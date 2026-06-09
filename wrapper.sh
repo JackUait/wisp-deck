@@ -39,7 +39,7 @@ if [ ! -d "$_WRAPPER_DIR/lib" ]; then
   exit 1
 fi
 
-_gt_libs=(ai-tools projects process input tui menu-tui project-actions tmux-session settings-json notification-setup tab-title-watcher)
+_gt_libs=(ai-tools projects process input tui menu-tui project-actions tmux-session settings-json notification-setup tab-title-watcher terminals/registry terminals/adapter session-restore)
 for _gt_lib in "${_gt_libs[@]}"; do
   if [ ! -f "$_WRAPPER_DIR/lib/${_gt_lib}.sh" ]; then
     printf '\033[31mError:\033[0m Missing library %s/lib/%s.sh\n' "$_WRAPPER_DIR" "$_gt_lib" >&2
@@ -83,11 +83,30 @@ validate_ai_tool "$AI_TOOL_PREF_FILE"
 # Load user projects from config file if it exists
 PROJECTS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab/projects"
 
+# Boot id (stable per uptime) for once-per-boot restore.
+GHOST_TAB_BOOT_ID="$(current_boot_id)"
+
+# Restore mode: wrapper.sh --restore <project_path> <ai_tool>
+RESTORE_MODE=0
+_restore_parsed="$(parse_restore_flag "$@")"
+if [ -n "$_restore_parsed" ]; then
+  RESTORE_MODE=1
+  RESTORE_PATH="${_restore_parsed%%|*}"
+  RESTORE_TOOL="${_restore_parsed##*|}"
+fi
+
 # Select working directory
-if [ -n "$1" ] && [ -d "$1" ]; then
+if [ "$RESTORE_MODE" -eq 1 ]; then
+  cd "$RESTORE_PATH" || exit 1
+  PROJECT_NAME="$(basename "$RESTORE_PATH")"
+  SELECTED_AI_TOOL="$RESTORE_TOOL"
+elif [ -n "$1" ] && [ -d "$1" ]; then
   cd "$1" || exit 1
   shift
 elif [ -z "$1" ]; then
+  # First interactive launch after a reboot: reopen previous tabs.
+  maybe_restore_session "$SHARE_DIR" "$GHOST_TAB_BOOT_ID" "$0"
+
   # Use TUI for project selection
   printf '\033]0;👻 Ghost Tab\007'
 
@@ -176,6 +195,7 @@ WATCHER_PID=$!
 
 cleanup() {
   stop_tab_title_watcher "$GHOST_TAB_MARKER_FILE"
+  [ -n "${HEARTBEAT_PID:-}" ] && kill "$HEARTBEAT_PID" 2>/dev/null || true
   # Remove waiting indicator hooks if no other Ghost Tab sessions are running
   if [ "$SELECTED_AI_TOOL" = "claude" ]; then
     # Clean up orphaned markers and cooldown files from dead sessions (e.g., after SIGKILL)
@@ -198,6 +218,10 @@ cleanup() {
 }
 trap cleanup EXIT HUP TERM INT
 
+if [ "$RESTORE_MODE" -eq 1 ]; then
+  export GHOST_TAB_RESUME=1
+fi
+
 # Build the AI tool launch command
 case "$SELECTED_AI_TOOL" in
   codex|opencode)
@@ -211,7 +235,20 @@ esac
 # Start tab title watcher before tmux (which blocks until session ends)
 start_tab_title_watcher "$SESSION_NAME" "$SELECTED_AI_TOOL" "$PROJECT_NAME" "$_tab_title_setting" "$TMUX_CMD" "$GHOST_TAB_MARKER_FILE" "${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab"
 
-"$TMUX_CMD" new-session -s "$SESSION_NAME" -e "PATH=$PATH" -e "GHOST_TAB_BASELINE_FILE=$GHOST_TAB_BASELINE_FILE" -e "GHOST_TAB_MARKER_FILE=$GHOST_TAB_MARKER_FILE" -c "$PROJECT_DIR" \
+# Session-restore snapshot: stamp metadata into the tmux session env via -e
+# flags on new-session (below), and run a heartbeat that re-derives the
+# snapshot from all alive Ghost Tab sessions.
+GHOST_TAB_TERMINAL="$(load_terminal_preference "$SHARE_DIR/terminal")"
+GHOST_TAB_SNAPSHOT="$SHARE_DIR/last-session"
+(
+  while true; do
+    write_session_snapshot "$TMUX_CMD" "$GHOST_TAB_SNAPSHOT"
+    sleep 10
+  done
+) &
+HEARTBEAT_PID=$!
+
+"$TMUX_CMD" new-session -s "$SESSION_NAME" -e "PATH=$PATH" -e "GHOST_TAB_BASELINE_FILE=$GHOST_TAB_BASELINE_FILE" -e "GHOST_TAB_MARKER_FILE=$GHOST_TAB_MARKER_FILE" -e "GHOST_TAB=1" -e "GHOST_TAB_BOOT=$GHOST_TAB_BOOT_ID" -e "GHOST_TAB_PROJECT=$PROJECT_NAME" -e "GHOST_TAB_PATH=$PROJECT_DIR" -e "GHOST_TAB_TOOL=$SELECTED_AI_TOOL" -e "GHOST_TAB_TERMINAL=$GHOST_TAB_TERMINAL" -c "$PROJECT_DIR" \
   "$LAZYGIT_CMD; exec bash" \; \
   set-option status-left " ⬡ ${PROJECT_NAME} " \; \
   set-option status-left-style "fg=white,bg=colour236,bold" \; \
