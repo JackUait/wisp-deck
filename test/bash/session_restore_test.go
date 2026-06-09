@@ -183,6 +183,38 @@ launch_restore_window "ghostty" "/w/wrapper.sh" "/p/app" "claude"
 	}
 }
 
+func TestWriteSessionSnapshot_handles_session_name_with_spaces(t *testing.T) {
+	dir := t.TempDir()
+	// Session name contains a space: "dev-My Project-1".
+	// The word-splitting bug in the old for loop would split this into two tokens.
+	tmuxBody := `
+case "$1" in
+  list-sessions) echo "dev-My Project-1" ;;
+  show-environment)
+    if [ "$3" = "dev-My Project-1" ]; then
+      printf 'GHOST_TAB=1\nGHOST_TAB_BOOT=111\nGHOST_TAB_PROJECT=My Project\nGHOST_TAB_PATH=/p/app\nGHOST_TAB_TOOL=claude\nGHOST_TAB_TERMINAL=ghostty\n'
+    else
+      printf 'SOMEVAR=1\n'
+    fi ;;
+esac
+`
+	binDir := mockCommand(t, dir, "tmux", tmuxBody)
+	env := buildEnv(t, []string{binDir})
+	snap := filepath.Join(dir, "last-session")
+	_, code := runBashFunc(t, "lib/session-restore.sh", "write_session_snapshot",
+		[]string{"tmux", snap}, env)
+	assertExitCode(t, code, 0)
+	data, err := os.ReadFile(snap)
+	if err != nil {
+		t.Fatalf("snapshot not written: %v", err)
+	}
+	got := strings.TrimSpace(string(data))
+	want := "111|My Project|/p/app|claude|ghostty"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestWriteSessionSnapshot_empty_when_no_ghost_sessions(t *testing.T) {
 	dir := t.TempDir()
 	tmuxBody := `

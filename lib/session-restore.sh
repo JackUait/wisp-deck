@@ -15,12 +15,14 @@ current_boot_id() {
 # A session is "ours" iff its session environment contains GHOST_TAB=1.
 # Writes atomically (temp + mv). One line per session:
 #   boot_id|project|path|tool|terminal
+# Field delimiter is '|' — project paths containing '|' are not supported.
 write_session_snapshot() {
   local tmux_cmd="$1" snap_file="$2"
   local tmp="${snap_file}.tmp.$$"
   : > "$tmp"
   local s env boot proj path tool term
-  for s in $("$tmux_cmd" list-sessions -F '#{session_name}' 2>/dev/null); do
+  while IFS= read -r s; do
+    [ -n "$s" ] || continue
     env="$("$tmux_cmd" show-environment -t "$s" 2>/dev/null)" || continue
     echo "$env" | grep -q '^GHOST_TAB=1$' || continue
     boot="$(echo "$env" | sed -n 's/^GHOST_TAB_BOOT=//p')"
@@ -29,7 +31,7 @@ write_session_snapshot() {
     tool="$(echo "$env" | sed -n 's/^GHOST_TAB_TOOL=//p')"
     term="$(echo "$env" | sed -n 's/^GHOST_TAB_TERMINAL=//p')"
     echo "${boot}|${proj}|${path}|${tool}|${term}" >> "$tmp"
-  done
+  done < <("$tmux_cmd" list-sessions -F '#{session_name}' 2>/dev/null)
   mv "$tmp" "$snap_file"
 }
 
