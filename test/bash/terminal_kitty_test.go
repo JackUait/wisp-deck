@@ -82,6 +82,26 @@ func TestKittyAdapter_install_calls_ensure_cask(t *testing.T) {
 	assertContains(t, out, "kitty found")
 }
 
+func TestKittyAdapter_launch_restore(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "rec")
+	binDir := mockCommand(t, dir, "open", `echo "$@" > `+fmt.Sprintf("%q", rec))
+	env := buildEnv(t, []string{binDir})
+	snippet := kittyAdapterSnippet(t,
+		`terminal_launch_restore "/w/wrapper.sh" "/p/app" "claude"`)
+	_, code := runBashSnippet(t, snippet, env)
+	assertExitCode(t, code, 0)
+	data, err := os.ReadFile(rec)
+	if err != nil {
+		t.Fatalf("open not invoked: %v", err)
+	}
+	got := strings.TrimSpace(string(data))
+	want := "-na kitty --args /bin/bash -l /w/wrapper.sh --restore /p/app claude"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestKittyAdapter_cleanup_config_removes_shell_line(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := writeTempFile(t, tmpDir, "kitty.conf", "font_size 14\nshell /some/path\ntheme dark\n")
