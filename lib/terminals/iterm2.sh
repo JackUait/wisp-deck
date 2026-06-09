@@ -53,9 +53,10 @@ EOF
 
 # Open a new iTerm2 window running the wrapper in restore mode.
 # Args: wrapper_path project_path ai_tool
+# Note: paths containing a single quote are not supported (accepted limitation).
 terminal_launch_restore() {
   local wrapper="$1" path="$2" tool="$3"
-  osascript -e "tell application \"iTerm\" to create window with default profile command \"/bin/bash -l $wrapper --restore $path $tool\""
+  osascript -e "tell application \"iTerm\" to create window with default profile command \"/bin/bash -l '$wrapper' --restore '$path' '$tool'\""
 }
 
 # Remove the Ghost Tab dynamic profile from iTerm2 and restore previous default.

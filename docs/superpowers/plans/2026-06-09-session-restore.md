@@ -827,7 +827,7 @@ Append to `test/bash/terminal_iterm2_test.go` (use the file's adapter-snippet he
 func TestIterm2Adapter_launch_restore(t *testing.T) {
 	dir := t.TempDir()
 	rec := filepath.Join(dir, "rec")
-	binDir := mockCommand(t, dir, "osascript", `echo "$@" > `+fmt.Sprintf("%q", rec))
+	binDir := mockCommand(t, dir, "osascript", `printf '%s\n' "$*" > `+fmt.Sprintf("%q", rec))
 	env := buildEnv(t, []string{binDir})
 	snippet := iterm2AdapterSnippet(t,
 		`terminal_launch_restore "/w/wrapper.sh" "/p/app" "claude"`)
@@ -838,7 +838,7 @@ func TestIterm2Adapter_launch_restore(t *testing.T) {
 		t.Fatalf("osascript not invoked: %v", err)
 	}
 	got := strings.TrimSpace(string(data))
-	want := `-e tell application "iTerm" to create window with default profile command "/bin/bash -l /w/wrapper.sh --restore /p/app claude"`
+	want := `-e tell application "iTerm" to create window with default profile command "/bin/bash -l '/w/wrapper.sh' --restore '/p/app' 'claude'"`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -857,9 +857,10 @@ Append to `lib/terminals/iterm2.sh`:
 ```bash
 # Open a new iTerm2 window running the wrapper in restore mode.
 # Args: wrapper_path project_path ai_tool
+# Note: paths containing a single quote are not supported (accepted limitation).
 terminal_launch_restore() {
   local wrapper="$1" path="$2" tool="$3"
-  osascript -e "tell application \"iTerm\" to create window with default profile command \"/bin/bash -l $wrapper --restore $path $tool\""
+  osascript -e "tell application \"iTerm\" to create window with default profile command \"/bin/bash -l '$wrapper' --restore '$path' '$tool'\""
 }
 ```
 
