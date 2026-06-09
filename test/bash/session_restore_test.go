@@ -141,6 +141,24 @@ esac
 	}
 }
 
+func TestParseRestoreFlag_emits_path_and_tool(t *testing.T) {
+	out, code := runBashFunc(t, "lib/session-restore.sh", "parse_restore_flag",
+		[]string{"--restore", "/p/app", "claude"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "/p/app|claude" {
+		t.Errorf("got %q, want %q", strings.TrimSpace(out), "/p/app|claude")
+	}
+}
+
+func TestParseRestoreFlag_empty_when_not_restore(t *testing.T) {
+	out, code := runBashFunc(t, "lib/session-restore.sh", "parse_restore_flag",
+		[]string{"/some/dir"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("expected empty, got %q", strings.TrimSpace(out))
+	}
+}
+
 func TestLaunchRestoreWindow_loads_adapter_and_calls_hook(t *testing.T) {
 	// Stub load_terminal_adapter + terminal_launch_restore so we can record args.
 	root := projectRoot(t)

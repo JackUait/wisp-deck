@@ -73,3 +73,11 @@ maybe_restore_session() {
   done < "$snap"
   return 0
 }
+
+# If args start with --restore, echo "path|tool"; otherwise echo nothing.
+# Usage: parse_restore_flag "$@"
+parse_restore_flag() {
+  if [ "$1" = "--restore" ]; then
+    echo "$2|$3"
+  fi
+}
