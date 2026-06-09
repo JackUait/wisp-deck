@@ -111,7 +111,7 @@ tool persists transcripts to disk):
 - claude → `claude -c` (`--continue`)
 - codex → `codex resume --last`
 - copilot → `copilot --continue`
-- opencode → `opencode -c`
+- opencode → `opencode --continue` (`-c`)
 
 Only used in restore mode. Normal new tabs launch fresh (no resume flag).
 
