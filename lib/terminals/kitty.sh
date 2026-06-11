@@ -32,10 +32,11 @@ terminal_setup_config() {
 }
 
 # Remove ghost-tab shell line from kitty config.
+# Matches only ghost-tab's own wrapper line so a user-written shell survives.
 terminal_cleanup_config() {
   local config_path="$1"
   if [ -f "$config_path" ]; then
-    sed -i '' '/^shell[[:space:]]/d' "$config_path"
+    sed -i '' '/^shell[[:space:]].*ghost-tab\/wrapper\.sh/d' "$config_path"
   fi
 }
 

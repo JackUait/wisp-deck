@@ -335,3 +335,32 @@ func TestIterm2Adapter_cleanup_config_restores_previous_default(t *testing.T) {
 		t.Error("expected saved GUID file to be removed")
 	}
 }
+
+func TestIterm2Adapter_cleanup_config_skips_restoring_ghost_tab_guid(t *testing.T) {
+	// Re-running setup while ghost-tab is already the default overwrites the
+	// saved GUID with "ghost-tab-profile". Restoring that on cleanup would
+	// point iTerm2's default at a profile that no longer exists.
+	tmpDir := t.TempDir()
+	profilePath := filepath.Join(tmpDir, "ghost-tab.json")
+	os.WriteFile(profilePath, []byte(`{"Profiles":[]}`), 0644)
+
+	configDir := filepath.Join(tmpDir, ".config", "ghost-tab")
+	os.MkdirAll(configDir, 0755)
+	savedGuidPath := filepath.Join(configDir, "iterm2-previous-guid")
+	os.WriteFile(savedGuidPath, []byte("ghost-tab-profile"), 0644)
+
+	binDir, logFile := mockDefaultsCommand(t, tmpDir, "")
+	env := buildEnv(t, []string{binDir}, "HOME="+tmpDir)
+
+	snippet := iterm2AdapterSnippet(t,
+		fmt.Sprintf(`terminal_cleanup_config %q`, profilePath))
+	_, code := runBashSnippet(t, snippet, env)
+	assertExitCode(t, code, 0)
+
+	calls, _ := os.ReadFile(logFile)
+	assertNotContains(t, string(calls), "write com.googlecode.iterm2")
+
+	if _, err := os.Stat(savedGuidPath); !os.IsNotExist(err) {
+		t.Error("expected saved GUID file to be removed")
+	}
+}

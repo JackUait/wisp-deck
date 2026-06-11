@@ -30,7 +30,7 @@ func writeGhosttyConfig(t *testing.T) (string, string) {
 		t.Fatal(err)
 	}
 	cfg := filepath.Join(cfgDir, "config")
-	content := "font-size = 14\ncommand = direct:/bin/bash -l /x/wrapper.sh\ntheme = dark\n"
+	content := "font-size = 14\ncommand = direct:/bin/bash -l /x/.config/ghost-tab/wrapper.sh\ntheme = dark\n"
 	if err := os.WriteFile(cfg, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestCleanupPreviousTerminal_noop_when_terminal_unchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertContains(t, string(data), "command = direct:/bin/bash -l /x/wrapper.sh")
+	assertContains(t, string(data), "command = direct:/bin/bash -l /x/.config/ghost-tab/wrapper.sh")
 }
 
 func TestCleanupPreviousTerminal_noop_when_no_previous_preference(t *testing.T) {
@@ -95,7 +95,7 @@ func TestCleanupPreviousTerminal_noop_when_no_previous_preference(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertContains(t, string(data), "command = direct:/bin/bash -l /x/wrapper.sh")
+	assertContains(t, string(data), "command = direct:/bin/bash -l /x/.config/ghost-tab/wrapper.sh")
 }
 
 func TestCleanupPreviousTerminal_noop_for_unknown_previous_terminal(t *testing.T) {

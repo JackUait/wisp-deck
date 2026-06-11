@@ -56,10 +56,11 @@ terminal_setup_config() {
 }
 
 # Remove ghost-tab command line from Ghostty config.
+# Matches only ghost-tab's own wrapper line so a user-written command survives.
 terminal_cleanup_config() {
   local config_path="$1"
   if [ -f "$config_path" ]; then
-    sed -i '' '/^command[[:space:]]*=/d' "$config_path"
+    sed -i '' '/^command[[:space:]]*=.*ghost-tab\/wrapper\.sh/d' "$config_path"
   fi
 }
 

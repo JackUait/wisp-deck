@@ -74,7 +74,9 @@ terminal_cleanup_config() {
   if [ -f "$saved_guid_path" ]; then
     local previous_guid
     previous_guid="$(cat "$saved_guid_path")"
-    if [ -n "$previous_guid" ]; then
+    # Re-running setup can save "ghost-tab-profile" itself; restoring that
+    # would point iTerm2's default at the profile we just deleted.
+    if [ -n "$previous_guid" ] && [ "$previous_guid" != "ghost-tab-profile" ]; then
       defaults write com.googlecode.iterm2 "Default Bookmark Guid" -string "$previous_guid"
     fi
     rm -f "$saved_guid_path"

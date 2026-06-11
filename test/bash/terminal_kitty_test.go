@@ -104,7 +104,7 @@ func TestKittyAdapter_launch_restore(t *testing.T) {
 
 func TestKittyAdapter_cleanup_config_removes_shell_line(t *testing.T) {
 	tmpDir := t.TempDir()
-	configFile := writeTempFile(t, tmpDir, "kitty.conf", "font_size 14\nshell /some/path\ntheme dark\n")
+	configFile := writeTempFile(t, tmpDir, "kitty.conf", "font_size 14\nshell /Users/u/.config/ghost-tab/wrapper.sh\ntheme dark\n")
 
 	snippet := kittyAdapterSnippet(t,
 		fmt.Sprintf(`terminal_cleanup_config %q`, configFile))
@@ -118,4 +118,22 @@ func TestKittyAdapter_cleanup_config_removes_shell_line(t *testing.T) {
 	content := string(data)
 	assertContains(t, content, "font_size 14")
 	assertNotContains(t, content, "shell ")
+}
+
+func TestKittyAdapter_cleanup_config_preserves_user_shell_line(t *testing.T) {
+	// A shell line the user wrote themselves (Skip path during setup)
+	// must survive cleanup — only ghost-tab's own line may be removed.
+	tmpDir := t.TempDir()
+	configFile := writeTempFile(t, tmpDir, "kitty.conf", "shell /opt/homebrew/bin/fish\n")
+
+	snippet := kittyAdapterSnippet(t,
+		fmt.Sprintf(`terminal_cleanup_config %q`, configFile))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	assertContains(t, string(data), "shell /opt/homebrew/bin/fish")
 }

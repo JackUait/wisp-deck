@@ -126,7 +126,7 @@ func TestWeztermAdapter_launch_restore(t *testing.T) {
 
 func TestWeztermAdapter_cleanup_config_removes_default_prog(t *testing.T) {
 	tmpDir := t.TempDir()
-	existing := "local wezterm = require 'wezterm'\nlocal config = wezterm.config_builder()\nconfig.default_prog = { '/some/path' }\nconfig.font_size = 14\nreturn config\n"
+	existing := "local wezterm = require 'wezterm'\nlocal config = wezterm.config_builder()\nconfig.default_prog = { '/Users/u/.config/ghost-tab/wrapper.sh' }\nconfig.font_size = 14\nreturn config\n"
 	configFile := writeTempFile(t, tmpDir, ".wezterm.lua", existing)
 
 	snippet := weztermAdapterSnippet(t,
@@ -141,4 +141,23 @@ func TestWeztermAdapter_cleanup_config_removes_default_prog(t *testing.T) {
 	content := string(data)
 	assertNotContains(t, content, "default_prog")
 	assertContains(t, content, "font_size = 14")
+}
+
+func TestWeztermAdapter_cleanup_config_preserves_user_default_prog(t *testing.T) {
+	// A default_prog the user wrote themselves (Skip path during setup)
+	// must survive cleanup — only ghost-tab's own line may be removed.
+	tmpDir := t.TempDir()
+	existing := "local config = {}\nconfig.default_prog = { '/opt/homebrew/bin/fish' }\nreturn config\n"
+	configFile := writeTempFile(t, tmpDir, ".wezterm.lua", existing)
+
+	snippet := weztermAdapterSnippet(t,
+		fmt.Sprintf(`terminal_cleanup_config %q`, configFile))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	assertContains(t, string(data), "config.default_prog = { '/opt/homebrew/bin/fish' }")
 }

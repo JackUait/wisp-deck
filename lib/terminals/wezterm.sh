@@ -42,10 +42,11 @@ EOF
 }
 
 # Remove ghost-tab default_prog from WezTerm config.
+# Matches only ghost-tab's own wrapper line so a user-written default_prog survives.
 terminal_cleanup_config() {
   local config_path="$1"
   if [ -f "$config_path" ]; then
-    sed -i '' '/default_prog/d' "$config_path"
+    sed -i '' '/default_prog.*ghost-tab\/wrapper\.sh/d' "$config_path"
   fi
 }
 

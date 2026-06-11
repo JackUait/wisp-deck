@@ -133,7 +133,7 @@ func TestGhosttyAdapter_setup_config_uses_direct_prefix(t *testing.T) {
 
 func TestGhosttyAdapter_cleanup_config_removes_command_line(t *testing.T) {
 	tmpDir := t.TempDir()
-	configFile := writeTempFile(t, tmpDir, "config", "font-size = 14\ncommand = direct:/bin/bash -l/some/path\ntheme = dark\n")
+	configFile := writeTempFile(t, tmpDir, "config", "font-size = 14\ncommand = direct:/bin/bash -l /Users/u/.config/ghost-tab/wrapper.sh\ntheme = dark\n")
 
 	snippet := ghosttyAdapterSnippet(t,
 		fmt.Sprintf(`terminal_cleanup_config %q`, configFile))
@@ -148,6 +148,41 @@ func TestGhosttyAdapter_cleanup_config_removes_command_line(t *testing.T) {
 	assertContains(t, content, "font-size = 14")
 	assertContains(t, content, "theme = dark")
 	assertNotContains(t, content, "command =")
+}
+
+func TestGhosttyAdapter_cleanup_config_removes_pre_direct_format(t *testing.T) {
+	// Versions before the direct: prefix wrote "command = /bin/bash -l <wrapper>".
+	tmpDir := t.TempDir()
+	configFile := writeTempFile(t, tmpDir, "config", "command = /bin/bash -l /Users/u/.config/ghost-tab/wrapper.sh\n")
+
+	snippet := ghosttyAdapterSnippet(t,
+		fmt.Sprintf(`terminal_cleanup_config %q`, configFile))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	assertNotContains(t, string(data), "command =")
+}
+
+func TestGhosttyAdapter_cleanup_config_preserves_user_command_line(t *testing.T) {
+	// A command line the user wrote themselves (Skip path during setup)
+	// must survive cleanup — only ghost-tab's own line may be removed.
+	tmpDir := t.TempDir()
+	configFile := writeTempFile(t, tmpDir, "config", "command = /opt/homebrew/bin/fish\n")
+
+	snippet := ghosttyAdapterSnippet(t,
+		fmt.Sprintf(`terminal_cleanup_config %q`, configFile))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	assertContains(t, string(data), "command = /opt/homebrew/bin/fish")
 }
 
 func TestGhosttyAdapter_terminal_install_skips_when_app_exists(t *testing.T) {
