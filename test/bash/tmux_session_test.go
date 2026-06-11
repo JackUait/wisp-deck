@@ -10,6 +10,10 @@ func aiCmd(t *testing.T, tool string, resume bool) string {
 	var env []string
 	if resume {
 		env = buildEnv(t, nil, "GHOST_TAB_RESUME=1")
+	} else {
+		// Stay hermetic when the test itself runs inside a restored
+		// Ghost Tab session (which exports GHOST_TAB_RESUME=1).
+		env = buildEnv(t, nil, "GHOST_TAB_RESUME=0")
 	}
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
 		[]string{tool, "claude", "codex", "copilot", "npx opencode-ai@latest", "/p/app"}, env)
