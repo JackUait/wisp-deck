@@ -96,6 +96,11 @@ var themes = map[string]AIToolTheme{
 	},
 }
 
+// currentTheme is the palette last applied via ApplyTheme. Components that need
+// the full palette (not just the package-level title/selected styles) read this.
+// Defaults to claude so rendering works even before ApplyTheme is called (tests).
+var currentTheme = themes["claude"]
+
 // ThemeForTool returns the color theme for the given AI tool.
 // Unknown tools fall back to the claude theme.
 func ThemeForTool(tool string) AIToolTheme {
@@ -116,6 +121,7 @@ func AnsiFromThemeColor(c lipgloss.Color) string {
 // questionStyle) to use the given theme's Primary color. Call this before
 // creating any TUI model so that all components reflect the AI tool's colors.
 func ApplyTheme(theme AIToolTheme) {
+	currentTheme = theme
 	titleStyle = lipgloss.NewStyle().Foreground(theme.Primary).Bold(true)
 	selectedItemStyle = lipgloss.NewStyle().Foreground(theme.Primary)
 	questionStyle = lipgloss.NewStyle().Foreground(theme.Primary).Bold(true)

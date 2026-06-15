@@ -29,13 +29,15 @@ func TestHumanizeTokens(t *testing.T) {
 	}
 }
 
-func TestStatsView_rendersMonthRowsHumanizedAndBars(t *testing.T) {
-	months := []usage.MonthlyUsage{
-		{Month: "2026-06", Input: 2_000_000, Output: 0, CacheWrite: 0, CacheRead: 0}, // total 2M (max)
-		{Month: "2026-05", Input: 1_000_000, Output: 0, CacheWrite: 0, CacheRead: 0}, // total 1M (half)
+func twoMonths() []usage.MonthlyUsage {
+	return []usage.MonthlyUsage{
+		{Month: "2026-06", Input: 2_000_000, Output: 0, CacheWrite: 0, CacheRead: 0}, // total 2M
+		{Month: "2026-05", Input: 1_000_000, Output: 0, CacheWrite: 0, CacheRead: 0}, // total 1M
 	}
-	m := NewStatsModelWithData(months)
-	view := m.View()
+}
+
+func TestStatsView_rendersMonthRowsHumanizedAndBars(t *testing.T) {
+	view := NewStatsModelWithData(twoMonths()).View()
 
 	if !strings.Contains(view, "2026-06") || !strings.Contains(view, "2026-05") {
 		t.Errorf("view missing month labels:\n%s", view)
@@ -43,10 +45,52 @@ func TestStatsView_rendersMonthRowsHumanizedAndBars(t *testing.T) {
 	if !strings.Contains(view, "2.0M") || !strings.Contains(view, "1.0M") {
 		t.Errorf("view missing humanized totals:\n%s", view)
 	}
-	bar6 := countBarRunes(view, "2026-06")
-	bar5 := countBarRunes(view, "2026-05")
+	// Each month's bar sits on the line directly below its data row and is scaled
+	// to that month's share of all tokens, so June (2M of 3M) > May (1M of 3M).
+	bar6 := barBlocksAfter(view, "2026-06")
+	bar5 := barBlocksAfter(view, "2026-05")
 	if bar6 <= bar5 || bar5 == 0 {
-		t.Errorf("bar widths not proportional: jun=%d may=%d", bar6, bar5)
+		t.Errorf("bar widths not proportional: jun=%d may=%d\n%s", bar6, bar5, view)
+	}
+}
+
+func TestStatsView_isBoxedWithGhostBorder(t *testing.T) {
+	view := NewStatsModelWithData(twoMonths()).View()
+	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
+		if !strings.Contains(view, glyph) {
+			t.Errorf("view missing box glyph %q (ghost-tab look):\n%s", glyph, view)
+		}
+	}
+}
+
+func TestStatsView_hasLabeledColumnHeader(t *testing.T) {
+	view := NewStatsModelWithData(twoMonths()).View()
+	for _, label := range []string{"Month", "Input", "Output", "Cache W", "Cache R", "Total"} {
+		if !strings.Contains(view, label) {
+			t.Errorf("view missing column header %q:\n%s", label, view)
+		}
+	}
+}
+
+func TestStatsView_showsGrandTotalRow(t *testing.T) {
+	view := NewStatsModelWithData(twoMonths()).View()
+	// Footer row labelled "Total" summing every month: 2M + 1M = 3.0M.
+	found := false
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "Total") && strings.Contains(line, "3.0M") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("view missing grand-total row with 3.0M:\n%s", view)
+	}
+}
+
+func TestStatsView_showsShareOfAllPercent(t *testing.T) {
+	view := NewStatsModelWithData(twoMonths()).View()
+	// June is 2M of 3M total ≈ 67%.
+	if !strings.Contains(view, "67%") {
+		t.Errorf("view missing share-of-all percentage (67%%):\n%s", view)
 	}
 }
 
@@ -65,11 +109,13 @@ func TestStatsView_errorShown(t *testing.T) {
 	}
 }
 
-// countBarRunes returns how many '█' runes appear on the line containing label.
-func countBarRunes(view, label string) int {
-	for _, line := range strings.Split(view, "\n") {
-		if strings.Contains(line, label) {
-			return strings.Count(line, "█")
+// barBlocksAfter counts '█' runes on the line immediately following the line that
+// contains label — i.e. a month's bar row, which sits below its data row.
+func barBlocksAfter(view, label string) int {
+	lines := strings.Split(view, "\n")
+	for i, line := range lines {
+		if strings.Contains(line, label) && i+1 < len(lines) {
+			return strings.Count(lines[i+1], "█")
 		}
 	}
 	return 0

@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	statsBarWidth = 24
-	statsWindow   = 8 // months visible at once before scrolling
+	statsInner  = 60 // inner content width between the box borders
+	statsBarMax = 40 // bar length (columns) for a month that is 100% of all tokens
+	statsWindow = 8  // months visible at once before scrolling
 )
 
 // humanizeTokens renders a token count as a compact string (999, 1.5K, 2.0M, 3.1B).
@@ -46,60 +47,143 @@ func NewStatsModelWithData(months []usage.MonthlyUsage) StatsModel {
 	return StatsModel{months: months, loading: false}
 }
 
-// maxTotal returns the largest month Total, used to scale bars. Minimum 1.
-func (m StatsModel) maxTotal() int64 {
-	var max int64 = 1
-	for _, mu := range m.months {
-		if t := mu.Total(); t > max {
-			max = t
-		}
+// statsGrandTotal sums every month into one MonthlyUsage labelled "Total".
+func statsGrandTotal(months []usage.MonthlyUsage) usage.MonthlyUsage {
+	g := usage.MonthlyUsage{Month: "Total"}
+	for _, mu := range months {
+		g.Input += mu.Input
+		g.Output += mu.Output
+		g.CacheWrite += mu.CacheWrite
+		g.CacheRead += mu.CacheRead
 	}
-	return max
+	return g
 }
 
-func (m StatsModel) renderRow(mu usage.MonthlyUsage, max int64) string {
-	barLen := int(mu.Total() * int64(statsBarWidth) / max)
-	if barLen == 0 && mu.Total() > 0 {
-		barLen = 1
+// statsBar renders a proportional bar of fractional block glyphs (eighths for
+// sub-cell resolution), padded to statsBarMax columns so trailing labels align.
+func statsBar(frac float64) string {
+	if frac < 0 {
+		frac = 0
 	}
-	bar := strings.Repeat("█", barLen)
-	return fmt.Sprintf("%s  in %-7s out %-7s cw %-7s cr %-7s = %-7s %s",
-		mu.Month,
-		humanizeTokens(mu.Input),
-		humanizeTokens(mu.Output),
-		humanizeTokens(mu.CacheWrite),
-		humanizeTokens(mu.CacheRead),
-		humanizeTokens(mu.Total()),
-		bar,
-	)
+	if frac > 1 {
+		frac = 1
+	}
+	units := frac * float64(statsBarMax)
+	full := int(units)
+	bar := strings.Repeat("█", full)
+	if full < statsBarMax {
+		eighths := []string{"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"}
+		if i := int((units - float64(full)) * 8); i > 0 {
+			bar += eighths[i]
+		}
+	}
+	return bar + strings.Repeat(" ", statsBarMax-lipgloss.Width(bar))
+}
+
+// statsCols formats the six aligned columns: month left-justified, the four
+// token counts right-justified, total right-justified. Each segment is styled
+// independently so the total can stand out.
+func statsCols(month, in, out, cw, cr, total string, monthStyle, numStyle, totalStyle lipgloss.Style) string {
+	return "  " + monthStyle.Render(fmt.Sprintf("%-7s", month)) + " " +
+		numStyle.Render(fmt.Sprintf("%8s", in)) + " " +
+		numStyle.Render(fmt.Sprintf("%8s", out)) + " " +
+		numStyle.Render(fmt.Sprintf("%8s", cw)) + " " +
+		numStyle.Render(fmt.Sprintf("%8s", cr)) + " " +
+		totalStyle.Render(fmt.Sprintf("%9s", total))
+}
+
+// statsBoxLine wraps inner content with vertical borders, padding to statsInner.
+func statsBoxLine(content string, border lipgloss.Style) string {
+	pad := statsInner - lipgloss.Width(content)
+	if pad < 0 {
+		pad = 0
+	}
+	return border.Render("│") + content + strings.Repeat(" ", pad) + border.Render("│")
+}
+
+// statsSep renders an inner horizontal rule row (├───┤).
+func statsSep(border lipgloss.Style) string {
+	return border.Render("├" + strings.Repeat("─", statsInner) + "┤")
+}
+
+// statsFrame wraps already-box-wrapped body lines with a titled rounded top
+// border and a bottom border, matching the ghost-tab look.
+func statsFrame(body []string) string {
+	border := lipgloss.NewStyle().Foreground(currentTheme.Dim)
+	title := lipgloss.NewStyle().Foreground(currentTheme.Primary).Bold(true).Render("⬡ Token Usage by Month")
+	n := statsInner - 3 - lipgloss.Width(title)
+	if n < 0 {
+		n = 0
+	}
+	top := border.Render("╭─ ") + title + border.Render(" "+strings.Repeat("─", n)+"╮")
+	bottom := border.Render("╰" + strings.Repeat("─", statsInner) + "╯")
+	return strings.Join(append(append([]string{top}, body...), bottom), "\n")
 }
 
 func (m StatsModel) View() string {
-	title := titleStyle.Render("Token Usage by Month")
-	hint := lipgloss.NewStyle().Faint(true).Render("↑↓ scroll · esc back")
+	border := lipgloss.NewStyle().Foreground(currentTheme.Dim)
+	primary := lipgloss.NewStyle().Foreground(currentTheme.Primary)
+	primaryBold := lipgloss.NewStyle().Foreground(currentTheme.Primary).Bold(true)
+	header := lipgloss.NewStyle().Foreground(currentTheme.Dim).Bold(true)
+	num := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	faint := lipgloss.NewStyle().Faint(true)
+	hint := faint.Render("↑↓ scroll · esc back")
 
+	// One-line message states (error / loading / empty) share the same frame.
+	message := func(body string) string {
+		return statsFrame([]string{
+			statsBoxLine("", border),
+			statsBoxLine("  "+body, border),
+			statsBoxLine("", border),
+			statsBoxLine("  "+hint, border),
+		})
+	}
 	if m.err != nil {
-		return title + "\n\n" + "Failed to load usage: " + m.err.Error() + "\n\n" + hint
+		return message(lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render("Failed to load usage: " + m.err.Error()))
 	}
 	if m.loading {
-		return title + "\n\n" + "Crunching token usage…" + "\n\n" + hint
+		return message(primary.Render("Crunching token usage…"))
 	}
 	if len(m.months) == 0 {
-		return title + "\n\n" + "No usage data found yet." + "\n\n" + hint
+		return message(muted.Render("No usage data found yet."))
 	}
 
-	max := m.maxTotal()
+	grandTotal := statsGrandTotal(m.months).Total()
+	if grandTotal < 1 {
+		grandTotal = 1
+	}
 	end := m.offset + statsWindow
 	if end > len(m.months) {
 		end = len(m.months)
 	}
-	var b strings.Builder
-	b.WriteString(title + "\n\n")
+
+	var body []string
+	body = append(body, statsBoxLine("", border))
+	body = append(body, statsBoxLine(
+		statsCols("Month", "Input", "Output", "Cache W", "Cache R", "Total", header, header, header), border))
+	body = append(body, statsSep(border))
 	for _, mu := range m.months[m.offset:end] {
-		b.WriteString(m.renderRow(mu, max) + "\n")
+		row := statsCols(mu.Month,
+			humanizeTokens(mu.Input), humanizeTokens(mu.Output),
+			humanizeTokens(mu.CacheWrite), humanizeTokens(mu.CacheRead),
+			humanizeTokens(mu.Total()), num, num, primaryBold)
+		frac := float64(mu.Total()) / float64(grandTotal)
+		pct := int(frac*100 + 0.5)
+		barRow := "  " + primary.Render(statsBar(frac)) + " " +
+			faint.Render(fmt.Sprintf("%d%% of all", pct))
+		body = append(body, statsBoxLine(row, border))
+		body = append(body, statsBoxLine(barRow, border))
 	}
-	b.WriteString("\n" + hint)
-	return b.String()
+	body = append(body, statsSep(border))
+	g := statsGrandTotal(m.months)
+	body = append(body, statsBoxLine(statsCols(g.Month,
+		humanizeTokens(g.Input), humanizeTokens(g.Output),
+		humanizeTokens(g.CacheWrite), humanizeTokens(g.CacheRead),
+		humanizeTokens(g.Total()), primaryBold, primaryBold, primaryBold), border))
+	body = append(body, statsBoxLine("", border))
+	body = append(body, statsBoxLine("  "+hint, border))
+	return statsFrame(body)
 }
 
 type statsLoadedMsg struct{ months []usage.MonthlyUsage }
