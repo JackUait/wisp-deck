@@ -1,6 +1,11 @@
 package tui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/jackuait/ghost-tab/internal/usage"
+)
 
 func TestHumanizeTokens(t *testing.T) {
 	tests := []struct {
@@ -22,3 +27,55 @@ func TestHumanizeTokens(t *testing.T) {
 		}
 	}
 }
+
+func TestStatsView_rendersMonthRowsHumanizedAndBars(t *testing.T) {
+	months := []usage.MonthlyUsage{
+		{Month: "2026-06", Input: 2_000_000, Output: 0, CacheWrite: 0, CacheRead: 0}, // total 2M (max)
+		{Month: "2026-05", Input: 1_000_000, Output: 0, CacheWrite: 0, CacheRead: 0}, // total 1M (half)
+	}
+	m := NewStatsModelWithData(months)
+	view := m.View()
+
+	if !strings.Contains(view, "2026-06") || !strings.Contains(view, "2026-05") {
+		t.Errorf("view missing month labels:\n%s", view)
+	}
+	if !strings.Contains(view, "2.0M") || !strings.Contains(view, "1.0M") {
+		t.Errorf("view missing humanized totals:\n%s", view)
+	}
+	bar6 := countBarRunes(view, "2026-06")
+	bar5 := countBarRunes(view, "2026-05")
+	if bar6 <= bar5 || bar5 == 0 {
+		t.Errorf("bar widths not proportional: jun=%d may=%d", bar6, bar5)
+	}
+}
+
+func TestStatsView_emptyShowsFriendlyMessage(t *testing.T) {
+	m := NewStatsModelWithData([]usage.MonthlyUsage{})
+	if !strings.Contains(m.View(), "No usage data") {
+		t.Errorf("empty view should show 'No usage data', got:\n%s", m.View())
+	}
+}
+
+func TestStatsView_errorShown(t *testing.T) {
+	m := NewStatsModelWithData(nil)
+	m.err = errTestStats
+	if !strings.Contains(m.View(), "Failed") {
+		t.Errorf("error view should mention failure, got:\n%s", m.View())
+	}
+}
+
+// countBarRunes returns how many '█' runes appear on the line containing label.
+func countBarRunes(view, label string) int {
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, label) {
+			return strings.Count(line, "█")
+		}
+	}
+	return 0
+}
+
+var errTestStats = stubErr("boom")
+
+type stubErr string
+
+func (e stubErr) Error() string { return string(e) }
