@@ -42,6 +42,10 @@ func Aggregate(claudeDir, cachePath string) ([]MonthlyUsage, error) {
 		return nil, err
 	}
 
+	// Dedup is per-file only (ParseFile dedups by message.id within a file). We do
+	// NOT dedup across files: a global dedup would require parsing every file
+	// together, which defeats the incremental cache. Cross-file duplicate ids are
+	// rare (~0.02% in practice) and intentionally tolerated. Do not "fix" this.
 	merged := map[string]*MonthlyUsage{}
 	for _, entry := range next.Files {
 		for month, mu := range entry.Months {
