@@ -141,30 +141,34 @@ func (m StatsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEsc:
 			return m, func() tea.Msg { return PopScreenMsg{} }
 		case tea.KeyUp:
-			if m.offset > 0 {
-				m.offset--
-			}
+			m.scrollUp()
 			return m, nil
 		case tea.KeyDown:
-			if m.offset < len(m.months)-1 {
-				m.offset++
-			}
+			m.scrollDown()
 			return m, nil
 		case tea.KeyRunes:
 			if len(msg.Runes) == 1 {
 				switch msg.Runes[0] {
 				case 'k':
-					if m.offset > 0 {
-						m.offset--
-					}
+					m.scrollUp()
 				case 'j':
-					if m.offset < len(m.months)-1 {
-						m.offset++
-					}
+					m.scrollDown()
 				}
 			}
 			return m, nil
 		}
 	}
 	return m, nil
+}
+
+func (m *StatsModel) scrollUp() {
+	if m.offset > 0 {
+		m.offset--
+	}
+}
+
+func (m *StatsModel) scrollDown() {
+	if m.offset < len(m.months)-statsWindow {
+		m.offset++
+	}
 }

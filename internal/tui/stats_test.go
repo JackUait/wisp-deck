@@ -88,25 +88,42 @@ func threeMonths() []usage.MonthlyUsage {
 }
 
 func TestStatsUpdate_scrollClampsAtBothEnds(t *testing.T) {
+	// With 3 months and a window of 8, every row fits — there is no scrolling.
 	m := NewStatsModelWithData(threeMonths())
 	// Up at top stays at 0.
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	if updated.(StatsModel).offset != 0 {
 		t.Errorf("offset after up-at-top = %d, want 0", updated.(StatsModel).offset)
 	}
-	// Down advances by one.
+	// Down does not scroll because everything already fits.
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	if updated.(StatsModel).offset != 1 {
-		t.Errorf("offset after down = %d, want 1", updated.(StatsModel).offset)
+	if updated.(StatsModel).offset != 0 {
+		t.Errorf("offset after down (all rows fit) = %d, want 0", updated.(StatsModel).offset)
 	}
-	// Down repeatedly clamps at len-1 (max scroll keeps last row visible).
+	// Down repeatedly still stays at 0.
 	m2 := updated.(StatsModel)
 	for i := 0; i < 10; i++ {
 		u, _ := m2.Update(tea.KeyMsg{Type: tea.KeyDown})
 		m2 = u.(StatsModel)
 	}
-	if m2.offset > len(m2.months)-1 {
-		t.Errorf("offset = %d, want clamped <= %d", m2.offset, len(m2.months)-1)
+	if m2.offset != 0 {
+		t.Errorf("offset after repeated down = %d, want 0", m2.offset)
+	}
+}
+
+func TestStatsUpdate_scrollStopsAtFullWindow(t *testing.T) {
+	months := make([]usage.MonthlyUsage, 12)
+	for i := range months {
+		months[i] = usage.MonthlyUsage{Month: "2026-01", Input: int64(i + 1)}
+	}
+	m := NewStatsModelWithData(months)
+	for i := 0; i < 50; i++ {
+		u, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = u.(StatsModel)
+	}
+	// Max offset must leave a full window visible: len-statsWindow = 12-8 = 4.
+	if m.offset != 4 {
+		t.Errorf("max offset = %d, want 4 (len-statsWindow)", m.offset)
 	}
 }
 
