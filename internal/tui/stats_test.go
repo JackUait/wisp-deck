@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jackuait/ghost-tab/internal/usage"
 )
 
@@ -79,3 +80,61 @@ var errTestStats = stubErr("boom")
 type stubErr string
 
 func (e stubErr) Error() string { return string(e) }
+
+func threeMonths() []usage.MonthlyUsage {
+	return []usage.MonthlyUsage{
+		{Month: "2026-06", Input: 3}, {Month: "2026-05", Input: 2}, {Month: "2026-04", Input: 1},
+	}
+}
+
+func TestStatsUpdate_scrollClampsAtBothEnds(t *testing.T) {
+	m := NewStatsModelWithData(threeMonths())
+	// Up at top stays at 0.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if updated.(StatsModel).offset != 0 {
+		t.Errorf("offset after up-at-top = %d, want 0", updated.(StatsModel).offset)
+	}
+	// Down advances by one.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if updated.(StatsModel).offset != 1 {
+		t.Errorf("offset after down = %d, want 1", updated.(StatsModel).offset)
+	}
+	// Down repeatedly clamps at len-1 (max scroll keeps last row visible).
+	m2 := updated.(StatsModel)
+	for i := 0; i < 10; i++ {
+		u, _ := m2.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m2 = u.(StatsModel)
+	}
+	if m2.offset > len(m2.months)-1 {
+		t.Errorf("offset = %d, want clamped <= %d", m2.offset, len(m2.months)-1)
+	}
+}
+
+func TestStatsUpdate_escEmitsPopScreen(t *testing.T) {
+	m := NewStatsModelWithData(threeMonths())
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd == nil {
+		t.Fatal("esc returned nil cmd, want PopScreenMsg cmd")
+	}
+	if _, ok := cmd().(PopScreenMsg); !ok {
+		t.Errorf("esc cmd = %T, want PopScreenMsg", cmd())
+	}
+}
+
+func TestStatsUpdate_loadedMsgPopulatesAndStopsLoading(t *testing.T) {
+	m := StatsModel{loading: true}
+	updated, _ := m.Update(statsLoadedMsg{months: threeMonths()})
+	sm := updated.(StatsModel)
+	if sm.loading || len(sm.months) != 3 {
+		t.Errorf("after load: loading=%v months=%d, want false/3", sm.loading, len(sm.months))
+	}
+}
+
+func TestStatsUpdate_errMsgSetsError(t *testing.T) {
+	m := StatsModel{loading: true}
+	updated, _ := m.Update(statsErrMsg{err: errTestStats})
+	sm := updated.(StatsModel)
+	if sm.err == nil || sm.loading {
+		t.Errorf("after err: err=%v loading=%v, want set/false", sm.err, sm.loading)
+	}
+}

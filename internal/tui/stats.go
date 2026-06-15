@@ -2,9 +2,11 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jackuait/ghost-tab/internal/usage"
 )
@@ -98,4 +100,71 @@ func (m StatsModel) View() string {
 	}
 	b.WriteString("\n" + hint)
 	return b.String()
+}
+
+type statsLoadedMsg struct{ months []usage.MonthlyUsage }
+type statsErrMsg struct{ err error }
+
+// NewStatsModel builds a model that loads usage asynchronously on Init.
+func NewStatsModel() StatsModel {
+	home, _ := os.UserHomeDir()
+	claudeDir, cachePath := usage.DefaultPaths(home)
+	return StatsModel{loading: true, claudeDir: claudeDir, cachePath: cachePath}
+}
+
+func (m StatsModel) Init() tea.Cmd {
+	if !m.loading {
+		return nil
+	}
+	claudeDir, cachePath := m.claudeDir, m.cachePath
+	return func() tea.Msg {
+		months, err := usage.Aggregate(claudeDir, cachePath)
+		if err != nil {
+			return statsErrMsg{err: err}
+		}
+		return statsLoadedMsg{months: months}
+	}
+}
+
+func (m StatsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case statsLoadedMsg:
+		m.months = msg.months
+		m.loading = false
+		return m, nil
+	case statsErrMsg:
+		m.err = msg.err
+		m.loading = false
+		return m, nil
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyEsc:
+			return m, func() tea.Msg { return PopScreenMsg{} }
+		case tea.KeyUp:
+			if m.offset > 0 {
+				m.offset--
+			}
+			return m, nil
+		case tea.KeyDown:
+			if m.offset < len(m.months)-1 {
+				m.offset++
+			}
+			return m, nil
+		case tea.KeyRunes:
+			if len(msg.Runes) == 1 {
+				switch msg.Runes[0] {
+				case 'k':
+					if m.offset > 0 {
+						m.offset--
+					}
+				case 'j':
+					if m.offset < len(m.months)-1 {
+						m.offset++
+					}
+				}
+			}
+			return m, nil
+		}
+	}
+	return m, nil
 }
