@@ -74,7 +74,9 @@ func Aggregate(claudeDir, cachePath string) ([]MonthlyUsage, error) {
 
 	out := make([]MonthlyUsage, 0, len(acc))
 	for month, byModel := range acc {
-		out = append(out, *buildMonthly(month, byModel))
+		if mu := buildMonthly(month, byModel); mu != nil {
+			out = append(out, *mu)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Month > out[j].Month })
 	return out, nil

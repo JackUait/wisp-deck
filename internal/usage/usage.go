@@ -40,14 +40,23 @@ func (m MonthlyUsage) Total() int64 {
 
 // buildMonthly assembles a MonthlyUsage from per-model accumulators: it sums the
 // flat fields and returns Models sorted by Total() desc (tie-break by model id).
+// Models with zero total tokens (e.g. "<synthetic>" placeholder records) are
+// dropped so they neither render nor flag the month as partially unpriced. Returns
+// nil when no model has any tokens.
 func buildMonthly(month string, models map[string]*ModelUsage) *MonthlyUsage {
 	mu := &MonthlyUsage{Month: month}
 	for _, m := range models {
+		if m.Total() == 0 {
+			continue
+		}
 		mu.Input += m.Input
 		mu.Output += m.Output
 		mu.CacheWrite += m.CacheWrite
 		mu.CacheRead += m.CacheRead
 		mu.Models = append(mu.Models, *m)
+	}
+	if len(mu.Models) == 0 {
+		return nil
 	}
 	sort.Slice(mu.Models, func(i, j int) bool {
 		if ti, tj := mu.Models[i].Total(), mu.Models[j].Total(); ti != tj {
@@ -150,7 +159,9 @@ func ParseFile(path string) (map[string]*MonthlyUsage, FileMeta, error) {
 
 	months := make(map[string]*MonthlyUsage, len(acc))
 	for month, byModel := range acc {
-		months[month] = buildMonthly(month, byModel)
+		if mu := buildMonthly(month, byModel); mu != nil {
+			months[month] = mu
+		}
 	}
 	return months, meta, nil
 }

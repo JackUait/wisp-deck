@@ -127,3 +127,26 @@ func TestParseFile_missingModelIsUnknown(t *testing.T) {
 		t.Errorf("missing model = %q, want unknown", months["2026-05"].Models[0].Model)
 	}
 }
+
+func TestParseFile_dropsZeroTokenModels(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"type":"assistant","timestamp":"2026-05-01T10:00:00Z","message":{"id":"a","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+{"type":"assistant","timestamp":"2026-05-01T10:00:01Z","message":{"id":"b","model":"claude-opus-4-7","usage":{"input_tokens":5,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+`
+	p := writeFixture(t, dir, "s.jsonl", content)
+	months, _, _ := ParseFile(p)
+	may := months["2026-05"]
+	if may == nil || len(may.Models) != 1 || may.Models[0].Model != "claude-opus-4-7" {
+		t.Errorf("zero-token model not dropped: %+v", may)
+	}
+}
+
+func TestParseFile_dropsAllZeroMonth(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"type":"assistant","timestamp":"2026-05-01T10:00:00Z","message":{"id":"a","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}` + "\n"
+	p := writeFixture(t, dir, "s.jsonl", content)
+	months, _, _ := ParseFile(p)
+	if _, ok := months["2026-05"]; ok {
+		t.Errorf("month with only zero-token usage should be dropped: %+v", months)
+	}
+}
