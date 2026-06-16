@@ -20,6 +20,19 @@ func TestMainMenu_TKeyPushesStatsScreen(t *testing.T) {
 	}
 }
 
+func TestMainMenu_TKeyPassesWindowSizeToStats(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "")
+	m.SetSize(120, 50)
+	_, cmd := m.handleRune('t')
+	sm, ok := cmd().(PushScreenMsg).Model.(StatsModel)
+	if !ok {
+		t.Fatalf("pushed model is not StatsModel")
+	}
+	if sm.width != 120 || sm.height != 50 {
+		t.Errorf("pushed stats size = %dx%d, want 120x50 (so it centers immediately)", sm.width, sm.height)
+	}
+}
+
 func TestMainMenu_hasStatsActionLabel(t *testing.T) {
 	found := false
 	for _, a := range actionLabels {

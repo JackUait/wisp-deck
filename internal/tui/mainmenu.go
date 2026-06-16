@@ -174,10 +174,10 @@ type MainMenuModel struct {
 
 	// Two-field add-project form state
 	nameInput      textinput.Model
-	nameTouched    bool  // user manually edited name; disable auto-derive
+	nameTouched    bool // user manually edited name; disable auto-derive
 	nameErr        error
-	nameWarnShown  bool  // true after first Enter on duplicate name; second Enter confirms
-	inputFocusPath bool  // true = path field focused, false = name field focused
+	nameWarnShown  bool // true after first Enter on duplicate name; second Enter confirms
+	inputFocusPath bool // true = path field focused, false = name field focused
 
 	// Delete mode
 	deleteMode           bool
@@ -1420,7 +1420,9 @@ func (m *MainMenuModel) handleRune(r rune) (tea.Model, tea.Cmd) {
 		m.settingsSelected = 0
 		return m, nil
 	case 't', 'T':
-		return m, func() tea.Msg { return PushScreenMsg{Model: NewStatsModel()} }
+		stats := NewStatsModel()
+		stats.SetSize(m.width, m.height)
+		return m, func() tea.Msg { return PushScreenMsg{Model: stats} }
 	case '1', '2', '3', '4', '5', '6', '7', '8', '9':
 		n := int(r - '0')
 		if n > len(m.projects) {

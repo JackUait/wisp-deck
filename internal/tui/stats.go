@@ -37,8 +37,18 @@ type StatsModel struct {
 	loading   bool
 	err       error
 	offset    int
+	width     int
+	height    int
 	claudeDir string
 	cachePath string
+}
+
+// SetSize records the terminal dimensions so View can center the box. Callers
+// that already know the size (e.g. the main menu pushing this screen) set it up
+// front so the box is centered on the first frame, before any resize event.
+func (m *StatsModel) SetSize(width, height int) {
+	m.width = width
+	m.height = height
 }
 
 // NewStatsModelWithData builds a ready-to-render model (no async load). For tests
@@ -120,6 +130,15 @@ func statsFrame(body []string) string {
 	return strings.Join(append(append([]string{top}, body...), bottom), "\n")
 }
 
+// center places content in the middle of the terminal when the size is known;
+// otherwise it returns content as-is (origin) for unsized callers and tests.
+func (m StatsModel) center(content string) string {
+	if m.width > 0 && m.height > 0 {
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
+	}
+	return content
+}
+
 func (m StatsModel) View() string {
 	border := lipgloss.NewStyle().Foreground(currentTheme.Dim)
 	primary := lipgloss.NewStyle().Foreground(currentTheme.Primary)
@@ -140,13 +159,13 @@ func (m StatsModel) View() string {
 		})
 	}
 	if m.err != nil {
-		return message(lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render("Failed to load usage: " + m.err.Error()))
+		return m.center(message(lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render("Failed to load usage: " + m.err.Error())))
 	}
 	if m.loading {
-		return message(primary.Render("Crunching token usage…"))
+		return m.center(message(primary.Render("Crunching token usage…")))
 	}
 	if len(m.months) == 0 {
-		return message(muted.Render("No usage data found yet."))
+		return m.center(message(muted.Render("No usage data found yet.")))
 	}
 
 	grandTotal := statsGrandTotal(m.months).Total()
@@ -183,7 +202,7 @@ func (m StatsModel) View() string {
 		humanizeTokens(g.Total()), primaryBold, primaryBold, primaryBold), border))
 	body = append(body, statsBoxLine("", border))
 	body = append(body, statsBoxLine("  "+hint, border))
-	return statsFrame(body)
+	return m.center(statsFrame(body))
 }
 
 type statsLoadedMsg struct{ months []usage.MonthlyUsage }
@@ -219,6 +238,10 @@ func (m StatsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statsErrMsg:
 		m.err = msg.err
 		m.loading = false
+		return m, nil
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.Type {

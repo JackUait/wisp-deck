@@ -173,6 +173,46 @@ func TestStatsUpdate_scrollStopsAtFullWindow(t *testing.T) {
 	}
 }
 
+func TestStatsUpdate_storesWindowSize(t *testing.T) {
+	m := NewStatsModelWithData(twoMonths())
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 50})
+	sm := updated.(StatsModel)
+	if sm.width != 120 || sm.height != 50 {
+		t.Errorf("size = %dx%d, want 120x50", sm.width, sm.height)
+	}
+}
+
+func TestStatsView_centeredWithinWindow(t *testing.T) {
+	m := NewStatsModelWithData(twoMonths())
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 50})
+	lines := strings.Split(updated.(StatsModel).View(), "\n")
+
+	// Vertical centering leaves blank padding rows above the box.
+	if strings.TrimSpace(lines[0]) != "" {
+		t.Errorf("expected blank top padding (vertical centering), got %q", lines[0])
+	}
+	// Horizontal centering indents the box; its top border is not at column 0.
+	var top string
+	for _, l := range lines {
+		if strings.Contains(l, "╭") {
+			top = l
+			break
+		}
+	}
+	if !strings.HasPrefix(top, " ") {
+		t.Errorf("expected left padding before box (horizontal centering), got %q", top)
+	}
+}
+
+func TestStatsView_notCenteredWithoutSize(t *testing.T) {
+	// width/height unset (0): render the box at the origin so non-sized callers
+	// and tests still see raw content.
+	view := NewStatsModelWithData(twoMonths()).View()
+	if !strings.HasPrefix(view, "╭") {
+		t.Errorf("unsized view should start at the box border, got %q", strings.SplitN(view, "\n", 2)[0])
+	}
+}
+
 func TestStatsUpdate_escEmitsPopScreen(t *testing.T) {
 	m := NewStatsModelWithData(threeMonths())
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
