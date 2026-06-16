@@ -103,11 +103,11 @@ func TestAggregate_reparsesChangedFile(t *testing.T) {
 	}
 }
 
-func TestAggregate_dropsDeletedFileFromCache(t *testing.T) {
+func TestAggregate_sealsDeletedFileIntoArchive(t *testing.T) {
 	dir := t.TempDir()
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	p := writeFixture(t, dir, "a.jsonl",
-		`{"type":"assistant","timestamp":"2026-05-01T10:00:00Z","message":{"id":"a","usage":{"input_tokens":10,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`+"\n")
+		`{"type":"assistant","timestamp":"2026-05-01T10:00:00Z","message":{"id":"a","model":"claude-opus-4-7","usage":{"input_tokens":10,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`+"\n")
 	if _, err := Aggregate(dir, cachePath); err != nil {
 		t.Fatal(err)
 	}
@@ -116,11 +116,64 @@ func TestAggregate_dropsDeletedFileFromCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out) != 0 {
-		t.Errorf("out = %+v, want empty after file deleted", out)
+	// The month survives even though its transcript is gone.
+	if len(out) != 1 || out[0].Month != "2026-05" || out[0].Input != 10 {
+		t.Fatalf("out = %+v, want one 2026-05 row with input 10", out)
 	}
-	if _, ok := LoadCache(cachePath).Files[p]; ok {
-		t.Errorf("deleted file still present in cache")
+	c := LoadCache(cachePath)
+	if _, ok := c.Files[p]; ok {
+		t.Errorf("deleted file should not remain in Files")
+	}
+	if !c.Sealed[p] {
+		t.Errorf("deleted file should be recorded in Sealed")
+	}
+	if c.Archive["2026-05"]["claude-opus-4-7"].Input != 10 {
+		t.Errorf("archive = %+v, want 2026-05/opus input 10", c.Archive)
+	}
+}
+
+func TestAggregate_sealedFileNotDoubleCountedOnReappear(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	record := `{"type":"assistant","timestamp":"2026-05-01T10:00:00Z","message":{"id":"a","model":"claude-opus-4-7","usage":{"input_tokens":10,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}` + "\n"
+	p := writeFixture(t, dir, "a.jsonl", record)
+	if _, err := Aggregate(dir, cachePath); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(p)
+	if _, err := Aggregate(dir, cachePath); err != nil { // seals into archive
+		t.Fatal(err)
+	}
+	writeFixture(t, dir, "a.jsonl", record) // same path reappears
+	out, err := Aggregate(dir, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Counted once (from the archive), NOT 20.
+	if len(out) != 1 || out[0].Input != 10 {
+		t.Errorf("out = %+v, want input 10 (sealed path skipped, not re-added)", out)
+	}
+}
+
+func TestAggregate_mergesArchiveWithLiveMonth(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	// Two May files; delete one so it seals, keep one live. Both feed 2026-05.
+	gone := writeFixture(t, dir, "gone.jsonl",
+		`{"type":"assistant","timestamp":"2026-05-01T10:00:00Z","message":{"id":"g","model":"claude-opus-4-7","usage":{"input_tokens":4,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`+"\n")
+	writeFixture(t, dir, "live.jsonl",
+		`{"type":"assistant","timestamp":"2026-05-02T10:00:00Z","message":{"id":"l","model":"claude-opus-4-7","usage":{"input_tokens":6,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`+"\n")
+	if _, err := Aggregate(dir, cachePath); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(gone)
+	out, err := Aggregate(dir, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Archived 4 (gone) + live 6 = 10 for 2026-05.
+	if len(out) != 1 || out[0].Input != 10 {
+		t.Errorf("out = %+v, want 2026-05 input 10 (archive 4 + live 6)", out)
 	}
 }
 

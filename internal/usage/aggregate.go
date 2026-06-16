@@ -71,17 +71,35 @@ func cloneArchive(src map[string]map[string]*ModelUsage) map[string]map[string]*
 
 // Aggregate walks claudeDir for *.jsonl transcripts and returns per-month token
 // usage sorted newest-first. It reuses cachePath entries for files whose size and
-// mtime are unchanged, re-parses changed files, drops entries for deleted files,
-// and best-effort saves the updated cache.
+// mtime are unchanged and re-parses changed files. When a previously-cached file
+// vanishes from disk, its totals are sealed into a durable per-month Archive so
+// the history survives Claude Code's transcript pruning; sealed paths are never
+// re-counted. Best-effort saves the updated cache.
 func Aggregate(claudeDir, cachePath string) ([]MonthlyUsage, error) {
 	cache := LoadCache(cachePath)
-	next := &Cache{Version: cacheVersion, Files: map[string]fileCacheEntry{}}
+	next := &Cache{
+		Version: cacheVersion,
+		Files:   map[string]fileCacheEntry{},
+		Archive: cloneArchive(cache.Archive),
+		Sealed:  map[string]bool{},
+	}
+	for p := range cache.Sealed {
+		next.Sealed[p] = true
+	}
 
+	seen := map[string]bool{}
 	err := filepath.WalkDir(claudeDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable dirs/files, keep going
 		}
 		if d.IsDir() || !strings.HasSuffix(path, ".jsonl") {
+			return nil
+		}
+		seen[path] = true
+		if next.Sealed[path] {
+			// Already folded into Archive; never re-count. A brand-new file that
+			// reuses a sealed path would be ignored, but transcript paths embed a
+			// session UUID so reuse does not happen in practice.
 			return nil
 		}
 		info, statErr := d.Info()
@@ -104,33 +122,26 @@ func Aggregate(claudeDir, cachePath string) ([]MonthlyUsage, error) {
 		return nil, err
 	}
 
+	// Seal transcripts that were cached but have vanished from disk: fold their
+	// months into the durable archive so the history outlives the source file.
+	for path, entry := range cache.Files {
+		if seen[path] || next.Sealed[path] {
+			continue
+		}
+		foldMonths(next.Archive, entry.Months)
+		next.Sealed[path] = true
+	}
+
 	// Dedup is per-file only (ParseFile dedups by message.id within a file). We do
 	// NOT dedup across files: a global dedup would require parsing every file
 	// together, which defeats the incremental cache. Cross-file duplicate ids are
 	// rare (~0.02% in practice) and intentionally tolerated. Do not "fix" this.
-	// month -> model -> accumulator. Merge each file's per-model rows so a model
-	// used across many files becomes one row per month.
+	// Accumulate live files plus the sealed archive into month -> model totals.
 	acc := map[string]map[string]*ModelUsage{}
 	for _, entry := range next.Files {
-		for month, mu := range entry.Months {
-			byModel := acc[month]
-			if byModel == nil {
-				byModel = map[string]*ModelUsage{}
-				acc[month] = byModel
-			}
-			for _, m := range mu.Models {
-				a := byModel[m.Model]
-				if a == nil {
-					a = &ModelUsage{Model: m.Model}
-					byModel[m.Model] = a
-				}
-				a.Input += m.Input
-				a.Output += m.Output
-				a.CacheWrite += m.CacheWrite
-				a.CacheRead += m.CacheRead
-			}
-		}
+		foldMonths(acc, entry.Months)
 	}
+	foldArchive(acc, next.Archive)
 
 	_ = next.Save(cachePath) // best-effort; a save failure must not break the view
 
