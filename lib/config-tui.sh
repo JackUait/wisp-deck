@@ -31,16 +31,16 @@ manage_claude_configs_interactive() {
     case "$action" in
       add)
         name="$(echo "$result" | jq -r '.name' 2>/dev/null)"
-        [ -n "$name" ] && [ "$name" != "null" ] && add_claude_config "$list_file" "$configs_dir" "$name" >/dev/null
+        [ -n "$name" ] && [ "$name" != "null" ] && ghost-tab-tui claude-config add --list "$list_file" --dir "$configs_dir" --name "$name" >/dev/null
         ;;
       rename)
         file="$(echo "$result" | jq -r '.file' 2>/dev/null)"
         name="$(echo "$result" | jq -r '.name' 2>/dev/null)"
-        [ -n "$file" ] && [ "$file" != "null" ] && [ -n "$name" ] && [ "$name" != "null" ] && rename_claude_config "$list_file" "$file" "$name"
+        [ -n "$file" ] && [ "$file" != "null" ] && [ -n "$name" ] && [ "$name" != "null" ] && ghost-tab-tui claude-config rename --list "$list_file" --file "$file" --name "$name"
         ;;
       delete)
         file="$(echo "$result" | jq -r '.file' 2>/dev/null)"
-        [ -n "$file" ] && [ "$file" != "null" ] && delete_claude_config "$list_file" "$configs_dir" "$pointer_file" "$file"
+        [ -n "$file" ] && [ "$file" != "null" ] && ghost-tab-tui claude-config delete --list "$list_file" --dir "$configs_dir" --pointer "$pointer_file" --file "$file"
         ;;
       quit|""|null)
         return 0

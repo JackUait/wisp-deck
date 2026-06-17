@@ -59,6 +59,7 @@ select_project_interactive() {
   fi
   cmd_args+=("--claude-config-file" "$gt_config_dir/claude-config")
   cmd_args+=("--claude-configs-list" "$gt_config_dir/claude-configs.list")
+  cmd_args+=("--claude-configs-dir" "$gt_config_dir/claude-configs")
   if [ -n "${_update_version:-}" ]; then
     cmd_args+=("--update-version" "$_update_version")
   fi

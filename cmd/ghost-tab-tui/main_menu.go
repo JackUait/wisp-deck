@@ -34,6 +34,7 @@ var (
 	mainMenuSoundFile        string
 	mainMenuClaudeConfigFile  string
 	mainMenuClaudeConfigsList string
+	mainMenuClaudeConfigsDir  string
 )
 
 func init() {
@@ -51,6 +52,7 @@ func init() {
 	mainMenuCmd.Flags().StringVar(&mainMenuSoundFile, "sound-file", "", "Path to sound features JSON file for persistence")
 	mainMenuCmd.Flags().StringVar(&mainMenuClaudeConfigFile, "claude-config-file", "", "Path to active Claude config pointer file")
 	mainMenuCmd.Flags().StringVar(&mainMenuClaudeConfigsList, "claude-configs-list", "", "Path to Claude configs list (name:file)")
+	mainMenuCmd.Flags().StringVar(&mainMenuClaudeConfigsDir, "claude-configs-dir", "", "Path to Claude configs directory (settings JSON files)")
 	rootCmd.AddCommand(mainMenuCmd)
 }
 
@@ -94,6 +96,7 @@ func runMainMenu(cmd *cobra.Command, args []string) error {
 	if mainMenuClaudeConfigsList != "" {
 		model.SetClaudeConfigs(tui.LoadClaudeConfigsList(mainMenuClaudeConfigsList))
 		model.SetActiveClaudeConfig(tui.ReadActiveClaudeConfig(mainMenuClaudeConfigFile))
+		model.SetClaudeConfigPaths(mainMenuClaudeConfigsList, mainMenuClaudeConfigsDir)
 	}
 
 	ttyOpts, cleanup, err := util.TUITeaOptions()

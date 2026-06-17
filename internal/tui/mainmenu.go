@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/jackuait/ghost-tab/internal/claudeconfig"
 	"github.com/jackuait/ghost-tab/internal/models"
 	"github.com/jackuait/ghost-tab/internal/util"
 )
@@ -230,6 +231,15 @@ type MainMenuModel struct {
 	claudeConfigs    []ClaudeConfig // Standard is implicit index 0, not stored here
 	selectedConfig   int            // 0 = Standard, 1.. = claudeConfigs[i-1]
 	claudeConfigFile string         // pointer file path for persistence
+	claudeConfigsList string        // name:file list file path (for mutations)
+	claudeConfigsDir  string        // directory holding the settings JSON files
+
+	// Inline Claude config management panel (opened with Enter on the row)
+	configPanelOpen   bool
+	configPanelCursor int                 // 0 = Standard, 1.. = claudeConfigs[i-1]
+	configPanelMode   string              // "" list, "add", "rename", "delete"
+	configPanelInput  textinput.Model     // name entry for add/rename
+	configPanelErr    error               // last mutation error, shown in the panel
 
 	// Worktree expand/collapse state (project index -> expanded)
 	expandedWorktrees map[int]bool
@@ -732,6 +742,16 @@ func (m *MainMenuModel) persistSound() {
 // SetClaudeConfigFile sets the pointer file path used to persist the active config.
 func (m *MainMenuModel) SetClaudeConfigFile(path string) { m.claudeConfigFile = path }
 
+// SetClaudeConfigPaths records the list-file and configs-directory paths the
+// inline management panel needs to create, rename, and delete config files.
+func (m *MainMenuModel) SetClaudeConfigPaths(listFile, dir string) {
+	m.claudeConfigsList = listFile
+	m.claudeConfigsDir = dir
+}
+
+// ConfigPanelOpen reports whether the inline Claude config panel is showing.
+func (m *MainMenuModel) ConfigPanelOpen() bool { return m.configPanelOpen }
+
 // SetClaudeConfigs stores the managed config list (excluding the implicit Standard).
 func (m *MainMenuModel) SetClaudeConfigs(configs []ClaudeConfig) { m.claudeConfigs = configs }
 
@@ -827,37 +847,23 @@ func (m *MainMenuModel) settingsItemCount() int {
 }
 
 // LoadClaudeConfigsList parses a name:file list file into ClaudeConfig entries.
+// It delegates to internal/claudeconfig (the single source of truth) and maps
+// to the local ClaudeConfig type.
 func LoadClaudeConfigsList(path string) []ClaudeConfig {
-	data, err := os.ReadFile(path)
-	if err != nil {
+	loaded := claudeconfig.Load(path)
+	if loaded == nil {
 		return nil
 	}
-	var out []ClaudeConfig
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		i := strings.Index(line, ":")
-		if i < 0 {
-			continue
-		}
-		out = append(out, ClaudeConfig{Name: line[:i], File: line[i+1:]})
+	out := make([]ClaudeConfig, len(loaded))
+	for i, c := range loaded {
+		out[i] = ClaudeConfig{Name: c.Name, File: c.File}
 	}
 	return out
 }
 
 // ReadActiveClaudeConfig returns the active filename from the pointer file ("" if none/standard).
 func ReadActiveClaudeConfig(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	v := strings.TrimSpace(string(data))
-	if v == "standard" {
-		return ""
-	}
-	return v
+	return claudeconfig.GetActive(path)
 }
 
 // CycleGhostDisplay cycles through ghost display modes: animated -> static -> none -> animated.
@@ -1557,6 +1563,9 @@ func (m *MainMenuModel) handleRune(r rune) (tea.Model, tea.Cmd) {
 
 // updateSettings handles key events while in settings mode.
 func (m *MainMenuModel) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.configPanelOpen {
+		return m.updateConfigPanel(msg)
+	}
 	if m.settingsInputMode {
 		return m.updateSettingsInput(msg)
 	}
@@ -1589,7 +1598,7 @@ func (m *MainMenuModel) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.settingsInputErr = nil
 			return m, textinput.Blink
 		case 4:
-			m.CycleClaudeConfig("next")
+			m.openConfigPanel()
 		}
 		return m, nil
 	case tea.KeyUp:
@@ -2407,9 +2416,12 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	// Help row — show ⏎ edit hint for item 3 (projects dir), ← → cycle for others
 	sep := dimStyle.Render(" · ")
 	var cycleOrEdit string
-	if m.settingsSelected == 3 {
+	switch m.settingsSelected {
+	case 3:
 		cycleOrEdit = helpStyle.Render("\u23ce edit")
-	} else {
+	case 4:
+		cycleOrEdit = helpStyle.Render("\u2190\u2192 cycle") + sep + helpStyle.Render("\u23ce manage")
+	default:
 		cycleOrEdit = helpStyle.Render("\u2190\u2192 cycle")
 	}
 	helpContent := helpStyle.Render("\u2191\u2193 navigate") + sep + cycleOrEdit + sep + helpStyle.Render("Esc close")
@@ -3161,7 +3173,11 @@ func (m *MainMenuModel) View() string {
 
 	var menuBox string
 	if m.settingsMode {
-		menuBox = m.renderSettingsBox()
+		if m.configPanelOpen {
+			menuBox = m.renderConfigPanel()
+		} else {
+			menuBox = m.renderSettingsBox()
+		}
 	} else if m.inputMode != "" {
 		menuBox = m.renderInputBox()
 	} else {
