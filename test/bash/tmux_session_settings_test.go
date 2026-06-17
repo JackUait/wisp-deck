@@ -1,7 +1,6 @@
 package bash_test
 
 import (
-	"path/filepath"
 	"testing"
 )
 
@@ -34,5 +33,4 @@ func TestBuildAILaunchCmd_settings_ignored_for_codex(t *testing.T) {
 		[]string{"codex", "claude", "codex", "copilot", "opencode", "/proj"}, env)
 	assertExitCode(t, code, 0)
 	assertNotContains(t, out, "--settings")
-	_ = filepath.Separator
 }

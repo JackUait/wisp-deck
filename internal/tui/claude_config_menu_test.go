@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 func testConfigs() []ClaudeConfig {
@@ -242,5 +245,38 @@ func TestClaudeConfigMenu_EmptyConfigs_AddRowIsIndex0(t *testing.T) {
 	m := NewClaudeConfigMenu([]ClaudeConfig{})
 	if m.addRowIndex() != 0 {
 		t.Errorf("add row index with empty configs should be 0, got %d", m.addRowIndex())
+	}
+}
+
+// TestClaudeConfigMenu_BoxTopBorderWidth asserts the first line of the rendered
+// view has the correct visible width (boxWidth) even when the title contains
+// ANSI escape sequences (styled foreground + bold).
+// Forces TrueColor so lipgloss emits ANSI sequences — reproduces the bug where
+// len(titleRunes) over-skips border runes and corrupts the top border width.
+func TestClaudeConfigMenu_BoxTopBorderWidth(t *testing.T) {
+	// Force TrueColor profile so titleRendered contains ANSI escapes.
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+
+	m := NewClaudeConfigMenu(testConfigs())
+	// Force a window size so boxWidth stays at 56 (default).
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(ClaudeConfigMenuModel)
+
+	view := m.View()
+	if view == "" {
+		t.Fatal("View() returned empty string")
+	}
+
+	lines := strings.Split(view, "\n")
+	topLine := lines[0]
+	got := lipgloss.Width(topLine)
+
+	// boxWidth is 56; lipgloss border adds 2 cols (left + right), so the
+	// rendered outer width is boxWidth + 2 = 58.
+	const wantWidth = 58
+	if got != wantWidth {
+		t.Errorf("top border visible width = %d, want %d (ANSI escape leak in renderBox?)", got, wantWidth)
 	}
 }

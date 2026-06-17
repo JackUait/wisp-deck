@@ -247,15 +247,54 @@ func renderBox(inner string, boxWidth int, borderColor lipgloss.TerminalColor, t
 
 	lines := strings.Split(box, "\n")
 	if len(lines) > 0 {
-		topRunes := []rune(lines[0])
-		titleRunes := []rune(titleRendered)
+		// The top border line may carry ANSI colour sequences from the border
+		// style, so we cannot slice by raw rune index.  Instead, walk the
+		// string tracking *visible* column position and split at the two points
+		// we need: after column insertPos, and after column insertPos+titleVis.
+		titleVis := lipgloss.Width(titleRendered)
 		insertPos := 2
-		if len(topRunes) > insertPos+len(titleRunes) {
-			result := make([]rune, 0, len(topRunes))
-			result = append(result, topRunes[:insertPos]...)
-			result = append(result, titleRunes...)
-			result = append(result, topRunes[insertPos+len(titleRunes):]...)
-			lines[0] = string(result)
+		top := lines[0]
+
+		// Collect the string up to visible column insertPos, then skip
+		// titleVis visible columns, then take the rest.
+		var before, after strings.Builder
+		col := 0
+		i := 0
+		runes := []rune(top)
+		n := len(runes)
+
+		for i < n {
+			r := runes[i]
+			if r == '\x1b' {
+				// Consume entire escape sequence (skip non-printable bytes).
+				seq := []rune{r}
+				i++
+				for i < n && runes[i] != 'm' {
+					seq = append(seq, runes[i])
+					i++
+				}
+				if i < n {
+					seq = append(seq, runes[i]) // 'm'
+					i++
+				}
+				if col <= insertPos {
+					before.WriteString(string(seq))
+				} else {
+					after.WriteString(string(seq))
+				}
+				continue
+			}
+			if col < insertPos {
+				before.WriteRune(r)
+			} else if col >= insertPos+titleVis {
+				after.WriteRune(r)
+			}
+			col++
+			i++
+		}
+
+		if col > insertPos+titleVis {
+			lines[0] = before.String() + titleRendered + after.String()
 		}
 		box = strings.Join(lines, "\n")
 	}
