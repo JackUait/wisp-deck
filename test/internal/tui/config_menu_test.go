@@ -10,14 +10,17 @@ import (
 
 func TestConfigMenuItems(t *testing.T) {
 	items := tui.GetConfigMenuItems()
-	if len(items) != 2 {
-		t.Errorf("Expected 2 menu items, got %d", len(items))
+	if len(items) != 3 {
+		t.Errorf("Expected 3 menu items, got %d", len(items))
 	}
 	if items[0].Action != "manage-terminals" {
 		t.Errorf("Expected first action 'manage-terminals', got %q", items[0].Action)
 	}
-	if items[1].Action != "reinstall" {
-		t.Errorf("Expected second action 'reinstall', got %q", items[1].Action)
+	if items[1].Action != "manage-claude-configs" {
+		t.Errorf("Expected second action 'manage-claude-configs', got %q", items[1].Action)
+	}
+	if items[2].Action != "reinstall" {
+		t.Errorf("Expected third action 'reinstall', got %q", items[2].Action)
 	}
 }
 
@@ -71,14 +74,15 @@ func TestConfigMenu_DownThenEnterSelectsSecondItem(t *testing.T) {
 	if result.Selected() == nil {
 		t.Fatal("Enter should select current item")
 	}
-	if result.Selected().Action != "reinstall" {
-		t.Errorf("Expected 'reinstall', got %q", result.Selected().Action)
+	if result.Selected().Action != "manage-claude-configs" {
+		t.Errorf("Expected 'manage-claude-configs', got %q", result.Selected().Action)
 	}
 }
 
 func TestConfigMenu_CursorWrapsDown(t *testing.T) {
 	m := tui.NewConfigMenu(tui.ConfigMenuOptions{})
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = updated.(tui.ConfigMenuModel).Update(tea.KeyMsg{Type: tea.KeyDown})
 	updated, _ = updated.(tui.ConfigMenuModel).Update(tea.KeyMsg{Type: tea.KeyDown})
 	updated, _ = updated.(tui.ConfigMenuModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
 	result := updated.(tui.ConfigMenuModel)
@@ -102,7 +106,7 @@ func TestConfigMenu_JKNavigation(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	updated, _ = updated.(tui.ConfigMenuModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
 	result := updated.(tui.ConfigMenuModel)
-	if result.Selected().Action != "reinstall" {
+	if result.Selected().Action != "manage-claude-configs" {
 		t.Errorf("Expected 'j' to move down, got %q", result.Selected().Action)
 	}
 }

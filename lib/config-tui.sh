@@ -10,6 +10,48 @@ _config_tui_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ "$(type -t select_terminal_interactive 2>/dev/null)" = "function" ] || source "$_config_tui_dir/terminal-select-tui.sh"
 # shellcheck source=lib/terminals/registry.sh
 [ "$(type -t get_terminal_display_name 2>/dev/null)" = "function" ] || source "$_config_tui_dir/terminals/registry.sh"
+# shellcheck source=lib/claude-configs.sh
+[ "$(type -t load_claude_configs 2>/dev/null)" = "function" ] || source "$_config_tui_dir/claude-configs.sh"
+
+# Interactive Claude config management loop.
+manage_claude_configs_interactive() {
+  if ! command -v ghost-tab-tui &>/dev/null; then
+    error "ghost-tab-tui binary not found. Please reinstall."
+    return 1
+  fi
+  local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab"
+  local list_file="$config_dir/claude-configs.list"
+  local configs_dir="$config_dir/claude-configs"
+  local pointer_file="$config_dir/claude-config"
+
+  while true; do
+    local result action file name
+    result="$(ghost-tab-tui claude-config-menu --configs-list "$list_file" 2>/dev/null)" || return 1
+    action="$(echo "$result" | jq -r '.action' 2>/dev/null)"
+    case "$action" in
+      add)
+        name="$(echo "$result" | jq -r '.name' 2>/dev/null)"
+        [ -n "$name" ] && [ "$name" != "null" ] && add_claude_config "$list_file" "$configs_dir" "$name" >/dev/null
+        ;;
+      rename)
+        file="$(echo "$result" | jq -r '.file' 2>/dev/null)"
+        name="$(echo "$result" | jq -r '.name' 2>/dev/null)"
+        rename_claude_config "$list_file" "$file" "$name"
+        ;;
+      delete)
+        file="$(echo "$result" | jq -r '.file' 2>/dev/null)"
+        delete_claude_config "$list_file" "$configs_dir" "$pointer_file" "$file"
+        ;;
+      quit|""|null)
+        return 0
+        ;;
+      *)
+        error "Unknown action: $action"
+        return 1
+        ;;
+    esac
+  done
+}
 
 # Interactive config menu loop.
 # Calls ghost-tab-tui config-menu, dispatches on action, loops until quit.
@@ -68,6 +110,9 @@ config_menu_interactive() {
           echo ""
           read -rsn1 -p "Press any key to continue..." </dev/tty
         fi
+        ;;
+      manage-claude-configs)
+        manage_claude_configs_interactive
         ;;
       quit|"")
         return 0

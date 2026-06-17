@@ -44,6 +44,7 @@ type ConfigMenuModel struct {
 func GetConfigMenuItems() []ConfigMenuItem {
 	return []ConfigMenuItem{
 		{ItemTitle: "Terminals", ItemDesc: "Add, remove, or switch terminal emulator", Action: "manage-terminals"},
+		{ItemTitle: "Manage Claude configs", ItemDesc: "Add, rename, or delete Claude settings profiles", Action: "manage-claude-configs"},
 		{ItemTitle: "Reinstall / Update", ItemDesc: "Re-run the installer", Action: "reinstall"},
 	}
 }
@@ -61,7 +62,7 @@ func NewConfigMenu(opts ConfigMenuOptions) ConfigMenuModel {
 
 	// Set status for Reinstall / Update item
 	if opts.Version != "" {
-		items[1].Status = "v" + opts.Version
+		items[2].Status = "v" + opts.Version
 	}
 
 	return ConfigMenuModel{
