@@ -71,9 +71,9 @@ func TestDetectAITools_AllToolsDetected(t *testing.T) {
 	binDir := filepath.Join(tmpDir, "bin")
 	os.Mkdir(binDir, 0755)
 
-	// Create all 4 mock executables (note: "gh copilot" uses "gh" as the binary)
-	// OpenCode is detected via "npx" availability (launched as npx opencode-ai@latest)
-	for _, cmd := range []string{"claude", "codex", "gh", "npx"} {
+	// Create mock executables. OpenCode is detected via "npx" availability
+	// (launched as npx opencode-ai@latest).
+	for _, cmd := range []string{"claude", "codex", "npx"} {
 		os.WriteFile(filepath.Join(binDir, cmd), []byte("#!/bin/bash\necho test"), 0755)
 	}
 
@@ -83,16 +83,14 @@ func TestDetectAITools_AllToolsDetected(t *testing.T) {
 
 	tools := models.DetectAITools()
 
-	if len(tools) != 4 {
-		t.Fatalf("Expected 4 tools, got %d", len(tools))
+	if len(tools) != 3 {
+		t.Fatalf("Expected 3 tools, got %d", len(tools))
 	}
 
 	// claude, codex, opencode should be installed (their commands are single binaries)
-	// copilot uses "gh copilot" — exec.LookPath only checks first word, so "gh" must exist
 	expected := map[string]bool{
 		"claude":   true,
 		"codex":    true,
-		"copilot":  false, // "gh copilot" won't pass LookPath (it looks for literal "gh copilot")
 		"opencode": true,
 	}
 
@@ -130,7 +128,6 @@ func TestDisplayName(t *testing.T) {
 	}{
 		{"claude", "Claude Code"},
 		{"codex", "Codex CLI"},
-		{"copilot", "Copilot CLI"},
 		{"opencode", "OpenCode"},
 		{"vim", "vim"},
 		{"unknown-tool", "unknown-tool"},
@@ -250,8 +247,6 @@ func TestAIToolString_AllTools(t *testing.T) {
 		{"claude", false, "Claude Code (not installed)"},
 		{"codex", true, "Codex CLI ✓"},
 		{"codex", false, "Codex CLI (not installed)"},
-		{"copilot", true, "Copilot CLI ✓"},
-		{"copilot", false, "Copilot CLI (not installed)"},
 		{"opencode", true, "OpenCode ✓"},
 		{"opencode", false, "OpenCode (not installed)"},
 	}

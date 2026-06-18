@@ -124,7 +124,6 @@ var actionLabels = []struct {
 var aiToolDisplayNames = map[string]string{
 	"claude":   "Claude Code",
 	"codex":    "Codex CLI",
-	"copilot":  "Copilot CLI",
 	"opencode": "OpenCode",
 }
 
@@ -240,6 +239,15 @@ type MainMenuModel struct {
 	configPanelMode   string              // "" list, "add", "rename", "delete"
 	configPanelInput  textinput.Model     // name entry for add/rename
 	configPanelErr    error               // last mutation error, shown in the panel
+
+	// Model mapping panel for non-Standard configs
+	modelMapOpen    bool
+	modelMapCursor  int          // 0-3: which Anthropic slot (opus, sonnet, haiku, fable)
+	modelMap        [4]int       // index into modelMapModels for each slot
+	modelMapModels  []string     // provider-specific model list
+	modelMapErr     error
+	modelMapKeyMode bool         // true when entering API key
+	modelMapKeyInput textinput.Model
 
 	// Worktree expand/collapse state (project index -> expanded)
 	expandedWorktrees map[int]bool
@@ -751,6 +759,9 @@ func (m *MainMenuModel) SetClaudeConfigPaths(listFile, dir string) {
 
 // ConfigPanelOpen reports whether the inline Claude config panel is showing.
 func (m *MainMenuModel) ConfigPanelOpen() bool { return m.configPanelOpen }
+
+// APIKeyInputOpen reports whether the API key input is showing.
+func (m *MainMenuModel) APIKeyInputOpen() bool { return m.modelMapOpen }
 
 // SetClaudeConfigs stores the managed config list (excluding the implicit Standard).
 func (m *MainMenuModel) SetClaudeConfigs(configs []ClaudeConfig) { m.claudeConfigs = configs }
@@ -1566,6 +1577,9 @@ func (m *MainMenuModel) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.configPanelOpen {
 		return m.updateConfigPanel(msg)
 	}
+	if m.modelMapOpen {
+		return m.updateModelMap(msg)
+	}
 	if m.settingsInputMode {
 		return m.updateSettingsInput(msg)
 	}
@@ -1598,6 +1612,10 @@ func (m *MainMenuModel) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.settingsInputErr = nil
 			return m, textinput.Blink
 		case 4:
+			if m.selectedConfig > 0 {
+				m.openModelMap()
+				return m, nil
+			}
 			m.openConfigPanel()
 		}
 		return m, nil
@@ -2404,7 +2422,14 @@ func (m *MainMenuModel) renderSettingsBox() string {
 			cfgColor = lipgloss.Color("241") // gray for Standard
 		}
 		cfgStyle := lipgloss.NewStyle().Foreground(cfgColor)
-		lines = append(lines, m.renderSettingsItem(4, "Claude Config", "["+cfgName+"]", cfgStyle, primaryBoldStyle, leftBorder, rightBorder))
+		cfgFile := m.CurrentClaudeConfigFile()
+		state := "[" + cfgName + "]"
+		if cfgFile != "" {
+			indicator := configAPIKeyIndicator(m.claudeConfigsDir, cfgFile)
+			dimIndicator := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(" " + indicator)
+			state = state + dimIndicator
+		}
+		lines = append(lines, m.renderSettingsItem(4, "Claude Config", state, cfgStyle, primaryBoldStyle, leftBorder, rightBorder))
 	}
 
 	// Empty row
@@ -2420,7 +2445,11 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	case 3:
 		cycleOrEdit = helpStyle.Render("\u23ce edit")
 	case 4:
-		cycleOrEdit = helpStyle.Render("\u2190\u2192 cycle") + sep + helpStyle.Render("\u23ce manage")
+		if m.selectedConfig > 0 {
+			cycleOrEdit = helpStyle.Render("\u2190\u2192 cycle") + sep + helpStyle.Render("\u23ce map models")
+		} else {
+			cycleOrEdit = helpStyle.Render("\u2190\u2192 cycle") + sep + helpStyle.Render("\u23ce manage")
+		}
 	default:
 		cycleOrEdit = helpStyle.Render("\u2190\u2192 cycle")
 	}
@@ -3175,6 +3204,8 @@ func (m *MainMenuModel) View() string {
 	if m.settingsMode {
 		if m.configPanelOpen {
 			menuBox = m.renderConfigPanel()
+		} else if m.modelMapOpen {
+			menuBox = m.renderSettingsBox() + "\n" + m.renderModelMapPanel()
 		} else {
 			menuBox = m.renderSettingsBox()
 		}

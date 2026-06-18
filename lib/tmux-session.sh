@@ -3,10 +3,10 @@
 # Depends on: process.sh (kill_tree)
 
 # Build the AI tool launch command string.
-# Usage: build_ai_launch_cmd <tool> <claude_cmd> <codex_cmd> <copilot_cmd> <opencode_cmd> [extra_args_or_project_dir]
+# Usage: build_ai_launch_cmd <tool> <claude_cmd> <codex_cmd> <opencode_cmd> [extra_args_or_project_dir]
 build_ai_launch_cmd() {
-  local tool="$1" claude_cmd="$2" codex_cmd="$3" copilot_cmd="$4" opencode_cmd="$5"
-  shift 5
+  local tool="$1" claude_cmd="$2" codex_cmd="$3" opencode_cmd="$4"
+  shift 4
   local extra="$*"
 
   # Claude-only: append --settings when a config is active.
@@ -19,7 +19,6 @@ build_ai_launch_cmd() {
   if [ "${GHOST_TAB_RESUME:-0}" = "1" ]; then
     case "$tool" in
       codex)    echo "$codex_cmd resume --last" ;;
-      copilot)  echo "$copilot_cmd --continue" ;;
       opencode) echo "$opencode_cmd --continue" ;;
       *)        echo "$claude_cmd -c${claude_settings}" ;;
     esac
@@ -29,9 +28,6 @@ build_ai_launch_cmd() {
   case "$tool" in
     codex)
       echo "$codex_cmd --cd \"$extra\""
-      ;;
-    copilot)
-      echo "$copilot_cmd"
       ;;
     opencode)
       echo "$opencode_cmd \"$extra\""

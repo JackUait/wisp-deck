@@ -10,7 +10,7 @@ import (
 
 func TestFilterProjects_AfterThemeApply(t *testing.T) {
 	// Apply a non-default theme, then verify FilterProjects still works correctly
-	tui.ApplyTheme(tui.ThemeForTool("copilot"))
+	tui.ApplyTheme(tui.ThemeForTool("opencode"))
 
 	projects := []models.Project{
 		{Name: "web-app", Path: "/home/user/web-app"},

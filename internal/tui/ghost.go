@@ -119,63 +119,6 @@ func ghostCodexSleeping(theme AIToolTheme) []string {
 	}
 }
 
-// ghostCopilot returns the awake Copilot ghost ASCII art.
-func ghostCopilot(theme AIToolTheme) []string {
-	P := AnsiFromThemeColor(theme.Primary)   // purple
-	LP := AnsiFromThemeColor(theme.Bright)   // light purple
-	DP := AnsiFromThemeColor(theme.DarkFeet) // dark purple
-	LV := AnsiFromThemeColor(theme.Cap)      // lavender
-	W := AnsiFromThemeColor(theme.EyeWhite)  // white
-	K := AnsiFromThemeColor(theme.EyePupil)  // black
-	M := AnsiFromThemeColor(theme.Accent)    // magenta
-
-	return []string{
-		r + "       " + LV + "\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584" + r + "       ",
-		r + "     " + LV + "\u2584" + P + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + LV + "\u2584" + r + "     ",
-		r + "    " + LV + "\u2584" + P + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + LV + "\u2584" + r + "    ",
-		r + "   " + P + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "   ",
-		r + "  " + P + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + P + "\u2588\u2588" + M + "\u2584\u2584\u2584\u2584\u2584\u2584" + P + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + M + "\u2584\u2584\u2584\u2584\u2584\u2584" + P + "\u2588\u2588" + r + "  ",
-		r + "  " + P + "\u2588\u2588" + M + "\u258c" + W + "\u2588\u2588" + K + "\u2588" + W + "\u2588\u2588" + M + "\u2590" + P + "\u2588\u2588\u2588\u2588\u2588\u2588" + M + "\u258c" + W + "\u2588\u2588" + K + "\u2588" + W + "\u2588\u2588" + M + "\u2590" + P + "\u2588\u2588" + r + "  ",
-		r + "  " + P + "\u2588\u2588" + M + "\u2580\u2580\u2580\u2580\u2580\u2580" + P + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + M + "\u2580\u2580\u2580\u2580\u2580\u2580" + P + "\u2588\u2588" + r + "  ",
-		r + "  " + LP + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + LP + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + LP + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + LP + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + DP + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + DP + "\u2588\u2588 \u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588 \u2588\u2588" + r + "  ",
-		r + "  " + DP + "\u2588" + r + "  " + DP + "\u2580\u2588\u2588\u2588\u2588\u2580" + r + " " + DP + "\u2588\u2588\u2588\u2588" + r + " " + DP + "\u2580\u2588\u2588\u2588\u2588\u2580" + r + "  " + DP + "\u2588" + r + "  ",
-	}
-}
-
-// ghostCopilotSleeping returns the sleeping Copilot ghost (dimmed, closed eyes).
-func ghostCopilotSleeping(theme AIToolTheme) []string {
-	P := AnsiFromThemeColor(theme.SleepPrimary)  // dimmed purple
-	LP := AnsiFromThemeColor(theme.SleepDim)     // dimmed light purple
-	DP := AnsiFromThemeColor(theme.SleepDarkFeet) // dimmed dark purple
-	LV := AnsiFromThemeColor(theme.SleepCap)     // dimmed lavender
-	K := AnsiFromThemeColor(theme.EyePupil)      // black
-	M := AnsiFromThemeColor(theme.SleepAccent)   // dimmed magenta
-
-	return []string{
-		r + "       " + LV + "\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584" + r + "       ",
-		r + "     " + LV + "\u2584" + P + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + LV + "\u2584" + r + "     ",
-		r + "    " + LV + "\u2584" + P + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + LV + "\u2584" + r + "    ",
-		r + "   " + P + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "   ",
-		r + "  " + P + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + P + "\u2588\u2588" + M + "\u2584\u2584\u2584\u2584\u2584\u2584" + P + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + M + "\u2584\u2584\u2584\u2584\u2584\u2584" + P + "\u2588\u2588" + r + "  ",
-		r + "  " + P + "\u2588\u2588" + M + "\u258c" + K + "\u25ac\u25ac\u25ac\u25ac\u25ac" + M + "\u2590" + P + "\u2588\u2588\u2588\u2588\u2588\u2588" + M + "\u258c" + K + "\u25ac\u25ac\u25ac\u25ac\u25ac" + M + "\u2590" + P + "\u2588\u2588" + r + "  ",
-		r + "  " + P + "\u2588\u2588" + M + "\u2580\u2580\u2580\u2580\u2580\u2580" + P + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + M + "\u2580\u2580\u2580\u2580\u2580\u2580" + P + "\u2588\u2588" + r + "  ",
-		r + "  " + LP + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + LP + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + LP + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + LP + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + DP + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + DP + "\u2588\u2588 \u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588 \u2588\u2588" + r + "  ",
-		r + "  " + DP + "\u2588" + r + "  " + DP + "\u2580\u2588\u2588\u2588\u2588\u2580" + r + " " + DP + "\u2588\u2588\u2588\u2588" + r + " " + DP + "\u2580\u2588\u2588\u2588\u2588\u2580" + r + "  " + DP + "\u2588" + r + "  ",
-	}
-}
-
 // ghostOpencode returns the awake OpenCode ghost ASCII art.
 func ghostOpencode(theme AIToolTheme) []string {
 	W := AnsiFromThemeColor(theme.Bright)    // white (upper body)
@@ -245,11 +188,6 @@ func GhostForTool(tool string, sleeping bool) []string {
 			return ghostCodexSleeping(theme)
 		}
 		return ghostCodex(theme)
-	case "copilot":
-		if sleeping {
-			return ghostCopilotSleeping(theme)
-		}
-		return ghostCopilot(theme)
 	case "opencode":
 		if sleeping {
 			return ghostOpencodeSleeping(theme)

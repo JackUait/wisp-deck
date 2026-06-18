@@ -691,7 +691,7 @@ func TestMenu_ai_tool_persists_between_sessions(t *testing.T) {
 source %q 2>/dev/null || true
 source %q
 error() { echo "ERROR: $*" >&2; }
-AI_TOOLS_AVAILABLE=("claude" "codex" "copilot" "opencode")
+AI_TOOLS_AVAILABLE=("claude" "codex" "opencode")
 SELECTED_AI_TOOL="claude"
 _update_version=""
 select_project_interactive %q
@@ -745,7 +745,7 @@ source %q 2>/dev/null || true
 source %q
 source %q
 error() { echo "ERROR: $*" >&2; }
-AI_TOOLS_AVAILABLE=("claude" "codex" "copilot" "opencode")
+AI_TOOLS_AVAILABLE=("claude" "codex" "opencode")
 # Read the saved preference like the wrapper does
 AI_TOOL_PREF_FILE="%s"
 SELECTED_AI_TOOL=""
@@ -987,7 +987,7 @@ func TestAITools_validate_persists_fallback_to_file(t *testing.T) {
 
 	script := fmt.Sprintf(`
 source %q
-AI_TOOLS_AVAILABLE=("claude" "copilot")
+AI_TOOLS_AVAILABLE=("claude" "opencode")
 SELECTED_AI_TOOL="codex"
 validate_ai_tool %q
 echo "tool=$SELECTED_AI_TOOL"

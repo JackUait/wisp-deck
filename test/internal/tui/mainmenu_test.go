@@ -24,7 +24,7 @@ func testProjects() []models.Project {
 }
 
 func testAITools() []string {
-	return []string{"claude", "codex", "copilot", "opencode"}
+	return []string{"claude", "codex", "opencode"}
 }
 
 func TestMainMenu_Navigation(t *testing.T) {
@@ -110,13 +110,7 @@ func TestMainMenu_AIToolCycling(t *testing.T) {
 		t.Errorf("After next: expected 'codex', got %q", m.CurrentAITool())
 	}
 
-	// Cycle next: codex -> copilot
-	m.CycleAITool("next")
-	if m.CurrentAITool() != "copilot" {
-		t.Errorf("After next: expected 'copilot', got %q", m.CurrentAITool())
-	}
-
-	// Cycle next: copilot -> opencode
+	// Cycle next: codex -> opencode
 	m.CycleAITool("next")
 	if m.CurrentAITool() != "opencode" {
 		t.Errorf("After next: expected 'opencode', got %q", m.CurrentAITool())
@@ -134,10 +128,10 @@ func TestMainMenu_AIToolCycling(t *testing.T) {
 		t.Errorf("After prev wrap: expected 'opencode', got %q", m.CurrentAITool())
 	}
 
-	// Cycle prev: opencode -> copilot
+	// Cycle prev: opencode -> codex
 	m.CycleAITool("prev")
-	if m.CurrentAITool() != "copilot" {
-		t.Errorf("After prev: expected 'copilot', got %q", m.CurrentAITool())
+	if m.CurrentAITool() != "codex" {
+		t.Errorf("After prev: expected 'codex', got %q", m.CurrentAITool())
 	}
 }
 
@@ -160,11 +154,11 @@ func TestMainMenu_CycleAITool_PersistsToFile(t *testing.T) {
 		t.Errorf("ai-tool file should be 'codex', got %q", strings.TrimSpace(string(data)))
 	}
 
-	// Cycle again to copilot
+	// Cycle again to opencode
 	m.CycleAITool("next")
 	data, _ = os.ReadFile(aiToolFile)
-	if strings.TrimSpace(string(data)) != "copilot" {
-		t.Errorf("ai-tool file should be 'copilot' after second cycle, got %q", strings.TrimSpace(string(data)))
+	if strings.TrimSpace(string(data)) != "opencode" {
+		t.Errorf("ai-tool file should be 'opencode' after second cycle, got %q", strings.TrimSpace(string(data)))
 	}
 }
 
@@ -199,15 +193,15 @@ func TestMainMenu_AIToolCycling_SingleTool(t *testing.T) {
 }
 
 func TestMainMenu_AIToolCycling_StartNonFirst(t *testing.T) {
-	m := tui.NewMainMenu(testProjects(), testAITools(), "copilot", "animated")
+	m := tui.NewMainMenu(testProjects(), testAITools(), "codex", "animated")
 
-	if m.CurrentAITool() != "copilot" {
-		t.Errorf("Initial: expected 'copilot', got %q", m.CurrentAITool())
+	if m.CurrentAITool() != "codex" {
+		t.Errorf("Initial: expected 'codex', got %q", m.CurrentAITool())
 	}
 
 	m.CycleAITool("next")
 	if m.CurrentAITool() != "opencode" {
-		t.Errorf("After next from copilot: expected 'opencode', got %q", m.CurrentAITool())
+		t.Errorf("After next from codex: expected 'opencode', got %q", m.CurrentAITool())
 	}
 }
 
@@ -848,7 +842,6 @@ func TestMainMenu_AIToolDisplayName(t *testing.T) {
 	}{
 		{"claude", "Claude Code"},
 		{"codex", "Codex CLI"},
-		{"copilot", "Copilot CLI"},
 		{"opencode", "OpenCode"},
 		{"unknown", "unknown"},
 	}

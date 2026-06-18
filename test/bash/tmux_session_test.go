@@ -16,7 +16,7 @@ func aiCmd(t *testing.T, tool string, resume bool) string {
 		env = buildEnv(t, nil, "GHOST_TAB_RESUME=0")
 	}
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{tool, "claude", "codex", "copilot", "npx opencode-ai@latest", "/p/app"}, env)
+		[]string{tool, "claude", "codex", "npx opencode-ai@latest", "/p/app"}, env)
 	assertExitCode(t, code, 0)
 	return strings.TrimSpace(out)
 }
@@ -28,7 +28,6 @@ func TestBuildAiLaunchCmd_resume_flags(t *testing.T) {
 	}{
 		{"claude", "claude -c"},
 		{"codex", "codex resume --last"},
-		{"copilot", "copilot --continue"},
 		{"opencode", "npx opencode-ai@latest --continue"},
 	}
 	for _, c := range cases {

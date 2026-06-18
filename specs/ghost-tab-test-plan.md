@@ -100,12 +100,12 @@ Ghost Tab is a terminal and tmux wrapper application with no web-facing UI. It c
 **File:** `tests/main-menu/cycle-ai-tool.spec.ts`
 
 **Steps:**
-  1. Launch the main menu with ai-tools set to 'claude,codex,copilot' and current tool 'claude', then press Tab
+  1. Launch the main menu with ai-tools set to 'claude,codex,opencode' and current tool 'claude', then press Tab
     - expect: The ghost changes color from orange (Claude) to green (Codex)
     - expect: The displayed tool indicator updates to Codex
   2. Press Tab again
-    - expect: The ghost changes to purple (Copilot)
-    - expect: The displayed tool indicator updates to Copilot
+    - expect: The ghost changes to gray/silver (OpenCode)
+    - expect: The displayed tool indicator updates to OpenCode
   3. Press Tab a third time
     - expect: The ghost wraps back to orange (Claude)
     - expect: The tool indicator updates to Claude

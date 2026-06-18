@@ -149,7 +149,7 @@ func TestTabTitleWatcher_check_ai_tool_state_detects_dollar_prompt(t *testing.T)
 	tmpDir := t.TempDir()
 	binDir := mockCommand(t, tmpDir, "tmux", `
 if [ "$1" = "capture-pane" ]; then
-  printf 'Welcome to copilot\n$ \n'
+  printf 'Welcome to opencode\n$ \n'
   exit 0
 fi
 exit 0
@@ -158,7 +158,7 @@ exit 0
 	tmuxPath := filepath.Join(binDir, "tmux")
 
 	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`check_ai_tool_state "copilot" "dev-test-123" %q ""`, tmuxPath))
+		fmt.Sprintf(`check_ai_tool_state "opencode" "dev-test-123" %q ""`, tmuxPath))
 
 	out, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)

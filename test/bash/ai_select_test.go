@@ -100,7 +100,7 @@ func TestAiSelect_SetsSelectedAiTools(t *testing.T) {
 
 	ghostTabTuiBody := `
 if [ "$1" = "multi-select-ai-tool" ]; then
-    echo '{"tools":["codex","copilot"],"confirmed":true}'
+    echo '{"tools":["codex","opencode"],"confirmed":true}'
     exit 0
 fi
 exit 1
@@ -114,7 +114,7 @@ echo "$count" > "$counter_file"
 if [ "$2" = ".confirmed" ]; then
     echo "true"
 elif [ "$2" = ".tools[]" ]; then
-    printf "codex\ncopilot\n"
+    printf "codex\nopencode\n"
 fi
 exit 0
 `, tmpDir)
@@ -142,7 +142,7 @@ exit $result
 	out, code := runBashSnippet(t, script, nil)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "codex")
-	assertContains(t, out, "copilot")
+	assertContains(t, out, "opencode")
 }
 
 func TestAiSelect_PicksClaudeByPriority(t *testing.T) {
@@ -150,7 +150,7 @@ func TestAiSelect_PicksClaudeByPriority(t *testing.T) {
 
 	ghostTabTuiBody := `
 if [ "$1" = "multi-select-ai-tool" ]; then
-    echo '{"tools":["copilot","claude"],"confirmed":true}'
+    echo '{"tools":["opencode","claude"],"confirmed":true}'
     exit 0
 fi
 exit 1
@@ -164,7 +164,7 @@ echo "$count" > "$counter_file"
 if [ "$2" = ".confirmed" ]; then
     echo "true"
 elif [ "$2" = ".tools[]" ]; then
-    printf "copilot\nclaude\n"
+    printf "opencode\nclaude\n"
 fi
 exit 0
 `, tmpDir)
@@ -190,7 +190,7 @@ exit $result
 
 	out, code := runBashSnippet(t, script, nil)
 	assertExitCode(t, code, 0)
-	// Should pick claude despite copilot being first in list
+	// Should pick claude despite opencode being first in list
 	assertContains(t, out, "SELECTED_TOOL=claude")
 }
 
@@ -199,7 +199,7 @@ func TestAiSelect_PicksCodexWhenClaudeNotSelected(t *testing.T) {
 
 	ghostTabTuiBody := `
 if [ "$1" = "multi-select-ai-tool" ]; then
-    echo '{"tools":["copilot","codex"],"confirmed":true}'
+    echo '{"tools":["opencode","codex"],"confirmed":true}'
     exit 0
 fi
 exit 1
@@ -213,7 +213,7 @@ echo "$count" > "$counter_file"
 if [ "$2" = ".confirmed" ]; then
     echo "true"
 elif [ "$2" = ".tools[]" ]; then
-    printf "copilot\ncodex\n"
+    printf "opencode\ncodex\n"
 fi
 exit 0
 `, tmpDir)
