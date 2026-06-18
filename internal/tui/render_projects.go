@@ -1,0 +1,445 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
+
+// actionBarFor returns the contextual action label text for a selected row type.
+func actionBarFor(itemType string) string {
+	switch itemType {
+	case "project":
+		return "▸ Open    ⟕ Worktrees    ✕ Delete"
+	case "worktree":
+		return "▸ Open    ✕ Delete"
+	case "add-project":
+		return "+ Add project"
+	default:
+		return ""
+	}
+}
+
+// renderActionBar renders the contextual action line for the current selection.
+func (m *MainMenuModel) renderActionBar(leftBorder, rightBorder string) string {
+	style := lipgloss.NewStyle().Foreground(m.theme.Accent)
+	itemType, _, _ := m.ResolveItem(m.selectedItem)
+	text := actionBarFor(itemType)
+	rendered := style.Render(text)
+	gap := menuContentWidth - lipgloss.Width(rendered) - 2
+	if gap < 0 {
+		gap = 0
+	}
+	return leftBorder + "  " + rendered + strings.Repeat(" ", gap) + rightBorder
+}
+
+// renderTitleRow renders the "Ghost Tab" + right-aligned AI tool chooser row.
+func (m *MainMenuModel) renderTitleRow(leftBorder, rightBorder string) string {
+	dimStyle := lipgloss.NewStyle().Foreground(m.theme.Dim)
+	primaryStyle := lipgloss.NewStyle().Foreground(m.theme.Primary)
+	primaryBoldStyle := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
+
+	title := primaryBoldStyle.Render("Ghost Tab")
+	aiDisplay := AIToolDisplayName(m.CurrentAITool())
+	var aiPart string
+	if len(m.aiTools) > 1 {
+		aiPart = dimStyle.Render(" ◂ ") + primaryStyle.Render(aiDisplay) + dimStyle.Render(" ▸")
+	} else {
+		aiPart = " " + primaryStyle.Render(aiDisplay)
+	}
+	// Right-align AI tool chooser: "⬡ Ghost Tab" left, "◂ Claude Code ▸" right
+	aiPadding := menuContentWidth - lipgloss.Width(title) - lipgloss.Width(aiPart) - 1 // -1 for leading space
+	if aiPadding < 1 {
+		aiPadding = 1
+	}
+	return leftBorder + " " + title + strings.Repeat(" ", aiPadding) + aiPart + rightBorder
+}
+
+// renderUpdateRow renders the "Update available" notification row.
+func (m *MainMenuModel) renderUpdateRow(leftBorder, rightBorder string) string {
+	updateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+	updateMsg := fmt.Sprintf("Update available: %s (brew upgrade ghost-tab)", m.updateVersion)
+	updateContent := updateStyle.Render(updateMsg)
+	updatePadding := menuContentWidth - lipgloss.Width(updateContent) - 2 // leading 2 spaces
+	if updatePadding < 0 {
+		updatePadding = 0
+	}
+	return leftBorder + "  " + updateContent + strings.Repeat(" ", updatePadding) + rightBorder
+}
+
+// renderProjectRows renders the leading blank row, every project (2 rows each)
+// with their expanded worktree entries, and the trailing "+ Add project" row.
+func (m *MainMenuModel) renderProjectRows(leftBorder, rightBorder string) []string {
+	dimStyle := lipgloss.NewStyle().Foreground(m.theme.Dim)
+	primaryStyle := lipgloss.NewStyle().Foreground(m.theme.Primary)
+	primaryBoldStyle := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
+	neutralTextStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	neutralDimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	moveFlashStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+	deleteStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+	staleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+	deleteDimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+
+	var rows []string
+
+	// Empty line before items
+	emptyRow := leftBorder + strings.Repeat(" ", menuContentWidth) + rightBorder
+	rows = append(rows, emptyRow)
+
+	// Project items
+	for i, proj := range m.projects {
+		selected := func() bool {
+			if m.deleteMode {
+				return m.deleteSelected == m.projectToFlatIndex(i)
+			}
+			return m.selectedItem == m.projectToFlatIndex(i)
+		}()
+		flashing := !m.deleteMode && m.moveFlashIdx == i && m.moveFlashTimer > 0
+		num := fmt.Sprintf("%d", i+1)
+
+		var nameLine string
+		var pathLine string
+
+		shortPath := TruncateMiddle(shortenHomePath(proj.Path), menuContentWidth-7)
+
+		// Worktree count indicator
+		var wtIndicator string
+		if len(proj.Worktrees) > 0 {
+			wtCount := len(proj.Worktrees)
+			wtWord := "worktrees"
+			if wtCount == 1 {
+				wtWord = "worktree"
+			}
+			wtIndicator = fmt.Sprintf("%d %s", wtCount, wtWord)
+		}
+
+		if selected {
+			// Delete mode: red styles. Normal mode: primary or flash.
+			selNameStyle := primaryBoldStyle
+			selPathStyle := primaryStyle
+			if m.deleteMode {
+				selNameStyle = deleteStyle
+				selPathStyle = deleteDimStyle
+			} else if flashing {
+				selNameStyle = moveFlashStyle
+				selPathStyle = moveFlashStyle
+			}
+
+			marker := selNameStyle.Render("▎")
+			truncName := TruncateMiddle(proj.Name, menuContentWidth-7-len(num))
+			nameText := selNameStyle.Render(num + "  " + truncName)
+			// "  ▎ 1  name" -> 2 spaces + marker + space + num + 2 spaces + name
+			// For stale projects, replace the first 2 spaces with "⚠ " marker.
+			var namePrefix string
+			if proj.Stale && !m.deleteMode {
+				namePrefix = staleStyle.Render("⚠") + " "
+			} else {
+				namePrefix = "  "
+			}
+			nameContent := namePrefix + marker + " " + nameText
+
+			if wtIndicator != "" {
+				wtStyled := dimStyle.Render(wtIndicator)
+				gap := menuContentWidth - lipgloss.Width(nameContent) - lipgloss.Width(wtStyled)
+				if gap < 1 {
+					gap = 1
+				}
+				nameLine = leftBorder + nameContent + strings.Repeat(" ", gap) + wtStyled + rightBorder
+			} else {
+				namePadding := menuContentWidth - lipgloss.Width(nameContent)
+				if namePadding < 0 {
+					namePadding = 0
+				}
+				nameLine = leftBorder + nameContent + strings.Repeat(" ", namePadding) + rightBorder
+			}
+
+			pathContent := "       " + selPathStyle.Render(shortPath)
+			pathPadding := menuContentWidth - lipgloss.Width(pathContent)
+			if pathPadding < 0 {
+				pathPadding = 0
+			}
+			pathLine = leftBorder + pathContent + strings.Repeat(" ", pathPadding) + rightBorder
+		} else {
+			// Choose style: amber flash when recently moved, neutral otherwise.
+			rowNameStyle := neutralTextStyle
+			rowDimStyle := neutralDimStyle
+			if flashing {
+				rowNameStyle = moveFlashStyle
+				rowDimStyle = moveFlashStyle
+			}
+
+			numText := rowDimStyle.Render(num)
+			truncName := TruncateMiddle(proj.Name, menuContentWidth-6-len(num))
+			nameText := rowNameStyle.Render(truncName)
+			// For stale projects, replace the leading 2 spaces with "⚠ " marker.
+			var rowPrefix string
+			if proj.Stale {
+				rowPrefix = staleStyle.Render("⚠") + " "
+			} else {
+				rowPrefix = "  "
+			}
+			nameContent := rowPrefix + "  " + numText + "  " + nameText
+
+			if wtIndicator != "" {
+				wtStyled := rowDimStyle.Render(wtIndicator)
+				gap := menuContentWidth - lipgloss.Width(nameContent) - lipgloss.Width(wtStyled)
+				if gap < 1 {
+					gap = 1
+				}
+				nameLine = leftBorder + nameContent + strings.Repeat(" ", gap) + wtStyled + rightBorder
+			} else {
+				namePadding := menuContentWidth - lipgloss.Width(nameContent)
+				if namePadding < 0 {
+					namePadding = 0
+				}
+				nameLine = leftBorder + nameContent + strings.Repeat(" ", namePadding) + rightBorder
+			}
+
+			pathContent := "       " + rowDimStyle.Render(shortPath)
+			pathPadding := menuContentWidth - lipgloss.Width(pathContent)
+			if pathPadding < 0 {
+				pathPadding = 0
+			}
+			pathLine = leftBorder + pathContent + strings.Repeat(" ", pathPadding) + rightBorder
+		}
+
+		rows = append(rows, nameLine)
+		rows = append(rows, pathLine)
+
+		// Expanded worktree entries (2 rows each: branch + path) + add-worktree (1 row)
+		if m.expandedWorktrees[i] {
+			// All worktrees use ├─ connector (add-worktree follows as last item)
+			connector := "├─"
+			for j, wt := range proj.Worktrees {
+				wtFlatIdx := m.projectToFlatIndex(i) + 1 + j
+				wtSelected := !m.deleteMode && m.selectedItem == wtFlatIdx
+				wtDeleteSelected := m.deleteMode && m.deleteSelected == wtFlatIdx
+				var wtBranchLine, wtPathLine string
+				branchDisplay := TruncateMiddle(wt.Branch, menuContentWidth-11)
+				shortWtPath := TruncateMiddle(shortenHomePath(wt.Path), menuContentWidth-11)
+
+				if wtDeleteSelected {
+					marker := deleteStyle.Render("▎")
+					connStyled := deleteStyle.Render(connector)
+					branchText := deleteStyle.Render(branchDisplay)
+					content := "     " + marker + " " + connStyled + " " + branchText
+					padding := menuContentWidth - lipgloss.Width(content)
+					if padding < 0 {
+						padding = 0
+					}
+					wtBranchLine = leftBorder + content + strings.Repeat(" ", padding) + rightBorder
+
+					pathContent := "          " + deleteDimStyle.Render(shortWtPath)
+					pathPadding := menuContentWidth - lipgloss.Width(pathContent)
+					if pathPadding < 0 {
+						pathPadding = 0
+					}
+					wtPathLine = leftBorder + pathContent + strings.Repeat(" ", pathPadding) + rightBorder
+				} else if wtSelected {
+					marker := primaryBoldStyle.Render("▎")
+					connStyled := primaryBoldStyle.Render(connector)
+					branchText := primaryBoldStyle.Render(branchDisplay)
+					content := "     " + marker + " " + connStyled + " " + branchText
+					padding := menuContentWidth - lipgloss.Width(content)
+					if padding < 0 {
+						padding = 0
+					}
+					wtBranchLine = leftBorder + content + strings.Repeat(" ", padding) + rightBorder
+
+					pathContent := "          " + primaryStyle.Render(shortWtPath)
+					pathPadding := menuContentWidth - lipgloss.Width(pathContent)
+					if pathPadding < 0 {
+						pathPadding = 0
+					}
+					wtPathLine = leftBorder + pathContent + strings.Repeat(" ", pathPadding) + rightBorder
+				} else {
+					connStyled := neutralDimStyle.Render(connector)
+					branchText := neutralTextStyle.Render(branchDisplay)
+					content := "       " + connStyled + " " + branchText
+					padding := menuContentWidth - lipgloss.Width(content)
+					if padding < 0 {
+						padding = 0
+					}
+					wtBranchLine = leftBorder + content + strings.Repeat(" ", padding) + rightBorder
+
+					pathContent := "          " + neutralDimStyle.Render(shortWtPath)
+					pathPadding := menuContentWidth - lipgloss.Width(pathContent)
+					if pathPadding < 0 {
+						pathPadding = 0
+					}
+					wtPathLine = leftBorder + pathContent + strings.Repeat(" ", pathPadding) + rightBorder
+				}
+				rows = append(rows, wtBranchLine)
+				rows = append(rows, wtPathLine)
+			}
+
+			// Add-worktree item (1 row, └─ connector)
+			addWtFlatIdx := m.projectToFlatIndex(i) + 1 + len(proj.Worktrees)
+			addWtSelected := m.selectedItem == addWtFlatIdx
+			addConnector := "└─"
+			var addWtLine string
+			if addWtSelected {
+				marker := primaryBoldStyle.Render("▎")
+				connStyled := primaryBoldStyle.Render(addConnector)
+				addLabel := primaryBoldStyle.Render("+ Add worktree")
+				content := "     " + marker + " " + connStyled + " " + addLabel
+				padding := menuContentWidth - lipgloss.Width(content)
+				if padding < 0 {
+					padding = 0
+				}
+				addWtLine = leftBorder + content + strings.Repeat(" ", padding) + rightBorder
+			} else {
+				connStyled := neutralDimStyle.Render(addConnector)
+				addLabel := neutralDimStyle.Render("+ Add worktree")
+				content := "       " + connStyled + " " + addLabel
+				padding := menuContentWidth - lipgloss.Width(content)
+				if padding < 0 {
+					padding = 0
+				}
+				addWtLine = leftBorder + content + strings.Repeat(" ", padding) + rightBorder
+			}
+			rows = append(rows, addWtLine)
+		}
+	}
+
+	// Blank spacer row before the add-project row.
+	rows = append(rows, emptyRow)
+
+	// "+ Add project" row — the final selectable item.
+	addStyle := lipgloss.NewStyle().Foreground(m.theme.Text)
+	addSel := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
+	label := "+  Add project"
+	var prefix string
+	if itemType, _, _ := m.ResolveItem(m.selectedItem); itemType == "add-project" && !m.deleteMode {
+		prefix = "  " + addSel.Render("▎") + " " + addSel.Render(label)
+	} else {
+		prefix = "   " + addStyle.Render(label)
+	}
+	gap := menuContentWidth - lipgloss.Width(prefix)
+	if gap < 0 {
+		gap = 0
+	}
+	rows = append(rows, leftBorder+prefix+strings.Repeat(" ", gap)+rightBorder)
+
+	return rows
+}
+
+// renderHelpRow renders the centered footer hint line. It sits below the box
+// (after the bottom border) and is centered to the full box width.
+func (m *MainMenuModel) renderHelpRow() string {
+	dimStyle := lipgloss.NewStyle().Foreground(m.theme.Dim)
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("247"))
+
+	sep := dimStyle.Render(" · ")
+	var helpContent string
+	if m.deleteMode {
+		helpContent = helpStyle.Render("↑↓ navigate") + sep + helpStyle.Render("1-9 jump") + sep + helpStyle.Render("⏎ delete") + sep + helpStyle.Render("Q cancel")
+	} else if m.showEscHint {
+		helpContent = helpStyle.Render("Press Esc again to quit")
+	} else {
+		hint := "↑↓ move · ⇧↑↓ reorder · ←→ AI · ↵ open · O once · P plain"
+		helpContent = helpStyle.Render(hint)
+	}
+	// Center within the full box width (inner + 2 border columns).
+	boxWidth := menuInnerWidth + 2
+	helpWidth := lipgloss.Width(helpContent)
+	helpLeft := (boxWidth - helpWidth) / 2
+	if helpLeft < 0 {
+		helpLeft = 0
+	}
+	return strings.Repeat(" ", helpLeft) + helpContent
+}
+
+// renderMenuBox renders the full Projects-tab box: chrome borders, title row,
+// tab bar, project list, the add-project row, the contextual action bar, and
+// the footer help row. Overflow is handled by applyMenuScroll.
+func (m *MainMenuModel) renderMenuBox() string {
+	staleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+	neutralDimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+
+	top, separator, bottom, leftBorder, rightBorder := m.boxBorders()
+
+	var lines []string
+
+	// Top border
+	lines = append(lines, top)
+
+	// Title row
+	lines = append(lines, m.renderTitleRow(leftBorder, rightBorder))
+
+	// Tab bar
+	lines = append(lines, m.renderTabBar(leftBorder, rightBorder))
+
+	// Separator after the tab bar
+	lines = append(lines, separator)
+
+	// Update notification (if set)
+	if m.updateVersion != "" {
+		lines = append(lines, m.renderUpdateRow(leftBorder, rightBorder))
+	}
+
+	// Project rows (leading blank + projects/worktrees + add-project row)
+	lines = append(lines, m.renderProjectRows(leftBorder, rightBorder)...)
+
+	// Feedback message (if any)
+	if m.feedbackMsg != "" {
+		var feedbackColor lipgloss.Color
+		if m.feedbackStyle == "success" {
+			feedbackColor = lipgloss.Color("114") // green
+		} else {
+			feedbackColor = lipgloss.Color("220") // yellow
+		}
+		fStyle := lipgloss.NewStyle().Foreground(feedbackColor)
+		fbContent := "  " + fStyle.Render(m.feedbackMsg)
+		fbPadding := menuContentWidth - lipgloss.Width(fbContent)
+		if fbPadding < 0 {
+			fbPadding = 0
+		}
+		lines = append(lines, leftBorder+fbContent+strings.Repeat(" ", fbPadding)+rightBorder)
+	}
+
+	// Stale confirmation prompt (if active)
+	if m.staleConfirmIdx >= 0 && m.staleConfirmIdx < len(m.projects) {
+		stalePath := m.projects[m.staleConfirmIdx].Path
+		warnLine := staleStyle.Render("⚠") + " " + staleStyle.Render("Path not found: "+stalePath)
+		warnContent := "  " + warnLine
+		warnPadding := menuContentWidth - lipgloss.Width(warnContent)
+		if warnPadding < 0 {
+			warnPadding = 0
+		}
+		lines = append(lines, leftBorder+warnContent+strings.Repeat(" ", warnPadding)+rightBorder)
+
+		promptLine := neutralDimStyle.Render("  Launch anyway? [y/N]")
+		promptPadding := menuContentWidth - lipgloss.Width(promptLine)
+		if promptPadding < 0 {
+			promptPadding = 0
+		}
+		lines = append(lines, leftBorder+promptLine+strings.Repeat(" ", promptPadding)+rightBorder)
+	}
+
+	// Separator before the contextual action bar
+	lines = append(lines, separator)
+
+	// Contextual action bar reflecting the selected row
+	lines = append(lines, m.renderActionBar(leftBorder, rightBorder))
+
+	// Bottom border
+	lines = append(lines, bottom)
+
+	// Help row
+	lines = append(lines, m.renderHelpRow())
+
+	// Scroll clipping when menu is taller than the available terminal height.
+	headerEnd := 5
+	if m.updateVersion != "" {
+		headerEnd = 6
+	}
+	footerStart := len(lines) - 3
+	avail := m.availableMenuHeight()
+	if avail > 0 && len(lines) > avail && headerEnd < footerStart {
+		lines = m.applyMenuScroll(lines, headerEnd, footerStart, avail)
+	}
+
+	return strings.Join(lines, "\n")
+}

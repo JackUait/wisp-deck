@@ -14,10 +14,7 @@ import (
 //	0: project "alpha"   (2 worktrees)
 //	1: project "beta"    (1 worktree)
 //	2: project "gamma"   (no worktrees)
-//	3: action add-project
-//	4: action delete-project
-//	5: action open-once
-//	6: action plain-terminal
+//	3: add-project row
 func newWorktreeMenu() *MainMenuModel {
 	projects := []models.Project{
 		{
@@ -73,25 +70,22 @@ func TestToggleAllWorktrees_ExpandPreservesCursorOnProject(t *testing.T) {
 	}
 }
 
-// TestToggleAllWorktrees_ExpandPreservesCursorOnAction verifies that when the
-// cursor is on an action row, expanding worktrees keeps the cursor on that
-// same action.
-func TestToggleAllWorktrees_ExpandPreservesCursorOnAction(t *testing.T) {
+// TestToggleAllWorktrees_ExpandPreservesCursorOnAddProject verifies that when
+// the cursor is on the add-project row, expanding worktrees keeps the cursor
+// on that same row.
+func TestToggleAllWorktrees_ExpandPreservesCursorOnAddProject(t *testing.T) {
 	m := newWorktreeMenu()
 
-	// Cursor on "add-project" action (flat index 3 when collapsed: 3 projects = 0,1,2 → action at 3)
+	// Cursor on the add-project row (flat index 3 when collapsed: 3 projects = 0,1,2 → add-project at 3)
 	m.selectedItem = 3
 	m.ToggleAllWorktrees()
 
 	// After expanding both alpha (3 sub-rows) and beta (2 sub-rows), total shift = 5.
-	// Without fix: cursor at 3 → points into alpha's worktree rows.
-	// With fix:    cursor should be on action "add-project" (actionIdx 0).
-	itemType, actionIdx, _ := m.ResolveItem(m.selectedItem)
-	if itemType != "action" {
-		t.Errorf("expected cursor on action row, got itemType=%q at flat index %d", itemType, m.selectedItem)
-	}
-	if actionIdx != 0 {
-		t.Errorf("expected action index 0 (add-project), got actionIdx=%d", actionIdx)
+	// Without anchoring: cursor at 3 → points into alpha's worktree rows.
+	// With anchoring:    cursor should still be on the add-project row.
+	itemType, _, _ := m.ResolveItem(m.selectedItem)
+	if itemType != "add-project" {
+		t.Errorf("expected cursor on add-project row, got itemType=%q at flat index %d", itemType, m.selectedItem)
 	}
 }
 
@@ -144,23 +138,21 @@ func TestToggleAllWorktrees_CollapsePreservesCursorOnProject(t *testing.T) {
 	}
 }
 
-// TestToggleAllWorktrees_CollapsePreservesCursorOnAction verifies that when
-// all worktrees are expanded and the cursor is on an action row, collapsing
-// keeps the cursor on that action.
-func TestToggleAllWorktrees_CollapsePreservesCursorOnAction(t *testing.T) {
+// TestToggleAllWorktrees_CollapsePreservesCursorOnAddProject verifies that when
+// all worktrees are expanded and the cursor is on the add-project row,
+// collapsing keeps the cursor on that row.
+func TestToggleAllWorktrees_CollapsePreservesCursorOnAddProject(t *testing.T) {
 	m := newWorktreeMenu()
 
 	// Expand all first
 	m.ToggleAllWorktrees()
 
-	// Move cursor to "add-project" action (first action)
+	// Move cursor to the add-project row (the final selectable item).
 	total := m.TotalItems()
-	// Actions start after all projects + their expanded worktrees
-	// Find "add-project" action
 	var addProjectFlat int
 	for i := 0; i < total; i++ {
-		iType, aIdx, _ := m.ResolveItem(i)
-		if iType == "action" && aIdx == 0 {
+		iType, _, _ := m.ResolveItem(i)
+		if iType == "add-project" {
 			addProjectFlat = i
 			break
 		}
@@ -170,12 +162,9 @@ func TestToggleAllWorktrees_CollapsePreservesCursorOnAction(t *testing.T) {
 	// Collapse all
 	m.ToggleAllWorktrees()
 
-	itemType, actionIdx, _ := m.ResolveItem(m.selectedItem)
-	if itemType != "action" {
-		t.Errorf("expected cursor on action row after collapse, got itemType=%q at flat index %d", itemType, m.selectedItem)
-	}
-	if actionIdx != 0 {
-		t.Errorf("expected action index 0 (add-project), got %d", actionIdx)
+	itemType, _, _ := m.ResolveItem(m.selectedItem)
+	if itemType != "add-project" {
+		t.Errorf("expected cursor on add-project row after collapse, got itemType=%q at flat index %d", itemType, m.selectedItem)
 	}
 }
 
@@ -305,16 +294,16 @@ func TestWKey_NoOpOnProjectWithNoWorktrees(t *testing.T) {
 	}
 }
 
-// TestWKey_NoOpOnActionRow verifies that pressing 'w' when the cursor is on
-// an action row is a no-op.
-func TestWKey_NoOpOnActionRow(t *testing.T) {
+// TestWKey_NoOpOnAddProjectRow verifies that pressing 'w' when the cursor is on
+// the add-project row is a no-op.
+func TestWKey_NoOpOnAddProjectRow(t *testing.T) {
 	m := newWorktreeMenu()
 
-	// Cursor on the first action row (flat index 3)
+	// Cursor on the add-project row (flat index 3)
 	m.selectedItem = 3
 	itemType, _, _ := m.ResolveItem(3)
-	if itemType != "action" {
-		t.Fatalf("setup: expected action at flat index 3, got %q", itemType)
+	if itemType != "add-project" {
+		t.Fatalf("setup: expected add-project at flat index 3, got %q", itemType)
 	}
 
 	m.ToggleWorktreesAtCursor()

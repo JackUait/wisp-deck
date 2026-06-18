@@ -75,23 +75,23 @@ func TestMainMenu_Navigation(t *testing.T) {
 }
 
 func TestMainMenu_TotalItems(t *testing.T) {
-	// 3 projects + 4 actions = 7
+	// 3 projects + 1 add-project row = 4
 	projects := testProjects()
 	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
-	if m.TotalItems() != 7 {
-		t.Errorf("TotalItems with 3 projects: expected 7, got %d", m.TotalItems())
+	if m.TotalItems() != 4 {
+		t.Errorf("TotalItems with 3 projects: expected 4, got %d", m.TotalItems())
 	}
 
-	// 0 projects + 4 actions = 4
+	// 0 projects + 1 add-project row = 1
 	m2 := tui.NewMainMenu(nil, testAITools(), "claude", "animated")
-	if m2.TotalItems() != 4 {
-		t.Errorf("TotalItems with 0 projects: expected 4, got %d", m2.TotalItems())
+	if m2.TotalItems() != 1 {
+		t.Errorf("TotalItems with 0 projects: expected 1, got %d", m2.TotalItems())
 	}
 
-	// 1 project + 4 actions = 5
+	// 1 project + 1 add-project row = 2
 	m3 := tui.NewMainMenu([]models.Project{{Name: "solo", Path: "/solo"}}, testAITools(), "claude", "animated")
-	if m3.TotalItems() != 5 {
-		t.Errorf("TotalItems with 1 project: expected 5, got %d", m3.TotalItems())
+	if m3.TotalItems() != 2 {
+		t.Errorf("TotalItems with 1 project: expected 2, got %d", m3.TotalItems())
 	}
 }
 
@@ -361,12 +361,14 @@ func TestMainMenu_SelectProject(t *testing.T) {
 
 func TestMainMenu_SelectAction(t *testing.T) {
 	projects := testProjects()
-	// Actions start at index 3 (after 3 projects)
-	// Index 3 = Add, 4 = Delete, 5 = Open Once, 6 = Plain Terminal
+	// The only action row remaining in the projects body is the add-project row,
+	// which is the final selectable item (index len(projects)). The former
+	// delete/open-once/plain-terminal action rows are gone; those actions are
+	// now reachable only via the d/o/p key shortcuts (see TestMainMenu_ActionShortcuts).
 
 	t.Run("add-project", func(t *testing.T) {
 		m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
-		// Navigate to add action (index 3)
+		// Navigate to the add-project row (last selectable item, index 3).
 		for i := 0; i < 3; i++ {
 			m.MoveDown()
 		}
@@ -381,58 +383,6 @@ func TestMainMenu_SelectAction(t *testing.T) {
 		}
 		if mm.Result() != nil {
 			t.Error("Should not produce result when entering input mode")
-		}
-	})
-
-	t.Run("delete-project", func(t *testing.T) {
-		m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
-		for i := 0; i < 4; i++ {
-			m.MoveDown()
-		}
-		newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		mm := newModel.(*tui.MainMenuModel)
-
-		if !mm.InDeleteMode() {
-			t.Error("Expected delete mode after Enter on delete-project")
-		}
-		if mm.Result() != nil {
-			t.Error("Should not produce result when entering delete mode")
-		}
-	})
-
-	t.Run("open-once", func(t *testing.T) {
-		m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
-		for i := 0; i < 5; i++ {
-			m.MoveDown()
-		}
-		newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		mm := newModel.(*tui.MainMenuModel)
-
-		if !mm.InInputMode() {
-			t.Error("Expected input mode after Enter on open-once")
-		}
-		if mm.InputMode() != "open-once" {
-			t.Errorf("Expected input mode 'open-once', got %q", mm.InputMode())
-		}
-		if mm.Result() != nil {
-			t.Error("Should not produce result when entering input mode")
-		}
-	})
-
-	t.Run("plain-terminal", func(t *testing.T) {
-		m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
-		for i := 0; i < 6; i++ {
-			m.MoveDown()
-		}
-		newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		mm := newModel.(*tui.MainMenuModel)
-		result := mm.Result()
-
-		if result == nil {
-			t.Fatal("Expected result, got nil")
-		}
-		if result.Action != "plain-terminal" {
-			t.Errorf("Expected action 'plain-terminal', got %q", result.Action)
 		}
 	})
 }
@@ -784,22 +734,31 @@ func TestMainMenu_ViewHelpRow(t *testing.T) {
 		t.Error("help row should NOT mention navigate")
 	}
 	if !strings.Contains(view, "AI") {
-		t.Error("help row should mention AI when multiple available")
+		t.Error("help row should mention AI")
 	}
-	if !strings.Contains(view, "delete") {
-		t.Error("help row should mention delete")
+	if !strings.Contains(view, "move") {
+		t.Error("help row should mention move")
+	}
+	if !strings.Contains(view, "P plain") {
+		t.Error("help row should mention 'P plain'")
 	}
 }
 
-func TestMainMenu_ViewActionItems(t *testing.T) {
-	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
+func TestMainMenu_ViewActionBar(t *testing.T) {
+	// With a project selected, the contextual action bar offers Open/Worktrees/Delete.
+	projects := []models.Project{{Name: "p1", Path: "/p1"}}
+	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 	view := m.View()
-	if !strings.Contains(view, "Add") {
-		t.Error("view should contain Add action")
+	if !strings.Contains(view, "Open") {
+		t.Error("action bar should offer Open for a selected project")
 	}
 	if !strings.Contains(view, "Delete") {
-		t.Error("view should contain Delete action")
+		t.Error("action bar should offer Delete for a selected project")
+	}
+	// The add-project row is always present in the body.
+	if !strings.Contains(view, "Add project") {
+		t.Error("view should contain the '+ Add project' row")
 	}
 }
 
@@ -862,12 +821,12 @@ func TestMainMenu_ViewHelpRowSingleTool(t *testing.T) {
 	if strings.Contains(view, "navigate") {
 		t.Error("help row should NOT mention navigate")
 	}
-	if !strings.Contains(view, "delete") {
-		t.Error("help row should mention delete")
+	if !strings.Contains(view, "move") {
+		t.Error("help row should mention move")
 	}
-	// Single tool: no AI tool mention in help
+	// The redesigned footer hint is static and never spells out "AI tool".
 	if strings.Contains(view, "AI tool") {
-		t.Error("help row should NOT mention AI tool when single tool")
+		t.Error("help row should NOT mention 'AI tool'")
 	}
 }
 
@@ -1050,41 +1009,41 @@ func TestMainMenu_MapRowToItem_Projects(t *testing.T) {
 	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 
-	// First project at rows 4-5 (row 0: border, 1: title, 2: separator, 3: empty)
-	if m.MapRowToItem(4) != 0 {
-		t.Errorf("click at row 4 should map to item 0, got %d", m.MapRowToItem(4))
-	}
+	// Layout: row 0 border, 1 title, 2 tab bar, 3 separator, 4 empty,
+	// then first project at rows 5-6.
 	if m.MapRowToItem(5) != 0 {
-		t.Errorf("click at row 5 should map to item 0 (path line), got %d", m.MapRowToItem(5))
+		t.Errorf("click at row 5 should map to item 0, got %d", m.MapRowToItem(5))
 	}
-	// Second project at rows 6-7
-	if m.MapRowToItem(6) != 1 {
-		t.Errorf("click at row 6 should map to item 1, got %d", m.MapRowToItem(6))
+	if m.MapRowToItem(6) != 0 {
+		t.Errorf("click at row 6 should map to item 0 (path line), got %d", m.MapRowToItem(6))
 	}
+	// Second project at rows 7-8
 	if m.MapRowToItem(7) != 1 {
-		t.Errorf("click at row 7 should map to item 1 (path line), got %d", m.MapRowToItem(7))
+		t.Errorf("click at row 7 should map to item 1, got %d", m.MapRowToItem(7))
+	}
+	if m.MapRowToItem(8) != 1 {
+		t.Errorf("click at row 8 should map to item 1 (path line), got %d", m.MapRowToItem(8))
 	}
 }
 
-func TestMainMenu_MapRowToItem_Actions(t *testing.T) {
+func TestMainMenu_MapRowToItem_AddProjectRow(t *testing.T) {
 	projects := []models.Project{
 		{Name: "p1", Path: "/p1"},
 	}
 	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 
-	// 1 project at rows 4-5, separator at row 6, actions start at row 7
-	if m.MapRowToItem(7) != 1 {
-		t.Errorf("click at first action row should map to item 1 (add-project), got %d", m.MapRowToItem(7))
+	// Layout: 1 project at rows 5-6, blank spacer at row 7, add-project row at row 8.
+	// The old delete/open-once/plain-terminal action rows no longer exist.
+	if m.MapRowToItem(8) != 1 {
+		t.Errorf("click at add-project row should map to item 1, got %d", m.MapRowToItem(8))
 	}
-	if m.MapRowToItem(8) != 2 {
-		t.Errorf("click at second action row should map to item 2 (delete-project), got %d", m.MapRowToItem(8))
+	if m.MapRowToItem(1) != m.TotalItems()-1 && m.MapRowToItem(8) != m.TotalItems()-1 {
+		t.Errorf("add-project row should be the final selectable item (%d), got %d", m.TotalItems()-1, m.MapRowToItem(8))
 	}
-	if m.MapRowToItem(9) != 3 {
-		t.Errorf("click at third action row should map to item 3 (open-once), got %d", m.MapRowToItem(9))
-	}
-	if m.MapRowToItem(10) != 4 {
-		t.Errorf("click at fourth action row should map to item 4 (plain-terminal), got %d", m.MapRowToItem(10))
+	// Rows past the add-project row are not selectable items.
+	if m.MapRowToItem(9) != -1 {
+		t.Errorf("click below add-project row should return -1, got %d", m.MapRowToItem(9))
 	}
 }
 
@@ -1101,17 +1060,21 @@ func TestMainMenu_MapRowToItem_Invalid(t *testing.T) {
 	if m.MapRowToItem(1) != -1 {
 		t.Errorf("click on title should return -1, got %d", m.MapRowToItem(1))
 	}
-	// Row 2 is separator
+	// Row 2 is the tab bar
 	if m.MapRowToItem(2) != -1 {
-		t.Errorf("click on separator should return -1, got %d", m.MapRowToItem(2))
+		t.Errorf("click on tab bar should return -1, got %d", m.MapRowToItem(2))
 	}
-	// Row 3 is empty
+	// Row 3 is separator
 	if m.MapRowToItem(3) != -1 {
-		t.Errorf("click on empty row should return -1, got %d", m.MapRowToItem(3))
+		t.Errorf("click on separator should return -1, got %d", m.MapRowToItem(3))
 	}
-	// Row 6 is separator between projects and actions
-	if m.MapRowToItem(6) != -1 {
-		t.Errorf("click on project/action separator should return -1, got %d", m.MapRowToItem(6))
+	// Row 4 is empty
+	if m.MapRowToItem(4) != -1 {
+		t.Errorf("click on empty row should return -1, got %d", m.MapRowToItem(4))
+	}
+	// Row 7 is the blank spacer before the add-project row
+	if m.MapRowToItem(7) != -1 {
+		t.Errorf("click on blank spacer should return -1, got %d", m.MapRowToItem(7))
 	}
 	// Row way beyond menu should return -1
 	if m.MapRowToItem(100) != -1 {
@@ -1123,12 +1086,13 @@ func TestMainMenu_MapRowToItem_NoProjects(t *testing.T) {
 	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 
-	// No projects, no separator. Actions start at row 4
-	if m.MapRowToItem(4) != 0 {
-		t.Errorf("first action at row 4 should map to item 0, got %d", m.MapRowToItem(4))
+	// No projects: row 0 border, 1 title, 2 tab bar, 3 separator, 4 empty,
+	// 5 blank spacer, 6 add-project row (the only selectable item).
+	if m.MapRowToItem(6) != 0 {
+		t.Errorf("add-project row at row 6 should map to item 0, got %d", m.MapRowToItem(6))
 	}
-	if m.MapRowToItem(5) != 1 {
-		t.Errorf("second action at row 5 should map to item 1, got %d", m.MapRowToItem(5))
+	if m.MapRowToItem(5) != -1 {
+		t.Errorf("blank spacer at row 5 should return -1, got %d", m.MapRowToItem(5))
 	}
 }
 
@@ -1139,12 +1103,13 @@ func TestMainMenu_MapRowToItem_WithUpdateVersion(t *testing.T) {
 	m.SetSize(80, 30)
 
 	// With update version, rows shift down by 1:
-	// Row 0: border, 1: title, 2: separator, 3: update notification, 4: empty, 5-6: project
-	if m.MapRowToItem(5) != 0 {
-		t.Errorf("with update version, project should be at row 5, got %d", m.MapRowToItem(5))
-	}
+	// Row 0: border, 1: title, 2: tab bar, 3: separator, 4: update notification,
+	// 5: empty, 6-7: project.
 	if m.MapRowToItem(6) != 0 {
-		t.Errorf("with update version, project path at row 6 should map to 0, got %d", m.MapRowToItem(6))
+		t.Errorf("with update version, project should be at row 6, got %d", m.MapRowToItem(6))
+	}
+	if m.MapRowToItem(7) != 0 {
+		t.Errorf("with update version, project path at row 7 should map to 0, got %d", m.MapRowToItem(7))
 	}
 }
 
@@ -1155,11 +1120,13 @@ func TestMainMenu_MouseClickSelectsItem(t *testing.T) {
 	}
 	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
+	_ = m.View() // compute the vertical centering offset
 
-	// Click on second project (row 6)
+	// Second project's name line is box row 7 (border, title, tab bar,
+	// separator, empty, p0-name, p0-path, p1-name). Account for centering.
 	mouseMsg := tea.MouseMsg{
 		X:      10,
-		Y:      6,
+		Y:      m.CenterOffsetY() + 7,
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
 	}
@@ -1181,11 +1148,13 @@ func TestMainMenu_MouseDoubleClickActivates(t *testing.T) {
 	}
 	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
+	_ = m.View() // compute the vertical centering offset
 
-	// First click selects item 0 (it's already selected, so this acts as double-click)
+	// First project's name line is box row 5. Clicking the already-selected
+	// item acts as a double-click activation. Account for centering.
 	mouseMsg := tea.MouseMsg{
 		X:      10,
-		Y:      4,
+		Y:      m.CenterOffsetY() + 5,
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
 	}
@@ -1776,36 +1745,33 @@ func TestMainMenu_ViewUnselectedProjectHasColor(t *testing.T) {
 	}
 }
 
-func TestMainMenu_ViewUnselectedActionHasColor(t *testing.T) {
+func TestMainMenu_ViewActionBarHasColor(t *testing.T) {
 	// Force color output so lipgloss emits ANSI codes in tests.
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	defer lipgloss.SetColorProfile(prev)
 
-	// Use no projects so actions are items 0-3, and select item 0 (Add).
-	// That makes Delete (item 1) unselected.
-	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
+	// With a project selected, the contextual action bar offers Open/Worktrees/Delete.
+	projects := []models.Project{{Name: "p1", Path: "/p1"}}
+	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 	view := m.View()
 
-	// Find the line containing "Delete" (unselected action label).
-	// When styled with dimStyle, lipgloss wraps the label in
-	// \x1b[...m...Delete...\x1b[0m so the character immediately
-	// before "Delete" is 'm'. Without styling, it's a space.
+	// The whole action bar text is rendered as one styled span, so its line
+	// carries ANSI escape sequences.
 	lines := strings.Split(view, "\n")
 	found := false
 	for _, line := range lines {
 		if strings.Contains(line, "Delete") {
 			found = true
-			idx := strings.Index(line, "Delete")
-			if idx == 0 || line[idx-1] != 'm' {
-				t.Error("unselected action label 'Delete' should have ANSI color codes applied directly (expected 'm' before label)")
+			if !strings.Contains(line, "\x1b[") {
+				t.Error("action bar line should carry ANSI color escape sequences")
 			}
 			break
 		}
 	}
 	if !found {
-		t.Error("could not find line containing unselected action 'Delete'")
+		t.Error("could not find action bar line containing 'Delete'")
 	}
 }
 
@@ -1887,28 +1853,28 @@ func TestMainMenu_ViewSelectedPathUsesPrimaryColor(t *testing.T) {
 	t.Error("could not find line containing selected project path")
 }
 
-func TestMainMenu_ViewUnselectedActionUsesTextColor(t *testing.T) {
+func TestMainMenu_ViewActionBarUsesAccentColor(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	defer lipgloss.SetColorProfile(prev)
 
-	// No projects so actions start at item 0. Item 0 (Add) is selected,
-	// so Delete (item 1) is unselected.
-	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
+	// The contextual action bar for a selected project uses theme.Accent
+	// (220 for claude).
+	projects := []models.Project{{Name: "p1", Path: "/p1"}}
+	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 	view := m.View()
 
-	// Unselected action label "Delete" should use neutral text color (252)
 	lines := strings.Split(view, "\n")
 	for _, line := range lines {
 		if strings.Contains(line, "Delete") {
-			if !strings.Contains(line, "\x1b[38;5;252m") {
-				t.Errorf("unselected action label 'Delete' should use neutral text color (252), line: %q", line)
+			if !strings.Contains(line, "\x1b[38;5;220m") {
+				t.Errorf("action bar should use accent color (220), line: %q", line)
 			}
 			return
 		}
 	}
-	t.Error("could not find line containing unselected action 'Delete'")
+	t.Error("could not find action bar line containing 'Delete'")
 }
 
 func TestMainMenu_MouseClickWakesAndResetsZzz(t *testing.T) {
@@ -2059,10 +2025,10 @@ func TestMainMenu_MouseClickWorksWithCentering(t *testing.T) {
 	// Need to call View() first so centerOffsetY is calculated
 	m.View()
 
-	// With ghost=none, 2 projects + 4 actions = 6 items, 1 separator
-	// Menu box height (lines): top border + title + sep + empty + 2*2 proj + sep + 4 actions + sep + help + bottom = ~16 lines
-	// Vertical offset = (40 - menuLines) / 2
-	// Second project name is at menu row 6, so absolute row = offset + 6
+	// With ghost=none, 2 projects + the add-project row.
+	// Menu box rows: border, title, tab bar, separator, empty, p0-name,
+	// p0-path, p1-name, ... so the second project name is at box row 7.
+	// Absolute row = centering offset + 7.
 	offset := m.CenterOffsetY()
 	if offset <= 0 {
 		t.Fatalf("expected positive centering offset with 80x40 and ghost=none, got %d", offset)
@@ -2070,7 +2036,7 @@ func TestMainMenu_MouseClickWorksWithCentering(t *testing.T) {
 
 	mouseMsg := tea.MouseMsg{
 		X:      40,
-		Y:      offset + 6,
+		Y:      offset + 7,
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
 	}
@@ -3151,7 +3117,7 @@ func TestMainMenu_View_DeleteMode_ShowsAITool(t *testing.T) {
 	}
 }
 
-func TestMainMenu_View_DeleteMode_ShowsActionItems(t *testing.T) {
+func TestMainMenu_View_DeleteMode_ShowsDeleteHints(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.Ascii)
 	defer lipgloss.SetColorProfile(prev)
@@ -3162,12 +3128,16 @@ func TestMainMenu_View_DeleteMode_ShowsActionItems(t *testing.T) {
 
 	view := mm.View()
 
-	// Action items should be visible
-	if !strings.Contains(view, "Add new project") {
-		t.Error("Delete mode view should show 'Add new project' action item")
+	// The old action stack is gone; delete mode now shows its dedicated footer
+	// hints instead.
+	if !strings.Contains(view, "navigate") {
+		t.Error("Delete mode view should show the 'navigate' hint")
 	}
-	if !strings.Contains(view, "Delete a project or a worktree") {
-		t.Error("Delete mode view should show 'Delete a project or a worktree' action item")
+	if !strings.Contains(view, "jump") {
+		t.Error("Delete mode view should show the 'jump' hint")
+	}
+	if !strings.Contains(view, "cancel") {
+		t.Error("Delete mode view should show the 'cancel' hint")
 	}
 }
 
@@ -3698,27 +3668,27 @@ func TestMainMenu_TotalItemsWithExpanded(t *testing.T) {
 	projects := testProjectsWithWorktrees()
 	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
 
-	// No expansions: 3 projects + 4 actions = 7
+	// No expansions: 3 projects + 1 add-project row = 4
+	if m.TotalItems() != 4 {
+		t.Errorf("unexpanded: expected 4, got %d", m.TotalItems())
+	}
+
+	// Expand first project (2 worktrees + 1 add-worktree): 3 + 3 + 1 = 7
+	m.ToggleWorktrees(0)
 	if m.TotalItems() != 7 {
-		t.Errorf("unexpanded: expected 7, got %d", m.TotalItems())
+		t.Errorf("expanded first: expected 7, got %d", m.TotalItems())
 	}
 
-	// Expand first project (2 worktrees + 1 add-worktree): 3 + 3 + 4 = 10
-	m.ToggleWorktrees(0)
-	if m.TotalItems() != 10 {
-		t.Errorf("expanded first: expected 10, got %d", m.TotalItems())
-	}
-
-	// Expand third project too (1 worktree + 1 add): 3 + 3 + 2 + 4 = 12
+	// Expand third project too (1 worktree + 1 add): 3 + 3 + 2 + 1 = 9
 	m.ToggleWorktrees(2)
-	if m.TotalItems() != 12 {
-		t.Errorf("expanded first+third: expected 12, got %d", m.TotalItems())
+	if m.TotalItems() != 9 {
+		t.Errorf("expanded first+third: expected 9, got %d", m.TotalItems())
 	}
 
-	// Collapse first project: 3 + 2 + 4 = 9
+	// Collapse first project: 3 + 2 + 1 = 6
 	m.ToggleWorktrees(0)
-	if m.TotalItems() != 9 {
-		t.Errorf("collapsed first, third expanded: expected 9, got %d", m.TotalItems())
+	if m.TotalItems() != 6 {
+		t.Errorf("collapsed first, third expanded: expected 6, got %d", m.TotalItems())
 	}
 }
 
@@ -3854,39 +3824,39 @@ func TestMainMenu_MapRowToItemWithWorktrees(t *testing.T) {
 	// Row layout (0-indexed within menu box):
 	// 0: top border
 	// 1: title
-	// 2: separator
-	// 3: empty
-	// 4-5: project 0 (name + path) -> item 0
-	// 6-7: worktree 0 (branch + path) -> item 1
-	// 8-9: worktree 1 (branch + path) -> item 2
-	// 10-11: project 1 (name + path) -> item 3
-	// 12-13: project 2 (name + path) -> item 4
+	// 2: tab bar
+	// 3: separator
+	// 4: empty
+	// 5-6: project 0 (name + path) -> item 0
+	// 7-8: worktree 0 (branch + path) -> item 1
+	// 9-10: worktree 1 (branch + path) -> item 2
+	// 11-12: project 1 (name + path) -> item 3
 
 	// Project 0
-	if m.MapRowToItem(4) != 0 {
-		t.Errorf("row 4: expected item 0, got %d", m.MapRowToItem(4))
-	}
 	if m.MapRowToItem(5) != 0 {
 		t.Errorf("row 5: expected item 0, got %d", m.MapRowToItem(5))
 	}
+	if m.MapRowToItem(6) != 0 {
+		t.Errorf("row 6: expected item 0, got %d", m.MapRowToItem(6))
+	}
 
 	// Worktree entries (2 rows each: branch + path)
-	if m.MapRowToItem(6) != 1 {
-		t.Errorf("row 6: expected item 1 (wt0), got %d", m.MapRowToItem(6))
-	}
 	if m.MapRowToItem(7) != 1 {
-		t.Errorf("row 7: expected item 1 (wt0 path row), got %d", m.MapRowToItem(7))
+		t.Errorf("row 7: expected item 1 (wt0), got %d", m.MapRowToItem(7))
 	}
-	if m.MapRowToItem(8) != 2 {
-		t.Errorf("row 8: expected item 2 (wt1), got %d", m.MapRowToItem(8))
+	if m.MapRowToItem(8) != 1 {
+		t.Errorf("row 8: expected item 1 (wt0 path row), got %d", m.MapRowToItem(8))
 	}
 	if m.MapRowToItem(9) != 2 {
-		t.Errorf("row 9: expected item 2 (wt1 path row), got %d", m.MapRowToItem(9))
+		t.Errorf("row 9: expected item 2 (wt1), got %d", m.MapRowToItem(9))
+	}
+	if m.MapRowToItem(10) != 2 {
+		t.Errorf("row 10: expected item 2 (wt1 path row), got %d", m.MapRowToItem(10))
 	}
 
 	// Project 1
-	if m.MapRowToItem(10) != 3 {
-		t.Errorf("row 10: expected item 3 (proj1), got %d", m.MapRowToItem(10))
+	if m.MapRowToItem(11) != 3 {
+		t.Errorf("row 11: expected item 3 (proj1), got %d", m.MapRowToItem(11))
 	}
 }
 
@@ -3937,16 +3907,16 @@ func TestMainMenu_WorktreeFullFlow(t *testing.T) {
 	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(100, 40)
 
-	// Verify initial state: 2 projects + 4 actions = 6
-	if m.TotalItems() != 6 {
-		t.Fatalf("initial total: expected 6, got %d", m.TotalItems())
+	// Verify initial state: 2 projects + 1 add-project row = 3
+	if m.TotalItems() != 3 {
+		t.Fatalf("initial total: expected 3, got %d", m.TotalItems())
 	}
 
 	// Press 'w' to expand project 0 (which has 1 worktree)
 	wKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}}
 	m.Update(wKey)
-	if m.TotalItems() != 8 { // 2 projects + 1 worktree + 1 add-worktree + 4 actions
-		t.Fatalf("after expand: expected 8, got %d", m.TotalItems())
+	if m.TotalItems() != 5 { // 2 projects + 1 worktree + 1 add-worktree + 1 add-project
+		t.Fatalf("after expand: expected 5, got %d", m.TotalItems())
 	}
 
 	// Move down to worktree
@@ -3980,21 +3950,21 @@ func TestMainMenu_TotalItemsWithAddWorktree(t *testing.T) {
 	projects := testProjectsWithWorktrees()
 	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
 
-	// Collapsed: 3 projects + 4 actions = 7
-	if m.TotalItems() != 7 {
-		t.Errorf("collapsed: expected 7, got %d", m.TotalItems())
+	// Collapsed: 3 projects + 1 add-project row = 4
+	if m.TotalItems() != 4 {
+		t.Errorf("collapsed: expected 4, got %d", m.TotalItems())
 	}
 
-	// Expand first project (2 worktrees + 1 add-worktree): 3 + 3 + 4 = 10
+	// Expand first project (2 worktrees + 1 add-worktree): 3 + 3 + 1 = 7
 	m.ToggleWorktrees(0)
-	if m.TotalItems() != 10 {
-		t.Errorf("expanded first: expected 10, got %d", m.TotalItems())
+	if m.TotalItems() != 7 {
+		t.Errorf("expanded first: expected 7, got %d", m.TotalItems())
 	}
 
-	// Expand third project too (1 worktree + 1 add): 3 + 3 + 2 + 4 = 12
+	// Expand third project too (1 worktree + 1 add): 3 + 3 + 2 + 1 = 9
 	m.ToggleWorktrees(2)
-	if m.TotalItems() != 12 {
-		t.Errorf("expanded first+third: expected 12, got %d", m.TotalItems())
+	if m.TotalItems() != 9 {
+		t.Errorf("expanded first+third: expected 9, got %d", m.TotalItems())
 	}
 }
 
@@ -4071,12 +4041,12 @@ func TestMainMenu_MapRowToItemWithAddWorktree(t *testing.T) {
 	m.SetSize(100, 40)
 
 	m.ToggleWorktrees(0)
-	// Layout: P0(rows 4-5), WT0(rows 6-7), WT1(rows 8-9), +Add(row 10), P1(rows 11-12)
-	if got := m.MapRowToItem(10); got != 3 {
-		t.Errorf("+Add row 10: got flat %d, want 3", got)
+	// Layout: P0(rows 5-6), WT0(rows 7-8), WT1(rows 9-10), +Add(row 11), P1(rows 12-13)
+	if got := m.MapRowToItem(11); got != 3 {
+		t.Errorf("+Add row 11: got flat %d, want 3", got)
 	}
-	if got := m.MapRowToItem(11); got != 4 {
-		t.Errorf("P1 row 11: got flat %d, want 4", got)
+	if got := m.MapRowToItem(12); got != 4 {
+		t.Errorf("P1 row 12: got flat %d, want 4", got)
 	}
 }
 

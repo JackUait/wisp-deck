@@ -15,10 +15,7 @@ import (
 //	0: project "alpha"
 //	1: project "beta"
 //	2: project "gamma"
-//	3: action add-project
-//	4: action delete-project
-//	5: action open-once
-//	6: action plain-terminal
+//	3: add-project row
 func newReorderMenu(t *testing.T) *MainMenuModel {
 	t.Helper()
 	dir := t.TempDir()
@@ -116,15 +113,15 @@ func TestMoveProjectUp_swapsExpandState(t *testing.T) {
 	}
 }
 
-// TestMoveProjectUp_noopOnActionRow verifies that MoveProjectUp is a no-op
-// when the cursor is on an action row.
-func TestMoveProjectUp_noopOnActionRow(t *testing.T) {
+// TestMoveProjectUp_noopOnAddProjectRow verifies that MoveProjectUp is a no-op
+// when the cursor is on the add-project row (a non-project row).
+func TestMoveProjectUp_noopOnAddProjectRow(t *testing.T) {
 	m := newReorderMenu(t)
-	m.selectedItem = 3 // first action row
+	m.selectedItem = 3 // add-project row (3 projects -> flat index 3)
 
 	itemType, _, _ := m.ResolveItem(3)
-	if itemType != "action" {
-		t.Fatalf("setup: expected action at flat index 3, got %q", itemType)
+	if itemType != "add-project" {
+		t.Fatalf("setup: expected add-project at flat index 3, got %q", itemType)
 	}
 
 	origOrder := []string{m.projects[0].Name, m.projects[1].Name, m.projects[2].Name}

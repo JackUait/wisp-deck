@@ -238,19 +238,19 @@ type MainMenuModel struct {
 	soundFile string
 
 	// Claude config selection state
-	claudeConfigs    []ClaudeConfig // Standard is implicit index 0, not stored here
-	selectedConfig   int            // 0 = Standard, 1.. = claudeConfigs[i-1]
-	claudeConfigFile string         // pointer file path for persistence
-	claudeConfigsList string        // name:file list file path (for mutations)
-	claudeConfigsDir  string        // directory holding the settings JSON files
+	claudeConfigs     []ClaudeConfig // Standard is implicit index 0, not stored here
+	selectedConfig    int            // 0 = Standard, 1.. = claudeConfigs[i-1]
+	claudeConfigFile  string         // pointer file path for persistence
+	claudeConfigsList string         // name:file list file path (for mutations)
+	claudeConfigsDir  string         // directory holding the settings JSON files
 
 	// Model mapping panel for non-Standard configs
-	modelMapOpen    bool
-	modelMapCursor  int          // 0-3: which Anthropic slot (opus, sonnet, haiku, fable)
-	modelMap        [4]int       // index into modelMapModels for each slot
-	modelMapModels  []string     // provider-specific model list
-	modelMapErr     error
-	modelMapKeyMode bool         // true when entering API key
+	modelMapOpen     bool
+	modelMapCursor   int      // 0-3: which Anthropic slot (opus, sonnet, haiku, fable)
+	modelMap         [4]int   // index into modelMapModels for each slot
+	modelMapModels   []string // provider-specific model list
+	modelMapErr      error
+	modelMapKeyMode  bool // true when entering API key
 	modelMapKeyInput textinput.Model
 
 	// Worktree expand/collapse state (project index -> expanded)
@@ -301,9 +301,10 @@ func (m *MainMenuModel) SelectedItem() int {
 	return m.selectedItem
 }
 
-// TotalItems returns the total number of selectable items (projects + expanded worktrees + 4 actions).
+// TotalItems returns the total number of selectable items
+// (projects + expanded worktrees + the add-project row).
 func (m *MainMenuModel) TotalItems() int {
-	return len(m.projects) + m.expandedWorktreeCount() + len(actionNames)
+	return len(m.projects) + m.expandedWorktreeCount() + 1 // +1 for the add-project row
 }
 
 // ToggleWorktrees toggles expand/collapse for the given project index.
@@ -351,10 +352,8 @@ func (m *MainMenuModel) resolveToFlatIndex(itemType string, projectIdx int, work
 		}
 		// Project collapsed — fall back to the project row.
 		return m.projectToFlatIndex(projectIdx)
-	case "action":
-		// projectIdx holds the action offset for "action" items.
-		actionStart := len(m.projects) + m.expandedWorktreeCount()
-		return actionStart + projectIdx
+	case "add-project":
+		return len(m.projects) + m.expandedWorktreeCount()
 	}
 	return 0
 }
@@ -368,7 +367,7 @@ func (m *MainMenuModel) ToggleWorktreesAtCursor() {
 	case "project", "worktree", "add-worktree":
 		m.ToggleWorktrees(projectIdx)
 	}
-	// "action" → no-op
+	// "add-project" → no-op
 }
 
 // expandedWorktreeCount returns the total number of visible worktree entries
@@ -414,8 +413,8 @@ func (m *MainMenuModel) DeletableItems() []int {
 }
 
 // ResolveItem maps a flat selectedItem index to what it represents.
-// Returns: itemType ("project", "worktree", "add-worktree", or "action"), projectIdx, worktreeIdx.
-// For "action", projectIdx is the action offset (0=add, 1=delete, etc).
+// Returns: itemType ("project", "worktree", "add-worktree", or "add-project"), projectIdx, worktreeIdx.
+// The final selectable index is the "add-project" row.
 func (m *MainMenuModel) ResolveItem(flatIdx int) (itemType string, projectIdx int, worktreeIdx int) {
 	pos := 0
 	for i, proj := range m.projects {
@@ -437,9 +436,8 @@ func (m *MainMenuModel) ResolveItem(flatIdx int) (itemType string, projectIdx in
 			pos++
 		}
 	}
-	// Must be an action
-	actionIdx := flatIdx - pos
-	return "action", actionIdx, -1
+	// Final selectable item is the add-project row.
+	return "add-project", -1, -1
 }
 
 // ToggleAllWorktrees expands all projects with worktrees if any are collapsed,
@@ -1173,11 +1171,12 @@ func (m *MainMenuModel) MapRowToItem(clickY int) int {
 	// Menu box row layout:
 	// Row 0: top border
 	// Row 1: title row
-	// Row 2: separator
+	// Row 2: tab bar
+	// Row 3: separator
 	// (optional) update notification row
-	// Row 3/4: empty row
-	// Then items start
-	startRow := 4
+	// Row 4/5: empty row
+	// Then project items start
+	startRow := 5
 	if m.updateVersion != "" {
 		startRow++ // update notification takes a row
 	}
@@ -1211,18 +1210,12 @@ func (m *MainMenuModel) MapRowToItem(clickY int) int {
 		}
 	}
 
-	// Separator
-	if len(m.projects) > 0 {
-		currentRow++
-	}
+	// Blank spacer row before the add-project row.
+	currentRow++
 
-	// Action items (1 row each)
-	for range actionNames {
-		if clickY == currentRow {
-			return flatIdx
-		}
-		currentRow++
-		flatIdx++
+	// Add-project row (1 row, the final selectable item).
+	if clickY == currentRow {
+		return flatIdx
 	}
 
 	return -1
@@ -1288,16 +1281,8 @@ func (m *MainMenuModel) selectCurrent() tea.Cmd {
 		available := models.FilterAvailableBranches(branches, worktrees, mainBranch)
 		picker := NewBranchPicker(available, m.theme, m.projects[projectIdx].Path)
 		return func() tea.Msg { return PushScreenMsg{Model: picker} }
-	case "action":
-		if projectIdx < len(actionNames) {
-			m.result = &MainMenuResult{
-				Action:       actionNames[projectIdx],
-				AITool:       m.CurrentAITool(),
-				GhostDisplay: m.ghostDisplayForResult(),
-				TabTitle:     m.tabTitleForResult(),
-				SoundName:    m.soundNameForResult(),
-			}
-		}
+	case "add-project":
+		// handled by Enter routing; selectCurrent only sets results.
 	}
 
 	if m.result != nil {
@@ -1515,18 +1500,16 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyEnter:
 			itemType, projectIdx, _ := m.ResolveItem(m.selectedItem)
-			if itemType == "action" {
-				if projectIdx < len(actionNames) {
-					switch actionNames[projectIdx] {
-					case "add-project":
-						return m.enterInputMode("add-project")
-					case "delete-project":
-						return m.enterDeleteMode()
-					case "open-once":
-						return m.enterInputMode("open-once")
-					}
+			switch itemType {
+			case "add-project":
+				return m.enterInputMode("add-project")
+			case "add-worktree":
+				if cmd := m.selectCurrent(); cmd != nil {
+					return m, cmd
 				}
+				return m, nil
 			}
+			_ = projectIdx
 			if cmd := m.selectCurrent(); cmd != nil {
 				return m, cmd
 			}
@@ -2554,417 +2537,6 @@ func shortenHomePath(path string) string {
 		return "~" + path[len(home):]
 	}
 	return path
-}
-
-// renderMenuBox builds the complete menu box string.
-func (m *MainMenuModel) renderMenuBox() string {
-	dimStyle := lipgloss.NewStyle().Foreground(m.theme.Dim)
-	primaryStyle := lipgloss.NewStyle().Foreground(m.theme.Primary)
-	primaryBoldStyle := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
-	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("247"))
-	updateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	neutralTextStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	neutralDimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	moveFlashStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
-	deleteStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-	staleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	deleteDimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-
-	hLine := strings.Repeat("\u2500", menuInnerWidth)
-	topBorder := dimStyle.Render("\u256d" + hLine + "\u256e")
-	separator := dimStyle.Render("\u251c" + hLine + "\u2524")
-	bottomBorder := dimStyle.Render("\u2570" + hLine + "\u256f")
-	leftBorder := dimStyle.Render("\u2502")
-	rightBorder := strings.Repeat(" ", menuPadding) + dimStyle.Render("\u2502")
-
-	var lines []string
-
-	// Top border
-	lines = append(lines, topBorder)
-
-	// Title row
-	title := primaryBoldStyle.Render("Ghost Tab")
-	aiDisplay := AIToolDisplayName(m.CurrentAITool())
-	var aiPart string
-	if len(m.aiTools) > 1 {
-		aiPart = dimStyle.Render(" \u25c2 ") + primaryStyle.Render(aiDisplay) + dimStyle.Render(" \u25b8")
-	} else {
-		aiPart = " " + primaryStyle.Render(aiDisplay)
-	}
-	// Right-align AI tool chooser: "⬡ Ghost Tab" left, "◂ Claude Code ▸" right
-	aiPadding := menuContentWidth - lipgloss.Width(title) - lipgloss.Width(aiPart) - 1 // -1 for leading space
-	if aiPadding < 1 {
-		aiPadding = 1
-	}
-	titleRow := leftBorder + " " + title + strings.Repeat(" ", aiPadding) + aiPart + rightBorder
-	lines = append(lines, titleRow)
-
-	// Separator after title
-	lines = append(lines, separator)
-
-	// Update notification (if set)
-	if m.updateVersion != "" {
-		updateMsg := fmt.Sprintf("Update available: %s (brew upgrade ghost-tab)", m.updateVersion)
-		updateContent := updateStyle.Render(updateMsg)
-		updatePadding := menuContentWidth - lipgloss.Width(updateContent) - 2 // leading 2 spaces
-		if updatePadding < 0 {
-			updatePadding = 0
-		}
-		updateRow := leftBorder + "  " + updateContent + strings.Repeat(" ", updatePadding) + rightBorder
-		lines = append(lines, updateRow)
-	}
-
-	// Empty line before items
-	emptyRow := leftBorder + strings.Repeat(" ", menuContentWidth) + rightBorder
-	lines = append(lines, emptyRow)
-
-	// Project items
-	numProjects := len(m.projects)
-	for i, proj := range m.projects {
-		selected := func() bool {
-			if m.deleteMode {
-				return m.deleteSelected == m.projectToFlatIndex(i)
-			}
-			return m.selectedItem == m.projectToFlatIndex(i)
-		}()
-		flashing := !m.deleteMode && m.moveFlashIdx == i && m.moveFlashTimer > 0
-		num := fmt.Sprintf("%d", i+1)
-
-		var nameLine string
-		var pathLine string
-
-		shortPath := TruncateMiddle(shortenHomePath(proj.Path), menuContentWidth-7)
-
-		// Worktree count indicator
-		var wtIndicator string
-		if len(proj.Worktrees) > 0 {
-			wtCount := len(proj.Worktrees)
-			wtWord := "worktrees"
-			if wtCount == 1 {
-				wtWord = "worktree"
-			}
-			wtIndicator = fmt.Sprintf("%d %s", wtCount, wtWord)
-		}
-
-		if selected {
-			// Delete mode: red styles. Normal mode: primary or flash.
-			selNameStyle := primaryBoldStyle
-			selPathStyle := primaryStyle
-			if m.deleteMode {
-				selNameStyle = deleteStyle
-				selPathStyle = deleteDimStyle
-			} else if flashing {
-				selNameStyle = moveFlashStyle
-				selPathStyle = moveFlashStyle
-			}
-
-			marker := selNameStyle.Render("\u258e")
-			truncName := TruncateMiddle(proj.Name, menuContentWidth-7-len(num))
-			nameText := selNameStyle.Render(num + "  " + truncName)
-			// "  ▎ 1  name" -> 2 spaces + marker + space + num + 2 spaces + name
-			// For stale projects, replace the first 2 spaces with "⚠ " marker.
-			var namePrefix string
-			if proj.Stale && !m.deleteMode {
-				namePrefix = staleStyle.Render("⚠") + " "
-			} else {
-				namePrefix = "  "
-			}
-			nameContent := namePrefix + marker + " " + nameText
-
-			if wtIndicator != "" {
-				wtStyled := dimStyle.Render(wtIndicator)
-				gap := menuContentWidth - lipgloss.Width(nameContent) - lipgloss.Width(wtStyled)
-				if gap < 1 {
-					gap = 1
-				}
-				nameLine = leftBorder + nameContent + strings.Repeat(" ", gap) + wtStyled + rightBorder
-			} else {
-				namePadding := menuContentWidth - lipgloss.Width(nameContent)
-				if namePadding < 0 {
-					namePadding = 0
-				}
-				nameLine = leftBorder + nameContent + strings.Repeat(" ", namePadding) + rightBorder
-			}
-
-			pathContent := "       " + selPathStyle.Render(shortPath)
-			pathPadding := menuContentWidth - lipgloss.Width(pathContent)
-			if pathPadding < 0 {
-				pathPadding = 0
-			}
-			pathLine = leftBorder + pathContent + strings.Repeat(" ", pathPadding) + rightBorder
-		} else {
-			// Choose style: amber flash when recently moved, neutral otherwise.
-			rowNameStyle := neutralTextStyle
-			rowDimStyle := neutralDimStyle
-			if flashing {
-				rowNameStyle = moveFlashStyle
-				rowDimStyle = moveFlashStyle
-			}
-
-			numText := rowDimStyle.Render(num)
-			truncName := TruncateMiddle(proj.Name, menuContentWidth-6-len(num))
-			nameText := rowNameStyle.Render(truncName)
-			// For stale projects, replace the leading 2 spaces with "⚠ " marker.
-			var rowPrefix string
-			if proj.Stale {
-				rowPrefix = staleStyle.Render("⚠") + " "
-			} else {
-				rowPrefix = "  "
-			}
-			nameContent := rowPrefix + "  " + numText + "  " + nameText
-
-			if wtIndicator != "" {
-				wtStyled := rowDimStyle.Render(wtIndicator)
-				gap := menuContentWidth - lipgloss.Width(nameContent) - lipgloss.Width(wtStyled)
-				if gap < 1 {
-					gap = 1
-				}
-				nameLine = leftBorder + nameContent + strings.Repeat(" ", gap) + wtStyled + rightBorder
-			} else {
-				namePadding := menuContentWidth - lipgloss.Width(nameContent)
-				if namePadding < 0 {
-					namePadding = 0
-				}
-				nameLine = leftBorder + nameContent + strings.Repeat(" ", namePadding) + rightBorder
-			}
-
-			pathContent := "       " + rowDimStyle.Render(shortPath)
-			pathPadding := menuContentWidth - lipgloss.Width(pathContent)
-			if pathPadding < 0 {
-				pathPadding = 0
-			}
-			pathLine = leftBorder + pathContent + strings.Repeat(" ", pathPadding) + rightBorder
-		}
-
-		lines = append(lines, nameLine)
-		lines = append(lines, pathLine)
-
-		// Expanded worktree entries (2 rows each: branch + path) + add-worktree (1 row)
-		if m.expandedWorktrees[i] {
-			// All worktrees use ├─ connector (add-worktree follows as last item)
-			connector := "\u251c\u2500"
-			for j, wt := range proj.Worktrees {
-				wtFlatIdx := m.projectToFlatIndex(i) + 1 + j
-				wtSelected := !m.deleteMode && m.selectedItem == wtFlatIdx
-				wtDeleteSelected := m.deleteMode && m.deleteSelected == wtFlatIdx
-				var wtBranchLine, wtPathLine string
-				branchDisplay := TruncateMiddle(wt.Branch, menuContentWidth-11)
-				shortWtPath := TruncateMiddle(shortenHomePath(wt.Path), menuContentWidth-11)
-
-				if wtDeleteSelected {
-					marker := deleteStyle.Render("\u258e")
-					connStyled := deleteStyle.Render(connector)
-					branchText := deleteStyle.Render(branchDisplay)
-					content := "     " + marker + " " + connStyled + " " + branchText
-					padding := menuContentWidth - lipgloss.Width(content)
-					if padding < 0 {
-						padding = 0
-					}
-					wtBranchLine = leftBorder + content + strings.Repeat(" ", padding) + rightBorder
-
-					pathContent := "          " + deleteDimStyle.Render(shortWtPath)
-					pathPadding := menuContentWidth - lipgloss.Width(pathContent)
-					if pathPadding < 0 {
-						pathPadding = 0
-					}
-					wtPathLine = leftBorder + pathContent + strings.Repeat(" ", pathPadding) + rightBorder
-				} else if wtSelected {
-					marker := primaryBoldStyle.Render("\u258e")
-					connStyled := primaryBoldStyle.Render(connector)
-					branchText := primaryBoldStyle.Render(branchDisplay)
-					content := "     " + marker + " " + connStyled + " " + branchText
-					padding := menuContentWidth - lipgloss.Width(content)
-					if padding < 0 {
-						padding = 0
-					}
-					wtBranchLine = leftBorder + content + strings.Repeat(" ", padding) + rightBorder
-
-					pathContent := "          " + primaryStyle.Render(shortWtPath)
-					pathPadding := menuContentWidth - lipgloss.Width(pathContent)
-					if pathPadding < 0 {
-						pathPadding = 0
-					}
-					wtPathLine = leftBorder + pathContent + strings.Repeat(" ", pathPadding) + rightBorder
-				} else {
-					connStyled := neutralDimStyle.Render(connector)
-					branchText := neutralTextStyle.Render(branchDisplay)
-					content := "       " + connStyled + " " + branchText
-					padding := menuContentWidth - lipgloss.Width(content)
-					if padding < 0 {
-						padding = 0
-					}
-					wtBranchLine = leftBorder + content + strings.Repeat(" ", padding) + rightBorder
-
-					pathContent := "          " + neutralDimStyle.Render(shortWtPath)
-					pathPadding := menuContentWidth - lipgloss.Width(pathContent)
-					if pathPadding < 0 {
-						pathPadding = 0
-					}
-					wtPathLine = leftBorder + pathContent + strings.Repeat(" ", pathPadding) + rightBorder
-				}
-				lines = append(lines, wtBranchLine)
-				lines = append(lines, wtPathLine)
-			}
-
-			// Add-worktree item (1 row, └─ connector)
-			addWtFlatIdx := m.projectToFlatIndex(i) + 1 + len(proj.Worktrees)
-			addWtSelected := m.selectedItem == addWtFlatIdx
-			addConnector := "\u2514\u2500"
-			var addWtLine string
-			if addWtSelected {
-				marker := primaryBoldStyle.Render("\u258e")
-				connStyled := primaryBoldStyle.Render(addConnector)
-				addLabel := primaryBoldStyle.Render("+ Add worktree")
-				content := "     " + marker + " " + connStyled + " " + addLabel
-				padding := menuContentWidth - lipgloss.Width(content)
-				if padding < 0 {
-					padding = 0
-				}
-				addWtLine = leftBorder + content + strings.Repeat(" ", padding) + rightBorder
-			} else {
-				connStyled := neutralDimStyle.Render(addConnector)
-				addLabel := neutralDimStyle.Render("+ Add worktree")
-				content := "       " + connStyled + " " + addLabel
-				padding := menuContentWidth - lipgloss.Width(content)
-				if padding < 0 {
-					padding = 0
-				}
-				addWtLine = leftBorder + content + strings.Repeat(" ", padding) + rightBorder
-			}
-			lines = append(lines, addWtLine)
-		}
-	}
-
-	// Separator between projects and actions (only if there are projects)
-	if numProjects > 0 {
-		lines = append(lines, separator)
-	}
-
-	// Action items
-	for i, action := range actionLabels {
-		actionIdx := numProjects + m.expandedWorktreeCount() + i
-		selected := !m.deleteMode && m.selectedItem == actionIdx
-
-		var actionLine string
-		if selected {
-			marker := primaryBoldStyle.Render("\u258e")
-			shortcutText := primaryBoldStyle.Render(action.shortcut + "  " + action.label)
-			content := "  " + marker + " " + shortcutText
-			padding := menuContentWidth - lipgloss.Width(content)
-			if padding < 0 {
-				padding = 0
-			}
-			actionLine = leftBorder + content + strings.Repeat(" ", padding) + rightBorder
-		} else {
-			shortcutText := neutralDimStyle.Render(action.shortcut)
-			labelText := neutralTextStyle.Render(action.label)
-			content := "    " + shortcutText + "  " + labelText
-			padding := menuContentWidth - lipgloss.Width(content)
-			if padding < 0 {
-				padding = 0
-			}
-			actionLine = leftBorder + content + strings.Repeat(" ", padding) + rightBorder
-		}
-
-		lines = append(lines, actionLine)
-	}
-
-	// Feedback message (if any)
-	if m.feedbackMsg != "" {
-		var feedbackColor lipgloss.Color
-		if m.feedbackStyle == "success" {
-			feedbackColor = lipgloss.Color("114") // green
-		} else {
-			feedbackColor = lipgloss.Color("220") // yellow
-		}
-		fStyle := lipgloss.NewStyle().Foreground(feedbackColor)
-		fbContent := "  " + fStyle.Render(m.feedbackMsg)
-		fbPadding := menuContentWidth - lipgloss.Width(fbContent)
-		if fbPadding < 0 {
-			fbPadding = 0
-		}
-		lines = append(lines, leftBorder+fbContent+strings.Repeat(" ", fbPadding)+rightBorder)
-	}
-
-	// Stale confirmation prompt (if active)
-	if m.staleConfirmIdx >= 0 && m.staleConfirmIdx < len(m.projects) {
-		stalePath := m.projects[m.staleConfirmIdx].Path
-		warnLine := staleStyle.Render("⚠") + " " + staleStyle.Render("Path not found: "+stalePath)
-		warnContent := "  " + warnLine
-		warnPadding := menuContentWidth - lipgloss.Width(warnContent)
-		if warnPadding < 0 {
-			warnPadding = 0
-		}
-		lines = append(lines, leftBorder+warnContent+strings.Repeat(" ", warnPadding)+rightBorder)
-
-		promptLine := neutralDimStyle.Render("  Launch anyway? [y/N]")
-		promptPadding := menuContentWidth - lipgloss.Width(promptLine)
-		if promptPadding < 0 {
-			promptPadding = 0
-		}
-		lines = append(lines, leftBorder+promptLine+strings.Repeat(" ", promptPadding)+rightBorder)
-	}
-
-	// Separator before help
-	lines = append(lines, separator)
-
-	// Help row
-	hasWorktrees := false
-	for _, p := range m.projects {
-		if len(p.Worktrees) > 0 {
-			hasWorktrees = true
-			break
-		}
-	}
-
-	sep := dimStyle.Render(" · ")
-	var helpContent string
-	if m.deleteMode {
-		helpContent = helpStyle.Render("\u2191\u2193 navigate") + sep + helpStyle.Render("1-9 jump") + sep + helpStyle.Render("\u23ce delete") + sep + helpStyle.Render("Q cancel")
-	} else if m.showEscHint {
-		helpContent = helpStyle.Render("Press Esc again to quit")
-	} else {
-		var parts []string
-		if len(m.projects) > 1 {
-			parts = append(parts, helpStyle.Render("Shift+\u2191\u2193 move"))
-		}
-		if len(m.aiTools) > 1 {
-			parts = append(parts, helpStyle.Render("\u2190\u2192 AI"))
-		}
-		if hasWorktrees {
-			parts = append(parts, helpStyle.Render("w trees"))
-		}
-		parts = append(parts, helpStyle.Render("d delete"))
-		parts = append(parts, helpStyle.Render("\u23ce select"))
-		helpContent = strings.Join(parts, sep)
-	}
-	helpWidth := lipgloss.Width(helpContent)
-	helpLeft := (menuInnerWidth - helpWidth) / 2
-	if helpLeft < 0 {
-		helpLeft = 0
-	}
-	helpRight := menuInnerWidth - helpWidth - helpLeft - menuPadding
-	if helpRight < 0 {
-		helpRight = 0
-	}
-	helpRow := leftBorder + strings.Repeat(" ", helpLeft) + helpContent + strings.Repeat(" ", helpRight) + rightBorder
-	lines = append(lines, helpRow)
-
-	// Bottom border
-	lines = append(lines, bottomBorder)
-
-	// Scroll clipping when menu is taller than the available terminal height.
-	headerEnd := 4
-	if m.updateVersion != "" {
-		headerEnd = 5
-	}
-	footerStart := len(lines) - 3
-	avail := m.availableMenuHeight()
-	if avail > 0 && len(lines) > avail && headerEnd < footerStart {
-		lines = m.applyMenuScroll(lines, headerEnd, footerStart, avail)
-	}
-
-	return strings.Join(lines, "\n")
 }
 
 // availableMenuHeight returns the vertical budget the menu box has inside the

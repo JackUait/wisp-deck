@@ -83,9 +83,9 @@ func TestMenuBox_AIToolHasTrailingSpace(t *testing.T) {
 }
 
 func TestMenuBox_HelpTextCentered(t *testing.T) {
-	// Minimal hint ("d delete · ⏎ select") should be visually centered.
-	// The rightBorder includes menuPadding=2 spaces, so those count toward
-	// the right-side whitespace. leftPad should roughly equal rightPad.
+	// The footer hint now renders below the box (no border framing) and is
+	// centered to the full box width. leftPad should roughly equal rightPad
+	// when measured against the box width.
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "animated")
 	m.width = 100
 	m.height = 40
@@ -95,7 +95,7 @@ func TestMenuBox_HelpTextCentered(t *testing.T) {
 
 	var helpLine string
 	for _, l := range lines {
-		if strings.Contains(l, "delete") && strings.Contains(l, "select") {
+		if strings.Contains(l, "move") && strings.Contains(l, "open") {
 			helpLine = l
 			break
 		}
@@ -104,27 +104,13 @@ func TestMenuBox_HelpTextCentered(t *testing.T) {
 		t.Fatal("could not find help row in:\n" + raw)
 	}
 
-	runes := []rune(helpLine)
-	// inner = everything between left border │ and right border │
-	inner := runes[1 : len(runes)-1]
-
-	leftPad := 0
-	for _, r := range inner {
-		if r != ' ' {
-			break
-		}
-		leftPad++
-	}
-	rightPad := 0
-	for i := len(inner) - 1; i >= 0; i-- {
-		if inner[i] != ' ' {
-			break
-		}
-		rightPad++
-	}
-
-	// rightBorder has menuPadding=2 built-in spaces, so rightPad includes those.
-	// For centered text: leftPad ≈ rightPad (within 1 for odd-width content).
+	// The hint is the last line, below the rounded box. It carries no border
+	// columns, so its width may differ slightly from the box. Verify it is
+	// approximately centered against the box width.
+	boxWidth := len([]rune(lines[0])) // top border defines box width
+	content := strings.TrimSpace(helpLine)
+	leftPad := len([]rune(helpLine)) - len([]rune(strings.TrimLeft(helpLine, " ")))
+	rightPad := boxWidth - leftPad - len([]rune(content))
 	diff := leftPad - rightPad
 	if diff < 0 {
 		diff = -diff
@@ -140,18 +126,22 @@ func TestMenuBox_HelpTextPresent(t *testing.T) {
 	box := m.renderMenuBox()
 
 	raw := stripAnsi(box)
-	// Help text should not contain navigate hint; should contain delete and select
+	// The footer hint must show the redesigned key list and not the old
+	// delete-mode "navigate" hint.
 	if strings.Contains(raw, "navigate") {
 		t.Error("help text should NOT contain 'navigate'")
 	}
-	if !strings.Contains(raw, "delete") {
-		t.Error("help text missing 'delete' hint")
+	if !strings.Contains(raw, "move") {
+		t.Error("help text missing 'move' hint")
 	}
 	if !strings.Contains(raw, "AI") {
-		t.Error("help text missing 'AI' hint (expected when multiple AI tools available)")
+		t.Error("help text missing 'AI' hint")
 	}
-	if !strings.Contains(raw, "select") {
-		t.Error("help text missing 'select'")
+	if !strings.Contains(raw, "open") {
+		t.Error("help text missing 'open' hint")
+	}
+	if !strings.Contains(raw, "P plain") {
+		t.Error("help text missing 'P plain' hint")
 	}
 }
 
@@ -464,7 +454,9 @@ func TestMenuBox_NoIndicatorWithoutWorktrees(t *testing.T) {
 	}
 }
 
-func TestMenuBox_HelpTextIncludesWorktreeKey(t *testing.T) {
+func TestMenuBox_ActionBarShowsWorktreesForProject(t *testing.T) {
+	// Worktree access moved from the footer hint into the contextual action
+	// bar: a selected project row offers a "Worktrees" action.
 	projects := []models.Project{
 		{
 			Name: "proj",
@@ -477,18 +469,19 @@ func TestMenuBox_HelpTextIncludesWorktreeKey(t *testing.T) {
 	m := NewMainMenu(projects, []string{"claude", "codex"}, "claude", "animated")
 	m.width = 100
 	m.height = 40
+	m.selectedItem = 0 // project row
 	box := m.renderMenuBox()
 	raw := stripAnsi(box)
 
-	if !strings.Contains(raw, "w trees") && !strings.Contains(raw, "W trees") {
-		t.Errorf("expected help text to mention 'w trees', got:\n%s", raw)
+	if !strings.Contains(raw, "Worktrees") {
+		t.Errorf("expected action bar to offer 'Worktrees' for a project, got:\n%s", raw)
 	}
 }
 
 func TestMenuBox_HelpTextFitsWithinBorders(t *testing.T) {
-	// With multiple AI tools + worktrees, the help text is at its longest:
-	// "↑↓ navigate ←→ AI tool S settings w worktrees ⏎ select"
-	// This must fit within the container borders (all lines same width).
+	// Every framed box row (top border .. bottom border) must share the same
+	// width. The footer hint now renders below the box (after the bottom
+	// border) without border columns, so it is excluded from this check.
 	projects := []models.Project{
 		{
 			Name: "proj",
@@ -509,9 +502,11 @@ func TestMenuBox_HelpTextFitsWithinBorders(t *testing.T) {
 		t.Fatal("renderMenuBox produced fewer than 3 lines")
 	}
 
-	// The top border defines the expected width of every row
+	// The top border defines the expected width of every framed row. The last
+	// line is the borderless footer hint, so stop at the bottom border.
 	borderWidth := len([]rune(lines[0]))
-	for i, line := range lines {
+	for i := 0; i < len(lines)-1; i++ {
+		line := lines[i]
 		lineWidth := len([]rune(line))
 		if lineWidth != borderWidth {
 			t.Errorf("line %d width %d != border width %d: %q", i, lineWidth, borderWidth, line)
@@ -566,7 +561,7 @@ func TestMenuBox_SelectedProjectUsesThemeColor(t *testing.T) {
 	}
 }
 
-func TestMenuBox_UnselectedActionUsesNeutralColors(t *testing.T) {
+func TestMenuBox_UnselectedAddProjectUsesThemeText(t *testing.T) {
 	// Force color output so lipgloss emits ANSI codes in tests.
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
@@ -578,30 +573,21 @@ func TestMenuBox_UnselectedActionUsesNeutralColors(t *testing.T) {
 	m := NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.width = 100
 	m.height = 40
-	// Select first project (item 0), so action items are unselected
+	// Select first project (item 0), so the add-project row is unselected.
+	m.selectedItem = 0
 	box := m.renderMenuBox()
 
-	// Find action item lines in raw output — they should contain neutral colors
-	// Action shortcuts and labels should use 245 and 252 respectively
+	// The unselected "+ Add project" row uses theme.Text (223 for claude).
 	lines := strings.Split(box, "\n")
-	found245 := false
-	found252 := false
+	found := false
 	for _, line := range lines {
 		raw := stripAnsi(line)
-		if strings.Contains(raw, "Add new project") {
-			if strings.Contains(line, "\x1b[38;5;245m") {
-				found245 = true
-			}
-			if strings.Contains(line, "\x1b[38;5;252m") {
-				found252 = true
-			}
+		if strings.Contains(raw, "Add project") && strings.Contains(line, "\x1b[38;5;223m") {
+			found = true
 		}
 	}
-	if !found245 {
-		t.Error("expected neutral dim color (245) for unselected action shortcut")
-	}
-	if !found252 {
-		t.Error("expected neutral text color (252) for unselected action label")
+	if !found {
+		t.Error("expected theme text color (223) for unselected '+ Add project' row")
 	}
 }
 
@@ -661,7 +647,9 @@ func TestMenuBox_UsesRoundedCorners(t *testing.T) {
 		t.Fatal("renderMenuBox produced fewer than 2 lines")
 	}
 	topLine := lines[0]
-	bottomLine := lines[len(lines)-1]
+	// The footer hint renders below the box, so the bottom border is the
+	// second-to-last line.
+	bottomLine := lines[len(lines)-2]
 
 	if !strings.HasPrefix(topLine, "╭") || !strings.HasSuffix(topLine, "╮") {
 		t.Errorf("top border should use rounded corners ╭╮, got: %q", topLine)
@@ -724,7 +712,9 @@ func TestDeleteBox_UsesRoundedCorners(t *testing.T) {
 		t.Fatal("renderMenuBox (delete mode) produced fewer than 2 lines")
 	}
 	topLine := lines[0]
-	bottomLine := lines[len(lines)-1]
+	// The footer hint renders below the box, so the bottom border is the
+	// second-to-last line.
+	bottomLine := lines[len(lines)-2]
 
 	if !strings.HasPrefix(topLine, "╭") || !strings.HasSuffix(topLine, "╮") {
 		t.Errorf("top border should use rounded corners ╭╮, got: %q", topLine)
@@ -794,7 +784,7 @@ func TestMenuBox_ShowsScrollIndicatorWhenOverflowing(t *testing.T) {
 }
 
 func TestMenuBox_NoScrollClipWhenFits(t *testing.T) {
-	// When everything fits, menu must render all projects & actions.
+	// When everything fits, menu must render all projects & the add-project row.
 	m := NewMainMenu(scrollTestProjects(3), []string{"claude"}, "claude", "animated")
 	m.width = 100
 	m.height = 60
@@ -805,8 +795,8 @@ func TestMenuBox_NoScrollClipWhenFits(t *testing.T) {
 			t.Errorf("project %q missing when content fits:\n%s", p.Name, raw)
 		}
 	}
-	if !strings.Contains(raw, "Add new project") {
-		t.Errorf("actions missing when content fits:\n%s", raw)
+	if !strings.Contains(raw, "Add project") {
+		t.Errorf("add-project row missing when content fits:\n%s", raw)
 	}
 	// No scroll indicators when everything fits.
 	if strings.ContainsAny(raw, "▲▼") {
@@ -841,7 +831,7 @@ func TestMenuBox_CursorVisibleAtVerySmallHeight(t *testing.T) {
 	// the cursor row.
 	m := NewMainMenu(scrollTestProjects(10), []string{"claude"}, "claude", "animated")
 	m.width = 100
-	m.height = 9 // 4 header + 3 footer + 2 body
+	m.height = 9       // 4 header + 3 footer + 2 body
 	m.selectedItem = 4 // 5th project, middle of list
 	box := m.renderMenuBox()
 	raw := stripAnsi(box)
