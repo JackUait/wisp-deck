@@ -35,45 +35,60 @@ compact_view() {
       printf '%s' "$p"
       return
     fi
-    # Keep last segment (filename) + enough leading segments to fill max
     local fname="${p##*/}"
     local dirs="${p%/*}"
-    # If filename alone exceeds max, just truncate from right
+    # Filename alone exceeds max — truncate from right
     if [ ${#fname} -ge "$max" ]; then
       printf '%.*s…' "$((max - 1))" "$fname"
       return
     fi
-    # Build prefix: take dir segments from left until we run out of room
+    # If filename is within 3 chars of max, no room for meaningful dir prefix
+    local avail=$((max - ${#fname}))
+    if [ "$avail" -le 3 ]; then
+      printf '%s' "$fname"
+      return
+    fi
+    # Build prefix: take dir segments from left, checking total width
     local keep=$((max - ${#fname} - 3))  # 3 for "/…/"
-    [ "$keep" -lt 1 ] && keep=1
     local prefix=""
     local remaining="$dirs"
     while [ -n "$remaining" ]; do
       local seg="${remaining%%/*}"
-      if [ ${#prefix} -gt 0 ]; then
-        # Check if adding this segment would exceed keep
-        if [ $((${#prefix} + ${#seg} + 1)) -gt "$keep" ]; then
-          break
-        fi
-        prefix="${prefix}/${seg}"
+      local candidate
+      if [ -z "$prefix" ]; then
+        candidate="$seg"
       else
-        prefix="$seg"
+        candidate="${prefix}/${seg}"
       fi
+      if [ ${#candidate} -gt "$keep" ]; then
+        break
+      fi
+      prefix="$candidate"
       if [ "$remaining" = "$seg" ]; then
         break
       fi
       remaining="${remaining#*/}"
     done
-    printf '%s/…/%s' "$prefix" "$fname"
+    if [ -z "$prefix" ]; then
+      printf '%s' "$fname"
+    else
+      printf '%s/…/%s' "$prefix" "$fname"
+    fi
   }
 
   while true; do
+    # Capture pane width outside subshell.
+    # tput cols may return wrong value in tmux; query tmux directly.
+    local w
+    if [ -n "${TMUX:-}" ] && command -v tmux &>/dev/null; then
+      w=$(tmux display-message -p '#{pane_width}' 2>/dev/null || tput cols 2>/dev/null || echo 80)
+    else
+      w=$(tput cols 2>/dev/null || echo 80)
+    fi
+
     output=$(
       cd "$project_dir" || exit 1
 
-      # Terminal width
-      local w
-      w=$(tput cols 2>/dev/null || echo 80)
       # Inner content width (2-space padding each side)
       local iw=$((w - 4))
       [ "$iw" -lt 20 ] && iw=20
