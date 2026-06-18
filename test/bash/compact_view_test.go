@@ -46,37 +46,6 @@ func TestFormatFile_truncates_long_basename_with_ellipsis(t *testing.T) {
 	}
 }
 
-// barcode_split divides `cells` segments between additions (green) and
-// deletions (red) proportionally, echoing "<green> <red>".
-
-func TestBarcodeSplit(t *testing.T) {
-	tests := []struct {
-		name              string
-		added, deleted    string
-		cells             string
-		want              string
-	}{
-		{"mostly additions", "142", "38", "5", "4 1"},
-		{"all additions", "96", "0", "5", "5 0"},
-		{"all deletions", "0", "12", "5", "0 5"},
-		{"balanced", "54", "29", "5", "3 2"},
-		{"tiny additions still show one green", "1", "100", "5", "1 4"},
-		{"tiny deletions still show one red", "100", "1", "5", "4 1"},
-		{"no changes", "0", "0", "5", "0 0"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			out, code := runBashFunc(t, "lib/compact-view.sh", "barcode_split",
-				[]string{tt.added, tt.deleted, tt.cells}, nil)
-			assertExitCode(t, code, 0)
-			if got := strings.TrimSpace(out); got != tt.want {
-				t.Errorf("barcode_split(%s,%s,%s) = %q, want %q",
-					tt.added, tt.deleted, tt.cells, got, tt.want)
-			}
-		})
-	}
-}
-
 // sum_numstat totals the added/deleted columns of `git --numstat` output,
 // treating binary markers ("-") as zero. Echoes "<added> <deleted>".
 

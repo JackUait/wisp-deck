@@ -1,7 +1,7 @@
 #!/bin/bash
 # shellcheck disable=SC2059  # Intentional: ANSI escape variables in printf format strings
 # Compact view: a "changeset ledger" of working-tree changes instead of lazygit.
-# Branch as a heading, net +/- stamp, filename-forward rows with barcode ratios.
+# Branch as a heading, net +/- stamp, aligned +/- columns with filenames.
 # Refreshes every 2 seconds. Ctrl-C to exit.
 
 # format_file shows the file BASENAME only (the path is dropped), truncating
@@ -15,24 +15,6 @@ format_file() {
   else
     printf '%.*s…' "$((max - 1))" "$fname"
   fi
-}
-
-# barcode_split divides `cells` segments between additions and deletions
-# proportionally, echoing "<green> <red>". A non-zero side always keeps at
-# least one segment so the ratio is never visually erased.
-# Usage: barcode_split <added> <deleted> <cells>
-barcode_split() {
-  local added="$1" deleted="$2" cells="$3"
-  local total=$((added + deleted))
-  if [ "$total" -eq 0 ]; then
-    printf '0 0'
-    return
-  fi
-  # Rounded proportion: (added*cells + total/2) / total
-  local green=$(((added * cells + total / 2) / total))
-  [ "$added" -gt 0 ] && [ "$green" -eq 0 ] && green=1
-  [ "$deleted" -gt 0 ] && [ "$green" -eq "$cells" ] && green=$((cells - 1))
-  printf '%d %d' "$green" "$((cells - green))"
 }
 
 # sum_numstat totals the added/deleted columns of `git --numstat` output read
@@ -74,41 +56,23 @@ compact_view() {
   local reset="\033[0m"
   local dimline="\033[2m"
 
-  local BARCELLS=5
-
-  # render_barcode prints a colored ratio bar for an added/deleted pair.
-  render_barcode() {
-    local added="$1" deleted="$2"
-    local split g r
-    split=$(barcode_split "$added" "$deleted" "$BARCELLS")
-    g=${split% *}
-    r=${split#* }
-    local i
-    printf "${green}"
-    for ((i = 0; i < g; i++)); do printf '▰'; done
-    printf "${red}"
-    for ((i = 0; i < r; i++)); do printf '▰'; done
-    printf "${reset}"
-  }
-
   # render_group prints a status group: a glyph header, then one row per file.
-  # Each row leads with its own aligned "+NNN -NNN" columns, then the barcode,
-  # then the filename — so on a narrow pane the numbers can never drift onto a
-  # neighbouring file. Long filenames truncate at the right edge.
+  # Each row leads with its own aligned "+NNN -NNN" columns, then the filename,
+  # so on a narrow pane the numbers can never drift onto a neighbouring file.
+  # Long filenames truncate at the right edge.
   # Usage: render_group <numstat text> <glyph color> <glyph> <label> <name_width> <count>
   render_group() {
     local data="$1" gcolor="$2" glyph="$3" label="$4" name_width="$5" count="$6"
     [ -z "$data" ] && return
     printf " ${gcolor}${bold}%s${reset} ${gcolor}%s${reset}  ${dim}(%s)${reset}\n" "$glyph" "$label" "$count"
-    local added deleted file display bar
+    local added deleted file display
     while IFS=$'\t' read -r added deleted file; do
       [ -z "$added" ] && continue
       [ "$added" = "-" ] && added=0
       [ "$deleted" = "-" ] && deleted=0
       display=$(format_file "$file" "$name_width")
-      bar=$(render_barcode "$added" "$deleted")
-      printf "   ${green}+%-4s${reset}${red}−%-4s${reset} %b  ${bright}%s${reset}\n" \
-        "$added" "$deleted" "$bar" "$display"
+      printf "   ${green}+%-4s${reset}${red}−%-4s${reset}  ${bright}%s${reset}\n" \
+        "$added" "$deleted" "$display"
     done <<< "$data"
     printf "\n"
   }
@@ -189,9 +153,9 @@ compact_view() {
       printf '%.*s' "$iw" '─'
       printf "${reset}\n"
 
-      # Filenames follow the "+NNN -NNN <bar>  " prefix:
-      #   indent(3) + "+"+4 + "−"+4 + space + bar(BARCELLS) + 2 spaces
-      local name_width=$((iw - 17 - BARCELLS))
+      # Filenames follow the "+NNN -NNN  " prefix:
+      #   indent(3) + "+"+4 + "−"+4 + 2 spaces
+      local name_width=$((iw - 15))
       [ "$name_width" -lt 8 ] && name_width=8
 
       local has_content=0
