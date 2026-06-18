@@ -1,7 +1,54 @@
 #!/bin/bash
 # shellcheck disable=SC2059  # Intentional: ANSI escape variables in printf format strings
-# Compact view: show changed files with +/- line counts instead of lazygit.
+# Compact view: a "changeset ledger" of working-tree changes instead of lazygit.
+# Branch as a heading, net +/- stamp, filename-forward rows with barcode ratios.
 # Refreshes every 2 seconds. Ctrl-C to exit.
+
+# format_file shows the file BASENAME only (the path is dropped), truncating
+# with an ellipsis when it exceeds max width.
+# Usage: format_file <path> <max_width>
+format_file() {
+  local p="$1" max="$2"
+  local fname="${p##*/}"
+  if [ "${#fname}" -le "$max" ]; then
+    printf '%s' "$fname"
+  else
+    printf '%.*s…' "$((max - 1))" "$fname"
+  fi
+}
+
+# barcode_split divides `cells` segments between additions and deletions
+# proportionally, echoing "<green> <red>". A non-zero side always keeps at
+# least one segment so the ratio is never visually erased.
+# Usage: barcode_split <added> <deleted> <cells>
+barcode_split() {
+  local added="$1" deleted="$2" cells="$3"
+  local total=$((added + deleted))
+  if [ "$total" -eq 0 ]; then
+    printf '0 0'
+    return
+  fi
+  # Rounded proportion: (added*cells + total/2) / total
+  local green=$(((added * cells + total / 2) / total))
+  [ "$added" -gt 0 ] && [ "$green" -eq 0 ] && green=1
+  [ "$deleted" -gt 0 ] && [ "$green" -eq "$cells" ] && green=$((cells - 1))
+  printf '%d %d' "$green" "$((cells - green))"
+}
+
+# sum_numstat totals the added/deleted columns of `git --numstat` output read
+# from stdin, treating binary markers ("-") as zero. Echoes "<added> <deleted>".
+# Usage: printf '%s\n' "$numstat" | sum_numstat
+sum_numstat() {
+  local a=0 d=0 added deleted _rest
+  while IFS=$'\t' read -r added deleted _rest; do
+    [ -z "$added" ] && continue
+    [ "$added" = "-" ] && added=0
+    [ "$deleted" = "-" ] && deleted=0
+    a=$((a + added))
+    d=$((d + deleted))
+  done
+  printf '%d %d' "$a" "$d"
+}
 
 compact_view() {
   local project_dir="${1:-.}"
@@ -27,25 +74,41 @@ compact_view() {
   local reset="\033[0m"
   local dimline="\033[2m"
 
-  # Show parent_dir/filename, truncating parent dir if needed.
-  # Usage: format_file <path> <max_width>
-  format_file() {
-    local p="$1" max="$2"
-    local fname="${p##*/}"
-    local dir="${p%/*}"
-    # Get just the immediate parent directory name
-    local parent="${dir##*/}"
-    local short="${parent}/${fname}"
-    if [ ${#short} -le "$max" ]; then
-      printf '%s' "$short"
-    elif [ ${#fname} -ge "$max" ]; then
-      # Filename alone exceeds max
-      printf '%.*s…' "$((max - 1))" "$fname"
-    else
-      # Truncate parent dir to fit
-      local keep=$((max - ${#fname} - 1))  # 1 for "/"
-      printf '%.*s/%s' "$keep" "$parent" "$fname"
-    fi
+  local BARCELLS=5
+
+  # render_barcode prints a colored ratio bar for an added/deleted pair.
+  render_barcode() {
+    local added="$1" deleted="$2"
+    local split g r
+    split=$(barcode_split "$added" "$deleted" "$BARCELLS")
+    g=${split% *}
+    r=${split#* }
+    local i
+    printf "${green}"
+    for ((i = 0; i < g; i++)); do printf '▰'; done
+    printf "${red}"
+    for ((i = 0; i < r; i++)); do printf '▰'; done
+    printf "${reset}"
+  }
+
+  # render_group prints a status group: a glyph header, then one row per file.
+  # Each row is "<filename>  <barcode>  +NNN -NNN".
+  # Usage: render_group <numstat text> <glyph color> <glyph> <label> <name_width>
+  render_group() {
+    local data="$1" gcolor="$2" glyph="$3" label="$4" name_width="$5" count="$6"
+    [ -z "$data" ] && return
+    printf " ${gcolor}${bold}%s${reset} ${gcolor}%s${reset}  ${dim}(%s)${reset}\n" "$glyph" "$label" "$count"
+    local added deleted file display bar
+    while IFS=$'\t' read -r added deleted file; do
+      [ -z "$added" ] && continue
+      [ "$added" = "-" ] && added=0
+      [ "$deleted" = "-" ] && deleted=0
+      display=$(format_file "$file" "$name_width")
+      bar=$(render_barcode "$added" "$deleted")
+      printf "   ${bright}%-*s${reset}  %b  ${green}+%-4s${reset}${red}-%s${reset}\n" \
+        "$name_width" "$display" "$bar" "$added" "$deleted"
+    done <<< "$data"
+    printf "\n"
   }
 
   while true; do
@@ -91,12 +154,32 @@ compact_view() {
       [ -n "$unstaged" ] && n_unstaged=$(echo "$unstaged" | wc -l | tr -d ' ')
       [ -n "$untracked" ] && n_untracked=$(echo "$untracked" | wc -l | tr -d ' ')
 
+      # Net line totals across tracked changes (the ledger "stamp")
+      local sums ta td
+      sums=$(printf '%s\n%s\n' "$staged" "$unstaged" | sum_numstat)
+      ta=${sums% *}
+      td=${sums#* }
+
       # Clear screen
       printf "\033[2J\033[H"
 
-      # ── Header ──
-      printf " ${bold}${bright}%s${reset}" "$branch"
+      # ── Header: branch heading with dimmed namespace + net stamp ──
+      local leaf="${branch##*/}"
+      local ns=""
+      [ "$leaf" != "$branch" ] && ns="${branch%/*}/"
+      local stamp=""
+      if [ "$ta" -gt 0 ] || [ "$td" -gt 0 ]; then
+        stamp="+${ta} −${td}"
+      fi
+      # Right-align the stamp on the heading line when it fits.
+      local headtext="${ns}${leaf}"
+      local pad=$((iw - ${#headtext} - ${#stamp}))
+      printf " ${dim}%s${reset}${bold}${bright}%s${reset}" "$ns" "$leaf"
       [ -n "$ahead_behind" ] && printf "%s" "$ahead_behind"
+      if [ -n "$stamp" ] && [ "$pad" -ge 1 ]; then
+        printf '%*s' "$pad" ''
+        printf "${green}+%s${reset} ${red}−%s${reset}" "$ta" "$td"
+      fi
       printf "\n"
 
       # Separator line
@@ -104,42 +187,27 @@ compact_view() {
       printf '%.*s' "$iw" '─'
       printf "${reset}\n"
 
+      # Available width for file names: iw - indent(3) - bar(BARCELLS+2) - counts(12)
+      local name_width=$((iw - 3 - 7 - 12))
+      [ "$name_width" -lt 10 ] && name_width=10
+
       local has_content=0
-      # Available width for file names after "+NNN -NNN  " prefix (13 chars)
-      local file_width=$((iw - 13))
-      [ "$file_width" -lt 10 ] && file_width=10
+      [ -n "$staged" ] && has_content=1
+      [ -n "$unstaged" ] && has_content=1
+      [ -n "$untracked" ] && has_content=1
 
       # ── Staged ──
-      if [ -n "$staged" ]; then
-        printf " ${green}${bold}●${reset} ${green}staged${reset}  ${dim}(%s)${reset}\n" "$n_staged"
-        while IFS=$'\t' read -r added deleted file; do
-          has_content=1
-          local display
-          display=$(format_file "$file" "$file_width")
-          printf "   ${green}%4s${reset} ${dim}-${reset}${red}%4s${reset}  %s\n" "+${added}" "${deleted}" "$display"
-        done <<< "$staged"
-        printf "\n"
-      fi
+      render_group "$staged" "$green" "●" "staged" "$name_width" "$n_staged"
 
       # ── Modified ──
-      if [ -n "$unstaged" ]; then
-        printf " ${yellow}${bold}●${reset} ${yellow}modified${reset}  ${dim}(%s)${reset}\n" "$n_unstaged"
-        while IFS=$'\t' read -r added deleted file; do
-          has_content=1
-          local display
-          display=$(format_file "$file" "$file_width")
-          printf "   ${green}%4s${reset} ${dim}-${reset}${red}%4s${reset}  %s\n" "+${added}" "${deleted}" "$display"
-        done <<< "$unstaged"
-        printf "\n"
-      fi
+      render_group "$unstaged" "$yellow" "●" "modified" "$name_width" "$n_unstaged"
 
-      # ── Untracked ──
+      # ── Untracked (new): filename only, no counts ──
       if [ -n "$untracked" ]; then
         printf " ${dim}${bold}○${reset} ${dim}new${reset}  ${dim}(%s)${reset}\n" "$n_untracked"
         while IFS= read -r file; do
-          has_content=1
           local display
-          display=$(format_file "$file" "$file_width")
+          display=$(format_file "$file" "$((iw - 3))")
           printf "   ${dim}%s${reset}\n" "$display"
         done <<< "$untracked"
         printf "\n"
