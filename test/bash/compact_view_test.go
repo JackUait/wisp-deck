@@ -188,6 +188,51 @@ func TestScrollStatus_at_bottom_shows_up_only(t *testing.T) {
 	}
 }
 
+// enter_ui_mode/exit_ui_mode wrap the live pane's terminal setup. The list must
+// not be scrollable "infinitely": the refresh loop redraws on the screen with
+// \033[2J, and on the MAIN buffer every old frame piles into the terminal's
+// scrollback, which the mouse wheel can then scroll through without bound. The
+// fix is the ALTERNATE screen buffer (\033[?1049h), which has no scrollback, so
+// the wheel can only move the app's own clamped viewport. Setup is emitted only
+// for an interactive tty (the Go harness pipes stdin -> $1 != 1 -> nothing).
+
+func TestEnterUiMode_interactive_uses_alt_screen(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "enter_ui_mode",
+		[]string{"1"}, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "\x1b[?1049h") // alternate screen: kills scrollback
+	assertContains(t, out, "\x1b[?25l")   // hide cursor
+	assertContains(t, out, "\x1b[?1000h") // SGR mouse reporting
+	assertContains(t, out, "\x1b[?1006h")
+}
+
+func TestEnterUiMode_noninteractive_emits_nothing(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "enter_ui_mode",
+		[]string{"0"}, nil)
+	assertExitCode(t, code, 0)
+	if got := strings.TrimSpace(out); got != "" {
+		t.Errorf("non-interactive enter_ui_mode should emit nothing, got %q", got)
+	}
+}
+
+func TestExitUiMode_interactive_leaves_alt_screen(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "exit_ui_mode",
+		[]string{"1"}, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "\x1b[?1049l") // leave alternate screen
+	assertContains(t, out, "\x1b[?1000l") // disable mouse reporting
+	assertContains(t, out, "\x1b[?25h")   // show cursor
+}
+
+func TestExitUiMode_noninteractive_emits_nothing(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "exit_ui_mode",
+		[]string{"0"}, nil)
+	assertExitCode(t, code, 0)
+	if got := strings.TrimSpace(out); got != "" {
+		t.Errorf("non-interactive exit_ui_mode should emit nothing, got %q", got)
+	}
+}
+
 // Regression: the refresh loop must not leak the `w` (pane width) variable to
 // stdout. The pane runs the script under zsh, where `local NAME` with no
 // assignment on an already-set variable acts as a *display* command and prints

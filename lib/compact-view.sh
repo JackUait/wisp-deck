@@ -67,6 +67,26 @@ scroll_status() {
   printf ' \033[2m%s%s %d-%d/%d\033[0m' "$up" "$down" "$first" "$last" "$total"
 }
 
+# enter_ui_mode prepares the live pane's terminal for the ledger UI: the
+# ALTERNATE screen buffer (\033[?1049h) — which has NO scrollback, so the mouse
+# wheel can't scroll past the rendered viewport into a pile of stale refresh
+# frames — plus a hidden cursor and SGR mouse-wheel reporting. Emits nothing
+# unless $1 is "1" (an interactive tty); the Go harness pipes stdin and must
+# stay quiet so its output assertions hold.
+# Usage: enter_ui_mode <interactive>
+enter_ui_mode() {
+  [ "$1" = 1 ] || return 0
+  printf '\033[?1049h\033[?25l\033[?1000h\033[?1006h'
+}
+
+# exit_ui_mode reverses enter_ui_mode: disable mouse reporting, show the cursor,
+# leave the alternate screen (restoring the user's shell view), and reset colors.
+# Usage: exit_ui_mode <interactive>
+exit_ui_mode() {
+  [ "$1" = 1 ] || return 0
+  printf '\033[?1000l\033[?1006l\033[?25h\033[?1049l\033[0m'
+}
+
 compact_view() {
   local project_dir="${1:-.}"
 
@@ -82,10 +102,11 @@ compact_view() {
   local interactive=0
   [ -t 0 ] && interactive=1
 
-  trap 'printf "\033[?1000l\033[?1006l\033[?25h\033[0m"; exit 0' INT TERM
-  printf "\033[?25l" # hide cursor
-  # Enable SGR mouse-wheel reporting so the wheel scrolls the list.
-  [ "$interactive" = 1 ] && printf "\033[?1000h\033[?1006h"
+  # Switch into the alternate screen (no scrollback -> the wheel can't scroll
+  # the list past its clamped viewport), hide the cursor, enable SGR mouse
+  # reporting. The trap restores the user's shell view on Ctrl-C / kill.
+  trap 'exit_ui_mode "$interactive"; exit 0' INT TERM
+  enter_ui_mode "$interactive"
 
   # read_key reads ONE keystroke into the global KEY within <timeout> seconds,
   # returning non-zero on timeout. bash and zsh spell single-char reads
