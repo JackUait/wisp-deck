@@ -92,8 +92,10 @@ compact_view() {
   }
 
   # render_group prints a status group: a glyph header, then one row per file.
-  # Each row is "<filename>  <barcode>  +NNN -NNN".
-  # Usage: render_group <numstat text> <glyph color> <glyph> <label> <name_width>
+  # Each row leads with its own aligned "+NNN -NNN" columns, then the barcode,
+  # then the filename — so on a narrow pane the numbers can never drift onto a
+  # neighbouring file. Long filenames truncate at the right edge.
+  # Usage: render_group <numstat text> <glyph color> <glyph> <label> <name_width> <count>
   render_group() {
     local data="$1" gcolor="$2" glyph="$3" label="$4" name_width="$5" count="$6"
     [ -z "$data" ] && return
@@ -105,8 +107,8 @@ compact_view() {
       [ "$deleted" = "-" ] && deleted=0
       display=$(format_file "$file" "$name_width")
       bar=$(render_barcode "$added" "$deleted")
-      printf "   ${bright}%-*s${reset}  %b  ${green}+%-4s${reset}${red}-%s${reset}\n" \
-        "$name_width" "$display" "$bar" "$added" "$deleted"
+      printf "   ${green}+%-4s${reset}${red}−%-4s${reset} %b  ${bright}%s${reset}\n" \
+        "$added" "$deleted" "$bar" "$display"
     done <<< "$data"
     printf "\n"
   }
@@ -187,9 +189,10 @@ compact_view() {
       printf '%.*s' "$iw" '─'
       printf "${reset}\n"
 
-      # Available width for file names: iw - indent(3) - bar(BARCELLS+2) - counts(12)
-      local name_width=$((iw - 3 - 7 - 12))
-      [ "$name_width" -lt 10 ] && name_width=10
+      # Filenames follow the "+NNN -NNN <bar>  " prefix:
+      #   indent(3) + "+"+4 + "−"+4 + space + bar(BARCELLS) + 2 spaces
+      local name_width=$((iw - 17 - BARCELLS))
+      [ "$name_width" -lt 8 ] && name_width=8
 
       local has_content=0
       [ -n "$staged" ] && has_content=1
