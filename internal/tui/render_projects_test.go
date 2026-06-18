@@ -71,7 +71,8 @@ func TestRenderMenuBox_emptyState(t *testing.T) {
 
 func TestCalculateLayout_accountsForTabBar(t *testing.T) {
 	projects := []models.Project{{Name: "a", Path: "/tmp/a"}}
-	m := NewMainMenu(projects, []string{"claude"}, "claude", "none")
+	// Non-Claude tool: no subscription row, so layout matches the documented rows.
+	m := NewMainMenu(projects, []string{"codex"}, "codex", "none")
 	layout := m.CalculateLayout(120, 40)
 	// Rendered line count for 1 project = 13 (box 12 + help 1).
 	// MenuHeight must equal that; old formula (+4 action rows) gives 14.
@@ -82,7 +83,8 @@ func TestCalculateLayout_accountsForTabBar(t *testing.T) {
 
 func TestCalculateLayout_emptyStateAddsRow(t *testing.T) {
 	// 0 projects: renderMenuBox emits empty-state row → 12 total lines.
-	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	// Non-Claude tool: no subscription row.
+	m := NewMainMenu(nil, []string{"codex"}, "codex", "none")
 	layout := m.CalculateLayout(120, 40)
 	if layout.MenuHeight != 12 {
 		t.Errorf("MenuHeight (0 proj) = %d, want 12", layout.MenuHeight)
@@ -94,7 +96,8 @@ func TestMapRowToItem_matchesRenderedLayout(t *testing.T) {
 		{Name: "alpha", Path: "/tmp/a"},
 		{Name: "beta", Path: "/tmp/b"},
 	}
-	m := NewMainMenu(projects, []string{"claude"}, "claude", "none")
+	// Non-Claude tool: no subscription row, so the documented rows hold.
+	m := NewMainMenu(projects, []string{"codex"}, "codex", "none")
 	m.width = 100
 	m.height = 60
 

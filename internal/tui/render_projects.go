@@ -64,6 +64,34 @@ func (m *MainMenuModel) renderTitleRow(leftBorder, rightBorder string) string {
 	return leftBorder + " " + title + strings.Repeat(" ", aiPadding) + aiPart + rightBorder
 }
 
+// subscriptionRowCount returns 1 when the main-page subscription line is shown
+// (Claude only), else 0. Layout math (height, scroll header, click mapping) all
+// add this so the project rows stay aligned.
+func (m *MainMenuModel) subscriptionRowCount() int {
+	if m.ClaudeConfigVisible() {
+		return 1
+	}
+	return 0
+}
+
+// renderSubscriptionRow renders the current Claude subscription, right-aligned
+// directly beneath the agent picker in the title row.
+func (m *MainMenuModel) renderSubscriptionRow(leftBorder, rightBorder string) string {
+	name := m.CurrentClaudeConfigName()
+	var valColor lipgloss.Color
+	if m.CurrentClaudeConfigFile() != "" {
+		valColor = lipgloss.Color("114") // green when a custom subscription is active
+	} else {
+		valColor = lipgloss.Color("241") // gray for Standard
+	}
+	content := lipgloss.NewStyle().Foreground(valColor).Render(name)
+	pad := menuContentWidth - lipgloss.Width(content) - 1 // -1 for leading space
+	if pad < 1 {
+		pad = 1
+	}
+	return leftBorder + " " + strings.Repeat(" ", pad) + content + rightBorder
+}
+
 // renderUpdateRow renders the "Update available" notification row.
 func (m *MainMenuModel) renderUpdateRow(leftBorder, rightBorder string) string {
 	updateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
@@ -411,6 +439,11 @@ func (m *MainMenuModel) renderMenuBox() string {
 	// Title row
 	lines = append(lines, m.renderTitleRow(leftBorder, rightBorder))
 
+	// Current subscription, under the agent picker (Claude only)
+	if m.subscriptionRowCount() > 0 {
+		lines = append(lines, m.renderSubscriptionRow(leftBorder, rightBorder))
+	}
+
 	// Tab bar
 	lines = append(lines, m.renderTabBar(leftBorder, rightBorder))
 
@@ -474,9 +507,11 @@ func (m *MainMenuModel) renderMenuBox() string {
 	lines = append(lines, m.renderHelpRow())
 
 	// Scroll clipping when menu is taller than the available terminal height.
-	headerEnd := 5
+	// Fixed header = top + title + tab-bar + sep + leading-blank (5), plus the
+	// optional subscription and update rows.
+	headerEnd := 5 + m.subscriptionRowCount()
 	if m.updateVersion != "" {
-		headerEnd = 6
+		headerEnd++
 	}
 	// Footer = separator-before-action + action-bar + bottom + help (4 lines).
 	// Keeping the separator in the footer ensures the action bar never renders

@@ -257,8 +257,9 @@ func TestMainMenu_LayoutCalculation(t *testing.T) {
 func TestMainMenu_LayoutCalculation_MenuHeight(t *testing.T) {
 	// 3 projects (2 rows each). Chrome = 11 fixed lines (tab-bar + action-bar
 	// now included in the constant; old 4 action-item rows removed).
+	// Non-Claude tool keeps the subscription row out of the base-height math.
 	projects := testProjects()
-	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
+	m := tui.NewMainMenu(projects, testAITools(), "codex", "animated")
 	layout := m.CalculateLayout(100, 40)
 
 	// MenuHeight = 11 (chrome) + 3*2 (projects) = 17
@@ -269,7 +270,7 @@ func TestMainMenu_LayoutCalculation_MenuHeight(t *testing.T) {
 
 	// 0 projects: empty-state row adds 1 line.
 	// MenuHeight = 11 (chrome) + 1 (empty-state row) = 12
-	m2 := tui.NewMainMenu(nil, testAITools(), "claude", "animated")
+	m2 := tui.NewMainMenu(nil, testAITools(), "codex", "animated")
 	layout2 := m2.CalculateLayout(100, 40)
 	expectedHeight2 := 11 + 1
 	if layout2.MenuHeight != expectedHeight2 {
@@ -1011,7 +1012,8 @@ func TestMainMenu_MapRowToItem_Projects(t *testing.T) {
 		{Name: "p1", Path: "/p1"},
 		{Name: "p2", Path: "/p2"},
 	}
-	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
+	// Non-Claude tool: no subscription row, so projects start at row 5.
+	m := tui.NewMainMenu(projects, []string{"codex"}, "codex", "animated")
 	m.SetSize(80, 30)
 
 	// Layout: row 0 border, 1 title, 2 tab bar, 3 separator, 4 empty,
@@ -1035,7 +1037,8 @@ func TestMainMenu_MapRowToItem_AddProjectRow(t *testing.T) {
 	projects := []models.Project{
 		{Name: "p1", Path: "/p1"},
 	}
-	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
+	// Non-Claude tool: no subscription row, so the documented rows hold.
+	m := tui.NewMainMenu(projects, []string{"codex"}, "codex", "animated")
 	m.SetSize(80, 30)
 
 	// Layout: 1 project at rows 5-6, blank spacer at row 7, add-project row at row 8.
@@ -1054,7 +1057,8 @@ func TestMainMenu_MapRowToItem_AddProjectRow(t *testing.T) {
 
 func TestMainMenu_MapRowToItem_Invalid(t *testing.T) {
 	projects := []models.Project{{Name: "p1", Path: "/p1"}}
-	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
+	// Non-Claude tool: no subscription row, so the documented rows hold.
+	m := tui.NewMainMenu(projects, []string{"codex"}, "codex", "animated")
 	m.SetSize(80, 30)
 
 	// Row 0 is border
@@ -1088,7 +1092,8 @@ func TestMainMenu_MapRowToItem_Invalid(t *testing.T) {
 }
 
 func TestMainMenu_MapRowToItem_NoProjects(t *testing.T) {
-	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
+	// Non-Claude tool: no subscription row, so the documented rows hold.
+	m := tui.NewMainMenu(nil, []string{"codex"}, "codex", "animated")
 	m.SetSize(80, 30)
 
 	// No projects: row 0 border, 1 title, 2 tab bar, 3 separator, 4 empty,
@@ -1103,7 +1108,8 @@ func TestMainMenu_MapRowToItem_NoProjects(t *testing.T) {
 
 func TestMainMenu_MapRowToItem_WithUpdateVersion(t *testing.T) {
 	projects := []models.Project{{Name: "p1", Path: "/p1"}}
-	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
+	// Non-Claude tool: no subscription row, so the documented rows hold.
+	m := tui.NewMainMenu(projects, []string{"codex"}, "codex", "animated")
 	m.SetUpdateVersion("v1.2.3")
 	m.SetSize(80, 30)
 
@@ -1123,7 +1129,8 @@ func TestMainMenu_MouseClickSelectsItem(t *testing.T) {
 		{Name: "p1", Path: "/p1"},
 		{Name: "p2", Path: "/p2"},
 	}
-	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
+	// Non-Claude tool: no subscription row, so the documented rows hold.
+	m := tui.NewMainMenu(projects, []string{"codex"}, "codex", "animated")
 	m.SetSize(80, 30)
 	_ = m.View() // compute the vertical centering offset
 
@@ -1151,7 +1158,8 @@ func TestMainMenu_MouseDoubleClickActivates(t *testing.T) {
 		{Name: "p1", Path: "/p1"},
 		{Name: "p2", Path: "/p2"},
 	}
-	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
+	// Non-Claude tool: no subscription row, so the documented rows hold.
+	m := tui.NewMainMenu(projects, []string{"codex"}, "codex", "animated")
 	m.SetSize(80, 30)
 	_ = m.View() // compute the vertical centering offset
 
@@ -2029,7 +2037,8 @@ func TestMainMenu_MouseClickWorksWithCentering(t *testing.T) {
 		{Name: "p1", Path: "/p1"},
 		{Name: "p2", Path: "/p2"},
 	}
-	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "none")
+	// Non-Claude tool: no subscription row, so the documented rows hold.
+	m := tui.NewMainMenu(projects, []string{"codex"}, "codex", "none")
 	m.SetSize(80, 40) // Large terminal -> centering will offset content
 
 	// Need to call View() first so centerOffsetY is calculated
@@ -3825,7 +3834,8 @@ func TestMainMenu_SelectWorktree(t *testing.T) {
 
 func TestMainMenu_MapRowToItemWithWorktrees(t *testing.T) {
 	projects := testProjectsWithWorktrees()
-	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
+	// Non-Claude tool: no subscription row, so the documented rows hold.
+	m := tui.NewMainMenu(projects, testAITools(), "codex", "animated")
 	m.SetSize(100, 40)
 
 	// Expand first project (2 worktrees)
@@ -3872,7 +3882,8 @@ func TestMainMenu_MapRowToItemWithWorktrees(t *testing.T) {
 
 func TestMainMenu_CalculateLayoutWithWorktrees(t *testing.T) {
 	projects := testProjectsWithWorktrees()
-	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
+	// Non-Claude tool: no subscription row, so the documented heights hold.
+	m := tui.NewMainMenu(projects, testAITools(), "codex", "animated")
 	m.SetSize(100, 40)
 
 	layout1 := m.CalculateLayout(100, 40)
@@ -4045,7 +4056,8 @@ func TestMainMenu_CollapseWithAddWorktreeAdjustsSelection(t *testing.T) {
 
 func TestMainMenu_MapRowToItemWithAddWorktree(t *testing.T) {
 	projects := testProjectsWithWorktrees()
-	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
+	// Non-Claude tool: no subscription row, so the documented rows hold.
+	m := tui.NewMainMenu(projects, testAITools(), "codex", "animated")
 	m.SetSize(100, 40)
 
 	m.ToggleWorktrees(0)
@@ -4060,7 +4072,8 @@ func TestMainMenu_MapRowToItemWithAddWorktree(t *testing.T) {
 
 func TestMainMenu_CalculateLayoutWithAddWorktree(t *testing.T) {
 	projects := testProjectsWithWorktrees()
-	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
+	// Non-Claude tool: no subscription row, so the documented heights hold.
+	m := tui.NewMainMenu(projects, testAITools(), "codex", "animated")
 
 	m.ToggleWorktrees(0)
 	m.ToggleWorktrees(2)

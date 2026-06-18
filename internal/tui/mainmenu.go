@@ -1180,7 +1180,8 @@ func (m *MainMenuModel) CalculateLayout(width, height int) MenuLayout {
 	}
 	// 11 fixed chrome lines: top + title + tab-bar + sep + leading-blank +
 	// spacer-before-add + add-project + sep-before-action + action-bar + bottom + help.
-	menuHeight := 11 + projectRows + worktreeRows + addWorktreeRows + emptyStateRow
+	// Plus the optional subscription row (Claude only).
+	menuHeight := 11 + m.subscriptionRowCount() + projectRows + worktreeRows + addWorktreeRows + emptyStateRow
 	menuWidth := 58
 
 	ghostPosition := "hidden"
@@ -1207,12 +1208,13 @@ func (m *MainMenuModel) MapRowToItem(clickY int) int {
 	// Menu box row layout:
 	// Row 0: top border
 	// Row 1: title row
+	// (optional) subscription row (Claude only)
 	// Row 2: tab bar
 	// Row 3: separator
 	// (optional) update notification row
 	// Row 4/5: empty row
 	// Then project items start
-	startRow := 5
+	startRow := 5 + m.subscriptionRowCount()
 	if m.updateVersion != "" {
 		startRow++ // update notification takes a row
 	}

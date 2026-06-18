@@ -81,8 +81,8 @@ func TestSettings_shows_config_row_for_claude(t *testing.T) {
 	m, _ := newClaudeMenu(t)
 	m.OpenSettings()
 	view := m.renderSettingsForTest()
-	if !strings.Contains(view, "Config") {
-		t.Fatalf("settings should show Config row:\n%s", view)
+	if !strings.Contains(view, "Subscription") {
+		t.Fatalf("settings should show Subscription row:\n%s", view)
 	}
 	if !strings.Contains(view, "Standard Claude") {
 		t.Fatalf("should show current config name")
