@@ -218,8 +218,6 @@ func installerToolDisplayName(name string) string {
 	switch name {
 	case "codex":
 		return base + " (OpenAI)"
-	case "copilot":
-		return base + " (GitHub)"
 	case "opencode":
 		return base + " (anomalyco)"
 	default:

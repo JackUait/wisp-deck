@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -10,186 +11,133 @@ import (
 	"github.com/jackuait/ghost-tab/internal/claudeconfig"
 )
 
-// openConfigPanel opens the inline Claude config management panel, starting in
-// list mode with the cursor on the currently-active entry.
-func (m *MainMenuModel) openConfigPanel() {
-	m.configPanelOpen = true
-	m.configPanelMode = ""
-	m.configPanelCursor = m.selectedConfig
-	m.configPanelErr = nil
+// openModelMap opens the model mapping panel for the active non-Standard config.
+func (m *MainMenuModel) openModelMap() {
+	file := m.CurrentClaudeConfigFile()
+	if file == "" {
+		return
+	}
+	m.modelMapOpen = true
+	m.modelMapCursor = 0
+	m.modelMapModels = claudeconfig.ModelsForConfig(m.CurrentClaudeConfigName())
+	m.modelMap = claudeconfig.ReadModelMappings(m.claudeConfigsDir, file, m.modelMapModels)
+	m.modelMapErr = nil
+	m.modelMapKeyMode = false
 }
 
-// reloadClaudeConfigs re-reads the list and pointer after a mutation, refreshes
-// the active selection, and clamps the panel cursor into range.
-func (m *MainMenuModel) reloadClaudeConfigs() {
-	m.claudeConfigs = LoadClaudeConfigsList(m.claudeConfigsList)
-	m.SetActiveClaudeConfig(ReadActiveClaudeConfig(m.claudeConfigFile))
-	maxIdx := len(m.claudeConfigs) // Standard is index 0
-	if m.configPanelCursor > maxIdx {
-		m.configPanelCursor = maxIdx
+// updateModelMap handles key events while the model mapping panel is open.
+func (m *MainMenuModel) updateModelMap(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.modelMapKeyMode {
+		return m.updateModelMapKeyInput(msg)
 	}
-	if m.configPanelCursor < 0 {
-		m.configPanelCursor = 0
+	n := len(m.modelMapModels)
+	switch msg.Type {
+	case tea.KeyEsc, tea.KeyCtrlC:
+		m.modelMapOpen = false
+		return m, nil
+	case tea.KeyEnter:
+		file := m.CurrentClaudeConfigFile()
+		if file == "" {
+			m.modelMapOpen = false
+			return m, nil
+		}
+		if err := claudeconfig.WriteModelMappings(m.claudeConfigsDir, file, m.modelMap, m.modelMapModels); err != nil {
+			m.modelMapErr = err
+			return m, nil
+		}
+		m.modelMapOpen = false
+		return m, nil
+	case tea.KeyUp:
+		m.modelMapCursor = (m.modelMapCursor - 1 + 4) % 4
+		return m, nil
+	case tea.KeyDown:
+		m.modelMapCursor = (m.modelMapCursor + 1) % 4
+		return m, nil
+	case tea.KeyLeft:
+		cur := m.modelMap[m.modelMapCursor]
+		if cur <= -1 {
+			m.modelMap[m.modelMapCursor] = n - 1
+		} else {
+			m.modelMap[m.modelMapCursor] = cur - 1
+		}
+		return m, nil
+	case tea.KeyRight:
+		cur := m.modelMap[m.modelMapCursor]
+		if cur >= n-1 {
+			m.modelMap[m.modelMapCursor] = -1
+		} else {
+			m.modelMap[m.modelMapCursor] = cur + 1
+		}
+		return m, nil
+	case tea.KeyRunes:
+		if len(msg.Runes) == 1 {
+			switch TranslateRune(msg.Runes[0]) {
+			case 'k':
+				m.modelMapCursor = (m.modelMapCursor - 1 + 4) % 4
+				return m, nil
+			case 'j':
+				m.modelMapCursor = (m.modelMapCursor + 1) % 4
+				return m, nil
+			case 'e':
+				return m, m.enterModelMapKeyInput()
+			}
+		}
 	}
+	return m, nil
 }
 
-// enterConfigInput switches the panel into add/rename mode with a focused input.
-func (m *MainMenuModel) enterConfigInput(mode string) tea.Cmd {
-	m.configPanelMode = mode
-	m.configPanelErr = nil
+// enterModelMapKeyInput opens the API key text input within the model map panel.
+func (m *MainMenuModel) enterModelMapKeyInput() tea.Cmd {
+	file := m.CurrentClaudeConfigFile()
+	if file == "" {
+		return nil
+	}
 	ti := textinput.New()
 	ti.Width = menuContentWidth - 11
-	if mode == "rename" {
-		ti.Placeholder = "new name"
-		ti.SetValue(m.claudeConfigs[m.configPanelCursor-1].Name)
-	} else {
-		ti.Placeholder = "config name"
-	}
+	ti.Placeholder = "API key"
+	ti.EchoMode = textinput.EchoPassword
+	ti.EchoCharacter = '•'
+	ti.SetValue(claudeconfig.ReadAPIKey(m.claudeConfigsDir, file))
 	ti.Focus()
-	m.configPanelInput = ti
+	m.modelMapKeyInput = ti
+	m.modelMapKeyMode = true
+	m.modelMapErr = nil
 	return textinput.Blink
 }
 
-// updateConfigPanel routes key events while the inline config panel is open.
-func (m *MainMenuModel) updateConfigPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch m.configPanelMode {
-	case "add", "rename":
-		return m.updateConfigPanelInput(msg)
-	case "delete":
-		return m.updateConfigPanelDelete(msg)
-	}
-
-	n := len(m.claudeConfigs) + 1 // +1 for Standard
+// updateModelMapKeyInput handles key events while entering the API key.
+func (m *MainMenuModel) updateModelMapKeyInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
-		m.configPanelOpen = false
-		return m, nil
-	case tea.KeyCtrlC:
-		m.configPanelOpen = false
-		m.settingsMode = false
-		m.setActionResult("quit")
-		return m, tea.Quit
-	case tea.KeyUp:
-		m.configPanelCursor = (m.configPanelCursor - 1 + n) % n
-		return m, nil
-	case tea.KeyDown:
-		m.configPanelCursor = (m.configPanelCursor + 1) % n
+		m.modelMapKeyMode = false
+		m.modelMapKeyInput.Blur()
 		return m, nil
 	case tea.KeyEnter:
-		m.selectedConfig = m.configPanelCursor
-		m.persistClaudeConfig()
-		m.configPanelOpen = false
-		return m, nil
-	case tea.KeyRunes:
-		if len(msg.Runes) == 1 {
-			switch TranslateRune(msg.Runes[0]) {
-			case 'j':
-				m.configPanelCursor = (m.configPanelCursor + 1) % n
-				return m, nil
-			case 'k':
-				m.configPanelCursor = (m.configPanelCursor - 1 + n) % n
-				return m, nil
-			case 'a':
-				return m, m.enterConfigInput("add")
-			case 'r':
-				if m.configPanelCursor > 0 {
-					return m, m.enterConfigInput("rename")
-				}
-			case 'd':
-				if m.configPanelCursor > 0 {
-					m.configPanelMode = "delete"
-					m.configPanelErr = nil
-				}
-			}
-		}
-	}
-	return m, nil
-}
-
-// updateConfigPanelInput handles the add/rename text entry.
-func (m *MainMenuModel) updateConfigPanelInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyEsc:
-		m.configPanelMode = ""
-		m.configPanelInput.Blur()
-		return m, nil
-	case tea.KeyEnter:
-		name := strings.TrimSpace(m.configPanelInput.Value())
-		if name == "" {
-			m.configPanelMode = ""
-			m.configPanelInput.Blur()
-			return m, nil
-		}
-		if m.configPanelMode == "add" {
-			file, err := claudeconfig.Add(m.claudeConfigsList, m.claudeConfigsDir, name)
-			if err != nil {
-				m.configPanelErr = err
+		file := m.CurrentClaudeConfigFile()
+		if file != "" {
+			key := strings.TrimSpace(m.modelMapKeyInput.Value())
+			if err := claudeconfig.WriteAPIKey(m.claudeConfigsDir, file, key); err != nil {
+				m.modelMapErr = err
 				return m, nil
 			}
-			// New config becomes active.
-			_ = claudeconfig.SetActive(m.claudeConfigFile, file)
-			m.reloadClaudeConfigs()
-			m.configPanelCursor = m.selectedConfig
-		} else { // rename
-			file := m.claudeConfigs[m.configPanelCursor-1].File
-			if err := claudeconfig.Rename(m.claudeConfigsList, file, name); err != nil {
-				m.configPanelErr = err
-				return m, nil
-			}
-			m.reloadClaudeConfigs()
 		}
-		m.configPanelMode = ""
-		m.configPanelInput.Blur()
+		m.modelMapKeyMode = false
+		m.modelMapKeyInput.Blur()
 		return m, nil
 	}
 	var cmd tea.Cmd
-	m.configPanelInput, cmd = m.configPanelInput.Update(msg)
+	m.modelMapKeyInput, cmd = m.modelMapKeyInput.Update(msg)
+	m.modelMapErr = nil
 	return m, cmd
 }
 
-// updateConfigPanelDelete handles the delete confirmation.
-func (m *MainMenuModel) updateConfigPanelDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	confirm := false
-	switch msg.Type {
-	case tea.KeyEnter:
-		confirm = true
-	case tea.KeyEsc:
-		m.configPanelMode = ""
-		return m, nil
-	case tea.KeyRunes:
-		if len(msg.Runes) == 1 {
-			switch TranslateRune(msg.Runes[0]) {
-			case 'y':
-				confirm = true
-			case 'n':
-				m.configPanelMode = ""
-				return m, nil
-			}
-		}
-	}
-	if !confirm {
-		return m, nil
-	}
-	if m.configPanelCursor > 0 && m.configPanelCursor <= len(m.claudeConfigs) {
-		file := m.claudeConfigs[m.configPanelCursor-1].File
-		if err := claudeconfig.Delete(m.claudeConfigsList, m.claudeConfigsDir, m.claudeConfigFile, file); err != nil {
-			m.configPanelErr = err
-		} else {
-			m.reloadClaudeConfigs()
-		}
-	}
-	m.configPanelMode = ""
-	return m, nil
-}
-
-// renderConfigPanel draws the inline config management box, mirroring the
-// settings box border style.
-func (m *MainMenuModel) renderConfigPanel() string {
+// renderModelMapPanel draws the model mapping box below the settings box.
+func (m *MainMenuModel) renderModelMapPanel() string {
 	dimStyle := lipgloss.NewStyle().Foreground(m.theme.Dim)
 	primaryBoldStyle := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("247"))
-	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
 	errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
 
 	hLine := strings.Repeat("─", menuInnerWidth)
 	topBorder := dimStyle.Render("╭" + hLine + "╮")
@@ -198,7 +146,6 @@ func (m *MainMenuModel) renderConfigPanel() string {
 	leftBorder := dimStyle.Render("│")
 	rightBorder := strings.Repeat(" ", menuPadding) + dimStyle.Render("│")
 
-	// pad builds a full-width content row from already-styled text.
 	pad := func(content string) string {
 		gap := menuContentWidth - lipgloss.Width(content) - 1
 		if gap < 0 {
@@ -208,71 +155,83 @@ func (m *MainMenuModel) renderConfigPanel() string {
 	}
 	emptyRow := leftBorder + strings.Repeat(" ", menuContentWidth) + rightBorder
 
+	name := m.CurrentClaudeConfigName()
 	var lines []string
 	lines = append(lines, topBorder)
-	lines = append(lines, pad(primaryBoldStyle.Render("Claude Configs")))
+	lines = append(lines, pad(primaryBoldStyle.Render("Model Mapping: "+name)))
 	lines = append(lines, separator)
 	lines = append(lines, emptyRow)
 
-	// Item rows: index 0 = Standard, then configs.
-	names := []string{"Standard Claude"}
-	for _, c := range m.claudeConfigs {
-		names = append(names, c.Name)
-	}
-	for i, name := range names {
+	models := m.modelMapModels
+	for i, alias := range claudeconfig.AnthropicAliases {
 		var prefix string
-		if i == m.configPanelCursor {
-			prefix = "  " + primaryBoldStyle.Render("▎") + " " + primaryBoldStyle.Render(name)
+		if i == m.modelMapCursor {
+			prefix = "  " + primaryBoldStyle.Render("▎") + " "
 		} else {
-			prefix = "    " + name
+			prefix = "    "
 		}
-		state := ""
-		if i == m.selectedConfig {
-			state = greenStyle.Render("active")
+		aliasLabel := primaryBoldStyle.Render(fmt.Sprintf("%-8s", alias))
+		arrow := dimStyle.Render(" →  ")
+		var modelStr string
+		idx := m.modelMap[i]
+		if idx >= 0 && idx < len(models) {
+			modelStr = greenStyle.Render(models[idx])
+		} else {
+			modelStr = dimStyle.Render("(none)")
 		}
-		gap := menuContentWidth - lipgloss.Width(prefix) - lipgloss.Width(state) - 1
-		if gap < 1 {
-			gap = 1
+		navHint := ""
+		if i == m.modelMapCursor {
+			navHint = dimStyle.Render(" ◀▶")
 		}
-		lines = append(lines, leftBorder+prefix+strings.Repeat(" ", gap)+state+" "+rightBorder)
+		content := prefix + aliasLabel + arrow + modelStr + navHint
+		lines = append(lines, pad(content))
 	}
 
 	lines = append(lines, emptyRow)
 
-	// Mode-specific row.
-	switch m.configPanelMode {
-	case "add", "rename":
-		label := "New config name:"
-		if m.configPanelMode == "rename" {
-			label = "Rename to:"
-		}
-		lines = append(lines, pad(helpStyle.Render(label)))
-		lines = append(lines, pad(m.configPanelInput.View()))
-	case "delete":
-		name := ""
-		if m.configPanelCursor > 0 && m.configPanelCursor <= len(m.claudeConfigs) {
-			name = m.claudeConfigs[m.configPanelCursor-1].Name
-		}
-		lines = append(lines, pad(errStyle.Render("Delete \""+name+"\"?")))
+	// API key row
+	file := m.CurrentClaudeConfigFile()
+	apiKey := claudeconfig.ReadAPIKey(m.claudeConfigsDir, file)
+	apiKeyStatus := dimStyle.Render("(not set)")
+	if apiKey != "" {
+		apiKeyStatus = greenStyle.Render("••••••••")
 	}
-	if m.configPanelErr != nil {
-		lines = append(lines, pad(errStyle.Render(m.configPanelErr.Error())))
+	lines = append(lines, pad("    "+helpStyle.Render("API Key")+dimStyle.Render(" →  ")+apiKeyStatus+dimStyle.Render("  press 'e' to edit")))
+
+	if m.modelMapKeyMode {
+		lines = append(lines, emptyRow)
+		lines = append(lines, pad("  "+m.modelMapKeyInput.View()))
+	}
+
+	if m.modelMapErr != nil {
+		lines = append(lines, emptyRow)
+		lines = append(lines, pad(errStyle.Render(m.modelMapErr.Error())))
 	}
 
 	lines = append(lines, separator)
 
-	// Help rows depend on mode.
 	sep := dimStyle.Render(" · ")
-	switch m.configPanelMode {
-	case "add", "rename":
-		lines = append(lines, pad(helpStyle.Render("⏎ save")+sep+helpStyle.Render("Esc cancel")))
-	case "delete":
-		lines = append(lines, pad(helpStyle.Render("y delete")+sep+helpStyle.Render("n cancel")))
-	default:
-		lines = append(lines, pad(helpStyle.Render("↑↓ move")+sep+helpStyle.Render("⏎ select")+sep+helpStyle.Render("Esc back")))
-		lines = append(lines, pad(helpStyle.Render("a add")+sep+helpStyle.Render("r rename")+sep+helpStyle.Render("d delete")))
-	}
+	helpLine := helpStyle.Render("↑↓ slot") + sep + helpStyle.Render("←→ model") + sep + helpStyle.Render("e api key") + sep + helpStyle.Render("⏎ save") + sep + helpStyle.Render("Esc cancel")
+	lines = append(lines, pad(helpLine))
 
 	lines = append(lines, bottomBorder)
 	return strings.Join(lines, "\n")
+}
+
+// configAPIKeyIndicator returns a display string showing mapping status for a config.
+func configAPIKeyIndicator(configsDir, file string) string {
+	if file == "" {
+		return ""
+	}
+	mappings := claudeconfig.ReadModelMappings(configsDir, file, claudeconfig.AllModels())
+	mapped := 0
+	for _, v := range mappings {
+		if v >= 0 {
+			mapped++
+		}
+	}
+	if mapped > 0 {
+		return fmt.Sprintf("%d mapped", mapped)
+	}
+	return "unmapped"
 }

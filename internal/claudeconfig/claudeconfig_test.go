@@ -213,6 +213,113 @@ func TestDelete_active_resets_pointer(t *testing.T) {
 	}
 }
 
+func TestReadAPIKey_returns_key_from_env(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	os.MkdirAll(cfgDir, 0755)
+	os.WriteFile(filepath.Join(cfgDir, "zhipu.json"), []byte(`{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-test123"}}`), 0644)
+
+	got := ReadAPIKey(cfgDir, "zhipu.json")
+	if got != "sk-test123" {
+		t.Fatalf("ReadAPIKey = %q, want sk-test123", got)
+	}
+}
+
+func TestReadAPIKey_empty_when_no_env(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	os.MkdirAll(cfgDir, 0755)
+	os.WriteFile(filepath.Join(cfgDir, "plain.json"), []byte(`{}`), 0644)
+
+	if got := ReadAPIKey(cfgDir, "plain.json"); got != "" {
+		t.Fatalf("ReadAPIKey = %q, want empty", got)
+	}
+}
+
+func TestReadAPIKey_empty_when_no_key(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	os.MkdirAll(cfgDir, 0755)
+	os.WriteFile(filepath.Join(cfgDir, "env.json"), []byte(`{"env":{"OTHER":"val"}}`), 0644)
+
+	if got := ReadAPIKey(cfgDir, "env.json"); got != "" {
+		t.Fatalf("ReadAPIKey = %q, want empty", got)
+	}
+}
+
+func TestReadAPIKey_empty_when_file_missing(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	os.MkdirAll(cfgDir, 0755)
+
+	if got := ReadAPIKey(cfgDir, "missing.json"); got != "" {
+		t.Fatalf("ReadAPIKey = %q, want empty", got)
+	}
+}
+
+func TestWriteAPIKey_creates_env_section(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	os.MkdirAll(cfgDir, 0755)
+	os.WriteFile(filepath.Join(cfgDir, "zhipu.json"), []byte(`{}`), 0644)
+
+	if err := WriteAPIKey(cfgDir, "zhipu.json", "sk-new-key"); err != nil {
+		t.Fatal(err)
+	}
+	got := ReadAPIKey(cfgDir, "zhipu.json")
+	if got != "sk-new-key" {
+		t.Fatalf("after write, ReadAPIKey = %q", got)
+	}
+}
+
+func TestWriteAPIKey_overwrites_existing_key(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	os.MkdirAll(cfgDir, 0755)
+	os.WriteFile(filepath.Join(cfgDir, "zhipu.json"), []byte(`{"env":{"ANTHROPIC_AUTH_TOKEN":"old-key"}}`), 0644)
+
+	if err := WriteAPIKey(cfgDir, "zhipu.json", "new-key"); err != nil {
+		t.Fatal(err)
+	}
+	got := ReadAPIKey(cfgDir, "zhipu.json")
+	if got != "new-key" {
+		t.Fatalf("after overwrite, ReadAPIKey = %q", got)
+	}
+}
+
+func TestWriteAPIKey_preserves_other_env_vars(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	os.MkdirAll(cfgDir, 0755)
+	os.WriteFile(filepath.Join(cfgDir, "zhipu.json"), []byte(`{"env":{"ANTHROPIC_BASE_URL":"http://localhost:4000","ANTHROPIC_AUTH_TOKEN":"old"}}`), 0644)
+
+	if err := WriteAPIKey(cfgDir, "zhipu.json", "new"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(cfgDir, "zhipu.json"))
+	if !strings.Contains(string(data), "http://localhost:4000") {
+		t.Fatalf("base URL lost after write: %s", data)
+	}
+	if !strings.Contains(string(data), `"new"`) {
+		t.Fatalf("new key not in file: %s", data)
+	}
+}
+
+func TestWriteAPIKey_preserves_non_env_fields(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	os.MkdirAll(cfgDir, 0755)
+	os.WriteFile(filepath.Join(cfgDir, "zhipu.json"), []byte(`{"permissions":{"allow":["Bash(ls)"]},"env":{"ANTHROPIC_AUTH_TOKEN":"old"}}`), 0644)
+
+	if err := WriteAPIKey(cfgDir, "zhipu.json", "new"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(cfgDir, "zhipu.json"))
+	if !strings.Contains(string(data), "Bash(ls)") {
+		t.Fatalf("permissions lost after write: %s", data)
+	}
+}
+
 func TestDelete_inactive_keeps_pointer(t *testing.T) {
 	dir := t.TempDir()
 	cfgDir := filepath.Join(dir, "claude-configs")
@@ -229,5 +336,133 @@ func TestDelete_inactive_keeps_pointer(t *testing.T) {
 	}
 	if got := GetActive(ptr); got != "personal.json" {
 		t.Fatalf("active pointer changed = %q", got)
+	}
+}
+
+func TestReadModelMappings_returns_indices(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	os.MkdirAll(cfgDir, 0755)
+	os.WriteFile(filepath.Join(cfgDir, "zhipu.json"), []byte(`{"env":{"ANTHROPIC_DEFAULT_OPUS_MODEL":"glm-5.2","ANTHROPIC_DEFAULT_HAIKU_MODEL":"glm-4.5-air"}}`), 0644)
+
+	models := ProviderModels["zhipu"]
+	got := ReadModelMappings(cfgDir, "zhipu.json", models)
+	if got[0] != 0 {
+		t.Fatalf("opus = %d, want 0", got[0])
+	}
+	if got[1] != -1 {
+		t.Fatalf("sonnet = %d, want -1", got[1])
+	}
+	if got[2] != 5 {
+		t.Fatalf("haiku = %d, want 5", got[2])
+	}
+	if got[3] != -1 {
+		t.Fatalf("fable = %d, want -1", got[3])
+	}
+}
+
+func TestReadModelMappings_empty_when_no_env(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	os.MkdirAll(cfgDir, 0755)
+	os.WriteFile(filepath.Join(cfgDir, "plain.json"), []byte(`{}`), 0644)
+
+	got := ReadModelMappings(cfgDir, "plain.json", ProviderModels["zhipu"])
+	for i, v := range got {
+		if v != -1 {
+			t.Fatalf("slot %d = %d, want -1", i, v)
+		}
+	}
+}
+
+func TestReadModelMappings_empty_when_file_missing(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	os.MkdirAll(cfgDir, 0755)
+
+	got := ReadModelMappings(cfgDir, "missing.json", ProviderModels["zhipu"])
+	for i, v := range got {
+		if v != -1 {
+			t.Fatalf("slot %d = %d, want -1", i, v)
+		}
+	}
+}
+
+func TestWriteModelMappings_creates_env_vars(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	os.MkdirAll(cfgDir, 0755)
+	os.WriteFile(filepath.Join(cfgDir, "zhipu.json"), []byte(`{}`), 0644)
+
+	models := ProviderModels["zhipu"]
+	mappings := [4]int{0, 0, 3, 0}
+	if err := WriteModelMappings(cfgDir, "zhipu.json", mappings, models); err != nil {
+		t.Fatal(err)
+	}
+	got := ReadModelMappings(cfgDir, "zhipu.json", models)
+	if got != mappings {
+		t.Fatalf("after write, got %v, want %v", got, mappings)
+	}
+}
+
+func TestWriteModelMappings_minus1_clears_key(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	os.MkdirAll(cfgDir, 0755)
+	os.WriteFile(filepath.Join(cfgDir, "zhipu.json"), []byte(`{"env":{"ANTHROPIC_DEFAULT_OPUS_MODEL":"glm-5.2"}}`), 0644)
+
+	mappings := [4]int{-1, -1, -1, -1}
+	if err := WriteModelMappings(cfgDir, "zhipu.json", mappings, ProviderModels["zhipu"]); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(cfgDir, "zhipu.json"))
+	if strings.Contains(string(data), "ANTHROPIC_DEFAULT_OPUS_MODEL") {
+		t.Fatalf("key should be cleared: %s", data)
+	}
+}
+
+func TestWriteModelMappings_preserves_other_env_vars(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	os.MkdirAll(cfgDir, 0755)
+	os.WriteFile(filepath.Join(cfgDir, "zhipu.json"), []byte(`{"env":{"ANTHROPIC_BASE_URL":"http://localhost:4000","ANTHROPIC_AUTH_TOKEN":"sk-test"}}`), 0644)
+
+	mappings := [4]int{0, -1, -1, -1}
+	if err := WriteModelMappings(cfgDir, "zhipu.json", mappings, ProviderModels["zhipu"]); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(cfgDir, "zhipu.json"))
+	if !strings.Contains(string(data), "http://localhost:4000") {
+		t.Fatalf("base URL lost: %s", data)
+	}
+	if !strings.Contains(string(data), "sk-test") {
+		t.Fatalf("API key lost: %s", data)
+	}
+}
+
+func TestModelsForConfig_zhipu(t *testing.T) {
+	models := ModelsForConfig("Zhipu GLM")
+	if len(models) != 6 {
+		t.Fatalf("expected 6 zhipu models, got %d", len(models))
+	}
+	if models[0] != "glm-5.2" {
+		t.Fatalf("expected glm-5.2, got %s", models[0])
+	}
+}
+
+func TestModelsForConfig_mimo(t *testing.T) {
+	models := ModelsForConfig("Xiaomi MiMo")
+	if len(models) != 5 {
+		t.Fatalf("expected 5 mimo models, got %d", len(models))
+	}
+	if models[0] != "mimo-v2.5-pro" {
+		t.Fatalf("expected mimo-v2.5-pro, got %s", models[0])
+	}
+}
+
+func TestModelsForConfig_unknown_falls_back(t *testing.T) {
+	models := ModelsForConfig("Unknown Provider")
+	if len(models) == 0 {
+		t.Fatal("expected fallback models, got empty")
 	}
 }

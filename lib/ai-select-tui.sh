@@ -47,8 +47,8 @@ select_ai_tool_interactive() {
   # Set space-separated list of all selected tools
   _selected_ai_tools="$tools_json"
 
-  # Pick first tool by priority: claude > codex > copilot > opencode
-  local priority_order=("claude" "codex" "copilot" "opencode")
+  # Pick first tool by priority: claude > codex > opencode
+  local priority_order=("claude" "codex" "opencode")
   _selected_ai_tool=""
   for priority_tool in "${priority_order[@]}"; do
     if echo "$tools_json" | grep -qx "$priority_tool"; then

@@ -11,6 +11,7 @@
 package claudeconfig
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -176,4 +177,152 @@ func Delete(listFile, configsDir, pointerFile, file string) error {
 		return SetActive(pointerFile, "")
 	}
 	return nil
+}
+
+// ReadAPIKey reads ANTHROPIC_AUTH_TOKEN from a config JSON's env section.
+// Returns "" if the file is missing, invalid JSON, or has no key.
+func ReadAPIKey(configsDir, file string) string {
+	data, err := os.ReadFile(filepath.Join(configsDir, file))
+	if err != nil {
+		return ""
+	}
+	var s struct {
+		Env map[string]string `json:"env"`
+	}
+	if json.Unmarshal(data, &s) != nil || s.Env == nil {
+		return ""
+	}
+	return s.Env["ANTHROPIC_AUTH_TOKEN"]
+}
+
+// WriteAPIKey sets ANTHROPIC_AUTH_TOKEN in a config JSON's env section,
+// preserving all other fields. Creates the env section if absent.
+func WriteAPIKey(configsDir, file, key string) error {
+	path := filepath.Join(configsDir, file)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return err
+	}
+	env, _ := m["env"].(map[string]any)
+	if env == nil {
+		env = make(map[string]any)
+	}
+	env["ANTHROPIC_AUTH_TOKEN"] = key
+	m["env"] = env
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(out, '\n'), 0644)
+}
+
+// AnthropicAliases are the model alias slots that can be mapped.
+var AnthropicAliases = []string{"opus", "sonnet", "haiku", "fable"}
+
+// ProviderModels maps provider names to their available model lists.
+var ProviderModels = map[string][]string{
+	"zhipu":  {"glm-5.2", "glm-5.1", "glm-5", "glm-4.7", "glm-4.6", "glm-4.5-air"},
+	"mimo":   {"mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-pro", "mimo-v2-omni", "mimo-v2-flash"},
+}
+
+// ModelsForConfig returns the model list for the provider matching the config
+// name. Falls back to GLM models if no provider matches.
+func ModelsForConfig(configName string) []string {
+	lower := strings.ToLower(configName)
+	for key, models := range ProviderModels {
+		if strings.Contains(lower, key) {
+			return models
+		}
+	}
+	// Default fallback
+	return ProviderModels["zhipu"]
+}
+
+// AllModels returns a deduplicated list of all provider models.
+func AllModels() []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, models := range ProviderModels {
+		for _, m := range models {
+			if !seen[m] {
+				seen[m] = true
+				out = append(out, m)
+			}
+		}
+	}
+	return out
+}
+
+// envKeys maps AnthropicAliases indices to their env var names.
+var envKeys = []string{
+	"ANTHROPIC_DEFAULT_OPUS_MODEL",
+	"ANTHROPIC_DEFAULT_SONNET_MODEL",
+	"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+	"ANTHROPIC_DEFAULT_FABLE_MODEL",
+}
+
+// ReadModelMappings reads the four ANTHROPIC_DEFAULT_*_MODEL values from a
+// config JSON and returns model list indices for each alias. Unmapped aliases
+// return -1.
+func ReadModelMappings(configsDir, file string, models []string) [4]int {
+	var result [4]int
+	for i := range result {
+		result[i] = -1
+	}
+	data, err := os.ReadFile(filepath.Join(configsDir, file))
+	if err != nil {
+		return result
+	}
+	var s struct {
+		Env map[string]string `json:"env"`
+	}
+	if json.Unmarshal(data, &s) != nil || s.Env == nil {
+		return result
+	}
+	for i, key := range envKeys {
+		if val, ok := s.Env[key]; ok {
+			for j, model := range models {
+				if val == model {
+					result[i] = j
+					break
+				}
+			}
+		}
+	}
+	return result
+}
+
+// WriteModelMappings writes the four ANTHROPIC_DEFAULT_*_MODEL values into a
+// config JSON. Indices of -1 clear the corresponding key.
+func WriteModelMappings(configsDir, file string, mappings [4]int, models []string) error {
+	path := filepath.Join(configsDir, file)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return err
+	}
+	env, _ := m["env"].(map[string]any)
+	if env == nil {
+		env = make(map[string]any)
+	}
+	for i, key := range envKeys {
+		if mappings[i] >= 0 && mappings[i] < len(models) {
+			env[key] = models[mappings[i]]
+		} else {
+			delete(env, key)
+		}
+	}
+	m["env"] = env
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(out, '\n'), 0644)
 }

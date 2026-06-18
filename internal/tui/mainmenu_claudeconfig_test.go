@@ -81,8 +81,8 @@ func TestSettings_shows_config_row_for_claude(t *testing.T) {
 	m, _ := newClaudeMenu(t)
 	m.OpenSettings()
 	view := m.renderSettingsForTest()
-	if !strings.Contains(view, "Claude Config") {
-		t.Fatalf("settings should show Claude Config row:\n%s", view)
+	if !strings.Contains(view, "Config") {
+		t.Fatalf("settings should show Config row:\n%s", view)
 	}
 	if !strings.Contains(view, "Standard Claude") {
 		t.Fatalf("should show current config name")
@@ -94,7 +94,7 @@ func TestSettings_hides_config_row_for_non_claude(t *testing.T) {
 	m.CycleAITool("next") // codex
 	m.OpenSettings()
 	view := m.renderSettingsForTest()
-	if strings.Contains(view, "Claude Config") {
+	if strings.Contains(view, "Config") {
 		t.Fatalf("config row must be hidden for non-claude:\n%s", view)
 	}
 }

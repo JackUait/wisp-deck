@@ -1,6 +1,6 @@
 # Ghost Tab
 
-A **`Ghostty`** + **`tmux`** wrapper that launches a three-pane dev session with an AI coding tool (**`Claude Code`**, **`Codex`**, **`Copilot`**, or **`OpenCode`**), **`lazygit`**, and a spare terminal. Automatically cleans up all processes when the window is closed — no zombie processes.
+A **`Ghostty`** + **`tmux`** wrapper that launches a three-pane dev session with an AI coding tool (**`Claude Code`**, **`Codex`**, or **`OpenCode`**), **`lazygit`**, and a spare terminal. Automatically cleans up all processes when the window is closed — no zombie processes.
 
 <p>
   <img src="docs/screenshot-selector.png" width="49%" />

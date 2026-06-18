@@ -176,9 +176,6 @@ if select_ai_tool_interactive; then
     codex)
       ensure_command "codex" "brew install --cask codex" "" "Codex CLI"
       ;;
-    copilot)
-      ensure_command "copilot" "brew install copilot-cli" "" "Copilot CLI"
-      ;;
     opencode)
       ensure_opencode
       ;;
@@ -279,6 +276,33 @@ if [ -d "$OLD_PROJECTS_DIR" ] && [ ! -d "$NEW_PROJECTS_DIR" ]; then
   info "Migrated config from vibecode-editor to ghost-tab"
 fi
 
+# ---------- Claude Configs (defaults) ----------
+CONFIGS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab"
+if [ -d "$SHARE_DIR/defaults/claude-configs" ]; then
+  mkdir -p "$CONFIGS_DIR/claude-configs"
+  for _cfg_file in "$SHARE_DIR/defaults/claude-configs/"*.json; do
+    [ -f "$_cfg_file" ] || continue
+    _cfg_name="$(basename "$_cfg_file")"
+    if [ ! -f "$CONFIGS_DIR/claude-configs/$_cfg_name" ]; then
+      cp "$_cfg_file" "$CONFIGS_DIR/claude-configs/$_cfg_name"
+    fi
+  done
+fi
+if [ -f "$SHARE_DIR/defaults/claude-configs.list" ]; then
+  if [ ! -f "$CONFIGS_DIR/claude-configs.list" ]; then
+    cp "$SHARE_DIR/defaults/claude-configs.list" "$CONFIGS_DIR/claude-configs.list"
+  else
+    # Append new entries from defaults that aren't already in the user's list
+    while IFS= read -r _line; do
+      [[ -z "$_line" || "$_line" == \#* ]] && continue
+      _cfg_key="${_line%%:*}"
+      if ! grep -q "^${_cfg_key}:" "$CONFIGS_DIR/claude-configs.list" 2>/dev/null; then
+        echo "$_line" >> "$CONFIGS_DIR/claude-configs.list"
+      fi
+    done < "$SHARE_DIR/defaults/claude-configs.list"
+  fi
+fi
+
 # ---------- Projects ----------
 header "Setting up projects..."
 PROJECTS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab"
@@ -357,7 +381,7 @@ success "Wrapper script:  ~/.config/ghost-tab/wrapper.sh (symlink)"
 _terminal_pref="$(cat "${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab/terminal" 2>/dev/null)"
 success "Terminal:        $(get_terminal_display_name "$_terminal_pref")"
 _ai_default="$(cat "${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab/ai-tool" 2>/dev/null)"
-success "AI tool:         $(echo "$_ai_default" | sed 's/claude/Claude Code/;s/codex/Codex CLI/;s/copilot/Copilot CLI/;s/opencode/OpenCode/')"
+success "AI tool:         $(echo "$_ai_default" | sed 's/claude/Claude Code/;s/codex/Codex CLI/;s/opencode/OpenCode/')"
 success "Projects file:   $PROJECTS_FILE"
 success "Config command:  ghost-tab (in ~/.local/bin/)"
 if [ -f ~/.claude/statusline-wrapper.sh ]; then

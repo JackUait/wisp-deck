@@ -26,14 +26,6 @@ func TestBuildAILaunchCmd(t *testing.T) {
 		}
 	})
 
-	t.Run("copilot has no extra args", func(t *testing.T) {
-		result := util.BuildAILaunchCmd("copilot", "/usr/bin/copilot", "", nil)
-		expected := "/usr/bin/copilot"
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
-
 	t.Run("opencode passes project dir via npx", func(t *testing.T) {
 		result := util.BuildAILaunchCmd("opencode", "npx opencode-ai@latest", "/my/project", nil)
 		expected := `npx opencode-ai@latest "/my/project"`
@@ -220,15 +212,6 @@ func TestBuildAILaunchCmd(t *testing.T) {
 		}
 	})
 
-	t.Run("handles copilot (no args ever)", func(t *testing.T) {
-		// Copilot ignores projectDir and args
-		result := util.BuildAILaunchCmd("copilot", "/usr/bin/copilot", "/any/path", []string{"--some-flag"})
-		expected := "/usr/bin/copilot"
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
-
 	t.Run("handles unknown tool falls back to claude behavior", func(t *testing.T) {
 		result := util.BuildAILaunchCmd("unknown-tool", "/usr/bin/unknown", "", []string{"--some-flag"})
 		expected := "/usr/bin/unknown --some-flag"
@@ -294,12 +277,6 @@ func TestBuildAILaunchCmdTable(t *testing.T) {
 			command:    "/usr/bin/codex",
 			projectDir: "/my/project",
 			expected:   `/usr/bin/codex --cd "/my/project"`,
-		},
-		{
-			name:    "copilot basic",
-			tool:    "copilot",
-			command: "/usr/bin/copilot",
-			expected: "/usr/bin/copilot",
 		},
 		{
 			name:       "opencode basic",
@@ -446,14 +423,6 @@ func TestBuildAILaunchCmdTable(t *testing.T) {
 			tool:     "claude",
 			command:  "/usr/bin/claude",
 			expected: "/usr/bin/claude",
-		},
-		{
-			name:       "copilot ignores everything",
-			tool:       "copilot",
-			command:    "/usr/bin/copilot",
-			projectDir: "/any/path",
-			args:       []string{"--some-flag"},
-			expected:   "/usr/bin/copilot",
 		},
 		{
 			name:     "unknown tool falls back to claude",

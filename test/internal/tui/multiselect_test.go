@@ -12,7 +12,6 @@ func testTools() []models.AITool {
 	return []models.AITool{
 		{Name: "claude", Command: "claude", Installed: true},
 		{Name: "codex", Command: "codex", Installed: true},
-		{Name: "copilot", Command: "gh copilot", Installed: false},
 		{Name: "opencode", Command: "opencode", Installed: false},
 	}
 }
@@ -55,12 +54,8 @@ func TestNewMultiSelect_InstalledToolsPreChecked(t *testing.T) {
 	if !checked[1] {
 		t.Error("Expected codex (installed) to be pre-checked")
 	}
-	// copilot (not installed) -> not checked
-	if checked[2] {
-		t.Error("Expected copilot (not installed) to not be pre-checked")
-	}
 	// opencode (not installed) -> not checked
-	if checked[3] {
+	if checked[2] {
 		t.Error("Expected opencode (not installed) to not be pre-checked")
 	}
 }
@@ -127,7 +122,7 @@ func TestMultiSelect_CursorWrapsAtBottom(t *testing.T) {
 
 	// Navigate past the end
 	var updated tea.Model = model
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 3; i++ {
 		updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
 	m := updated.(tui.MultiSelectModel)
@@ -145,8 +140,8 @@ func TestMultiSelect_CursorWrapsAtTop(t *testing.T) {
 	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyUp})
 	m := updated.(tui.MultiSelectModel)
 
-	if m.Cursor() != 3 {
-		t.Errorf("Expected cursor to wrap to 3, got %d", m.Cursor())
+	if m.Cursor() != 2 {
+		t.Errorf("Expected cursor to wrap to 2, got %d", m.Cursor())
 	}
 }
 
@@ -175,15 +170,15 @@ func TestMultiSelect_ToggleOnDifferentItem(t *testing.T) {
 	tools := testTools()
 	model := tui.NewMultiSelect(tools)
 
-	// Navigate to copilot (index 2, not installed, unchecked)
+	// Navigate to opencode (index 2, not installed, unchecked)
 	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
 	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyDown})
-	// Toggle copilot on
+	// Toggle opencode on
 	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
 	m := updated.(tui.MultiSelectModel)
 
 	if !m.Checked()[2] {
-		t.Error("Expected copilot to be checked after toggle")
+		t.Error("Expected opencode to be checked after toggle")
 	}
 }
 
@@ -294,7 +289,7 @@ func TestMultiSelect_ViewContainsToolNames(t *testing.T) {
 	view := model.View()
 
 	// Should contain all tool display names
-	expectedNames := []string{"Claude Code", "Codex CLI", "Copilot CLI", "OpenCode"}
+	expectedNames := []string{"Claude Code", "Codex CLI", "OpenCode"}
 	for _, name := range expectedNames {
 		if !containsString(view, name) {
 			t.Errorf("Expected view to contain %q", name)
@@ -377,14 +372,11 @@ func TestMultiSelect_ResultToolsInSelectionOrder(t *testing.T) {
 	model := tui.NewMultiSelect(tools)
 
 	// Pre-checked: claude (0), codex (1)
-	// Uncheck codex, check copilot and opencode
+	// Uncheck codex, check opencode
 	// Navigate to codex (index 1) and uncheck
 	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
 	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
-	// Navigate to copilot (index 2) and check
-	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyDown})
-	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
-	// Navigate to opencode (index 3) and check
+	// Navigate to opencode (index 2) and check
 	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyDown})
 	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
 
@@ -396,8 +388,8 @@ func TestMultiSelect_ResultToolsInSelectionOrder(t *testing.T) {
 	if result == nil {
 		t.Fatal("Expected non-nil result")
 	}
-	// Should be in list order: claude, copilot, opencode
-	expected := []string{"claude", "copilot", "opencode"}
+	// Should be in list order: claude, opencode
+	expected := []string{"claude", "opencode"}
 	if len(result.Tools) != len(expected) {
 		t.Fatalf("Expected %d tools, got %d", len(expected), len(result.Tools))
 	}

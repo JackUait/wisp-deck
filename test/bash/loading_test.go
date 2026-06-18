@@ -164,12 +164,6 @@ func TestLoading_get_tool_palette_returns_codex_palette(t *testing.T) {
 	assertContains(t, out, "22 28 29 34 35 41 42 47")
 }
 
-func TestLoading_get_tool_palette_returns_copilot_palette(t *testing.T) {
-	out, code := runBashFunc(t, "lib/loading.sh", "get_tool_palette", []string{"copilot"}, nil)
-	assertExitCode(t, code, 0)
-	assertContains(t, out, "54 56 93 99 135 141 177 183")
-}
-
 func TestLoading_get_tool_palette_returns_opencode_palette(t *testing.T) {
 	out, code := runBashFunc(t, "lib/loading.sh", "get_tool_palette", []string{"opencode"}, nil)
 	assertExitCode(t, code, 0)
