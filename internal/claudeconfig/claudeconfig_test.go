@@ -466,3 +466,40 @@ func TestModelsForConfig_unknown_falls_back(t *testing.T) {
 		t.Fatal("expected fallback models, got empty")
 	}
 }
+
+func TestWriteAPIKey_writes_file_with_0600_perms(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	os.MkdirAll(cfgDir, 0755)
+	os.WriteFile(filepath.Join(cfgDir, "zhipu.json"), []byte(`{}`), 0644)
+
+	if err := WriteAPIKey(cfgDir, "zhipu.json", "sk-secret"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(cfgDir, "zhipu.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Fatalf("config file perm = %o, want 0600", perm)
+	}
+}
+
+func TestWriteModelMappings_writes_file_with_0600_perms(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	os.MkdirAll(cfgDir, 0755)
+	os.WriteFile(filepath.Join(cfgDir, "zhipu.json"), []byte(`{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-secret"}}`), 0644)
+
+	models := ProviderModels["zhipu"]
+	if err := WriteModelMappings(cfgDir, "zhipu.json", [4]int{0, 1, 2, 3}, models); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(cfgDir, "zhipu.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Fatalf("config file perm = %o, want 0600", perm)
+	}
+}

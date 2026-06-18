@@ -179,6 +179,38 @@ func Delete(listFile, configsDir, pointerFile, file string) error {
 	return nil
 }
 
+// writeSecure atomically writes data to path with 0600 permissions. It writes
+// to a temp file in the same directory (created 0600) then renames over the
+// target, so the credential-bearing file is never world-readable, even briefly.
+// Plain os.WriteFile would leave an existing file's looser mode untouched.
+func writeSecure(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
+}
+
 // ReadAPIKey reads ANTHROPIC_AUTH_TOKEN from a config JSON's env section.
 // Returns "" if the file is missing, invalid JSON, or has no key.
 func ReadAPIKey(configsDir, file string) string {
@@ -217,7 +249,7 @@ func WriteAPIKey(configsDir, file, key string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(out, '\n'), 0644)
+	return writeSecure(path, append(out, '\n'))
 }
 
 // AnthropicAliases are the model alias slots that can be mapped.
@@ -324,5 +356,5 @@ func WriteModelMappings(configsDir, file string, mappings [4]int, models []strin
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(out, '\n'), 0644)
+	return writeSecure(path, append(out, '\n'))
 }
