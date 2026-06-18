@@ -65,14 +65,20 @@ compact_view() {
     local data="$1" gcolor="$2" glyph="$3" label="$4" name_width="$5" count="$6"
     [ -z "$data" ] && return
     printf " ${gcolor}${bold}%s${reset} ${gcolor}%s${reset}  ${dim}(%s)${reset}\n" "$glyph" "$label" "$count"
-    local added deleted file display
+    local added deleted file display pad_a pad_d
     while IFS=$'\t' read -r added deleted file; do
       [ -z "$added" ] && continue
       [ "$added" = "-" ] && added=0
       [ "$deleted" = "-" ] && deleted=0
       display=$(format_file "$file" "$name_width")
-      printf "   ${green}+%-4s${reset}${red}−%-4s${reset}  ${bright}%s${reset}\n" \
-        "$added" "$deleted" "$display"
+      # Right-align each number in a 4-wide cell (sign + up to 3 digits) so the
+      # figures form a neat ledger column and the filename sits a tight 2 spaces
+      # away — no trailing-space drift. The "−" is a format literal (not a %s
+      # arg) to keep its multibyte width from skewing printf's padding.
+      pad_a=$((3 - ${#added})); [ "$pad_a" -lt 0 ] && pad_a=0
+      pad_d=$((3 - ${#deleted})); [ "$pad_d" -lt 0 ] && pad_d=0
+      printf "   %*s${green}+%s${reset} %*s${red}−%s${reset}  ${bright}%s${reset}\n" \
+        "$pad_a" '' "$added" "$pad_d" '' "$deleted" "$display"
     done <<< "$data"
     printf "\n"
   }
@@ -112,17 +118,16 @@ compact_view() {
         fi
       fi
 
-      # Gather data
-      local staged unstaged untracked
+      # Gather data (tracked changes only — untracked files carry no +/- counts
+      # and are excess for a line-change ledger, so they are intentionally omitted)
+      local staged unstaged
       staged=$(git diff --cached --numstat 2>/dev/null)
       unstaged=$(git diff --numstat 2>/dev/null)
-      untracked=$(git ls-files --others --exclude-standard 2>/dev/null)
 
       # Count totals
-      local n_staged=0 n_unstaged=0 n_untracked=0
+      local n_staged=0 n_unstaged=0
       [ -n "$staged" ] && n_staged=$(echo "$staged" | wc -l | tr -d ' ')
       [ -n "$unstaged" ] && n_unstaged=$(echo "$unstaged" | wc -l | tr -d ' ')
-      [ -n "$untracked" ] && n_untracked=$(echo "$untracked" | wc -l | tr -d ' ')
 
       # Net line totals across tracked changes (the ledger "stamp")
       local sums ta td
@@ -157,32 +162,20 @@ compact_view() {
       printf '%.*s' "$iw" '─'
       printf "${reset}\n"
 
-      # Filenames follow the "+NNN -NNN  " prefix:
-      #   indent(3) + "+"+4 + "−"+4 + 2 spaces
-      local name_width=$((iw - 15))
+      # Filenames follow the right-aligned "+NNN −NNN  " prefix:
+      #   indent(3) + added cell(4) + 1 + deleted cell(4) + 2 spaces
+      local name_width=$((iw - 14))
       [ "$name_width" -lt 8 ] && name_width=8
 
       local has_content=0
       [ -n "$staged" ] && has_content=1
       [ -n "$unstaged" ] && has_content=1
-      [ -n "$untracked" ] && has_content=1
 
       # ── Staged ──
       render_group "$staged" "$green" "●" "staged" "$name_width" "$n_staged"
 
       # ── Modified ──
       render_group "$unstaged" "$yellow" "●" "modified" "$name_width" "$n_unstaged"
-
-      # ── Untracked (new): filename only, no counts ──
-      if [ -n "$untracked" ]; then
-        printf " ${dim}${bold}○${reset} ${dim}new${reset}  ${dim}(%s)${reset}\n" "$n_untracked"
-        while IFS= read -r file; do
-          local display
-          display=$(format_file "$file" "$((iw - 3))")
-          printf "   ${dim}%s${reset}\n" "$display"
-        done <<< "$untracked"
-        printf "\n"
-      fi
 
       # Empty state
       if [ "$has_content" -eq 0 ]; then

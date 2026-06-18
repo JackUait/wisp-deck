@@ -136,3 +136,63 @@ func TestCompactView_does_not_leak_width_variable_under_zsh(t *testing.T) {
 		t.Errorf("width variable leaked to output (saw \"w=\"):\n%q", string(out))
 	}
 }
+
+// The "new" (untracked) section is excess for a line-change ledger: untracked
+// files carry no +/- counts. compact_view must omit it entirely — no "new"
+// header, no untracked filenames, and (since the old block declared `local
+// display` inside its loop) no leaked "display=..." line under zsh.
+func TestCompactView_omits_untracked_new_section(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not available")
+	}
+	root := projectRoot(t)
+	module := filepath.Join(root, "lib", "compact-view.sh")
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	writeTempFile(t, dir, "app.txt", "one\n")
+	git("add", "app.txt")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "app.txt", "one\ntwo\n") // modified (tracked)
+	writeTempFile(t, dir, "untrackedonly.txt", "x\n") // untracked
+
+	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, zsh, "-c",
+		"source "+module+" && compact_view "+dir)
+	env := []string{}
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "TMUX=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=0.1", "TERM=xterm")
+	out, _ := cmd.CombinedOutput()
+	got := string(out)
+
+	if strings.Contains(got, "untrackedonly.txt") {
+		t.Errorf("untracked filename should not appear:\n%q", got)
+	}
+	if strings.Contains(got, "new") {
+		t.Errorf("'new' section header should not appear:\n%q", got)
+	}
+	if strings.Contains(got, "display=") {
+		t.Errorf("leaked 'display=' from untracked loop:\n%q", got)
+	}
+	// Sanity: the modified file IS still rendered.
+	if !strings.Contains(got, "app.txt") {
+		t.Errorf("modified file app.txt should still appear:\n%q", got)
+	}
+}
