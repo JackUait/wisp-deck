@@ -42,11 +42,19 @@ func (m *MainMenuModel) renderTitleRow(leftBorder, rightBorder string) string {
 
 	title := primaryBoldStyle.Render("Ghost Tab")
 	aiDisplay := AIToolDisplayName(m.CurrentAITool())
+	// When the AI switcher holds focus, brighten the chevrons and name so it
+	// reads as the active focus stop driven by ←/→.
+	chevronStyle := dimStyle
+	nameStyle := primaryStyle
+	if m.focus == FocusAI {
+		chevronStyle = lipgloss.NewStyle().Foreground(m.theme.Accent)
+		nameStyle = lipgloss.NewStyle().Foreground(m.theme.Bright).Bold(true)
+	}
 	var aiPart string
 	if len(m.aiTools) > 1 {
-		aiPart = dimStyle.Render(" ◂ ") + primaryStyle.Render(aiDisplay) + dimStyle.Render(" ▸")
+		aiPart = chevronStyle.Render(" ◂ ") + nameStyle.Render(aiDisplay) + chevronStyle.Render(" ▸")
 	} else {
-		aiPart = " " + primaryStyle.Render(aiDisplay)
+		aiPart = " " + nameStyle.Render(aiDisplay)
 	}
 	// Right-align AI tool chooser: "⬡ Ghost Tab" left, "◂ Claude Code ▸" right
 	aiPadding := menuContentWidth - lipgloss.Width(title) - lipgloss.Width(aiPart) - 1 // -1 for leading space
@@ -353,8 +361,7 @@ func (m *MainMenuModel) renderHelpRow() string {
 	} else if m.showEscHint {
 		helpContent = helpStyle.Render("Press Esc again to quit")
 	} else {
-		hint := "↑↓ move · ⇧↑↓ reorder · ←→ AI · ↵ open · O once · P plain"
-		helpContent = helpStyle.Render(hint)
+		helpContent = helpStyle.Render(m.focusHint())
 	}
 	// Center within the full box width (inner + 2 border columns).
 	boxWidth := menuInnerWidth + 2
@@ -364,6 +371,27 @@ func (m *MainMenuModel) renderHelpRow() string {
 		helpLeft = 0
 	}
 	return strings.Repeat(" ", helpLeft) + helpContent
+}
+
+// focusHint returns the footer hint line for the current focus region and tab.
+// The hints teach the focus ring: ↑/↓ move between AI switcher, tab bar, and
+// body; ←/→ act on whatever is focused.
+func (m *MainMenuModel) focusHint() string {
+	switch m.focus {
+	case FocusAI:
+		return "←→ switch AI · ↓ sections"
+	case FocusTabs:
+		return "←→ switch section · ↑ AI · ↓ enter"
+	default: // FocusBody
+		switch m.activeTab {
+		case TabSettings:
+			return "↑↓ move · ←→ change · ↵ edit · ↑ sections"
+		case TabStats:
+			return "↑↓ scroll · ↑ sections"
+		default: // projects
+			return "↑↓ move · ↵ open · ↑ sections · O once · P plain"
+		}
+	}
 }
 
 // renderMenuBox renders the full Projects-tab box: chrome borders, title row,

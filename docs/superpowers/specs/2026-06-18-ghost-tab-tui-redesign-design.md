@@ -66,6 +66,24 @@ not an incremental tweak.
   AI switch lives here on every tab; `←→` cycles it and re-themes the whole UI.
 - **Tab bar** — `Projects · Settings · Stats`. Active tab is Primary bold with a
   block accent; inactive tabs are Dim. `Tab` / `Shift+Tab` cycle; `S` / `T` jump.
+
+### Focus ring (arrow-driven navigation)
+
+Navigation is a single vertical **focus ring** so users never need to memorize a
+section keybind. Three focus stops, top to bottom: **AI switcher → Tab bar →
+Body**.
+
+- `↑` / `↓` move between stops, and move within the body region. `↑` at the body's
+  first item (or `↓` from the AI switcher) crosses into the next stop.
+- `←` / `→` act on whatever holds focus: cycle the AI tool, switch the tab, or
+  change the focused setting's value.
+- `↵` drills from the tab bar into the body, or triggers the body item's action.
+- The focused stop is highlighted (AI name + chevrons brighten; active tab
+  brightens), and the footer hint rewrites per focus so the next move is always
+  visible.
+
+`Tab` / `Shift+Tab` and the `S` / `T` accelerators remain as power-user jumps;
+`j` / `k` keep wrapping within the focused region (arrows instead escape focus).
 - **Body** — swaps per active tab.
 - **Action bar** — one line, contextual to the active tab and current selection.
 - **Footer hints** — rare global launches (`O` open once, `P` plain terminal)

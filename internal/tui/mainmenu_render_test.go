@@ -135,8 +135,10 @@ func TestMenuBox_HelpTextPresent(t *testing.T) {
 	if !strings.Contains(raw, "move") {
 		t.Error("help text missing 'move' hint")
 	}
-	if !strings.Contains(raw, "AI") {
-		t.Error("help text missing 'AI' hint")
+	// AI switching moved to its own focus stop; the default body footer now
+	// advertises ↑ to reach the tab bar instead.
+	if !strings.Contains(raw, "sections") {
+		t.Error("help text missing 'sections' hint")
 	}
 	if !strings.Contains(raw, "open") {
 		t.Error("help text missing 'open' hint")

@@ -24,7 +24,13 @@ var menuTabLabels = []string{"Projects", "Settings", "Stats"}
 // renderTabBar renders the Projects · Settings · Stats row. The active tab is
 // wrapped in block accents and styled bold; inactive tabs are dimmed.
 func (m *MainMenuModel) renderTabBar(leftBorder, rightBorder string) string {
-	activeStyle := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
+	// When the tab bar holds focus, the active tab brightens to signal that ←/→
+	// will switch sections; otherwise it stays the dimmer Primary.
+	activeColor := m.theme.Primary
+	if m.focus == FocusTabs {
+		activeColor = m.theme.Bright
+	}
+	activeStyle := lipgloss.NewStyle().Foreground(activeColor).Bold(true)
 	inactiveStyle := lipgloss.NewStyle().Foreground(m.theme.Dim)
 
 	var parts []string

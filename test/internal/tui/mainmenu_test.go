@@ -573,6 +573,7 @@ func TestMainMenu_KeyBindings_Navigation(t *testing.T) {
 func TestMainMenu_KeyBindings_AIToolCycling(t *testing.T) {
 	t.Run("right_arrow_cycles_next", func(t *testing.T) {
 		m := tui.NewMainMenu(testProjects(), testAITools(), "claude", "animated")
+		m.SetFocus(tui.FocusAI) // AI switcher is the top focus stop
 		newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
 		mm := newModel.(*tui.MainMenuModel)
 		if mm.CurrentAITool() != "codex" {
@@ -582,6 +583,7 @@ func TestMainMenu_KeyBindings_AIToolCycling(t *testing.T) {
 
 	t.Run("left_arrow_cycles_prev", func(t *testing.T) {
 		m := tui.NewMainMenu(testProjects(), testAITools(), "claude", "animated")
+		m.SetFocus(tui.FocusAI)
 		newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
 		mm := newModel.(*tui.MainMenuModel)
 		if mm.CurrentAITool() != "opencode" {
@@ -734,8 +736,10 @@ func TestMainMenu_ViewHelpRow(t *testing.T) {
 	if strings.Contains(view, "navigate") {
 		t.Error("help row should NOT mention navigate")
 	}
-	if !strings.Contains(view, "AI") {
-		t.Error("help row should mention AI")
+	// AI switching is now its own focus stop; the default footer points ↑ to
+	// the tab bar (sections) rather than advertising ←→ AI.
+	if !strings.Contains(view, "sections") {
+		t.Error("help row should mention sections")
 	}
 	if !strings.Contains(view, "move") {
 		t.Error("help row should mention move")
@@ -1478,28 +1482,33 @@ func TestMainMenu_SettingsNavigationKeys(t *testing.T) {
 func TestMainMenu_SettingsNavigationWraps(t *testing.T) {
 	const numItems = 5 // claude tool has 5 settings items (includes Claude Config row)
 
-	t.Run("down wraps from last to first", func(t *testing.T) {
+	jKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	kKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}}
+
+	// The vim j/k accelerators wrap within the settings list (arrow keys instead
+	// escape focus to the tab bar — covered by the focus-ring tests).
+	t.Run("j wraps from last to first", func(t *testing.T) {
 		m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
 		m.SetSize(80, 30)
 		m.EnterSettings()
 
 		// Navigate to the last item (index 3)
 		for i := 0; i < numItems-1; i++ {
-			m.Update(tea.KeyMsg{Type: tea.KeyDown})
+			m.Update(jKey)
 		}
 		if m.SettingsSelected() != numItems-1 {
 			t.Fatalf("expected to be on last item (%d), got %d", numItems-1, m.SettingsSelected())
 		}
 
-		// One more Down should wrap to index 0
-		newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		// One more j should wrap to index 0
+		newModel, _ := m.Update(jKey)
 		mm := newModel.(*tui.MainMenuModel)
 		if mm.SettingsSelected() != 0 {
-			t.Errorf("Down on last item should wrap to 0, got %d", mm.SettingsSelected())
+			t.Errorf("j on last item should wrap to 0, got %d", mm.SettingsSelected())
 		}
 	})
 
-	t.Run("up wraps from first to last", func(t *testing.T) {
+	t.Run("k wraps from first to last", func(t *testing.T) {
 		m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
 		m.SetSize(80, 30)
 		m.EnterSettings()
@@ -1509,11 +1518,11 @@ func TestMainMenu_SettingsNavigationWraps(t *testing.T) {
 			t.Fatalf("expected initial index 0, got %d", m.SettingsSelected())
 		}
 
-		// Up from first item should wrap to last
-		newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+		// k from first item should wrap to last
+		newModel, _ := m.Update(kKey)
 		mm := newModel.(*tui.MainMenuModel)
 		if mm.SettingsSelected() != numItems-1 {
-			t.Errorf("Up on first item should wrap to %d, got %d", numItems-1, mm.SettingsSelected())
+			t.Errorf("k on first item should wrap to %d, got %d", numItems-1, mm.SettingsSelected())
 		}
 	})
 
@@ -4985,9 +4994,9 @@ func TestSettings_NavWrapsWithFiveItems(t *testing.T) {
 	// claude tool shows 5 settings items (Ghost Display, Tab Title, Sound, Default projects dir, Claude Config)
 	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
 	m.EnterSettings()
-	// Navigate down 5 times — should wrap back to 0
+	// j 5 times — wraps back to 0 (vim accelerator wraps within the list)
 	for i := 0; i < 5; i++ {
-		m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	}
 	if m.SettingsSelected() != 0 {
 		t.Errorf("expected settingsSelected=0 after wrapping past 5 items, got %d", m.SettingsSelected())
@@ -4998,9 +5007,9 @@ func TestSettings_NavWrapsWithFourItems_NonClaude(t *testing.T) {
 	// non-claude tool shows 4 settings items (no Claude Config row)
 	m := tui.NewMainMenu(nil, []string{"codex"}, "codex", "animated")
 	m.EnterSettings()
-	// Navigate down 4 times — should wrap back to 0
+	// j 4 times — wraps back to 0 (vim accelerator wraps within the list)
 	for i := 0; i < 4; i++ {
-		m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	}
 	if m.SettingsSelected() != 0 {
 		t.Errorf("expected settingsSelected=0 after wrapping past 4 items, got %d", m.SettingsSelected())

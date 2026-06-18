@@ -102,6 +102,19 @@ const (
 
 const menuTabCount = 3
 
+// focusRegion is the vertically-stacked region currently receiving arrow input.
+// The focus ring is AI switcher (top) ↔ tab bar ↔ body (bottom). ↑/↓ move
+// between regions (and within the body); ←/→ act on the focused region.
+type focusRegion int
+
+const (
+	// FocusBody is the zero value so a freshly-built model starts with the
+	// project list focused (the primary action is selecting a project).
+	FocusBody focusRegion = iota
+	FocusTabs
+	FocusAI
+)
+
 // MenuLayout describes how the ghost and menu are arranged at a given terminal size.
 type MenuLayout struct {
 	GhostPosition string // "side", "above", "hidden"
@@ -172,6 +185,7 @@ type MainMenuModel struct {
 	result              *MainMenuResult
 	updateVersion       string
 	activeTab           MenuTab
+	focus               focusRegion
 	settingsSelected    int
 	initialGhostDisplay string
 	ghostDisplayChanged bool
@@ -842,11 +856,21 @@ func (m *MainMenuModel) soundNameForResult() *string {
 // InSettingsMode returns true if the menu is currently showing the settings panel.
 func (m *MainMenuModel) InSettingsMode() bool { return m.activeTab == TabSettings }
 
-// EnterSettings switches the menu to settings mode.
-func (m *MainMenuModel) EnterSettings() { m.activeTab = TabSettings; m.settingsSelected = 0 }
+// EnterSettings switches the menu to settings mode with the body focused.
+func (m *MainMenuModel) EnterSettings() {
+	m.activeTab = TabSettings
+	m.settingsSelected = 0
+	m.focus = FocusBody
+}
 
 // ExitSettings returns from settings mode to the main menu.
 func (m *MainMenuModel) ExitSettings() { m.activeTab = TabProjects }
+
+// Focus returns the region currently receiving arrow-key input.
+func (m *MainMenuModel) Focus() focusRegion { return m.focus }
+
+// SetFocus moves the focus ring to the given region.
+func (m *MainMenuModel) SetFocus(f focusRegion) { m.focus = f }
 
 // ActiveTab returns the currently selected top-level tab.
 func (m *MainMenuModel) ActiveTab() MenuTab { return m.activeTab }
@@ -1472,21 +1496,16 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Reset sleep state on any keypress
 		m.Wake()
 
-		// Settings tab intercepts all key handling
-		if m.activeTab == TabSettings {
-			return m.updateSettings(msg)
+		// Modal sub-screens intercept all key handling regardless of focus.
+		if m.modelMapOpen {
+			return m.updateModelMap(msg)
 		}
-		// Stats tab: Tab/Shift+Tab/S/T navigate; Esc returns to Projects.
-		if m.activeTab == TabStats {
-			return m.updateStatsTab(msg)
+		if m.settingsInputMode {
+			return m.updateSettingsInput(msg)
 		}
-
-		// Input mode intercepts all key handling
 		if m.inputMode != "" {
 			return m.updateInputMode(msg)
 		}
-
-		// Delete mode intercepts all key handling
 		if m.deleteMode {
 			return m.updateDeleteMode(msg)
 		}
@@ -1515,66 +1534,222 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		switch msg.Type {
-		case tea.KeyUp:
-			m.MoveUp()
-			return m, nil
-		case tea.KeyDown:
-			m.MoveDown()
-			return m, nil
-		case tea.KeyShiftUp:
-			m.MoveProjectUp()
-			return m, nil
-		case tea.KeyShiftDown:
-			m.MoveProjectDown()
-			return m, nil
-		case tea.KeyTab:
-			m.CycleTab("next")
-			if m.activeTab == TabStats {
-				return m, m.ensureStatsLoad()
-			}
-			return m, nil
-		case tea.KeyShiftTab:
-			m.CycleTab("prev")
-			if m.activeTab == TabStats {
-				return m, m.ensureStatsLoad()
-			}
-			return m, nil
-		case tea.KeyLeft:
-			m.CycleAITool("prev")
-			return m, nil
-		case tea.KeyRight:
-			m.CycleAITool("next")
-			return m, nil
-		case tea.KeyEnter:
-			itemType, _, _ := m.ResolveItem(m.selectedItem)
-			switch itemType {
-			case "add-project":
-				return m.enterInputMode("add-project")
-			case "add-worktree":
-				if cmd := m.selectCurrent(); cmd != nil {
-					return m, cmd
-				}
-				return m, nil
-			}
-			if cmd := m.selectCurrent(); cmd != nil {
-				return m, cmd
-			}
-			return m, tea.Quit
-		case tea.KeyEsc:
-			// Emit PopScreenMsg — AppModel handles double-Esc timeout to quit.
-			return m, func() tea.Msg { return PopScreenMsg{} }
-		case tea.KeyCtrlC:
-			m.setActionResult("quit")
-			return m, tea.Quit
-		case tea.KeyRunes:
-			if len(msg.Runes) == 1 {
-				return m.handleRune(msg.Runes[0])
-			}
-		}
+		return m.routeFocusKey(msg)
 	}
 
 	return m, nil
+}
+
+// routeFocusKey dispatches a keypress through the focus ring. Arrow keys act on
+// the focused region; Tab/Shift+Tab and the rune accelerators jump directly.
+func (m *MainMenuModel) routeFocusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyCtrlC:
+		m.setActionResult("quit")
+		return m, tea.Quit
+	case tea.KeyTab:
+		m.CycleTab("next")
+		m.focus = FocusTabs
+		if m.activeTab == TabStats {
+			return m, m.ensureStatsLoad()
+		}
+		return m, nil
+	case tea.KeyShiftTab:
+		m.CycleTab("prev")
+		m.focus = FocusTabs
+		if m.activeTab == TabStats {
+			return m, m.ensureStatsLoad()
+		}
+		return m, nil
+	case tea.KeyShiftUp:
+		if m.focus == FocusBody && m.activeTab == TabProjects {
+			m.MoveProjectUp()
+		}
+		return m, nil
+	case tea.KeyShiftDown:
+		if m.focus == FocusBody && m.activeTab == TabProjects {
+			m.MoveProjectDown()
+		}
+		return m, nil
+	case tea.KeyUp:
+		return m, m.focusUp()
+	case tea.KeyDown:
+		return m, m.focusDown()
+	case tea.KeyLeft:
+		return m, m.focusLeft()
+	case tea.KeyRight:
+		return m, m.focusRight()
+	case tea.KeyEnter:
+		return m.focusEnter()
+	case tea.KeyEsc:
+		return m.focusEsc()
+	case tea.KeyRunes:
+		if len(msg.Runes) == 1 {
+			return m.handleRune(msg.Runes[0])
+		}
+	}
+	return m, nil
+}
+
+// focusUp moves up the focus ring or up within the focused body region. When
+// the body cursor is already at its first item, focus escapes to the tab bar.
+func (m *MainMenuModel) focusUp() tea.Cmd {
+	switch m.focus {
+	case FocusAI:
+		// already the top stop
+	case FocusTabs:
+		m.focus = FocusAI
+	case FocusBody:
+		switch m.activeTab {
+		case TabSettings:
+			if m.settingsSelected <= 0 {
+				m.focus = FocusTabs
+			} else {
+				m.settingsSelected--
+			}
+		case TabStats:
+			if m.statsOffset <= 0 {
+				m.focus = FocusTabs
+			} else {
+				m.statsOffset--
+			}
+		default: // projects
+			if m.selectedItem <= 0 {
+				m.focus = FocusTabs
+			} else {
+				m.MoveUp()
+			}
+		}
+	}
+	return nil
+}
+
+// focusDown moves down the focus ring or down within the focused body region.
+func (m *MainMenuModel) focusDown() tea.Cmd {
+	switch m.focus {
+	case FocusAI:
+		m.focus = FocusTabs
+	case FocusTabs:
+		m.focus = FocusBody
+		if m.activeTab == TabStats {
+			return m.ensureStatsLoad()
+		}
+	case FocusBody:
+		switch m.activeTab {
+		case TabSettings:
+			if m.settingsSelected < m.settingsItemCount()-1 {
+				m.settingsSelected++
+			}
+		case TabStats:
+			m.statsScrollDown()
+		default: // projects
+			if m.selectedItem < m.TotalItems()-1 {
+				m.MoveDown()
+			}
+		}
+	}
+	return nil
+}
+
+// focusLeft acts on the focused region: cycle AI tool, switch tab, or decrement
+// the focused settings value.
+func (m *MainMenuModel) focusLeft() tea.Cmd {
+	switch m.focus {
+	case FocusAI:
+		m.CycleAITool("prev")
+	case FocusTabs:
+		m.CycleTab("prev")
+		if m.activeTab == TabStats {
+			return m.ensureStatsLoad()
+		}
+	case FocusBody:
+		if m.activeTab == TabSettings {
+			m.settingsValueLeft()
+		}
+	}
+	return nil
+}
+
+// focusRight mirrors focusLeft in the opposite direction.
+func (m *MainMenuModel) focusRight() tea.Cmd {
+	switch m.focus {
+	case FocusAI:
+		m.CycleAITool("next")
+	case FocusTabs:
+		m.CycleTab("next")
+		if m.activeTab == TabStats {
+			return m.ensureStatsLoad()
+		}
+	case FocusBody:
+		if m.activeTab == TabSettings {
+			m.settingsValueRight()
+		}
+	}
+	return nil
+}
+
+// focusEnter activates the focused region: drill from the tab bar into the body,
+// or trigger the body item's primary action.
+func (m *MainMenuModel) focusEnter() (tea.Model, tea.Cmd) {
+	switch m.focus {
+	case FocusAI:
+		return m, nil
+	case FocusTabs:
+		m.focus = FocusBody
+		if m.activeTab == TabStats {
+			return m, m.ensureStatsLoad()
+		}
+		return m, nil
+	default: // FocusBody
+		switch m.activeTab {
+		case TabSettings:
+			return m.settingsEnter()
+		case TabStats:
+			return m, nil
+		default: // projects
+			return m.projectsEnter()
+		}
+	}
+}
+
+// focusEsc backs out: from any non-Projects tab return to Projects; on Projects
+// it bubbles up to AppModel for the double-Esc quit flow.
+func (m *MainMenuModel) focusEsc() (tea.Model, tea.Cmd) {
+	if m.activeTab != TabProjects {
+		m.SetActiveTab(TabProjects)
+		m.focus = FocusBody
+		return m, nil
+	}
+	return m, func() tea.Msg { return PopScreenMsg{} }
+}
+
+// projectsEnter triggers the primary action for the selected Projects-tab row.
+func (m *MainMenuModel) projectsEnter() (tea.Model, tea.Cmd) {
+	itemType, _, _ := m.ResolveItem(m.selectedItem)
+	switch itemType {
+	case "add-project":
+		return m.enterInputMode("add-project")
+	case "add-worktree":
+		if cmd := m.selectCurrent(); cmd != nil {
+			return m, cmd
+		}
+		return m, nil
+	}
+	if cmd := m.selectCurrent(); cmd != nil {
+		return m, cmd
+	}
+	return m, tea.Quit
+}
+
+// statsScrollDown advances the stats month window by one, bounded to the data.
+func (m *MainMenuModel) statsScrollDown() {
+	max := len(m.statsMonths) - statsWindow
+	if max < 0 {
+		max = 0
+	}
+	if m.statsOffset < max {
+		m.statsOffset++
+	}
 }
 
 // handleRune processes a single rune keypress.
@@ -1582,16 +1757,20 @@ func (m *MainMenuModel) handleRune(r rune) (tea.Model, tea.Cmd) {
 	r = TranslateRune(r)
 	switch r {
 	case 'j':
-		m.MoveDown()
+		m.runeMoveDown()
 		return m, nil
 	case 'k':
-		m.MoveUp()
+		m.runeMoveUp()
 		return m, nil
 	case 'J':
-		m.MoveProjectDown()
+		if m.activeTab == TabProjects {
+			m.MoveProjectDown()
+		}
 		return m, nil
 	case 'K':
-		m.MoveProjectUp()
+		if m.activeTab == TabProjects {
+			m.MoveProjectUp()
+		}
 		return m, nil
 	case 'a', 'A':
 		return m.enterInputMode("add-project")
@@ -1608,9 +1787,11 @@ func (m *MainMenuModel) handleRune(r rune) (tea.Model, tea.Cmd) {
 	case 's', 'S':
 		m.SetActiveTab(TabSettings)
 		m.settingsSelected = 0
+		m.focus = FocusBody
 		return m, nil
 	case 't', 'T':
 		m.SetActiveTab(TabStats)
+		m.focus = FocusBody
 		return m, m.ensureStatsLoad()
 	case '1', '2', '3', '4', '5', '6', '7', '8', '9':
 		n := int(r - '0')
@@ -1626,170 +1807,89 @@ func (m *MainMenuModel) handleRune(r rune) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateSettings handles key events while in settings mode.
-func (m *MainMenuModel) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.modelMapOpen {
-		return m.updateModelMap(msg)
+// runeMoveDown handles the vim 'j' accelerator, scoped to the active tab's body
+// (wraps within the region rather than escaping focus like the arrow keys).
+func (m *MainMenuModel) runeMoveDown() {
+	switch m.activeTab {
+	case TabSettings:
+		m.settingsSelected = (m.settingsSelected + 1) % m.settingsItemCount()
+	case TabStats:
+		m.statsScrollDown()
+	default:
+		m.MoveDown()
 	}
-	if m.settingsInputMode {
-		return m.updateSettingsInput(msg)
-	}
-	switch msg.Type {
-	case tea.KeyEsc:
-		m.SetActiveTab(TabProjects)
-		return m, nil
-	case tea.KeyCtrlC:
-		m.setActionResult("quit")
-		return m, tea.Quit
-	case tea.KeyTab:
-		m.CycleTab("next")
-		if m.activeTab == TabStats {
-			return m, m.ensureStatsLoad()
-		}
-		return m, nil
-	case tea.KeyShiftTab:
-		m.CycleTab("prev")
-		if m.activeTab == TabStats {
-			return m, m.ensureStatsLoad()
-		}
-		return m, nil
-	case tea.KeyEnter:
-		// Activate current settings item
-		switch m.settingsSelected {
-		case 0:
-			m.CycleGhostDisplay()
-		case 1:
-			m.CycleTabTitle()
-		case 2:
-			m.CycleSoundName()
-		case 3:
-			// Open text input for projects root
-			m.settingsInputMode = true
-			si := textinput.New()
-			si.Placeholder = "e.g., ~/Projects"
-			si.Width = menuContentWidth - 11
-			si.SetValue(m.projectsRoot)
-			si.Focus()
-			m.settingsInput = si
-			m.settingsInputErr = nil
-			return m, textinput.Blink
-		case 4:
-			if m.selectedConfig > 0 {
-				m.openModelMap()
-			}
-		}
-		return m, nil
-	case tea.KeyUp:
+}
+
+// runeMoveUp handles the vim 'k' accelerator, scoped to the active tab's body.
+func (m *MainMenuModel) runeMoveUp() {
+	switch m.activeTab {
+	case TabSettings:
 		n := m.settingsItemCount()
 		m.settingsSelected = (m.settingsSelected - 1 + n) % n
-		return m, nil
-	case tea.KeyDown:
-		n := m.settingsItemCount()
-		m.settingsSelected = (m.settingsSelected + 1) % n
-		return m, nil
-	case tea.KeyRight:
-		switch m.settingsSelected {
-		case 0:
-			m.CycleGhostDisplay()
-		case 1:
-			m.CycleTabTitle()
-		case 2:
-			m.CycleSoundName()
-		case 4:
-			m.CycleClaudeConfig("next")
+	case TabStats:
+		if m.statsOffset > 0 {
+			m.statsOffset--
 		}
-		return m, nil
-	case tea.KeyLeft:
-		switch m.settingsSelected {
-		case 0:
-			m.CycleGhostDisplayReverse()
-		case 1:
-			m.CycleTabTitle()
-		case 2:
-			m.CycleSoundNameReverse()
-		case 4:
-			m.CycleClaudeConfig("prev")
-		}
-		return m, nil
-	case tea.KeyRunes:
-		if len(msg.Runes) == 1 {
-			r := TranslateRune(msg.Runes[0])
-			switch r {
-			case 'j':
-				m.settingsSelected = (m.settingsSelected + 1) % m.settingsItemCount()
-				return m, nil
-			case 'k':
-				n := m.settingsItemCount()
-				m.settingsSelected = (m.settingsSelected - 1 + n) % n
-				return m, nil
-			}
+	default:
+		m.MoveUp()
+	}
+}
+
+// settingsEnter activates the selected settings row: cycle a value, open the
+// projects-root text input, or open the model-map panel.
+func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
+	switch m.settingsSelected {
+	case 0:
+		m.CycleGhostDisplay()
+	case 1:
+		m.CycleTabTitle()
+	case 2:
+		m.CycleSoundName()
+	case 3:
+		// Open text input for projects root
+		m.settingsInputMode = true
+		si := textinput.New()
+		si.Placeholder = "e.g., ~/Projects"
+		si.Width = menuContentWidth - 11
+		si.SetValue(m.projectsRoot)
+		si.Focus()
+		m.settingsInput = si
+		m.settingsInputErr = nil
+		return m, textinput.Blink
+	case 4:
+		if m.selectedConfig > 0 {
+			m.openModelMap()
 		}
 	}
 	return m, nil
 }
 
-// updateStatsTab handles key events while the Stats tab is active.
-func (m *MainMenuModel) updateStatsTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyTab:
-		m.CycleTab("next")
-		if m.activeTab == TabStats {
-			return m, m.ensureStatsLoad()
-		}
-		return m, nil
-	case tea.KeyShiftTab:
-		m.CycleTab("prev")
-		if m.activeTab == TabStats {
-			return m, m.ensureStatsLoad()
-		}
-		return m, nil
-	case tea.KeyEsc:
-		m.SetActiveTab(TabProjects)
-		return m, nil
-	case tea.KeyCtrlC:
-		m.setActionResult("quit")
-		return m, tea.Quit
-	case tea.KeyUp:
-		if m.statsOffset > 0 {
-			m.statsOffset--
-		}
-		return m, nil
-	case tea.KeyDown:
-		max := len(m.statsMonths) - statsWindow
-		if max < 0 {
-			max = 0
-		}
-		if m.statsOffset < max {
-			m.statsOffset++
-		}
-		return m, nil
-	case tea.KeyRunes:
-		if len(msg.Runes) == 1 {
-			switch TranslateRune(msg.Runes[0]) {
-			case 'k':
-				if m.statsOffset > 0 {
-					m.statsOffset--
-				}
-				return m, nil
-			case 'j':
-				max := len(m.statsMonths) - statsWindow
-				if max < 0 {
-					max = 0
-				}
-				if m.statsOffset < max {
-					m.statsOffset++
-				}
-				return m, nil
-			case 's', 'S':
-				m.SetActiveTab(TabSettings)
-				return m, nil
-			case 't', 'T':
-				m.SetActiveTab(TabProjects) // 't' from Stats toggles back
-				return m, nil
-			}
-		}
+// settingsValueRight increments the focused settings row's value.
+func (m *MainMenuModel) settingsValueRight() {
+	switch m.settingsSelected {
+	case 0:
+		m.CycleGhostDisplay()
+	case 1:
+		m.CycleTabTitle()
+	case 2:
+		m.CycleSoundName()
+	case 4:
+		m.CycleClaudeConfig("next")
 	}
-	return m, nil
+}
+
+// settingsValueLeft decrements the focused settings row's value.
+func (m *MainMenuModel) settingsValueLeft() {
+	switch m.settingsSelected {
+	case 0:
+		m.CycleGhostDisplayReverse()
+	case 1:
+		m.CycleTabTitle()
+	case 2:
+		m.CycleSoundNameReverse()
+	case 4:
+		m.CycleClaudeConfig("prev")
+	}
 }
 
 // updateSettingsInput handles key events while in settings input mode (editing projects root).
