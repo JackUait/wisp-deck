@@ -2,7 +2,8 @@
 # shellcheck disable=SC2059  # Intentional: ANSI escape variables in printf format strings
 # Compact view: a "changeset ledger" of working-tree changes instead of lazygit.
 # Branch as a heading, net +/- stamp, aligned +/- columns with filenames.
-# Refreshes every 2 seconds. Ctrl-C to exit.
+# Refreshes every 2 seconds. Scroll with the mouse wheel, arrows/j/k,
+# space/b (page), g/G (top/bottom) when the list overflows. Ctrl-C to exit.
 
 # format_file shows the file BASENAME only (the path is dropped), truncating
 # with an ellipsis when it exceeds max width.
@@ -32,6 +33,40 @@ sum_numstat() {
   printf '%d %d' "$a" "$d"
 }
 
+# clamp_scroll keeps a scroll offset within [0, total - avail]. When the content
+# fits (total <= avail) the result is 0.
+# Usage: clamp_scroll <scroll> <total_lines> <viewport_lines>
+clamp_scroll() {
+  local scroll="$1" total="$2" avail="$3"
+  local max=$((total - avail))
+  [ "$max" -lt 0 ] && max=0
+  [ "$scroll" -lt 0 ] && scroll=0
+  [ "$scroll" -gt "$max" ] && scroll="$max"
+  printf '%d' "$scroll"
+}
+
+# viewport_slice prints <count> lines of stdin starting after <scroll> lines,
+# clipping at end-of-input. Line-based (no array indexing) so it behaves the
+# same under bash and zsh.
+# Usage: printf '%s\n' "$content" | viewport_slice <scroll> <count>
+viewport_slice() {
+  local start=$(($1 + 1)) end=$(($1 + $2))
+  sed -n "${start},${end}p"
+}
+
+# scroll_status renders the bottom position indicator "first-last/total" with
+# ↑/↓ arrows showing whether more content sits above/below the viewport.
+# Usage: scroll_status <scroll> <viewport_lines> <total_lines>
+scroll_status() {
+  local scroll="$1" avail="$2" total="$3"
+  local first=$((scroll + 1)) last=$((scroll + avail))
+  [ "$last" -gt "$total" ] && last="$total"
+  local up=" " down=" "
+  [ "$scroll" -gt 0 ] && up="↑"
+  [ "$last" -lt "$total" ] && down="↓"
+  printf ' \033[2m%s%s %d-%d/%d\033[0m' "$up" "$down" "$first" "$last" "$total"
+}
+
 compact_view() {
   local project_dir="${1:-.}"
 
@@ -42,8 +77,27 @@ compact_view() {
     return
   fi
 
-  trap 'printf "\033[?25h\033[0m"; exit 0' INT TERM
+  # Interactive only when stdin is a real terminal (the live tmux pane). The Go
+  # test harness pipes stdin, so it falls through to the timed-refresh path.
+  local interactive=0
+  [ -t 0 ] && interactive=1
+
+  trap 'printf "\033[?1000l\033[?1006l\033[?25h\033[0m"; exit 0' INT TERM
   printf "\033[?25l" # hide cursor
+  # Enable SGR mouse-wheel reporting so the wheel scrolls the list.
+  [ "$interactive" = 1 ] && printf "\033[?1000h\033[?1006h"
+
+  # read_key reads ONE keystroke into the global KEY within <timeout> seconds,
+  # returning non-zero on timeout. bash and zsh spell single-char reads
+  # differently (-n vs -k); IFS= preserves a literal space keypress.
+  read_key() {
+    KEY=''
+    if [ -n "${ZSH_VERSION:-}" ]; then
+      IFS= read -rs -t "$1" -k 1 KEY 2>/dev/null
+    else
+      IFS= read -rs -t "$1" -n 1 KEY 2>/dev/null
+    fi
+  }
 
   # ANSI helpers
   local dim="\033[90m"
@@ -87,17 +141,26 @@ compact_view() {
   # under zsh, where `local NAME` (no assignment) on an already-set variable is
   # a *display* command that prints "NAME=value" to stdout. Re-declaring `local
   # w` each iteration flashed "w=141" on screen until the next refresh.
-  local w
+  local w h content total avail mbtn
+  local scroll=0
+  local need_build=1
+  local interval="${COMPACT_VIEW_INTERVAL:-2}"
   while true; do
-    # Capture pane width outside subshell.
-    # tput cols may return wrong value in tmux; query tmux directly.
+    # Capture pane width/height outside subshell.
+    # tput may return wrong values in tmux; query tmux directly.
     if [ -n "${TMUX:-}" ] && command -v tmux &>/dev/null; then
       w=$(tmux display-message -p '#{pane_width}' 2>/dev/null || tput cols 2>/dev/null || echo 80)
+      h=$(tmux display-message -p '#{pane_height}' 2>/dev/null || tput lines 2>/dev/null || echo 24)
     else
       w=$(tput cols 2>/dev/null || echo 80)
+      h=$(tput lines 2>/dev/null || echo 24)
     fi
+    [ -z "$h" ] && h=24
+    [ "$h" -lt 4 ] && h=4
 
-    output=$(
+    # Rebuild the ledger only on a refresh tick; scroll keys just re-slice the
+    # cached content so the wheel stays snappy (no git calls per keystroke).
+    [ "$need_build" = 1 ] && content=$(
       cd "$project_dir" || exit 1
 
       # Inner content width (2-space padding each side)
@@ -134,9 +197,6 @@ compact_view() {
       sums=$(printf '%s\n%s\n' "$staged" "$unstaged" | sum_numstat)
       ta=${sums% *}
       td=${sums#* }
-
-      # Clear screen
-      printf "\033[2J\033[H"
 
       # ── Header: branch heading with dimmed namespace + net stamp ──
       local leaf="${branch##*/}"
@@ -183,7 +243,72 @@ compact_view() {
       fi
     )
 
-    printf "%s" "$output"
-    sleep "${COMPACT_VIEW_INTERVAL:-2}"
+    # Viewport: reserve the last row for the position indicator when the ledger
+    # overflows the pane, otherwise draw it whole.
+    total=$(printf '%s\n' "$content" | wc -l | tr -d ' ')
+    if [ "$total" -gt "$h" ]; then
+      avail=$((h - 1))
+    else
+      avail="$h"
+    fi
+    scroll=$(clamp_scroll "$scroll" "$total" "$avail")
+
+    printf '\033[2J\033[H'
+    if [ "$total" -le "$h" ]; then
+      printf '%s' "$content"
+    else
+      printf '%s\n' "$content" | viewport_slice "$scroll" "$avail"
+      scroll_status "$scroll" "$avail" "$total"
+    fi
+
+    # Idle: just refresh on a timer. Interactive: refresh OR react to a key.
+    if [ "$interactive" != 1 ]; then
+      sleep "$interval"
+      need_build=1
+      continue
+    fi
+
+    if ! read_key "$interval"; then
+      need_build=1   # timed out -> refresh the ledger
+      continue
+    fi
+    need_build=0     # a key arrived -> re-slice cached content, stay snappy
+    case "$KEY" in
+      k) scroll=$((scroll - 1)) ;;
+      j) scroll=$((scroll + 1)) ;;
+      b) scroll=$((scroll - avail)) ;;
+      ' ') scroll=$((scroll + avail)) ;;
+      g) scroll=0 ;;
+      G) scroll=$total ;;
+      $'\e')
+        # CSI sequence: arrows, page keys, or an SGR mouse-wheel report.
+        read_key 0.02 || true
+        if [ "$KEY" = "[" ]; then
+          read_key 0.02 || true
+          case "$KEY" in
+            A) scroll=$((scroll - 1)) ;;
+            B) scroll=$((scroll + 1)) ;;
+            H) scroll=0 ;;
+            F) scroll=$total ;;
+            5) scroll=$((scroll - avail)); read_key 0.02 || true ;;  # PgUp + ~
+            6) scroll=$((scroll + avail)); read_key 0.02 || true ;;  # PgDn + ~
+            '<')
+              # SGR mouse "<btn;col;rowM": wheel up=64, down=65.
+              mbtn=""
+              while read_key 0.05; do
+                case "$KEY" in
+                  M|m) break ;;
+                  *) mbtn="$mbtn$KEY" ;;
+                esac
+              done
+              case "${mbtn%%;*}" in
+                64) scroll=$((scroll - 3)) ;;
+                65) scroll=$((scroll + 3)) ;;
+              esac
+              ;;
+          esac
+        fi
+        ;;
+    esac
   done
 }

@@ -83,6 +83,111 @@ func TestSumNumstat_empty_is_zero(t *testing.T) {
 	}
 }
 
+// clamp_scroll keeps the scroll offset within [0, total-avail].
+
+func TestClampScroll_within_range(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "clamp_scroll",
+		[]string{"5", "30", "10"}, nil)
+	assertExitCode(t, code, 0)
+	if got := strings.TrimSpace(out); got != "5" {
+		t.Errorf("got %q, want %q", got, "5")
+	}
+}
+
+func TestClampScroll_negative_floors_to_zero(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "clamp_scroll",
+		[]string{"-4", "30", "10"}, nil)
+	assertExitCode(t, code, 0)
+	if got := strings.TrimSpace(out); got != "0" {
+		t.Errorf("got %q, want %q", got, "0")
+	}
+}
+
+func TestClampScroll_beyond_max_caps_at_max(t *testing.T) {
+	// total 30, avail 10 -> max scroll 20
+	out, code := runBashFunc(t, "lib/compact-view.sh", "clamp_scroll",
+		[]string{"99", "30", "10"}, nil)
+	assertExitCode(t, code, 0)
+	if got := strings.TrimSpace(out); got != "20" {
+		t.Errorf("got %q, want %q", got, "20")
+	}
+}
+
+func TestClampScroll_content_fits_is_zero(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "clamp_scroll",
+		[]string{"3", "8", "10"}, nil)
+	assertExitCode(t, code, 0)
+	if got := strings.TrimSpace(out); got != "0" {
+		t.Errorf("got %q, want %q", got, "0")
+	}
+}
+
+// viewport_slice prints <count> lines of stdin starting after <scroll> lines.
+
+func TestViewportSlice_middle_window(t *testing.T) {
+	in := "a\nb\nc\nd\ne\n"
+	out, code := runBashFuncWithStdin(t, "lib/compact-view.sh", "viewport_slice",
+		[]string{"1", "2"}, nil, in)
+	assertExitCode(t, code, 0)
+	if got := strings.TrimSpace(out); got != "b\nc" {
+		t.Errorf("got %q, want %q", got, "b\nc")
+	}
+}
+
+func TestViewportSlice_from_top(t *testing.T) {
+	in := "a\nb\nc\nd\ne\n"
+	out, code := runBashFuncWithStdin(t, "lib/compact-view.sh", "viewport_slice",
+		[]string{"0", "3"}, nil, in)
+	assertExitCode(t, code, 0)
+	if got := strings.TrimSpace(out); got != "a\nb\nc" {
+		t.Errorf("got %q, want %q", got, "a\nb\nc")
+	}
+}
+
+func TestViewportSlice_past_end_clips(t *testing.T) {
+	in := "a\nb\nc\nd\ne\n"
+	out, code := runBashFuncWithStdin(t, "lib/compact-view.sh", "viewport_slice",
+		[]string{"3", "10"}, nil, in)
+	assertExitCode(t, code, 0)
+	if got := strings.TrimSpace(out); got != "d\ne" {
+		t.Errorf("got %q, want %q", got, "d\ne")
+	}
+}
+
+// scroll_status renders the position indicator "first-last/total" with up/down
+// arrows reflecting whether more content sits above/below the viewport.
+
+func TestScrollStatus_at_top_shows_down_only(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "scroll_status",
+		[]string{"0", "10", "22"}, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "1-10/22")
+	assertContains(t, out, "↓")
+	if strings.Contains(out, "↑") {
+		t.Errorf("no up arrow expected at top:\n%q", out)
+	}
+}
+
+func TestScrollStatus_middle_shows_both(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "scroll_status",
+		[]string{"5", "10", "22"}, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "6-15/22")
+	assertContains(t, out, "↑")
+	assertContains(t, out, "↓")
+}
+
+func TestScrollStatus_at_bottom_shows_up_only(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "scroll_status",
+		[]string{"12", "10", "22"}, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "13-22/22")
+	assertContains(t, out, "↑")
+	if strings.Contains(out, "↓") {
+		t.Errorf("no down arrow expected at bottom:\n%q", out)
+	}
+}
+
 // Regression: the refresh loop must not leak the `w` (pane width) variable to
 // stdout. The pane runs the script under zsh, where `local NAME` with no
 // assignment on an already-set variable acts as a *display* command and prints

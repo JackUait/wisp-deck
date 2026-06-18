@@ -278,5 +278,5 @@ fi
   split-window -h -p "$_pane0_pct" -c "$PROJECT_DIR" \
   "$AI_LAUNCH_CMD; exec bash" \; \
   select-pane -t 0 \; \
-  split-window -v -p 30 -c "$PROJECT_DIR" \; \
+  split-window -v -p 45 -c "$PROJECT_DIR" \; \
   select-pane -t 2
