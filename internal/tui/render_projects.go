@@ -84,7 +84,25 @@ func (m *MainMenuModel) renderSubscriptionRow(leftBorder, rightBorder string) st
 	} else {
 		valColor = lipgloss.Color("241") // gray for Standard
 	}
-	content := lipgloss.NewStyle().Foreground(valColor).Render(name)
+	nameStyle := lipgloss.NewStyle().Foreground(valColor)
+	// When this row holds focus, brighten the name so it reads as the active
+	// ←/→ target, matching the AI switcher's focus treatment.
+	if m.focus == FocusSubscription {
+		nameStyle = lipgloss.NewStyle().Foreground(m.theme.Bright).Bold(true)
+	}
+
+	// Show cycle chevrons only when there is something to switch to.
+	var content string
+	if m.subscriptionFocusable() {
+		chevronStyle := lipgloss.NewStyle().Foreground(m.theme.Dim)
+		if m.focus == FocusSubscription {
+			chevronStyle = lipgloss.NewStyle().Foreground(m.theme.Accent)
+		}
+		content = chevronStyle.Render("◂ ") + nameStyle.Render(name) + chevronStyle.Render(" ▸")
+	} else {
+		content = nameStyle.Render(name)
+	}
+
 	pad := menuContentWidth - lipgloss.Width(content) - 1 // -1 for leading space
 	if pad < 1 {
 		pad = 1
@@ -408,6 +426,8 @@ func (m *MainMenuModel) focusHint() string {
 	switch m.focus {
 	case FocusAI:
 		return "←→ switch AI · ↓ sections"
+	case FocusSubscription:
+		return "←→ switch subscription · ↑ AI · ↓ sections"
 	case FocusTabs:
 		return "←→ switch section · ↑ AI · ↓ enter"
 	default: // FocusBody

@@ -113,6 +113,9 @@ const (
 	FocusBody focusRegion = iota
 	FocusTabs
 	FocusAI
+	// FocusSubscription is the optional stop between the AI switcher and the tab
+	// bar, reachable only when the Claude subscription line is changeable.
+	FocusSubscription
 )
 
 // MenuLayout describes how the ghost and menu are arranged at a given terminal size.
@@ -819,6 +822,13 @@ func (m *MainMenuModel) CurrentClaudeConfigFile() string {
 
 // ClaudeConfigVisible reports whether the config control should be shown.
 func (m *MainMenuModel) ClaudeConfigVisible() bool { return m.CurrentAITool() == "claude" }
+
+// subscriptionFocusable reports whether the main-page subscription line is a
+// reachable focus stop: it must be visible (Claude) and have at least one
+// custom config to switch to (Standard alone has nothing to cycle).
+func (m *MainMenuModel) subscriptionFocusable() bool {
+	return m.ClaudeConfigVisible() && len(m.claudeConfigs) > 0
+}
 
 // CycleClaudeConfig moves through [Standard, configs...] and persists the choice.
 func (m *MainMenuModel) CycleClaudeConfig(direction string) {
@@ -1599,8 +1609,14 @@ func (m *MainMenuModel) focusUp() tea.Cmd {
 	switch m.focus {
 	case FocusAI:
 		// already the top stop
-	case FocusTabs:
+	case FocusSubscription:
 		m.focus = FocusAI
+	case FocusTabs:
+		if m.subscriptionFocusable() {
+			m.focus = FocusSubscription
+		} else {
+			m.focus = FocusAI
+		}
 	case FocusBody:
 		switch m.activeTab {
 		case TabSettings:
@@ -1630,6 +1646,12 @@ func (m *MainMenuModel) focusUp() tea.Cmd {
 func (m *MainMenuModel) focusDown() tea.Cmd {
 	switch m.focus {
 	case FocusAI:
+		if m.subscriptionFocusable() {
+			m.focus = FocusSubscription
+		} else {
+			m.focus = FocusTabs
+		}
+	case FocusSubscription:
 		m.focus = FocusTabs
 	case FocusTabs:
 		m.focus = FocusBody
@@ -1659,6 +1681,8 @@ func (m *MainMenuModel) focusLeft() tea.Cmd {
 	switch m.focus {
 	case FocusAI:
 		m.CycleAITool("prev")
+	case FocusSubscription:
+		m.CycleClaudeConfig("prev")
 	case FocusTabs:
 		m.CycleTab("prev")
 		if m.activeTab == TabStats {
@@ -1677,6 +1701,8 @@ func (m *MainMenuModel) focusRight() tea.Cmd {
 	switch m.focus {
 	case FocusAI:
 		m.CycleAITool("next")
+	case FocusSubscription:
+		m.CycleClaudeConfig("next")
 	case FocusTabs:
 		m.CycleTab("next")
 		if m.activeTab == TabStats {
@@ -1695,6 +1721,13 @@ func (m *MainMenuModel) focusRight() tea.Cmd {
 func (m *MainMenuModel) focusEnter() (tea.Model, tea.Cmd) {
 	switch m.focus {
 	case FocusAI:
+		return m, nil
+	case FocusSubscription:
+		// Enter opens the model-map panel for a custom subscription (Standard
+		// has nothing to configure).
+		if m.selectedConfig > 0 {
+			m.openModelMap()
+		}
 		return m, nil
 	case FocusTabs:
 		m.focus = FocusBody
