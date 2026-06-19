@@ -15,12 +15,20 @@ build_ai_launch_cmd() {
     claude_settings=" --settings \"${GHOST_TAB_CLAUDE_SETTINGS}\""
   fi
 
+  # Claude-only: a launch prefix that runs Claude behind the screenshot-drag
+  # filter. wrapper.sh sets GHOST_TAB_CLAUDE_FILTER (to e.g.
+  # "ghost-tab-tui screenshot-filter -- ") only after confirming the TUI binary
+  # supports it. When a dropped screenshot delivers a screencaptureui temp path,
+  # the filter copies the file to a stable location and rewrites the path before
+  # Claude reads it (macOS deletes the temp file moments after the drop).
+  local claude_filter="${GHOST_TAB_CLAUDE_FILTER:-}"
+
   # Resume mode: relaunch into the most recent (cwd-scoped) conversation.
   if [ "${GHOST_TAB_RESUME:-0}" = "1" ]; then
     case "$tool" in
       codex)    echo "$codex_cmd resume --last" ;;
       opencode) echo "$opencode_cmd --continue" ;;
-      *)        echo "$claude_cmd -c${claude_settings}" ;;
+      *)        echo "${claude_filter}$claude_cmd -c${claude_settings}" ;;
     esac
     return 0
   fi
@@ -34,9 +42,9 @@ build_ai_launch_cmd() {
       ;;
     *)
       if [ -n "$extra" ]; then
-        echo "$claude_cmd $extra${claude_settings}"
+        echo "${claude_filter}$claude_cmd $extra${claude_settings}"
       else
-        echo "$claude_cmd${claude_settings}"
+        echo "${claude_filter}$claude_cmd${claude_settings}"
       fi
       ;;
   esac

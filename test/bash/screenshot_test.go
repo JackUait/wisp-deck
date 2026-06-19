@@ -46,8 +46,8 @@ exit 0`
 // gt_ai_pane prefers the @gt_ai-marked pane.
 func TestAiPane_prefers_marked_pane(t *testing.T) {
 	m := tmuxAiPaneMock(t,
-		"0 \n1 1\n2 ",                  // marker: pane 1 is the AI pane
-		"0 0 1 0\n1 0 0 1\n2 1 1 1\n")  // geometry would say pane 2
+		"0 \n1 1\n2 ",                 // marker: pane 1 is the AI pane
+		"0 0 1 0\n1 0 0 1\n2 1 1 1\n") // geometry would say pane 2
 	tmuxPath, env := m[0], m[1:]
 	out, code := runBashFunc(t, "lib/screenshot.sh", "gt_ai_pane",
 		[]string{tmuxPath, "sess"}, env)
@@ -63,8 +63,8 @@ func TestAiPane_prefers_marked_pane(t *testing.T) {
 // (the spare shell), stealing focus from / mis-targeting Claude at index 2.
 func TestAiPane_falls_back_to_full_height_right_pane(t *testing.T) {
 	m := tmuxAiPaneMock(t,
-		"0 \n1 \n2 \n",                 // no marker
-		"0 0 1 0\n1 0 0 1\n2 1 1 1\n")  // pane 2 is full-height on the right
+		"0 \n1 \n2 \n",                // no marker
+		"0 0 1 0\n1 0 0 1\n2 1 1 1\n") // pane 2 is full-height on the right
 	tmuxPath, env := m[0], m[1:]
 	out, code := runBashFunc(t, "lib/screenshot.sh", "gt_ai_pane",
 		[]string{tmuxPath, "sess"}, env)
@@ -98,7 +98,7 @@ exit 0`
 	env := []string{
 		"GT_MARK=0 \n1 \n2 \n",                // no @gt_ai marker
 		"GT_GEOM=0 0 1 0\n1 0 0 1\n2 1 1 1\n", // pane 2 is full-height on the right
-		"GT_PROMPT=❯ ",                         // pane is "ready" on the first poll
+		"GT_PROMPT=❯ ",                        // pane is "ready" on the first poll
 		"GT_SEL=" + selRec,
 	}
 	_, code := runBashFunc(t, "lib/screenshot.sh", "gt_focus_ai_pane_when_ready",
@@ -263,131 +263,5 @@ func TestStashScreenshot_missing_source_errors(t *testing.T) {
 		[]string{"/no/such/file.png"}, env)
 	if code == 0 {
 		t.Errorf("expected non-zero for missing source")
-	}
-}
-
-// tmuxAutoInjectMock returns a tmux mock that answers the mra/gt_ai_pane queries
-// and records set-buffer/paste-buffer calls to GT_BUF.
-func tmuxAutoInjectMock(t *testing.T, panes, clients, marker, geometry, bufLog string) string {
-	t.Helper()
-	dir := t.TempDir()
-	body := `case "$1" in
-  list-panes)
-    case "$*" in
-      *session_name*) printf '%s\n' "$GT_PANES" ;;
-      *pane_at_right*) printf '%s\n' "$GT_GEOM" ;;
-      *@gt_ai*)        printf '%s\n' "$GT_MARK" ;;
-    esac ;;
-  list-clients) printf '%s\n' "$GT_CLIENTS" ;;
-  set-buffer)   printf 'set-buffer %s\n' "$*" >> "$GT_BUF" ;;
-  paste-buffer) printf 'paste-buffer %s\n' "$*" >> "$GT_BUF" ;;
-  select-pane)  : ;;
-esac
-exit 0`
-	binDir := mockCommand(t, dir, "tmux", body)
-	_ = panes
-	_ = clients
-	_ = marker
-	_ = geometry
-	_ = bufLog
-	return filepath.Join(binDir, "tmux")
-}
-
-// gt_ghost_tab_mra_session prints the ghost-tab session (one with an @gt_ai pane)
-// whose client was most recently active. Non-ghost-tab sessions are ignored even
-// if more recently active.
-func TestMraSession_picks_most_recent_ghost_tab_session(t *testing.T) {
-	tmux := tmuxAutoInjectMock(t, "", "", "", "", "")
-	env := buildEnv(t, nil,
-		"GT_PANES=sessA 1\nsessA \nsessB \nsessB 1\nsessC \nsessC \n",
-		"GT_CLIENTS=sessA 100\nsessB 200\nsessC 999\n",
-		"GT_MARK=", "GT_GEOM=", "GT_BUF=/dev/null")
-	out, code := runBashFunc(t, "lib/screenshot.sh", "gt_ghost_tab_mra_session",
-		[]string{tmux}, env)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "sessB" {
-		t.Errorf("got %q, want sessB (most-recent ghost-tab session; sessC newer but not ghost-tab)", strings.TrimSpace(out))
-	}
-}
-
-// gt_autoinject_tick injects a NEW screenshot (stashed to a stable path) into the
-// AI pane when this session is the most-recently-active ghost-tab session.
-func TestAutoInjectTick_injects_stable_path_when_session_is_mra(t *testing.T) {
-	shotDir := t.TempDir()
-	shot := writeTempFile(t, shotDir, "Screenshot new.png", "img")
-	now := time.Now()
-	os.Chtimes(shot, now, now)
-	state := filepath.Join(t.TempDir(), "state")
-	buf := filepath.Join(t.TempDir(), "buf.log")
-	stash := filepath.Join(t.TempDir(), "stash")
-	tmux := tmuxAutoInjectMock(t, "", "", "", "", "")
-	env := buildEnv(t, nil,
-		"GT_PANES=sess 1\nsess \n",
-		"GT_CLIENTS=sess 500\n",
-		"GT_MARK=0 \n1 1\n", // pane 1 is the AI pane
-		"GT_GEOM=",
-		"GT_BUF="+buf,
-		"GT_SCREENSHOT_STASH_DIR="+stash)
-	_, code := runBashFunc(t, "lib/screenshot.sh", "gt_autoinject_tick",
-		[]string{tmux, "sess", state, shotDir}, env)
-	assertExitCode(t, code, 0)
-	data, err := os.ReadFile(buf)
-	if err != nil {
-		t.Fatalf("expected an injection (set-buffer) but buf log missing: %v", err)
-	}
-	got := string(data)
-	if !strings.Contains(got, "set-buffer") || !strings.Contains(got, "paste-buffer") {
-		t.Errorf("expected set-buffer + paste-buffer; got:\n%s", got)
-	}
-	if !strings.Contains(got, stash) {
-		t.Errorf("injected path must be the STABLE stash copy (under %q); got:\n%s", stash, got)
-	}
-}
-
-// gt_autoinject_tick must NOT inject when another ghost-tab session is more
-// recently active (the screenshot belongs to the session the user is in).
-func TestAutoInjectTick_skips_when_not_mra(t *testing.T) {
-	shotDir := t.TempDir()
-	shot := writeTempFile(t, shotDir, "Screenshot new.png", "img")
-	now := time.Now()
-	os.Chtimes(shot, now, now)
-	state := filepath.Join(t.TempDir(), "state")
-	buf := filepath.Join(t.TempDir(), "buf.log")
-	tmux := tmuxAutoInjectMock(t, "", "", "", "", "")
-	env := buildEnv(t, nil,
-		"GT_PANES=sess 1\nother 1\n",
-		"GT_CLIENTS=sess 100\nother 900\n", // other is more recent
-		"GT_MARK=0 \n1 1\n", "GT_GEOM=", "GT_BUF="+buf,
-		"GT_SCREENSHOT_STASH_DIR="+filepath.Join(t.TempDir(), "stash"))
-	_, code := runBashFunc(t, "lib/screenshot.sh", "gt_autoinject_tick",
-		[]string{tmux, "sess", state, shotDir}, env)
-	assertExitCode(t, code, 0)
-	if _, err := os.Stat(buf); err == nil {
-		data, _ := os.ReadFile(buf)
-		t.Errorf("must not inject when not MRA; buf:\n%s", string(data))
-	}
-}
-
-// gt_autoinject_tick must NOT re-inject a screenshot already seen (state file
-// records the last-injected mtime).
-func TestAutoInjectTick_skips_already_seen(t *testing.T) {
-	shotDir := t.TempDir()
-	shot := writeTempFile(t, shotDir, "Screenshot old.png", "img")
-	old := time.Now().Add(-1 * time.Minute)
-	os.Chtimes(shot, old, old)
-	state := filepath.Join(t.TempDir(), "state")
-	// state already records a far-future mtime, so the screenshot looks "seen".
-	os.WriteFile(state, []byte("9999999999\n"), 0644)
-	buf := filepath.Join(t.TempDir(), "buf.log")
-	tmux := tmuxAutoInjectMock(t, "", "", "", "", "")
-	env := buildEnv(t, nil,
-		"GT_PANES=sess 1\n", "GT_CLIENTS=sess 500\n",
-		"GT_MARK=0 \n1 1\n", "GT_GEOM=", "GT_BUF="+buf,
-		"GT_SCREENSHOT_STASH_DIR="+filepath.Join(t.TempDir(), "stash"))
-	_, code := runBashFunc(t, "lib/screenshot.sh", "gt_autoinject_tick",
-		[]string{tmux, "sess", state, shotDir}, env)
-	assertExitCode(t, code, 0)
-	if _, err := os.Stat(buf); err == nil {
-		t.Errorf("must not re-inject an already-seen screenshot")
 	}
 }
