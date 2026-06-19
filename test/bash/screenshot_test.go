@@ -26,6 +26,54 @@ func TestPickMarkedPane_none_marked_returns_error(t *testing.T) {
 	}
 }
 
+// tmuxAiPaneMock returns a tmux mock whose `list-panes` answers two formats:
+// the @gt_ai marker query and the geometry query. binDir/tmux is the mock.
+func tmuxAiPaneMock(t *testing.T, marker, geometry string) []string {
+	t.Helper()
+	dir := t.TempDir()
+	body := `if [ "$1" = "list-panes" ]; then
+  case "$*" in
+    *pane_at_right*) printf '%s\n' "$GT_GEOM" ;;
+    *@gt_ai*)        printf '%s\n' "$GT_MARK" ;;
+  esac
+fi
+exit 0`
+	binDir := mockCommand(t, dir, "tmux", body)
+	return []string{filepath.Join(binDir, "tmux"),
+		"GT_MARK=" + marker, "GT_GEOM=" + geometry}
+}
+
+// gt_ai_pane prefers the @gt_ai-marked pane.
+func TestAiPane_prefers_marked_pane(t *testing.T) {
+	m := tmuxAiPaneMock(t,
+		"0 \n1 1\n2 ",                  // marker: pane 1 is the AI pane
+		"0 0 1 0\n1 0 0 1\n2 1 1 1\n")  // geometry would say pane 2
+	tmuxPath, env := m[0], m[1:]
+	out, code := runBashFunc(t, "lib/screenshot.sh", "gt_ai_pane",
+		[]string{tmuxPath, "sess"}, env)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "1" {
+		t.Errorf("marked pane should win; got %q want 1", strings.TrimSpace(out))
+	}
+}
+
+// When no pane is marked (e.g. a session from an older ghost-tab), gt_ai_pane
+// must fall back to the full-height pane on the right edge -- where the AI tool
+// lives -- NOT a fixed index. Regression: the old fallback returned index 1
+// (the spare shell), stealing focus from / mis-targeting Claude at index 2.
+func TestAiPane_falls_back_to_full_height_right_pane(t *testing.T) {
+	m := tmuxAiPaneMock(t,
+		"0 \n1 \n2 \n",                 // no marker
+		"0 0 1 0\n1 0 0 1\n2 1 1 1\n")  // pane 2 is full-height on the right
+	tmuxPath, env := m[0], m[1:]
+	out, code := runBashFunc(t, "lib/screenshot.sh", "gt_ai_pane",
+		[]string{tmuxPath, "sess"}, env)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "2" {
+		t.Errorf("unmarked fallback should pick the full-height right pane; got %q want 2", strings.TrimSpace(out))
+	}
+}
+
 // gt_latest_screenshot <dir> prints the newest image file in dir.
 func TestLatestScreenshot_returns_newest_image(t *testing.T) {
 	dir := t.TempDir()

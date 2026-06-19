@@ -63,10 +63,19 @@ _gt_pick_marked_pane() {
 
 # gt_ai_pane <tmux_cmd> <session> — print the AI pane index. Prefers the pane
 # marked with @gt_ai=1 (set by wrapper.sh at session creation), so it is robust
-# to tmux pane renumbering and non-default layouts; falls back to index 1.
+# to tmux pane renumbering and non-default layouts. When no pane is marked (e.g.
+# a session created by an older ghost-tab), falls back to the full-height pane
+# on the right edge of the layout — where the AI tool lives — and only then to
+# index 1 as a last resort.
 gt_ai_pane() {
   local tmux_cmd="$1" session="$2" idx
   idx="$("$tmux_cmd" list-panes -t "${session}:0" -F '#{pane_index} #{@gt_ai}' 2>/dev/null | _gt_pick_marked_pane)" || idx=""
+  if [ -z "$idx" ]; then
+    # The AI pane spans the full height on the right (at_right & at_top & at_bottom).
+    idx="$("$tmux_cmd" list-panes -t "${session}:0" \
+            -F '#{pane_index} #{pane_at_right} #{pane_at_top} #{pane_at_bottom}' 2>/dev/null \
+          | awk '$2=="1" && $3=="1" && $4=="1"{print $1; exit}')"
+  fi
   [ -n "$idx" ] || idx=1
   printf '%s\n' "$idx"
 }
