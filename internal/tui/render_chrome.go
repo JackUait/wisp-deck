@@ -38,18 +38,27 @@ var menuTabLabels = []string{"Projects", "Settings", "Stats"}
 // renderTabBar renders the Projects · Settings · Stats row. The active tab is
 // wrapped in block accents and styled bold; inactive tabs are dimmed.
 func (m *MainMenuModel) renderTabBar(leftBorder, rightBorder string) string {
-	// When the tab bar holds focus, the active tab brightens to signal that ←/→
-	// will switch sections; otherwise it stays the dimmer Primary.
-	activeColor := m.theme.Primary
-	if m.focus == FocusTabs {
-		activeColor = m.theme.Bright
+	navFocused := m.focus == FocusTabs
+
+	// Two treatments for the active tab, by focus:
+	//   • navigation focused → a solid filled pill (dark text on Primary), so it
+	//     unmistakably reads as "this section is selected, ←/→ switches it".
+	//   • body focused → a quiet bold underline that just marks the current
+	//     section without competing with the project list's selection.
+	// Inactive tabs brighten slightly while navigating to read as reachable.
+	// Both treatments keep the " label " width so the row math is unchanged.
+	var activeStyle lipgloss.Style
+	inactiveColor := lipgloss.Color("245")
+	if navFocused {
+		activeStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("232")). // near-black ink on the pill
+			Background(m.theme.Primary).
+			Bold(true)
+		inactiveColor = lipgloss.Color("250")
+	} else {
+		activeStyle = lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true).Underline(true)
 	}
-	// Active tab: bold + underlined, so it reads as a tab rather than the old
-	// ▌label▐ block glyphs that looked like a render artifact. Inactive tabs are
-	// neutral gray and recede. Both keep the same " label " width so the row math
-	// is unchanged.
-	activeStyle := lipgloss.NewStyle().Foreground(activeColor).Bold(true).Underline(true)
-	inactiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	inactiveStyle := lipgloss.NewStyle().Foreground(inactiveColor)
 
 	var parts []string
 	for i, label := range menuTabLabels {

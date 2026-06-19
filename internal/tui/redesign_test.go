@@ -52,6 +52,40 @@ func TestRenderTabBar_activeTabNoBlockGlyph(t *testing.T) {
 	}
 }
 
+// When the section navigation holds focus, the active tab should read as
+// unmistakably selected — a solid filled pill, not just a faint underline —
+// so it's obvious the keyboard is on the nav row, not the project list.
+func TestRenderTabBar_navFocusFillsActivePill(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.focus = FocusTabs
+	_, _, _, lb, rb := m.boxBorders()
+	bar := m.renderTabBar(lb, rb)
+	// Background fill on the active tab (claude Primary = 209).
+	if !strings.Contains(bar, "48;5;209") {
+		t.Errorf("focused-nav active tab should have a filled background pill (48;5;209): %q", bar)
+	}
+}
+
+// When the body holds focus (just browsing the list), the tab bar must NOT
+// fill a pill — the current section shows only the quiet underline, so the
+// loud treatment is reserved for when navigation is actually focused.
+func TestRenderTabBar_bodyFocusNoFilledPill(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none") // focus defaults to body
+	_, _, _, lb, rb := m.boxBorders()
+	bar := m.renderTabBar(lb, rb)
+	if strings.Contains(bar, "48;5;") {
+		t.Errorf("idle (body-focus) tab bar should not fill a background pill: %q", bar)
+	}
+}
+
 // The contextual action bar should advertise the real key letters (W/D/⏎)
 // instead of decorative glyphs, so the labels double as a keymap.
 func TestActionBarFor_usesRealKeyLetters(t *testing.T) {
