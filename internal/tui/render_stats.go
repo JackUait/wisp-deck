@@ -135,19 +135,25 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 		barRow := leftBorder + barLine + strings.Repeat(" ", costPad) + primaryBoldStyle.Render(costStr) + rightBorder
 		rows = append(rows, barRow)
 
-		// Per-model breakdown: which models drove the month's spend. Sub-indented
-		// and muted so the rows read as a list under the month, not new months.
-		for _, md := range mu.Models {
+		// Per-model breakdown: which models drove the month's spend. Drawn as a tree
+		// hanging off the month (├─ for each model, └─ for the last) and muted so the
+		// rows read as children of the month, not new months.
+		branchStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+		for j, md := range mu.Models {
+			connector := "├─"
+			if j == len(mu.Models)-1 {
+				connector = "└─"
+			}
 			label := strings.TrimPrefix(md.Model, "claude-")
-			if len(label) > 18 {
-				label = label[:17] + "…"
+			if len(label) > 16 {
+				label = label[:15] + "…"
 			}
 			usd, priced := usage.ModelCostUSD(md)
 			modelCost := "—"
 			if priced {
 				modelCost = dollarFmt(usd)
 			}
-			modelLine := "      " + muted.Render(fmt.Sprintf("%-18s %8s", label, humanizeTokens(md.Total())))
+			modelLine := "    " + branchStyle.Render(connector) + " " + muted.Render(fmt.Sprintf("%-16s %8s", label, humanizeTokens(md.Total())))
 			modelPad := menuContentWidth - lipgloss.Width(modelLine) - lipgloss.Width(modelCost)
 			if modelPad < 1 {
 				modelPad = 1

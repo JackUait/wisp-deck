@@ -221,6 +221,38 @@ func TestRenderStatsBox_costColumnRightAligned(t *testing.T) {
 	}
 }
 
+// TestRenderStatsBox_perModelTreeBranches verifies the per-model rows hang off the
+// month as a tree: every model but the last gets a ├─ connector and the last gets a
+// └─, so the breakdown visually reads as children of the month.
+func TestRenderStatsBox_perModelTreeBranches(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabStats)
+
+	months := []usage.MonthlyUsage{
+		{Month: "2026-06", Input: 1_000_000, Models: []usage.ModelUsage{
+			{Model: "claude-opus-4-8", Input: 800_000},
+			{Model: "claude-fable-5", Input: 150_000},
+			{Model: "claude-haiku-4-5", Input: 50_000},
+		}},
+	}
+	updated, _ := m.Update(statsLoadedMsg{months: months})
+	box := updated.(*MainMenuModel).renderStatsBox()
+
+	for _, mid := range []string{"opus-4-8", "fable-5"} {
+		line := stripANSI(findLineContaining(box, mid))
+		if !strings.Contains(line, "├─") {
+			t.Errorf("non-last model row %q should carry a ├─ branch: %q", mid, line)
+		}
+	}
+	last := stripANSI(findLineContaining(box, "haiku-4-5"))
+	if !strings.Contains(last, "└─") {
+		t.Errorf("last model row should close the tree with a └─ branch: %q", last)
+	}
+	if strings.Contains(last, "├─") {
+		t.Errorf("last model row must use └─, not ├─: %q", last)
+	}
+}
+
 func TestRenderStatsBox_containsStatsRows(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	m.SetActiveTab(TabStats)
