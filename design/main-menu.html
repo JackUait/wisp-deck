@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ghost Tab — main menu redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    /* page */
+    --void:       #100f0e;
+    --void-2:     #17150f;
+
+    /* terminal surface — warm near-black, NOT orange */
+    --term:       #161412;
+    --term-bar:   #211e1a;
+
+    /* the ONE accent: Claude orange (ANSI 209 / 208 / 220) */
+    --accent:     #ff875f;   /* 209 — primary / selection rail            */
+    --accent-hi:  #ff9d44;   /* 208 — focused / active emphasis           */
+    --gold:       #ffd75f;   /* 220 — used ONCE, on the primary action     */
+
+    /* neutral spine — everything that is NOT active lives here */
+    --rail:       #34302b;   /* idle borders (was orange — biggest fix)    */
+    --rail-soft:  #272420;   /* inner separators                          */
+    --sel-bg:     #2a2620;   /* selected row wash                         */
+    --txt:        #ded7cc;   /* primary text  (ANSI 252-ish, warm)        */
+    --txt-dim:    #8d857a;   /* secondary text / paths (ANSI 245)         */
+    --txt-faint:  #5c554c;   /* numbers, idle chrome                      */
+    --label:      #6f675c;   /* tiny uppercase labels                    */
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+  body {
+    min-height: 100vh;
+    background:
+      radial-gradient(120% 90% at 50% -10%, rgba(255,135,95,.06), transparent 55%),
+      radial-gradient(100% 120% at 50% 120%, rgba(0,0,0,.5), transparent 55%),
+      var(--void);
+    color: var(--txt);
+    font-family: "JetBrains Mono", monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2.4rem;
+    padding: clamp(2rem, 6vw, 4.5rem) 1.25rem 5rem;
+  }
+  /* fine noise */
+  body::before {
+    content: "";
+    position: fixed; inset: 0; pointer-events: none; opacity: .04; z-index: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  }
+
+  /* ───────── page header ───────── */
+  .masthead { text-align: center; position: relative; z-index: 1; max-width: 40rem; }
+  .eyebrow {
+    font-size: .66rem; letter-spacing: .42em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: .9rem;
+  }
+  .masthead h1 {
+    font-family: "Fraunces", serif; font-weight: 500;
+    font-size: clamp(1.7rem, 4.5vw, 2.7rem); line-height: 1.05; color: var(--txt);
+    letter-spacing: -.01em;
+  }
+  .masthead h1 em { font-style: italic; color: var(--accent); }
+  .masthead p { margin-top: .9rem; color: var(--txt-dim); font-size: .82rem; line-height: 1.7; }
+
+  /* ───────── terminal window ───────── */
+  .stage { position: relative; z-index: 1; width: min(760px, 100%); }
+
+  .window {
+    background: var(--term);
+    border-radius: 11px;
+    border: 1px solid #2a2722;
+    box-shadow:
+      0 1px 0 rgba(255,255,255,.03) inset,
+      0 40px 80px -40px rgba(0,0,0,.9),
+      0 8px 24px -12px rgba(0,0,0,.6);
+    overflow: hidden;
+  }
+  .titlebar {
+    display: flex; align-items: center; gap: .55rem;
+    padding: .7rem .95rem;
+    background: var(--term-bar);
+    border-bottom: 1px solid #000;
+  }
+  .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .dot.r { background: #ff5f57; } .dot.y { background: #febc2e; } .dot.g { background: #28c840; }
+  .titlebar .tt {
+    margin-left: .5rem; font-size: .72rem; color: var(--txt-faint);
+    letter-spacing: .04em;
+  }
+
+  /* the TUI itself */
+  .tui {
+    padding: 1.5rem 1.4rem 1.2rem;
+    font-size: 14px; line-height: 1.55;
+  }
+  .box {
+    border: 1px solid var(--rail);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .row { display: flex; align-items: center; padding: 0 1rem; min-height: 1.9rem; }
+  .sep { height: 1px; background: var(--rail-soft); }
+
+  /* header strip ---------------------------------------------------- */
+  .topstrip { padding-top: .85rem; padding-bottom: .15rem; }
+  .brand { font-weight: 700; color: var(--txt); letter-spacing: .02em; }
+  .brand .ghost { color: var(--accent); }
+  .spacer { flex: 1; }
+
+  /* labelled control chips, right-aligned */
+  .ctl { display: inline-flex; align-items: baseline; gap: .5rem; }
+  .ctl + .ctl { margin-left: 1.4rem; }
+  .ctl .k {
+    font-size: .6rem; letter-spacing: .22em; text-transform: uppercase; color: var(--label);
+  }
+  .ctl .v { color: var(--txt); }
+  .ctl .chev { color: var(--txt-faint); }
+  /* focused control: this is the only place chevrons "light up" */
+  .ctl.focus .v { color: var(--accent-hi); font-weight: 700; }
+  .ctl.focus .chev { color: var(--accent-hi); }
+  .ctl.muted .v { color: var(--txt-dim); }
+
+  /* tab bar --------------------------------------------------------- */
+  .tabs { padding-top: .5rem; padding-bottom: .55rem; gap: 1.5rem; }
+  .tab { position: relative; color: var(--txt-faint); padding-bottom: .25rem; }
+  .tab.active { color: var(--txt); }
+  .tab.active::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: -.05rem; height: 2px;
+    background: var(--accent); border-radius: 2px;
+  }
+
+  /* project list ---------------------------------------------------- */
+  .list { padding: .5rem 0; }
+  .item {
+    display: grid;
+    grid-template-columns: 2.3rem 1fr auto;
+    grid-template-rows: auto auto;
+    align-items: baseline;
+    column-gap: .55rem;
+    padding: .34rem 1rem;
+    position: relative;
+  }
+  .item .rail { /* left accent bar slot */
+    position: absolute; left: 0; top: 3px; bottom: 3px; width: 3px; border-radius: 0 2px 2px 0;
+    background: transparent;
+  }
+  .item .num  { grid-column: 1; grid-row: 1; color: var(--txt-faint); text-align: right; }
+  .item .name { grid-column: 2; grid-row: 1; color: var(--txt); }
+  .item .wt {
+    grid-column: 3; grid-row: 1; justify-self: end;
+    color: var(--txt-dim); font-size: 11.5px;
+    border: 1px solid var(--rail); border-radius: 99px; padding: .02rem .55rem;
+    white-space: nowrap;
+  }
+  .item .path { grid-column: 2 / 4; grid-row: 2; color: var(--txt-dim); font-size: 12.5px; opacity: .9; }
+
+  /* the selected item — the single loudest thing on screen */
+  .item.sel { background: var(--sel-bg); }
+  .item.sel .rail { background: var(--accent); }
+  .item.sel .num  { color: var(--accent); }
+  .item.sel .name { color: var(--accent-hi); font-weight: 700; }
+  .item.sel .path { color: var(--txt); opacity: 1; }
+  .item.sel .wt   { color: var(--accent); border-color: rgba(255,135,95,.4); }
+
+  .add { display: flex; gap: .55rem; padding: .35rem 1rem; color: var(--txt-dim); }
+  .add .plus { color: var(--txt-faint); width: 1.6rem; text-align: center; }
+
+  /* action bar ------------------------------------------------------ */
+  .actions { gap: 1.6rem; padding-top: .5rem; padding-bottom: .5rem; }
+  .act { color: var(--txt); }
+  .act .key {
+    display: inline-block; min-width: 1.1rem; text-align: center;
+    color: var(--accent); font-weight: 700; margin-right: .45rem;
+  }
+  /* the primary action gets the gold, used exactly once */
+  .act.primary .key { color: var(--gold); }
+  .act.primary { color: var(--txt); }
+
+  /* footer hint (below the box) ------------------------------------- */
+  .hint {
+    text-align: center; color: var(--txt-faint); font-size: 12.5px;
+    margin-top: .85rem; letter-spacing: .01em;
+  }
+  .hint b { color: var(--txt-dim); font-weight: 500; }
+  .hint .d { color: var(--rail); margin: 0 .55rem; }
+
+  /* ───────── annotations ───────── */
+  .notes {
+    position: relative; z-index: 1; width: min(760px, 100%);
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1px;
+    background: var(--rail-soft); border: 1px solid var(--rail-soft); border-radius: 10px; overflow: hidden;
+  }
+  .note { background: var(--term); padding: 1.1rem 1.15rem; }
+  .note .n {
+    font-family: "Fraunces", serif; font-weight: 600; font-size: 1.05rem; color: var(--accent);
+    display: flex; align-items: baseline; gap: .5rem;
+  }
+  .note .n span { font-size: .62rem; letter-spacing: .2em; text-transform: uppercase; color: var(--label); font-family: "JetBrains Mono", monospace; }
+  .note p { margin-top: .45rem; color: var(--txt-dim); font-size: .76rem; line-height: 1.65; }
+  .note p s { color: var(--txt-faint); }
+</style>
+</head>
+<body>
+
+  <header class="masthead">
+    <div class="eyebrow">Ghost Tab · Main Menu</div>
+    <h1>From <em>everything-is-orange</em><br>to one clear focus.</h1>
+    <p>The redesign keeps the warm Claude palette but spends it carefully: neutral
+       grays carry the structure, and the accent only ever marks what's selected or
+       focused — so your eye lands in one place, instantly.</p>
+  </header>
+
+  <div class="stage">
+    <div class="window">
+      <div class="titlebar">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span class="tt">ghost-tab — select a project</span>
+      </div>
+
+      <div class="tui">
+        <div class="box">
+
+          <!-- header strip: brand left, labelled controls right -->
+          <div class="row topstrip">
+            <span class="brand"><span class="ghost">⬡</span> Ghost&nbsp;Tab</span>
+            <span class="spacer"></span>
+            <span class="ctl focus">
+              <span class="k">Agent</span>
+              <span class="chev">‹</span><span class="v">Claude&nbsp;Code</span><span class="chev">›</span>
+            </span>
+            <span class="ctl muted">
+              <span class="k">Plan</span>
+              <span class="chev">‹</span><span class="v">Standard</span><span class="chev">›</span>
+            </span>
+          </div>
+
+          <!-- tabs -->
+          <div class="row tabs">
+            <span class="tab active">Projects</span>
+            <span class="tab">Settings</span>
+            <span class="tab">Stats</span>
+          </div>
+
+          <div class="sep"></div>
+
+          <!-- project list -->
+          <div class="list">
+            <div class="item sel">
+              <span class="rail"></span>
+              <span class="num">1</span>
+              <span class="name">blok</span>
+              <span class="wt">1 worktree ›</span>
+              <span class="path">~/Packages/blok</span>
+            </div>
+
+            <div class="item">
+              <span class="num">2</span>
+              <span class="name">knowledgebase</span>
+              <span class="path">~/Packages/knowledgebase</span>
+            </div>
+
+            <div class="item">
+              <span class="num">3</span>
+              <span class="name">backoffice-elements</span>
+              <span class="wt">1 worktree</span>
+              <span class="path">~/Packages/shiftmanager…/backoffice-elements</span>
+            </div>
+
+            <div class="item">
+              <span class="num">4</span>
+              <span class="name">knowledgebase-angular</span>
+              <span class="path">~/Packages/knowledgebase-angular</span>
+            </div>
+
+            <div class="item">
+              <span class="num">5</span>
+              <span class="name">ghost-tab</span>
+              <span class="path">~/Packages/ghost-tab</span>
+            </div>
+
+            <div class="item">
+              <span class="num">6</span>
+              <span class="name">car-aggregator</span>
+              <span class="path">~/Packages/car-aggregator</span>
+            </div>
+
+            <div class="add"><span class="plus">+</span><span>Add project</span></div>
+          </div>
+
+          <div class="sep"></div>
+
+          <!-- contextual action bar -->
+          <div class="row actions">
+            <span class="act primary"><span class="key">⏎</span>Open</span>
+            <span class="act"><span class="key">W</span>Worktrees</span>
+            <span class="act"><span class="key">D</span>Delete</span>
+          </div>
+
+        </div><!-- /box -->
+
+        <!-- footer hint, plain language -->
+        <div class="hint">
+          <b>↑↓</b> move <span class="d">·</span>
+          <b>⏎</b> open <span class="d">·</span>
+          <b>⇥</b> switch section <span class="d">·</span>
+          <b>?</b> more keys
+        </div>
+
+      </div><!-- /tui -->
+    </div><!-- /window -->
+  </div><!-- /stage -->
+
+  <!-- what changed & why -->
+  <div class="notes">
+    <div class="note">
+      <div class="n">01 <span>Color</span></div>
+      <p>Borders, numbers and paths drop to neutral gray. <s>Orange chrome everywhere</s> → accent reserved for the one selected row. Hierarchy for free.</p>
+    </div>
+    <div class="note">
+      <div class="n">02 <span>Selection</span></div>
+      <p>A full-width wash + a solid left rail replace the half-painted bar, so the cursor never looks like a render glitch.</p>
+    </div>
+    <div class="note">
+      <div class="n">03 <span>Top controls</span></div>
+      <p>The two stacked chevron rows get tiny <s>AGENT / PLAN</s> labels and only light up the one that's focused — no more cramped collision with the title.</p>
+    </div>
+    <div class="note">
+      <div class="n">04 <span>Tabs</span></div>
+      <p>The <s>▌Projects▐</s> glyph artifact becomes a clean underline on the active tab — reads as a tab, not a bug.</p>
+    </div>
+    <div class="note">
+      <div class="n">05 <span>Worktrees</span></div>
+      <p>The count becomes a small pill pinned beside its own row, so it can't be misread as belonging to the row above.</p>
+    </div>
+    <div class="note">
+      <div class="n">06 <span>Footer</span></div>
+      <p>Cryptic <s>↑ sections · O once · P plain</s> becomes plain-language hints, with the rare keys tucked behind <b>?</b>.</p>
+    </div>
+  </div>
+
+</body>
+</html>
