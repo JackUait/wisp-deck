@@ -233,6 +233,53 @@ func TestExitUiMode_noninteractive_emits_nothing(t *testing.T) {
 	}
 }
 
+// The pinned header must state the number of changed files (not just the net
+// +/- line stamp), so the user always sees the changeset size at a glance.
+func TestCompactView_header_shows_changed_file_count(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not available")
+	}
+	root := projectRoot(t)
+	module := filepath.Join(root, "lib", "compact-view.sh")
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	writeTempFile(t, dir, "a.txt", "one\n")
+	writeTempFile(t, dir, "b.txt", "one\n")
+	git("add", "a.txt", "b.txt")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "a.txt", "one\ntwo\n")  // modified
+	writeTempFile(t, dir, "b.txt", "one\nthree\n") // modified -> 2 changed files
+
+	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, zsh, "-c", "source "+module+" && compact_view "+dir)
+	env := []string{}
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "TMUX=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=0.1", "TERM=xterm")
+	out, _ := cmd.CombinedOutput()
+
+	if !strings.Contains(string(out), "2 files") {
+		t.Errorf("header should state the changed-file count (\"2 files\"):\n%q", string(out))
+	}
+}
+
 // Regression: the refresh loop must not leak the `w` (pane width) variable to
 // stdout. The pane runs the script under zsh, where `local NAME` with no
 // assignment on an already-set variable acts as a *display* command and prints

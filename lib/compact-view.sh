@@ -176,7 +176,7 @@ compact_view() {
   # under zsh, where `local NAME` (no assignment) on an already-set variable is
   # a *display* command that prints "NAME=value" to stdout. Re-declaring `local
   # w` each iteration flashed "w=141" on screen until the next refresh.
-  local w h content total avail mbtn
+  local w h content header body body_total avail mbtn
   local scroll=0
   local need_build=1
   local interval="${COMPACT_VIEW_INTERVAL:-2}"
@@ -234,13 +234,18 @@ compact_view() {
       ta=${sums% *}
       td=${sums#* }
 
-      # ── Header: branch heading with dimmed namespace + net stamp ──
+      # ── Header: branch heading with dimmed namespace + changed-file count and
+      # net +/- stamp. This whole line (plus the separator below) is PINNED by
+      # the renderer — it never scrolls — so the changeset size stays in view.
       local leaf="${branch##*/}"
       local ns=""
       [ "$leaf" != "$branch" ] && ns="${branch%/*}/"
+      local total_files=$((n_staged + n_unstaged))
+      local funit="files"
+      [ "$total_files" -eq 1 ] && funit="file"
       local stamp=""
-      if [ "$ta" -gt 0 ] || [ "$td" -gt 0 ]; then
-        stamp="+${ta} −${td}"
+      if [ "$total_files" -gt 0 ]; then
+        stamp="${total_files} ${funit}  +${ta} −${td}"
       fi
       # Right-align the stamp on the heading line when it fits.
       local headtext="${ns}${leaf}"
@@ -249,7 +254,8 @@ compact_view() {
       [ -n "$ahead_behind" ] && printf "%s" "$ahead_behind"
       if [ -n "$stamp" ] && [ "$pad" -ge 1 ]; then
         printf '%*s' "$pad" ''
-        printf "${green}+%s${reset} ${red}−%s${reset}" "$ta" "$td"
+        printf "${dim}%s %s${reset}  ${green}+%s${reset} ${red}−%s${reset}" \
+          "$total_files" "$funit" "$ta" "$td"
       fi
       printf "\n"
 
@@ -279,22 +285,31 @@ compact_view() {
       fi
     )
 
-    # Viewport: reserve the last row for the position indicator when the ledger
-    # overflows the pane, otherwise draw it whole.
-    total=$(printf '%s\n' "$content" | wc -l | tr -d ' ')
-    if [ "$total" -gt "$h" ]; then
-      avail=$((h - 1))
+    # The header is the first 2 lines (branch heading + separator); it is PINNED
+    # — always drawn at the top, never part of the scroll region. Only the body
+    # (the file groups) scrolls beneath it.
+    header=$(printf '%s\n' "$content" | sed -n '1,2p')
+    body=$(printf '%s\n' "$content" | sed -n '3,$p')
+    body_total=$(printf '%s\n' "$body" | wc -l | tr -d ' ')
+
+    local body_rows=$((h - 2))
+    [ "$body_rows" -lt 1 ] && body_rows=1
+    # Reserve the last row for the position indicator when the body overflows.
+    if [ "$body_total" -gt "$body_rows" ]; then
+      avail=$((body_rows - 1))
+      [ "$avail" -lt 1 ] && avail=1
     else
-      avail="$h"
+      avail="$body_rows"
     fi
-    scroll=$(clamp_scroll "$scroll" "$total" "$avail")
+    scroll=$(clamp_scroll "$scroll" "$body_total" "$avail")
 
     printf '\033[2J\033[H'
-    if [ "$total" -le "$h" ]; then
-      printf '%s' "$content"
+    printf '%s\n' "$header"
+    if [ "$body_total" -le "$body_rows" ]; then
+      printf '%s' "$body"
     else
-      printf '%s\n' "$content" | viewport_slice "$scroll" "$avail"
-      scroll_status "$scroll" "$avail" "$total"
+      printf '%s\n' "$body" | viewport_slice "$scroll" "$avail"
+      scroll_status "$scroll" "$avail" "$body_total"
     fi
 
     # Idle: just refresh on a timer. Interactive: refresh OR react to a key.
@@ -315,7 +330,7 @@ compact_view() {
       b) scroll=$((scroll - avail)) ;;
       ' ') scroll=$((scroll + avail)) ;;
       g) scroll=0 ;;
-      G) scroll=$total ;;
+      G) scroll=$body_total ;;
       $'\e')
         # CSI sequence: arrows, page keys, or an SGR mouse-wheel report.
         read_key 0.02 || true
@@ -325,7 +340,7 @@ compact_view() {
             A) scroll=$((scroll - 1)) ;;
             B) scroll=$((scroll + 1)) ;;
             H) scroll=0 ;;
-            F) scroll=$total ;;
+            F) scroll=$body_total ;;
             5) scroll=$((scroll - avail)); read_key 0.02 || true ;;  # PgUp + ~
             6) scroll=$((scroll + avail)); read_key 0.02 || true ;;  # PgDn + ~
             '<')

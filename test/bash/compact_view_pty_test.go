@@ -2,10 +2,12 @@ package bash_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -174,5 +176,105 @@ func TestCompactView_zsh_ctrlc_exits(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		_ = cmd.Process.Kill()
 		t.Fatalf("compact_view did not exit within 3s of Ctrl-C under zsh (loop kept running)")
+	}
+}
+
+// stripANSI removes CSI escape sequences so frame content can be asserted on.
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]`)
+
+func lastFrame(s string) string {
+	// Frames are separated by the screen-clear \033[2J. The pinned header is
+	// redrawn at the top of every frame, so the last frame is what's on screen.
+	if i := strings.LastIndex(s, "\x1b[2J"); i >= 0 {
+		s = s[i:]
+	}
+	return ansiRE.ReplaceAllString(s, "")
+}
+
+// The branch heading + changed-file count must be PINNED: scrolling the file
+// list must never push it off screen. Overflow the list, jump to the bottom
+// with G, and assert the latest frame still shows the branch while a top file
+// has scrolled away and a bottom file is visible.
+func TestCompactView_header_stays_pinned_when_scrolled(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not available")
+	}
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	// One committed file so there is history, then many staged additions so the
+	// list overflows a short pane.
+	writeTempFile(t, dir, "seed.txt", "x\n")
+	git("add", "seed.txt")
+	git("commit", "-q", "-m", "init")
+	git("branch", "-m", "pinnedbr") // deterministic, unique branch name
+	for i := 0; i < 60; i++ {
+		writeTempFile(t, dir, fmt.Sprintf("f%02d.txt", i), "x\n")
+	}
+	git("add", ".")
+
+	cmd := exec.Command(zsh, "-c", "source "+module+" && compact_view "+dir)
+	env := []string{}
+	for _, e := range os.Environ() {
+		if len(e) >= 5 && e[:5] == "TMUX=" {
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=2", "TERM=xterm")
+
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 14, Cols: 60})
+	if err != nil {
+		t.Fatalf("start pty: %v", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	var mu sync.Mutex
+	var out bytes.Buffer
+	go func() {
+		b := make([]byte, 4096)
+		for {
+			n, err := ptmx.Read(b)
+			if n > 0 {
+				mu.Lock()
+				out.Write(b[:n])
+				mu.Unlock()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	time.Sleep(700 * time.Millisecond) // first frame
+	_, _ = ptmx.Write([]byte("G"))     // jump to bottom
+	time.Sleep(400 * time.Millisecond)
+	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C to exit cleanly
+	time.Sleep(300 * time.Millisecond)
+
+	mu.Lock()
+	frame := lastFrame(out.String())
+	mu.Unlock()
+
+	if !strings.Contains(frame, "pinnedbr") {
+		t.Errorf("branch heading must stay pinned after scrolling to bottom; frame:\n%s", frame)
+	}
+	if !strings.Contains(frame, "f59.txt") {
+		t.Errorf("bottom of the list (f59.txt) should be visible after G; frame:\n%s", frame)
+	}
+	if strings.Contains(frame, "f00.txt") {
+		t.Errorf("top file (f00.txt) should have scrolled away after G; frame:\n%s", frame)
 	}
 }
