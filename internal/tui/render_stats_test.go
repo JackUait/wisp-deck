@@ -138,6 +138,39 @@ func TestRenderStatsBox_showsPerModelBreakdown(t *testing.T) {
 	}
 }
 
+// TestRenderStatsBox_blankRowBetweenMonths verifies that consecutive months are
+// separated by a blank spacer row so the per-model breakdown of one month doesn't
+// visually run straight into the next month's header row.
+func TestRenderStatsBox_blankRowBetweenMonths(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabStats)
+
+	months := []usage.MonthlyUsage{
+		{Month: "2026-06", Input: 1_000_000, Models: []usage.ModelUsage{{Model: "claude-opus-4-8", Input: 1_000_000}}},
+		{Month: "2026-05", Input: 500_000, Models: []usage.ModelUsage{{Model: "claude-opus-4-8", Input: 500_000}}},
+	}
+	updated, _ := m.Update(statsLoadedMsg{months: months})
+	lines := strings.Split(updated.(*MainMenuModel).renderStatsBox(), "\n")
+
+	idx := -1
+	for i, l := range lines {
+		if strings.Contains(stripANSI(l), "2026-05") {
+			idx = i
+			break
+		}
+	}
+	if idx <= 0 {
+		t.Fatalf("could not find the 2026-05 month row:\n%s", strings.Join(lines, "\n"))
+	}
+	// The row directly above the second month must be a blank box row (only the
+	// border glyphs with spaces between them).
+	above := stripANSI(lines[idx-1])
+	inner := strings.TrimSuffix(strings.TrimPrefix(above, "│"), "│")
+	if strings.TrimSpace(inner) != "" {
+		t.Errorf("expected a blank spacer row above the second month, got: %q", above)
+	}
+}
+
 func TestRenderStatsBox_containsStatsRows(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	m.SetActiveTab(TabStats)

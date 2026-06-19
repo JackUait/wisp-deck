@@ -96,7 +96,13 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 		allTotal = 1
 	}
 
-	for _, mu := range visibleMonths {
+	for i, mu := range visibleMonths {
+		// Blank spacer between months so one month's per-model rows don't run
+		// straight into the next month's header.
+		if i > 0 {
+			rows = append(rows, emptyRow)
+		}
+
 		frac := float64(mu.Total()) / float64(allTotal)
 		pct := int(frac*100 + 0.5)
 		monthCost, allPriced := mu.CostUSD()
