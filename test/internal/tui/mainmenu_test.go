@@ -2285,8 +2285,9 @@ func TestMainMenu_ViewTruncatesLongPath(t *testing.T) {
 			if !strings.Contains(trimmed, "\u2026") {
 				t.Error("long path should be truncated with ellipsis")
 			}
-			if lipgloss.Width(trimmed) > 58 {
-				t.Errorf("path line content should not exceed box width 58, got %d: %q", lipgloss.Width(trimmed), trimmed)
+			// Box width is menuInnerWidth(60) + 2 border columns = 62.
+			if lipgloss.Width(trimmed) > 62 {
+				t.Errorf("path line content should not exceed box width 62, got %d: %q", lipgloss.Width(trimmed), trimmed)
 			}
 		}
 	}
@@ -2310,8 +2311,9 @@ func TestMainMenu_ViewTruncatesLongName(t *testing.T) {
 			if !strings.Contains(trimmed, "\u2026") {
 				t.Error("long name should be truncated with ellipsis")
 			}
-			if lipgloss.Width(trimmed) > 58 {
-				t.Errorf("name line content should not exceed box width 58, got %d: %q", lipgloss.Width(trimmed), trimmed)
+			// Box width is menuInnerWidth(60) + 2 border columns = 62.
+			if lipgloss.Width(trimmed) > 62 {
+				t.Errorf("name line content should not exceed box width 62, got %d: %q", lipgloss.Width(trimmed), trimmed)
 			}
 		}
 	}

@@ -72,6 +72,36 @@ func TestRenderStatsBox_SetSizeHonored(t *testing.T) {
 	}
 }
 
+// TestRenderStatsBox_dataRowsFitBoxWidth renders the stats table WITH data (the
+// full Month/Input/Output/Cache W/Cache R/Total header + data rows) and verifies
+// no box line spills past the right border. The empty-state width test above
+// never exercises the wide table, so the overflow only shows up with real data.
+func TestRenderStatsBox_dataRowsFitBoxWidth(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabStats)
+
+	months := []usage.MonthlyUsage{
+		{Month: "2026-06", Input: 34_400_000, Output: 30_800_000, CacheWrite: 252_300_000, CacheRead: 6_000_000_000},
+		{Month: "2026-05", Input: 7_000_000, Output: 12_600_000, CacheWrite: 90_300_000, CacheRead: 2_000_000_000},
+	}
+	updated, _ := m.Update(statsLoadedMsg{months: months})
+	out := updated.(*MainMenuModel).renderStatsBox()
+
+	maxAllowed := menuInnerWidth + 2 // left border + content + right pad/border
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" || !strings.Contains(line, "│") {
+			continue
+		}
+		if w := visibleWidth(line); w > maxAllowed {
+			t.Errorf("stats box line exceeds box width (%d): width=%d %q", maxAllowed, w, line)
+		}
+	}
+	// Sanity: the wide header actually rendered (otherwise the test proves nothing).
+	if !strings.Contains(out, "Cache R") {
+		t.Fatalf("expected the Cache R column header to render:\n%s", out)
+	}
+}
+
 func TestRenderStatsBox_containsStatsRows(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	m.SetActiveTab(TabStats)
