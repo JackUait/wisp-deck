@@ -29,16 +29,17 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 		return leftBorder + "  " + s + strings.Repeat(" ", gap) + rightBorder
 	}
 
-	// Helper: render a label-left / value-right row inside the box.
+	// Helper: render a label-left / value-right row inside the box. The value's
+	// right edge lands on menuContentWidth so it shares the Total-tokens column.
 	itemRow := func(label, value string, labelStyle, valStyle lipgloss.Style) string {
 		labelRendered := labelStyle.Render(label)
 		valRendered := valStyle.Render(value)
 		prefix := "    " + labelRendered
-		gap := menuContentWidth - lipgloss.Width(prefix) - lipgloss.Width(valRendered) - 1
+		gap := menuContentWidth - lipgloss.Width(prefix) - lipgloss.Width(valRendered)
 		if gap < 1 {
 			gap = 1
 		}
-		return leftBorder + prefix + strings.Repeat(" ", gap) + valRendered + " " + rightBorder
+		return leftBorder + prefix + strings.Repeat(" ", gap) + valRendered + rightBorder
 	}
 
 	var rows []string
@@ -127,11 +128,11 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 		// Bar + percent + cost on line below the data.
 		gaugeStr := statsGauge(frac, lipgloss.NewStyle().Foreground(m.theme.Primary), dimStyle)
 		barLine := "    " + gaugeStr + " " + faint.Render(fmt.Sprintf("%3d%%", pct))
-		costPad := menuContentWidth - lipgloss.Width(barLine) - lipgloss.Width(costStr) - 1
+		costPad := menuContentWidth - lipgloss.Width(barLine) - lipgloss.Width(costStr)
 		if costPad < 1 {
 			costPad = 1
 		}
-		barRow := leftBorder + barLine + strings.Repeat(" ", costPad) + primaryBoldStyle.Render(costStr) + " " + rightBorder
+		barRow := leftBorder + barLine + strings.Repeat(" ", costPad) + primaryBoldStyle.Render(costStr) + rightBorder
 		rows = append(rows, barRow)
 
 		// Per-model breakdown: which models drove the month's spend. Sub-indented
@@ -147,11 +148,11 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 				modelCost = dollarFmt(usd)
 			}
 			modelLine := "      " + muted.Render(fmt.Sprintf("%-18s %8s", label, humanizeTokens(md.Total())))
-			modelPad := menuContentWidth - lipgloss.Width(modelLine) - lipgloss.Width(modelCost) - 1
+			modelPad := menuContentWidth - lipgloss.Width(modelLine) - lipgloss.Width(modelCost)
 			if modelPad < 1 {
 				modelPad = 1
 			}
-			rows = append(rows, leftBorder+modelLine+strings.Repeat(" ", modelPad)+dimStyle.Render(modelCost)+" "+rightBorder)
+			rows = append(rows, leftBorder+modelLine+strings.Repeat(" ", modelPad)+dimStyle.Render(modelCost)+rightBorder)
 		}
 	}
 

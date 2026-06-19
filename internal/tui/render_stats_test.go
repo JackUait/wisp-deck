@@ -171,6 +171,56 @@ func TestRenderStatsBox_blankRowBetweenMonths(t *testing.T) {
 	}
 }
 
+// TestRenderStatsBox_costColumnRightAligned verifies every dollar figure (per-model
+// cost, the month bar-row cost, and the grand-total cost) shares the same right edge
+// as the month's Total-tokens number, so the money reads as one clean column under
+// the "Total" header instead of sitting one character to its left.
+func TestRenderStatsBox_costColumnRightAligned(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabStats)
+
+	months := []usage.MonthlyUsage{
+		{Month: "2026-06", Input: 1_000_000, Output: 500_000,
+			Models: []usage.ModelUsage{{Model: "claude-opus-4-8", Input: 1_000_000, Output: 500_000}}},
+	}
+	updated, _ := m.Update(statsLoadedMsg{months: months})
+	lines := strings.Split(updated.(*MainMenuModel).renderStatsBox(), "\n")
+
+	// rightEdge is the column (count of chars up to and including the last
+	// non-space) of a box row's content, with borders/padding stripped.
+	rightEdge := func(s string) int {
+		s = stripANSI(s)
+		s = strings.TrimPrefix(s, "│")
+		s = strings.TrimSuffix(s, "│")
+		return len([]rune(strings.TrimRight(s, " ")))
+	}
+
+	var totalRow, modelRow, barRow, estRow string
+	for _, l := range lines {
+		p := stripANSI(l)
+		switch {
+		case strings.Contains(p, "2026-06"):
+			totalRow = l
+		case strings.Contains(p, "opus-4-8"):
+			modelRow = l
+		case strings.Contains(p, "%"): // bar row carries the percent + month cost
+			barRow = l
+		case strings.Contains(p, "Est. cost"):
+			estRow = l
+		}
+	}
+	if totalRow == "" || modelRow == "" || barRow == "" || estRow == "" {
+		t.Fatalf("missing rows:\n%s", strings.Join(lines, "\n"))
+	}
+	want := rightEdge(totalRow)
+	for name, row := range map[string]string{"per-model": modelRow, "bar cost": barRow, "est. cost": estRow} {
+		if got := rightEdge(row); got != want {
+			t.Errorf("%s right edge = %d, want %d (Total-tokens column)\ntotal: %q\nrow:   %q",
+				name, got, want, stripANSI(totalRow), stripANSI(row))
+		}
+	}
+}
+
 func TestRenderStatsBox_containsStatsRows(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	m.SetActiveTab(TabStats)
