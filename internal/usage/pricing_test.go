@@ -87,6 +87,40 @@ func TestModelCostUSD_bareAliases(t *testing.T) {
 	}
 }
 
+func TestModelCostUSD_customProviderModels(t *testing.T) {
+	// Non-Anthropic models routed through Claude Code are priced at their own
+	// provider's published API rates (per 1M tokens) so the Stats tab no longer
+	// shows them as "—". 1M input + 1M output expected total per row.
+	cases := []struct {
+		model string
+		want  float64
+	}{
+		{"glm-5.2", 1.40 + 4.40},        // Z.ai
+		{"glm-4.7", 0.40 + 1.75},        // Z.ai
+		{"glm-4.5-air", 0.13 + 0.85},    // Z.ai
+		{"mimo-v2.5", 0.14 + 0.28},      // Xiaomi
+		{"mimo-v2.5-pro", 0.435 + 0.87}, // Xiaomi
+	}
+	for _, c := range cases {
+		usd, priced := ModelCostUSD(ModelUsage{Model: c.model, Input: 1_000_000, Output: 1_000_000})
+		if !priced || !approx(usd, c.want) {
+			t.Errorf("%s = %v priced=%v, want %v/true", c.model, usd, priced, c.want)
+		}
+	}
+}
+
+// mimo-v2.5 is a prefix of mimo-v2.5-pro, so a first-match lookup could price the
+// pro model at the cheaper standard rate depending on map iteration order. The
+// longest matching prefix must win.
+func TestRateFor_longestPrefixWins(t *testing.T) {
+	for i := 0; i < 50; i++ { // map order is randomized; hammer it
+		usd, priced := ModelCostUSD(ModelUsage{Model: "mimo-v2.5-pro", Input: 1_000_000, Output: 1_000_000})
+		if !priced || !approx(usd, 0.435+0.87) {
+			t.Fatalf("mimo-v2.5-pro = %v priced=%v, want %v (pro rate, not standard)", usd, priced, 0.435+0.87)
+		}
+	}
+}
+
 func TestModelCostUSD_zeroTokensPricedFree(t *testing.T) {
 	// Zero-token rows (e.g. "<synthetic>") cost nothing regardless of model, so
 	// they must report priced=true and must not flag a month as approximate.

@@ -24,6 +24,15 @@ var modelRates = map[string]modelRate{
 	"opus":   {5, 25},
 	"sonnet": {3, 15},
 	"haiku":  {1, 5},
+
+	// Non-Anthropic models routed through Claude Code via a custom provider. Priced
+	// at each provider's published standard API rates (per 1M tokens). mimo-v2.5 is
+	// a prefix of mimo-v2.5-pro; rateFor's longest-prefix match keeps them distinct.
+	"glm-5.2":       {1.40, 4.40},  // Z.ai
+	"glm-4.7":       {0.40, 1.75},  // Z.ai
+	"glm-4.5-air":   {0.13, 0.85},  // Z.ai
+	"mimo-v2.5":     {0.14, 0.28},  // Xiaomi
+	"mimo-v2.5-pro": {0.435, 0.87}, // Xiaomi
 }
 
 const (
@@ -35,13 +44,21 @@ const (
 	cacheReadMult = 0.10
 )
 
+// rateFor returns the rate whose key is the longest prefix of model. Longest-prefix
+// wins so overlapping ids resolve deterministically despite random map iteration
+// order (e.g. "mimo-v2.5-pro" must not match the shorter "mimo-v2.5").
 func rateFor(model string) (modelRate, bool) {
+	var (
+		best  modelRate
+		bestN = -1
+		found bool
+	)
 	for prefix, r := range modelRates {
-		if strings.HasPrefix(model, prefix) {
-			return r, true
+		if len(prefix) > bestN && strings.HasPrefix(model, prefix) {
+			best, bestN, found = r, len(prefix), true
 		}
 	}
-	return modelRate{}, false
+	return best, found
 }
 
 // ModelCostUSD returns the estimated USD cost for a model's usage and whether the
