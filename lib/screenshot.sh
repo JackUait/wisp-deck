@@ -24,13 +24,18 @@ gt_screenshot_dir() {
   fi
 }
 
-# gt_latest_screenshot <dir> — print the newest image file in <dir>.
-# Returns non-zero (printing nothing) when the dir is missing or has no images.
-# Uses find+stat (not globbing) so it is robust across bash/zsh and when some
-# image extensions have no matches.
+# gt_latest_screenshot <dir>... — print the newest image file across the given
+# dirs. Returns non-zero (printing nothing) when no dir exists or none has an
+# image. Uses find+stat (not globbing) so it is robust across bash/zsh and when
+# some image extensions have no matches. Multiple dirs let the injector search
+# both the saved location (Desktop) and the screencaptureui temp dir holding a
+# just-taken, not-yet-saved floating-thumbnail screenshot.
 gt_latest_screenshot() {
-  local dir="$1"
-  [ -d "$dir" ] || return 1
+  local dirs=() d
+  for d in "$@"; do
+    [ -d "$d" ] && dirs+=("$d")
+  done
+  [ ${#dirs[@]} -gt 0 ] || return 1
 
   local latest=""
   local line
@@ -39,12 +44,26 @@ gt_latest_screenshot() {
     [ -n "$line" ] || continue
     latest="${line#* }"  # strip the leading "<mtime> "
     break
-  done < <(find "$dir" -maxdepth 1 -type f \
+  done < <(find "${dirs[@]}" -maxdepth 1 -type f \
             \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \) \
             -exec stat -f '%m %N' {} + 2>/dev/null | sort -rn)
 
   [ -n "$latest" ] || return 1
   printf '%s\n' "$latest"
+}
+
+# gt_screenshot_temp_dirs — print the screencaptureui TemporaryItems dirs that
+# hold a just-taken screenshot while its floating thumbnail is still showing
+# (before it is saved to the screenshot location). A real OS drag of that
+# thumbnail is intermittently broken (macOS hands the terminal an empty,
+# promise-only payload), so reading the file straight from here and injecting
+# its path bypasses the drag entirely. Base is overridable for tests.
+gt_screenshot_temp_dirs() {
+  local base="${GT_SCREENSHOT_TEMP_BASE:-$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null)TemporaryItems}"
+  local d
+  for d in "$base"/NSIRD_screencaptureui_*; do
+    [ -d "$d" ] && printf '%s\n' "$d"
+  done
 }
 
 # _gt_pick_marked_pane — read "<index> <flag>" lines on stdin and print the
@@ -110,9 +129,13 @@ gt_paste_latest_screenshot() {
   [ -n "$session" ] || return 1
   local pane="${2:-$(gt_ai_pane "$tmux_cmd" "$session")}"
 
-  local dir latest
+  # Search the saved location AND the screencaptureui temp dirs, so a screenshot
+  # taken moments ago (still a floating thumbnail, not yet on disk in the saved
+  # dir) is found too.
+  local dir latest line temp_dirs=()
   dir="$(gt_screenshot_dir)"
-  latest="$(gt_latest_screenshot "$dir")" || {
+  while IFS= read -r line; do [ -n "$line" ] && temp_dirs+=("$line"); done < <(gt_screenshot_temp_dirs)
+  latest="$(gt_latest_screenshot "$dir" "${temp_dirs[@]}")" || {
     "$tmux_cmd" display-message "ghost-tab: no screenshot found in $dir" 2>/dev/null || true
     return 0
   }

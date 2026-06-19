@@ -134,6 +134,45 @@ func TestLatestScreenshot_returns_newest_image(t *testing.T) {
 	assertNotContains(t, out, "Screen Shot old.png")
 }
 
+// gt_latest_screenshot must pick the newest image across MULTIPLE dirs -- the
+// just-taken screenshot lives in a screencaptureui temp dir (floating thumbnail
+// not yet saved to Desktop), so the injector has to search there too.
+func TestLatestScreenshot_picks_newest_across_multiple_dirs(t *testing.T) {
+	saved := t.TempDir()
+	temp := t.TempDir()
+	old := writeTempFile(t, saved, "old.png", "old")
+	fresh := writeTempFile(t, temp, "Screenshot fresh.png", "fresh")
+	now := time.Now()
+	os.Chtimes(old, now.Add(-2*time.Minute), now.Add(-2*time.Minute))
+	os.Chtimes(fresh, now, now)
+
+	out, code := runBashFunc(t, "lib/screenshot.sh", "gt_latest_screenshot",
+		[]string{saved, temp}, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "Screenshot fresh.png")
+	assertNotContains(t, out, "old.png")
+}
+
+// gt_screenshot_temp_dirs lists the screencaptureui TemporaryItems dirs (where a
+// floating-thumbnail screenshot lives before it is saved). Base is overridable
+// via GT_SCREENSHOT_TEMP_BASE so it is testable without real screenshots.
+func TestScreenshotTempDirs_lists_screencaptureui_dirs(t *testing.T) {
+	base := t.TempDir()
+	want := filepath.Join(base, "NSIRD_screencaptureui_ABC123")
+	if err := os.MkdirAll(want, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// A non-matching dir must be ignored.
+	if err := os.MkdirAll(filepath.Join(base, "SomethingElse"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	env := buildEnv(t, nil, "GT_SCREENSHOT_TEMP_BASE="+base)
+	out, code := runBashFunc(t, "lib/screenshot.sh", "gt_screenshot_temp_dirs", nil, env)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, want)
+	assertNotContains(t, out, "SomethingElse")
+}
+
 // Non-image files must be ignored.
 func TestLatestScreenshot_ignores_non_images(t *testing.T) {
 	dir := t.TempDir()
