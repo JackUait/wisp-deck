@@ -11,7 +11,9 @@ func TestActionBarFor_byRowType(t *testing.T) {
 	cases := map[string][]string{
 		"project":     {"Open", "Worktrees", "Delete"},
 		"worktree":    {"Open", "Delete"},
-		"add-project": {"Add project"},
+		// Leading glyph doubles as the keymap: Enter triggers add-project, so the
+		// action bar must show ⏎ like the other rows (not a bare "+").
+		"add-project": {"⏎", "Add project"},
 	}
 	for rowType, wantWords := range cases {
 		got := actionBarFor(rowType)

@@ -17,7 +17,7 @@ func actionBarFor(itemType string) string {
 	case "worktree":
 		return "⏎ Open    D Delete"
 	case "add-project":
-		return "+ Add project"
+		return "⏎ Add project"
 	default:
 		return ""
 	}
