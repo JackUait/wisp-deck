@@ -2293,9 +2293,9 @@ func TestMainMenu_ViewTruncatesLongPath(t *testing.T) {
 			if !strings.Contains(trimmed, "\u2026") {
 				t.Error("long path should be truncated with ellipsis")
 			}
-			// Box width is menuInnerWidth(60) + 2 border columns = 62.
-			if lipgloss.Width(trimmed) > 62 {
-				t.Errorf("path line content should not exceed box width 62, got %d: %q", lipgloss.Width(trimmed), trimmed)
+			// Box width is menuInnerWidth(66) + 2 border columns = 68.
+			if lipgloss.Width(trimmed) > 68 {
+				t.Errorf("path line content should not exceed box width 68, got %d: %q", lipgloss.Width(trimmed), trimmed)
 			}
 		}
 	}
@@ -2306,7 +2306,7 @@ func TestMainMenu_ViewTruncatesLongPath(t *testing.T) {
 
 func TestMainMenu_ViewTruncatesLongName(t *testing.T) {
 	lipgloss.SetDefaultRenderer(lipgloss.NewRenderer(termenv.NewOutput(termenv.DefaultOutput().TTY(), termenv.WithProfile(termenv.Ascii))))
-	longName := "my-extremely-long-project-name-that-overflows-the-box"
+	longName := "my-extremely-long-project-name-that-definitely-overflows-the-wider-box-now"
 	projects := []models.Project{{Name: longName, Path: "/short"}}
 	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "none")
 	m.SetSize(80, 30)
@@ -2319,9 +2319,9 @@ func TestMainMenu_ViewTruncatesLongName(t *testing.T) {
 			if !strings.Contains(trimmed, "\u2026") {
 				t.Error("long name should be truncated with ellipsis")
 			}
-			// Box width is menuInnerWidth(60) + 2 border columns = 62.
-			if lipgloss.Width(trimmed) > 62 {
-				t.Errorf("name line content should not exceed box width 62, got %d: %q", lipgloss.Width(trimmed), trimmed)
+			// Box width is menuInnerWidth(66) + 2 border columns = 68.
+			if lipgloss.Width(trimmed) > 68 {
+				t.Errorf("name line content should not exceed box width 68, got %d: %q", lipgloss.Width(trimmed), trimmed)
 			}
 		}
 	}

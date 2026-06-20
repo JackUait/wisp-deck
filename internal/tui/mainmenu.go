@@ -2623,7 +2623,6 @@ func ghostDisplayLabel(mode string) string {
 	}
 }
 
-
 // tabTitleLabel returns a display label for the tab title mode.
 func tabTitleLabel(mode string) string {
 	switch mode {
@@ -2648,12 +2647,11 @@ func panelModeLabel(mode string) string {
 	}
 }
 
-
 // menuInnerWidth is sized so the widest view — the Stats table
-// (Month/Input/Output/Cache W/Cache R/Total, indented 4) at 58 content columns
-// — fits without overflowing the right border. All views share this width so
-// the box is a consistent size across Projects, Settings, and Stats.
-const menuInnerWidth = 60
+// (Month/Input/Output/Cache W/Cache R/Total, indented 2) — fits with a roomy gap
+// between the Cache R column and the right-aligned Total column. All views share
+// this width so the box is a consistent size across Projects, Settings, and Stats.
+const menuInnerWidth = 66
 const menuPadding = 2
 const menuContentWidth = menuInnerWidth - menuPadding // 58 (right-side padding only)
 
