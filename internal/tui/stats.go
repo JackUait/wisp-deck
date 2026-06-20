@@ -136,13 +136,13 @@ func statsGauge(frac float64, fill, track lipgloss.Style) string {
 // token counts right-justified, total right-justified. Each segment is styled
 // independently so the total can stand out.
 func statsCols(month, in, out, cw, cr, total string, monthStyle, numStyle, totalStyle lipgloss.Style) string {
-	// Input/Output are %7s (their values/headers fit) so the 2 reclaimed columns
-	// can widen the gap before Total without growing past statsColEnd.
+	// The four token columns are %7s (their values/headers fit) so the reclaimed
+	// columns can set Total apart with a 5-space gap without growing past statsColEnd.
 	return "  " + monthStyle.Render(fmt.Sprintf("%-8s", monthLabel(month))) + " " +
 		numStyle.Render(fmt.Sprintf("%7s", in)) + " " +
 		numStyle.Render(fmt.Sprintf("%7s", out)) + " " +
-		numStyle.Render(fmt.Sprintf("%8s", cw)) + " " +
-		numStyle.Render(fmt.Sprintf("%8s", cr)) + "   " +
+		numStyle.Render(fmt.Sprintf("%7s", cw)) + " " +
+		numStyle.Render(fmt.Sprintf("%7s", cr)) + "     " +
 		totalStyle.Render(fmt.Sprintf("%9s", total))
 }
 
@@ -268,8 +268,8 @@ func (m StatsModel) View() string {
 				connector = "└─ "
 			}
 			label := strings.TrimPrefix(md.Model, "claude-")
-			if len(label) > 30 {
-				label = label[:29] + "…" // keep the row inside the box
+			if len(label) > 28 {
+				label = label[:27] + "…" // keep the row inside the box
 			}
 			usd, priced := usage.ModelCostUSD(md)
 			cost := "—"
@@ -277,8 +277,8 @@ func (m StatsModel) View() string {
 				cost = dollarFmt(usd)
 			}
 			mrow := "   " + muted.Render(connector) +
-				muted.Render(fmt.Sprintf("%-30s", label)) +
-				muted.Render(fmt.Sprintf("%8s", humanizeTokens(md.Total()))) + "   " +
+				muted.Render(fmt.Sprintf("%-28s", label)) +
+				muted.Render(fmt.Sprintf("%8s", humanizeTokens(md.Total()))) + "     " +
 				primary.Render(fmt.Sprintf("%9s", cost))
 			body = append(body, statsBoxLine(mrow, border))
 		}

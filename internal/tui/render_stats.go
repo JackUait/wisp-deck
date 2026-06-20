@@ -72,7 +72,7 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 
 	// Column header row.
 	header := lipgloss.NewStyle().Foreground(m.theme.Dim).Bold(true)
-	hdr := "    " + header.Render(fmt.Sprintf("%-8s %7s %7s %8s %8s   %9s",
+	hdr := "    " + header.Render(fmt.Sprintf("%-8s %7s %7s %7s %7s     %9s",
 		"Month", "Input", "Output", "Cache W", "Cache R", "Total"))
 	hdrGap := menuContentWidth - lipgloss.Width(hdr)
 	if hdrGap < 0 {
@@ -112,12 +112,12 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 			costStr = "~" + costStr
 		}
 
-		dataLine := "    " + numStyle.Render(fmt.Sprintf("%-8s %7s %7s %8s %8s",
+		dataLine := "    " + numStyle.Render(fmt.Sprintf("%-8s %7s %7s %7s %7s",
 			monthLabel(mu.Month),
 			humanizeTokens(mu.Input),
 			humanizeTokens(mu.Output),
 			humanizeTokens(mu.CacheWrite),
-			humanizeTokens(mu.CacheRead))) + "   " +
+			humanizeTokens(mu.CacheRead))) + "     " +
 			primaryBoldStyle.Render(fmt.Sprintf("%9s", humanizeTokens(mu.Total())))
 		dataGap := menuContentWidth - lipgloss.Width(dataLine)
 		if dataGap < 0 {
