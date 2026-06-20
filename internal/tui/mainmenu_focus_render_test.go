@@ -9,11 +9,14 @@ func TestHelpRow_focusAI(t *testing.T) {
 	m := focusTestMenu()
 	m.SetFocus(FocusAI)
 	help := stripAnsi(m.renderHelpRow())
-	if !strings.Contains(help, "AI") {
-		t.Errorf("AI-focus help should mention switching AI, got %q", help)
+	if !strings.Contains(help, "switch agent") {
+		t.Errorf("agent-focus help should say 'switch agent', got %q", help)
+	}
+	if strings.Contains(help, "switch AI") {
+		t.Errorf("agent-focus help should no longer say 'switch AI', got %q", help)
 	}
 	if !strings.Contains(help, "sections") {
-		t.Errorf("AI-focus help should point down to sections, got %q", help)
+		t.Errorf("agent-focus help should point down to sections, got %q", help)
 	}
 }
 

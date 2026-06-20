@@ -505,11 +505,11 @@ func (m *MainMenuModel) renderHelpRow() string {
 func (m *MainMenuModel) focusHint() string {
 	switch m.focus {
 	case FocusAI:
-		return "←→ switch AI · ↓ sections"
+		return "←→ switch agent · ↓ sections"
 	case FocusSubscription:
-		return "←→ switch subscription · ↑ AI · ↓ sections"
+		return "←→ switch subscription · ↑ agent · ↓ sections"
 	case FocusTabs:
-		return "←→ switch section · ↑ AI · ↓ enter"
+		return "←→ switch section · ↑ agent · ↓ enter"
 	default: // FocusBody
 		switch m.activeTab {
 		case TabSettings:
