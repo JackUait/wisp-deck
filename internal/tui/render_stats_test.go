@@ -278,7 +278,7 @@ func TestRenderStatsBox_biggerGapBeforeTotal(t *testing.T) {
 	months := []usage.MonthlyUsage{{Month: "2026-06", Input: 2_000_000}}
 	updated, _ := m.Update(statsLoadedMsg{months: months})
 	out := stripANSI(updated.(*MainMenuModel).renderStatsBox())
-	gap := "Cache R" + strings.Repeat(" ", 9) + "Total"
+	gap := "Cache R" + strings.Repeat(" ", 11) + "Total"
 	if !strings.Contains(out, gap) {
 		t.Errorf("expected a wider gap %q before Total:\n%s", gap, out)
 	}

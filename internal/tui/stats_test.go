@@ -71,7 +71,7 @@ func TestStatsView_biggerGapBeforeTotal(t *testing.T) {
 	// The Total column is set apart from the calculation columns by widening the
 	// gap after Cache R from 1 to 3 spaces (7 visible spaces between the headers).
 	view := stripANSI(NewStatsModelWithData(twoMonths()).View())
-	gap := "Cache R" + strings.Repeat(" ", 9) + "Total"
+	gap := "Cache R" + strings.Repeat(" ", 11) + "Total"
 	if !strings.Contains(view, gap) {
 		t.Errorf("expected a wider gap %q before Total:\n%s", gap, view)
 	}

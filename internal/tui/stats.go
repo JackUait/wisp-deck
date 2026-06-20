@@ -15,7 +15,7 @@ import (
 const (
 	statsInner  = 60 // inner content width between the box borders
 	statsGaugeW = 26 // gauge length (columns) for a month that is 100% of all tokens
-	statsColEnd = 56 // right edge of the Total column; money/totals align here
+	statsColEnd = 58 // right edge of the Total column; money/totals align here
 	statsWindow = 8  // months visible at once before scrolling
 )
 
@@ -137,12 +137,12 @@ func statsGauge(frac float64, fill, track lipgloss.Style) string {
 // independently so the total can stand out.
 func statsCols(month, in, out, cw, cr, total string, monthStyle, numStyle, totalStyle lipgloss.Style) string {
 	// The four token columns are %7s (their values/headers fit) so the reclaimed
-	// columns can set Total apart with a 5-space gap without growing past statsColEnd.
+	// columns can set Total apart with a 7-space gap without growing past statsColEnd.
 	return "  " + monthStyle.Render(fmt.Sprintf("%-8s", monthLabel(month))) + " " +
 		numStyle.Render(fmt.Sprintf("%7s", in)) + " " +
 		numStyle.Render(fmt.Sprintf("%7s", out)) + " " +
 		numStyle.Render(fmt.Sprintf("%7s", cw)) + " " +
-		numStyle.Render(fmt.Sprintf("%7s", cr)) + "     " +
+		numStyle.Render(fmt.Sprintf("%7s", cr)) + "       " +
 		totalStyle.Render(fmt.Sprintf("%9s", total))
 }
 
@@ -278,7 +278,7 @@ func (m StatsModel) View() string {
 			}
 			mrow := "   " + muted.Render(connector) +
 				muted.Render(fmt.Sprintf("%-28s", label)) +
-				muted.Render(fmt.Sprintf("%8s", humanizeTokens(md.Total()))) + "     " +
+				muted.Render(fmt.Sprintf("%8s", humanizeTokens(md.Total()))) + "       " +
 				primary.Render(fmt.Sprintf("%9s", cost))
 			body = append(body, statsBoxLine(mrow, border))
 		}

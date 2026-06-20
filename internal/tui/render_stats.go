@@ -34,7 +34,7 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 	itemRow := func(label, value string, labelStyle, valStyle lipgloss.Style) string {
 		labelRendered := labelStyle.Render(label)
 		valRendered := valStyle.Render(value)
-		prefix := "    " + labelRendered
+		prefix := "  " + labelRendered
 		gap := menuContentWidth - lipgloss.Width(prefix) - lipgloss.Width(valRendered)
 		if gap < 1 {
 			gap = 1
@@ -72,7 +72,7 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 
 	// Column header row.
 	header := lipgloss.NewStyle().Foreground(m.theme.Dim).Bold(true)
-	hdr := "    " + header.Render(fmt.Sprintf("%-8s %7s %7s %7s %7s     %9s",
+	hdr := "  " + header.Render(fmt.Sprintf("%-8s %7s %7s %7s %7s       %9s",
 		"Month", "Input", "Output", "Cache W", "Cache R", "Total"))
 	hdrGap := menuContentWidth - lipgloss.Width(hdr)
 	if hdrGap < 0 {
@@ -112,12 +112,12 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 			costStr = "~" + costStr
 		}
 
-		dataLine := "    " + numStyle.Render(fmt.Sprintf("%-8s %7s %7s %7s %7s",
+		dataLine := "  " + numStyle.Render(fmt.Sprintf("%-8s %7s %7s %7s %7s",
 			monthLabel(mu.Month),
 			humanizeTokens(mu.Input),
 			humanizeTokens(mu.Output),
 			humanizeTokens(mu.CacheWrite),
-			humanizeTokens(mu.CacheRead))) + "     " +
+			humanizeTokens(mu.CacheRead))) + "       " +
 			primaryBoldStyle.Render(fmt.Sprintf("%9s", humanizeTokens(mu.Total())))
 		dataGap := menuContentWidth - lipgloss.Width(dataLine)
 		if dataGap < 0 {
@@ -127,7 +127,7 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 
 		// Bar + percent + cost on line below the data.
 		gaugeStr := statsGauge(frac, lipgloss.NewStyle().Foreground(m.theme.Primary), dimStyle)
-		barLine := "    " + gaugeStr + " " + faint.Render(fmt.Sprintf("%3d%%", pct))
+		barLine := "  " + gaugeStr + " " + faint.Render(fmt.Sprintf("%3d%%", pct))
 		costPad := menuContentWidth - lipgloss.Width(barLine) - lipgloss.Width(costStr)
 		if costPad < 1 {
 			costPad = 1
@@ -153,7 +153,7 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 			if priced {
 				modelCost = dollarFmt(usd)
 			}
-			modelLine := "    " + branchStyle.Render(connector) + " " + muted.Render(fmt.Sprintf("%-16s %8s", label, humanizeTokens(md.Total())))
+			modelLine := "  " + branchStyle.Render(connector) + " " + muted.Render(fmt.Sprintf("%-16s %8s", label, humanizeTokens(md.Total())))
 			modelPad := menuContentWidth - lipgloss.Width(modelLine) - lipgloss.Width(modelCost)
 			if modelPad < 1 {
 				modelPad = 1
