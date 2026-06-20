@@ -565,6 +565,42 @@ func TestMenuBox_SelectedProjectUsesThemeColor(t *testing.T) {
 	}
 }
 
+func TestMenuBox_SelectedProjectPathNotHighlighted(t *testing.T) {
+	// Force color output so lipgloss emits ANSI codes in tests.
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	projects := []models.Project{
+		{Name: "myproj", Path: "/tmp/projpath"},
+	}
+	m := NewMainMenu(projects, []string{"claude"}, "claude", "animated")
+	m.width = 100
+	m.height = 40
+	box := m.renderMenuBox()
+
+	// Find the path line (contains "projpath", not the name "myproj").
+	var pathLine string
+	for _, line := range strings.Split(box, "\n") {
+		if strings.Contains(stripAnsi(line), "projpath") {
+			pathLine = line
+			break
+		}
+	}
+	if pathLine == "" {
+		t.Fatal("could not find selected project path line")
+	}
+
+	// The path must NOT use the theme primary highlight color (209).
+	if strings.Contains(pathLine, "\x1b[38;5;209m") {
+		t.Errorf("selected project path should not be highlighted with primary color (209): %q", pathLine)
+	}
+	// It should use the neutral dim color (245) instead.
+	if !strings.Contains(pathLine, "\x1b[38;5;245m") {
+		t.Errorf("expected neutral dim color (245) for selected project path: %q", pathLine)
+	}
+}
+
 func TestMenuBox_UnselectedAddProjectUsesThemeText(t *testing.T) {
 	// Force color output so lipgloss emits ANSI codes in tests.
 	prev := lipgloss.ColorProfile()

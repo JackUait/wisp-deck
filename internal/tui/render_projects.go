@@ -200,7 +200,7 @@ func (m *MainMenuModel) renderProjectRows(leftBorder, rightBorder string) []stri
 			// cursor will resume.
 			bodyFocus := m.focus == FocusBody
 			selNameStyle := primaryBoldStyle
-			selPathStyle := primaryStyle
+			selPathStyle := neutralDimStyle
 			markerStyle := primaryBoldStyle
 			wtStyle := primaryStyle
 			washStyle := selectedBgStyle

@@ -1854,7 +1854,7 @@ func TestMainMenu_ViewSelectedProjectUsesPrimaryColor(t *testing.T) {
 	t.Error("could not find line containing selected project name")
 }
 
-func TestMainMenu_ViewSelectedPathUsesPrimaryColor(t *testing.T) {
+func TestMainMenu_ViewSelectedPathNotHighlighted(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	defer lipgloss.SetColorProfile(prev)
@@ -1866,12 +1866,16 @@ func TestMainMenu_ViewSelectedPathUsesPrimaryColor(t *testing.T) {
 	m.SetSize(80, 30)
 	view := m.View()
 
-	// Selected project path should use theme.Primary (209), not Dim (166)
+	// Selected project path should NOT be highlighted with theme.Primary (209);
+	// it uses the neutral dim color (245) so only the name carries the accent.
 	lines := strings.Split(view, "\n")
 	for _, line := range lines {
 		if strings.Contains(line, "/some/selected/path") {
-			if !strings.Contains(line, "\x1b[38;5;209m") {
-				t.Errorf("selected project path should use Primary color (209), line: %q", line)
+			if strings.Contains(line, "\x1b[38;5;209m") {
+				t.Errorf("selected project path should not use Primary color (209), line: %q", line)
+			}
+			if !strings.Contains(line, "\x1b[38;5;245m") {
+				t.Errorf("selected project path should use neutral dim color (245), line: %q", line)
 			}
 			return
 		}
