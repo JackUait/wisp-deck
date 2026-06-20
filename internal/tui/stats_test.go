@@ -40,7 +40,7 @@ func twoMonths() []usage.MonthlyUsage {
 func TestStatsView_rendersMonthRowsHumanizedAndBars(t *testing.T) {
 	view := NewStatsModelWithData(twoMonths()).View()
 
-	if !strings.Contains(view, "2026-06") || !strings.Contains(view, "2026-05") {
+	if !strings.Contains(view, "Jun 2026") || !strings.Contains(view, "May 2026") {
 		t.Errorf("view missing month labels:\n%s", view)
 	}
 	if !strings.Contains(view, "2.0M") || !strings.Contains(view, "1.0M") {
@@ -48,10 +48,32 @@ func TestStatsView_rendersMonthRowsHumanizedAndBars(t *testing.T) {
 	}
 	// Each month's bar sits on the line directly below its data row and is scaled
 	// to that month's share of all tokens, so June (2M of 3M) > May (1M of 3M).
-	bar6 := barBlocksAfter(view, "2026-06")
-	bar5 := barBlocksAfter(view, "2026-05")
+	bar6 := barBlocksAfter(view, "Jun 2026")
+	bar5 := barBlocksAfter(view, "May 2026")
 	if bar6 <= bar5 || bar5 == 0 {
 		t.Errorf("bar widths not proportional: jun=%d may=%d\n%s", bar6, bar5, view)
+	}
+}
+
+func TestStatsView_monthRendersAsName(t *testing.T) {
+	view := NewStatsModelWithData(twoMonths()).View()
+	for _, want := range []string{"Jun 2026", "May 2026"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view missing human month label %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "2026-06") || strings.Contains(view, "2026-05") {
+		t.Errorf("raw YYYY-MM month should be replaced by a name:\n%s", view)
+	}
+}
+
+func TestStatsView_biggerGapBeforeTotal(t *testing.T) {
+	// The Total column is set apart from the calculation columns by widening the
+	// gap after Cache R from 1 to 3 spaces (7 visible spaces between the headers).
+	view := stripANSI(NewStatsModelWithData(twoMonths()).View())
+	gap := "Cache R" + strings.Repeat(" ", 7) + "Total"
+	if !strings.Contains(view, gap) {
+		t.Errorf("expected a wider gap %q before Total:\n%s", gap, view)
 	}
 }
 
@@ -127,13 +149,13 @@ func TestStatsView_blankLineSeparatesMonths(t *testing.T) {
 	lines := strings.Split(view, "\n")
 	idx := -1
 	for i, l := range lines {
-		if strings.Contains(l, "2026-05") {
+		if strings.Contains(l, "May 2026") {
 			idx = i
 			break
 		}
 	}
 	if idx <= 0 {
-		t.Fatalf("could not find 2026-05 row:\n%s", view)
+		t.Fatalf("could not find May 2026 row:\n%s", view)
 	}
 	inner := strings.ReplaceAll(lines[idx-1], "│", "")
 	if strings.TrimSpace(inner) != "" {

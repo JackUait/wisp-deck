@@ -154,13 +154,13 @@ func TestRenderStatsBox_blankRowBetweenMonths(t *testing.T) {
 
 	idx := -1
 	for i, l := range lines {
-		if strings.Contains(stripANSI(l), "2026-05") {
+		if strings.Contains(stripANSI(l), "May 2026") {
 			idx = i
 			break
 		}
 	}
 	if idx <= 0 {
-		t.Fatalf("could not find the 2026-05 month row:\n%s", strings.Join(lines, "\n"))
+		t.Fatalf("could not find the May 2026 month row:\n%s", strings.Join(lines, "\n"))
 	}
 	// The row directly above the second month must be a blank box row (only the
 	// border glyphs with spaces between them).
@@ -199,7 +199,7 @@ func TestRenderStatsBox_costColumnRightAligned(t *testing.T) {
 	for _, l := range lines {
 		p := stripANSI(l)
 		switch {
-		case strings.Contains(p, "2026-06"):
+		case strings.Contains(p, "Jun 2026"):
 			totalRow = l
 		case strings.Contains(p, "opus-4-8"):
 			modelRow = l
@@ -253,6 +253,37 @@ func TestRenderStatsBox_perModelTreeBranches(t *testing.T) {
 	}
 }
 
+func TestRenderStatsBox_monthRendersAsName(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabStats)
+	months := []usage.MonthlyUsage{
+		{Month: "2026-06", Input: 2_000_000},
+		{Month: "2026-05", Input: 1_000_000},
+	}
+	updated, _ := m.Update(statsLoadedMsg{months: months})
+	out := stripANSI(updated.(*MainMenuModel).renderStatsBox())
+	for _, want := range []string{"Jun 2026", "May 2026"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stats box missing human month label %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "2026-06") || strings.Contains(out, "2026-05") {
+		t.Errorf("raw YYYY-MM month should be replaced by a name:\n%s", out)
+	}
+}
+
+func TestRenderStatsBox_biggerGapBeforeTotal(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabStats)
+	months := []usage.MonthlyUsage{{Month: "2026-06", Input: 2_000_000}}
+	updated, _ := m.Update(statsLoadedMsg{months: months})
+	out := stripANSI(updated.(*MainMenuModel).renderStatsBox())
+	gap := "Cache R" + strings.Repeat(" ", 7) + "Total"
+	if !strings.Contains(out, gap) {
+		t.Errorf("expected a wider gap %q before Total:\n%s", gap, out)
+	}
+}
+
 func TestRenderStatsBox_containsStatsRows(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	m.SetActiveTab(TabStats)
@@ -290,7 +321,7 @@ func TestRenderStatsBox_DataState(t *testing.T) {
 	mm := updated.(*MainMenuModel)
 
 	out := mm.renderStatsBox()
-	if !strings.Contains(out, "2.0M") && !strings.Contains(out, "2026-06") {
+	if !strings.Contains(out, "2.0M") && !strings.Contains(out, "Jun 2026") {
 		t.Errorf("data state should render humanized tokens or month label:\n%s", out)
 	}
 	if !strings.Contains(out, "Est. cost") && !strings.Contains(out, "Total") {

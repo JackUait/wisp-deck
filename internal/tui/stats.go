@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -14,9 +15,20 @@ import (
 const (
 	statsInner  = 60 // inner content width between the box borders
 	statsGaugeW = 26 // gauge length (columns) for a month that is 100% of all tokens
-	statsColEnd = 55 // right edge of the Total column; money/totals align here
+	statsColEnd = 56 // right edge of the Total column; money/totals align here
 	statsWindow = 8  // months visible at once before scrolling
 )
+
+// monthLabel turns a "YYYY-MM" bucket into a human label like "Jun 2026". Other
+// strings (the "Month" header, the "Total" grand row) are returned unchanged so
+// the column formatters can pass everything through it.
+func monthLabel(s string) string {
+	t, err := time.Parse("2006-01", s)
+	if err != nil {
+		return s
+	}
+	return t.Format("Jan 2006")
+}
 
 // humanizeTokens renders a token count as a compact string (999, 1.5K, 2.0M, 3.1B).
 func humanizeTokens(n int64) string {
@@ -124,11 +136,13 @@ func statsGauge(frac float64, fill, track lipgloss.Style) string {
 // token counts right-justified, total right-justified. Each segment is styled
 // independently so the total can stand out.
 func statsCols(month, in, out, cw, cr, total string, monthStyle, numStyle, totalStyle lipgloss.Style) string {
-	return "  " + monthStyle.Render(fmt.Sprintf("%-7s", month)) + " " +
-		numStyle.Render(fmt.Sprintf("%8s", in)) + " " +
-		numStyle.Render(fmt.Sprintf("%8s", out)) + " " +
+	// Input/Output are %7s (their values/headers fit) so the 2 reclaimed columns
+	// can widen the gap before Total without growing past statsColEnd.
+	return "  " + monthStyle.Render(fmt.Sprintf("%-8s", monthLabel(month))) + " " +
+		numStyle.Render(fmt.Sprintf("%7s", in)) + " " +
+		numStyle.Render(fmt.Sprintf("%7s", out)) + " " +
 		numStyle.Render(fmt.Sprintf("%8s", cw)) + " " +
-		numStyle.Render(fmt.Sprintf("%8s", cr)) + " " +
+		numStyle.Render(fmt.Sprintf("%8s", cr)) + "   " +
 		totalStyle.Render(fmt.Sprintf("%9s", total))
 }
 
@@ -254,8 +268,8 @@ func (m StatsModel) View() string {
 				connector = "└─ "
 			}
 			label := strings.TrimPrefix(md.Model, "claude-")
-			if len(label) > 31 {
-				label = label[:30] + "…" // keep the row inside the box
+			if len(label) > 30 {
+				label = label[:29] + "…" // keep the row inside the box
 			}
 			usd, priced := usage.ModelCostUSD(md)
 			cost := "—"
@@ -263,8 +277,8 @@ func (m StatsModel) View() string {
 				cost = dollarFmt(usd)
 			}
 			mrow := "   " + muted.Render(connector) +
-				muted.Render(fmt.Sprintf("%-31s", label)) +
-				muted.Render(fmt.Sprintf("%8s", humanizeTokens(md.Total()))) + " " +
+				muted.Render(fmt.Sprintf("%-30s", label)) +
+				muted.Render(fmt.Sprintf("%8s", humanizeTokens(md.Total()))) + "   " +
 				primary.Render(fmt.Sprintf("%9s", cost))
 			body = append(body, statsBoxLine(mrow, border))
 		}
