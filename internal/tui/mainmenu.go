@@ -2623,7 +2623,6 @@ func ghostDisplayLabel(mode string) string {
 	}
 }
 
-
 // tabTitleLabel returns a display label for the tab title mode.
 func tabTitleLabel(mode string) string {
 	switch mode {
@@ -2647,7 +2646,6 @@ func panelModeLabel(mode string) string {
 		return mode
 	}
 }
-
 
 // menuInnerWidth is sized so the widest view — the Stats table
 // (Month/Input/Output/Cache W/Cache R/Total, indented 2) — fits with 3-space gaps
