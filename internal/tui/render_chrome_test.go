@@ -30,14 +30,13 @@ func TestRenderTabBar_activeTabAccented(t *testing.T) {
 	m.SetActiveTab(TabSettings)
 	_, _, _, lb, rb := m.boxBorders()
 	bar := m.renderTabBar(lb, rb)
-	// The active tab is bold + underlined on the label only (the surrounding
-	// padding spaces are not underlined, so the rule sits tight under the word).
-	want := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true).Underline(true).Render("Settings")
+	// The active (body-focused) tab is wrapped in bold accent brackets.
+	want := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true).Render("[Settings]")
 	if !strings.Contains(bar, want) {
-		t.Errorf("active tab bar missing bold+underline accent on label: %q", bar)
+		t.Errorf("active tab bar missing bracketed bold accent: %q", bar)
 	}
-	padded := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true).Underline(true).Render(" Settings ")
-	if strings.Contains(bar, padded) {
-		t.Errorf("active tab underline should not span the padding spaces: %q", bar)
+	// Inactive tabs are not bracketed.
+	if strings.Contains(stripAnsi(bar), "[Projects]") || strings.Contains(stripAnsi(bar), "[Stats]") {
+		t.Errorf("inactive tabs should not be bracketed: %q", bar)
 	}
 }

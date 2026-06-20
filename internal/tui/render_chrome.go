@@ -49,10 +49,10 @@ func (m *MainMenuModel) renderTabBar(leftBorder, rightBorder string) string {
 	// Two treatments for the active tab, by focus:
 	//   • navigation focused → a solid filled pill (dark text on Primary), so it
 	//     unmistakably reads as "this section is selected, ←/→ switches it".
-	//   • body focused → a quiet bold underline that just marks the current
+	//   • body focused → bold accent brackets ([label]) that mark the current
 	//     section without competing with the project list's selection.
 	// Inactive tabs brighten slightly while navigating to read as reachable.
-	// Both treatments keep the " label " width so the row math is unchanged.
+	// Both treatments keep the label+2 width so the row math is unchanged.
 	var activeStyle lipgloss.Style
 	inactiveColor := lipgloss.Color("245")
 	if navFocused {
@@ -62,19 +62,18 @@ func (m *MainMenuModel) renderTabBar(leftBorder, rightBorder string) string {
 			Bold(true)
 		inactiveColor = lipgloss.Color("250")
 	} else {
-		activeStyle = lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true).Underline(true)
+		activeStyle = lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
 	}
 	inactiveStyle := lipgloss.NewStyle().Foreground(inactiveColor)
 
 	// Render the active tab. When nav-focused the whole pill (including padding)
-	// is filled, so style the padded label. When body-focused the accent is just
-	// a bold underline, which should sit tight under the word — so style only the
-	// label and leave the surrounding padding spaces unstyled.
+	// is filled, so style the padded " label ". When body-focused, wrap the label
+	// in accent brackets "[label]" (same label+2 width as the padded inactives).
 	renderActive := func(label string) string {
 		if navFocused {
 			return activeStyle.Render(" " + label + " ")
 		}
-		return " " + activeStyle.Render(label) + " "
+		return activeStyle.Render("[" + label + "]")
 	}
 
 	var parts []string
