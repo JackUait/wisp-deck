@@ -42,7 +42,7 @@ func (m *MainMenuModel) renderActionBar(leftBorder, rightBorder string) string {
 	return leftBorder + "  " + rendered + strings.Repeat(" ", gap) + rightBorder
 }
 
-// renderTitleRow renders the "Ghost Tab" + right-aligned AI tool chooser row.
+// renderTitleRow renders the left-aligned AGENT tool chooser + right-aligned "Ghost Tab" row.
 func (m *MainMenuModel) renderTitleRow(leftBorder, rightBorder string) string {
 	primaryStyle := lipgloss.NewStyle().Foreground(m.theme.Primary)
 	primaryBoldStyle := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
@@ -67,12 +67,12 @@ func (m *MainMenuModel) renderTitleRow(leftBorder, rightBorder string) string {
 	} else {
 		aiPart = agentLabel + nameStyle.Render(aiDisplay)
 	}
-	// Right-align the labelled chooser: "Ghost Tab" left, "AGENT ◂ Claude Code ▸" right
+	// Switcher on the left, "Ghost Tab" right-aligned: "AGENT ◂ Claude Code ▸" left, "Ghost Tab" right
 	aiPadding := menuContentWidth - lipgloss.Width(title) - lipgloss.Width(aiPart) - 1 // -1 for leading space
 	if aiPadding < 1 {
 		aiPadding = 1
 	}
-	return leftBorder + " " + title + strings.Repeat(" ", aiPadding) + aiPart + rightBorder
+	return leftBorder + " " + aiPart + strings.Repeat(" ", aiPadding) + title + rightBorder
 }
 
 // subscriptionRowCount returns 1 when the main-page subscription line is shown
@@ -85,7 +85,7 @@ func (m *MainMenuModel) subscriptionRowCount() int {
 	return 0
 }
 
-// renderSubscriptionRow renders the current Claude subscription, right-aligned
+// renderSubscriptionRow renders the current Claude subscription, left-aligned
 // directly beneath the agent picker in the title row.
 func (m *MainMenuModel) renderSubscriptionRow(leftBorder, rightBorder string) string {
 	name := m.CurrentClaudeConfigName()
@@ -122,7 +122,8 @@ func (m *MainMenuModel) renderSubscriptionRow(leftBorder, rightBorder string) st
 	if pad < 1 {
 		pad = 1
 	}
-	return leftBorder + " " + strings.Repeat(" ", pad) + content + rightBorder
+	// Left-aligned so the PLAN switcher sits directly under the AGENT switcher.
+	return leftBorder + " " + content + strings.Repeat(" ", pad) + rightBorder
 }
 
 // renderUpdateRow renders the "Update available" notification row.

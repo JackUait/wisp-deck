@@ -33,8 +33,8 @@ func TestMenuBox_AIToolRightAligned(t *testing.T) {
 	}
 	titleRow := lines[1]
 
-	// The AI tool display name should appear after Ghost Tab, not immediately adjacent
-	// With right-alignment, there should be spaces between "Ghost Tab" and the AI tool
+	// The AGENT switcher sits on the left and "Ghost Tab" is right-aligned, with
+	// padding between the switcher cluster and the title.
 	if !strings.Contains(titleRow, "Ghost Tab") {
 		t.Error("title row missing 'Ghost Tab'")
 	}
@@ -42,27 +42,33 @@ func TestMenuBox_AIToolRightAligned(t *testing.T) {
 		t.Error("title row missing 'Claude Code'")
 	}
 
-	// Verify right-alignment: there should be multiple spaces between Ghost Tab and
-	// the right-aligned control cluster, which now begins with the AGENT label.
 	// Strip ANSI codes to check raw layout
 	raw := stripAnsi(titleRow)
+	agentIdx := strings.Index(raw, "AGENT")
 	ghostIdx := strings.Index(raw, "Ghost Tab")
-	arrowIdx := strings.Index(raw, "AGENT")
-	if ghostIdx < 0 || arrowIdx < 0 {
-		t.Fatal("could not find Ghost Tab or AGENT in stripped title row")
+	if agentIdx < 0 || ghostIdx < 0 {
+		t.Fatal("could not find AGENT or Ghost Tab in stripped title row")
 	}
-	// With right-alignment, there should be significant padding between the end of
-	// "Ghost Tab" and the AGENT label (more than just a single space)
-	gap := raw[ghostIdx+len("Ghost Tab") : arrowIdx]
+	// AGENT switcher comes first (left), Ghost Tab after it (right).
+	if agentIdx > ghostIdx {
+		t.Errorf("expected AGENT switcher left of Ghost Tab, got agent=%d ghost=%d in %q", agentIdx, ghostIdx, raw)
+	}
+	// There should be significant whitespace padding between the switcher's last
+	// chevron and the right-aligned title.
+	lastArrow := strings.LastIndex(raw, "▸")
+	if lastArrow < 0 || lastArrow > ghostIdx {
+		t.Fatalf("could not find switcher chevron left of Ghost Tab in %q", raw)
+	}
+	gap := raw[lastArrow+len("▸") : ghostIdx]
 	if len(strings.TrimSpace(gap)) != 0 {
-		t.Errorf("expected only whitespace between Ghost Tab and AGENT, got %q", gap)
+		t.Errorf("expected only whitespace between the switcher and Ghost Tab, got %q", gap)
 	}
 	if len(gap) < 5 {
 		t.Errorf("expected at least 5 chars padding for right-alignment, got %d: %q", len(gap), gap)
 	}
 }
 
-func TestMenuBox_AIToolHasTrailingSpace(t *testing.T) {
+func TestMenuBox_TitleRightAligned(t *testing.T) {
 	m := newTestMenu()
 	box := m.renderMenuBox()
 	lines := strings.Split(box, "\n")
@@ -70,17 +76,16 @@ func TestMenuBox_AIToolHasTrailingSpace(t *testing.T) {
 		t.Fatal("renderMenuBox produced fewer than 2 lines")
 	}
 	raw := stripAnsi(lines[1]) // title row
-	// AI tool selector should have whitespace between last ▸ and trailing │
-	// After padding, the trailing is "▸   │" (3 spaces: 1 content + 2 padding)
-	// Check there's whitespace between last ▸ and trailing │
-	lastArrow := strings.LastIndex(raw, "▸")
+	// "Ghost Tab" is right-aligned: only whitespace (the box's right padding)
+	// sits between the end of the title and the trailing border.
+	ghostIdx := strings.LastIndex(raw, "Ghost Tab")
 	borderChar := strings.LastIndex(raw, "│")
-	if lastArrow < 0 || borderChar < 0 || borderChar <= lastArrow {
-		t.Errorf("expected AI tool selector with ▸ and trailing border, got: %q", raw)
+	if ghostIdx < 0 || borderChar < 0 || borderChar <= ghostIdx {
+		t.Errorf("expected right-aligned 'Ghost Tab' before the trailing border, got: %q", raw)
 	}
-	trailing := raw[lastArrow+len("▸") : borderChar]
+	trailing := raw[ghostIdx+len("Ghost Tab") : borderChar]
 	if len(strings.TrimSpace(trailing)) != 0 || len(trailing) < 1 {
-		t.Errorf("expected only whitespace between ▸ and border, got: %q", trailing)
+		t.Errorf("expected only whitespace between Ghost Tab and border, got: %q", trailing)
 	}
 }
 
