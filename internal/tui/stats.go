@@ -259,8 +259,6 @@ func (m StatsModel) View() string {
 			faint.Render(fmt.Sprintf("%3d%%", pct))
 		barRow := rightAlign(gaugeLeft, primaryBold.Render(costLabel))
 		body = append(body, statsBoxLine(row, border))
-		// Blank spacer so the totals row doesn't sit flush against the gauge below.
-		body = append(body, statsBoxLine("", border))
 		body = append(body, statsBoxLine(barRow, border))
 		// Per-model breakdown, drawn as a tree. Tokens align under Cache R and cost
 		// under Total so the breakdown reads as columns, not a clump.

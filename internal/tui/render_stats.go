@@ -125,9 +125,6 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 		}
 		rows = append(rows, leftBorder+dataLine+strings.Repeat(" ", dataGap)+rightBorder)
 
-		// Blank spacer so the totals row doesn't sit flush against the gauge below.
-		rows = append(rows, emptyRow)
-
 		// Bar + percent + cost on line below the data.
 		gaugeStr := statsGauge(frac, lipgloss.NewStyle().Foreground(m.theme.Primary), dimStyle)
 		barLine := "  " + gaugeStr + " " + faint.Render(fmt.Sprintf("%3d%%", pct))

@@ -46,7 +46,7 @@ func TestStatsView_rendersMonthRowsHumanizedAndBars(t *testing.T) {
 	if !strings.Contains(view, "2.0M") || !strings.Contains(view, "1.0M") {
 		t.Errorf("view missing humanized totals:\n%s", view)
 	}
-	// Each month's bar sits a couple of rows below its data row and is scaled
+	// Each month's bar sits on the line directly below its data row and is scaled
 	// to that month's share of all tokens, so June (2M of 3M) > May (1M of 3M).
 	bar6 := barBlocksAfter(view, "Jun 2026")
 	bar5 := barBlocksAfter(view, "May 2026")
@@ -249,15 +249,8 @@ func TestStatsView_errorShown(t *testing.T) {
 func barBlocksAfter(view, label string) int {
 	lines := strings.Split(view, "\n")
 	for i, line := range lines {
-		if !strings.Contains(line, label) {
-			continue
-		}
-		// The gauge sits a couple of rows below the data row (a blank spacer now
-		// separates them), so scan forward to the first line with bar blocks.
-		for j := i + 1; j < len(lines); j++ {
-			if strings.Contains(lines[j], "█") {
-				return strings.Count(lines[j], "█")
-			}
+		if strings.Contains(line, label) && i+1 < len(lines) {
+			return strings.Count(lines[i+1], "█")
 		}
 	}
 	return 0

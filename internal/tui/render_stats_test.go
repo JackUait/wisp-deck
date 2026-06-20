@@ -171,42 +171,6 @@ func TestRenderStatsBox_blankRowBetweenMonths(t *testing.T) {
 	}
 }
 
-// TestRenderStatsBox_blankRowBetweenDataAndBar verifies that within a month the
-// numbers row (Month/Input/.../Total) is separated from the gauge+cost row below
-// it by a blank spacer, so the totals don't sit flush against the bar.
-func TestRenderStatsBox_blankRowBetweenDataAndBar(t *testing.T) {
-	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
-	m.SetActiveTab(TabStats)
-
-	months := []usage.MonthlyUsage{
-		{Month: "2026-06", Input: 38_000_000, Output: 36_700_000, CacheWrite: 287_100_000, CacheRead: 7_000_000_000,
-			Models: []usage.ModelUsage{{Model: "claude-opus-4-8", Input: 38_000_000}}},
-	}
-	updated, _ := m.Update(statsLoadedMsg{months: months})
-	lines := strings.Split(updated.(*MainMenuModel).renderStatsBox(), "\n")
-
-	idx := -1
-	for i, l := range lines {
-		if strings.Contains(stripANSI(l), "Jun 2026") {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 || idx+2 >= len(lines) {
-		t.Fatalf("could not find the Jun 2026 data row:\n%s", strings.Join(lines, "\n"))
-	}
-	// The row directly below the data row must be a blank box row.
-	below := stripANSI(lines[idx+1])
-	inner := strings.TrimSuffix(strings.TrimPrefix(below, "│"), "│")
-	if strings.TrimSpace(inner) != "" {
-		t.Errorf("expected a blank spacer row below the data row, got: %q", below)
-	}
-	// The gauge row (orange bar) must come on the line after the spacer.
-	if !strings.Contains(stripANSI(lines[idx+2]), "█") {
-		t.Errorf("expected the gauge bar two rows below the data row, got: %q", stripANSI(lines[idx+2]))
-	}
-}
-
 // TestRenderStatsBox_costColumnRightAligned verifies every dollar figure (per-model
 // cost, the month bar-row cost, and the grand-total cost) shares the same right edge
 // as the month's Total-tokens number, so the money reads as one clean column under
