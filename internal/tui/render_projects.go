@@ -93,7 +93,7 @@ func (m *MainMenuModel) renderSubscriptionRow(leftBorder, rightBorder string) st
 	if m.CurrentClaudeConfigFile() != "" {
 		valColor = lipgloss.Color("114") // green when a custom subscription is active
 	} else {
-		valColor = lipgloss.Color("241") // gray for Standard
+		valColor = m.theme.Primary // orange for Standard, mirroring the AGENT value
 	}
 	nameStyle := lipgloss.NewStyle().Foreground(valColor)
 	// When this row holds focus, brighten the name so it reads as the active

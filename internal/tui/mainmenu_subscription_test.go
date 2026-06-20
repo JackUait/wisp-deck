@@ -4,8 +4,25 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/jackuait/ghost-tab/internal/models"
+	"github.com/muesli/termenv"
 )
+
+func TestSubscriptionRow_standardIsPrimary(t *testing.T) {
+	// Force a real color profile so the foreground color is emitted.
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+
+	m := subTestMenu("claude") // Standard Claude (no custom config)
+	row := m.renderSubscriptionRow("│", "│")
+	name := m.CurrentClaudeConfigName()
+	want := lipgloss.NewStyle().Foreground(m.theme.Primary).Render(name)
+	if !strings.Contains(row, want) {
+		t.Errorf("standard subscription name should be orange (Primary), got: %q", row)
+	}
+}
 
 func subTestMenu(tool string) *MainMenuModel {
 	projects := []models.Project{
