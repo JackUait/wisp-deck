@@ -124,8 +124,12 @@ func TestIterm2Adapter_setup_config_json_has_correct_profile(t *testing.T) {
 	if p["Custom Command"] != "Yes" {
 		t.Errorf("Custom Command = %q, want %q", p["Custom Command"], "Yes")
 	}
-	if p["Command"] != wrapperPath {
-		t.Errorf("Command = %q, want %q", p["Command"], wrapperPath)
+	// Must launch through bash: iTerm2 runs a bare-path custom command under
+	// /bin/sh, which on macOS Tahoe lacks process substitution and chokes when
+	// the wrapper sources lib/screenshot.sh. A /bin/bash -l prefix is required.
+	wantCmd := "/bin/bash -l " + wrapperPath
+	if p["Command"] != wantCmd {
+		t.Errorf("Command = %q, want %q", p["Command"], wantCmd)
 	}
 }
 
@@ -154,8 +158,9 @@ func TestIterm2Adapter_setup_config_overwrites_existing(t *testing.T) {
 	json.Unmarshal(data, &profile)
 	profiles := profile["Profiles"].([]interface{})
 	p := profiles[0].(map[string]interface{})
-	if p["Command"] != wrapperPath {
-		t.Errorf("Command = %q, want %q", p["Command"], wrapperPath)
+	wantCmd := "/bin/bash -l " + wrapperPath
+	if p["Command"] != wantCmd {
+		t.Errorf("Command = %q, want %q", p["Command"], wantCmd)
 	}
 }
 

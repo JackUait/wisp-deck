@@ -30,7 +30,7 @@ terminal_setup_config() {
       "Name": "Ghost Tab",
       "Guid": "ghost-tab-profile",
       "Custom Command": "Yes",
-      "Command": "$wrapper_path"
+      "Command": "/bin/bash -l $wrapper_path"
     }
   ]
 }
