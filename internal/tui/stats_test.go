@@ -82,10 +82,10 @@ func TestStatsView_columnGapsAndTotal(t *testing.T) {
 
 func TestStatsView_gaugeWidth(t *testing.T) {
 	// A month that is 100% of all tokens fills the whole gauge, which is widened
-	// to statsGaugeW (34) columns.
+	// to statsGaugeW (46) columns so the bar reaches the right edge of Cache R.
 	view := stripANSI(NewStatsModelWithData([]usage.MonthlyUsage{{Month: "2026-06", Input: 1_000_000}}).View())
-	if n := barBlocksAfter(view, "Jun 2026"); n != 34 {
-		t.Errorf("100%% gauge block count = %d, want 34", n)
+	if n := barBlocksAfter(view, "Jun 2026"); n != 46 {
+		t.Errorf("100%% gauge block count = %d, want 46", n)
 	}
 }
 

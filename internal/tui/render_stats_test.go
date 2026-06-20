@@ -185,6 +185,50 @@ func TestRenderStatsBox_widerColumnGaps(t *testing.T) {
 	}
 }
 
+// TestRenderStatsBox_gaugeReachesCacheR verifies the gauge's right edge lines up
+// with the right edge of the Cache R column header, so the bar spans the data
+// columns up to (and no further than) Cache R.
+func TestRenderStatsBox_gaugeReachesCacheR(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabStats)
+	// A sub-100% month so the gauge has both fill (█) and track (░).
+	months := []usage.MonthlyUsage{
+		{Month: "2026-06", Input: 3_000_000},
+		{Month: "2026-05", Input: 1_000_000},
+	}
+	updated, _ := m.Update(statsLoadedMsg{months: months})
+	lines := strings.Split(stripANSI(updated.(*MainMenuModel).renderStatsBox()), "\n")
+
+	inner := func(s string) string {
+		return strings.TrimSuffix(strings.TrimPrefix(s, "│"), "│")
+	}
+	var cacheREnd, gaugeEnd int
+	for _, l := range lines {
+		c := inner(l)
+		if i := strings.Index(c, "Cache R"); i >= 0 {
+			// Rune column just past the "Cache R" header.
+			cacheREnd = len([]rune(c[:i])) + len([]rune("Cache R"))
+		}
+		if strings.ContainsAny(c, "█░") && cacheREnd > 0 {
+			// Rune column just past the last gauge glyph (fill or track).
+			last := -1
+			for k, ch := range []rune(c) {
+				if ch == '█' || ch == '░' {
+					last = k
+				}
+			}
+			gaugeEnd = last + 1
+			break
+		}
+	}
+	if cacheREnd == 0 || gaugeEnd == 0 {
+		t.Fatalf("could not locate Cache R header (%d) or gauge (%d):\n%s", cacheREnd, gaugeEnd, strings.Join(lines, "\n"))
+	}
+	if gaugeEnd != cacheREnd {
+		t.Errorf("gauge right edge = col %d, want Cache R end col %d", gaugeEnd, cacheREnd)
+	}
+}
+
 // TestRenderStatsBox_costColumnRightAligned verifies every dollar figure (per-model
 // cost, the month bar-row cost, and the grand-total cost) shares the same right edge
 // as the month's Total-tokens number, so the money reads as one clean column under

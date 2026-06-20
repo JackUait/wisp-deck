@@ -14,7 +14,7 @@ import (
 
 const (
 	statsInner  = 68 // inner content width between the box borders
-	statsGaugeW = 34 // gauge length (columns) for a month that is 100% of all tokens
+	statsGaugeW = 46 // gauge length (columns); spans the data columns up to Cache R's right edge
 	statsColEnd = 66 // right edge of the Total column; money/totals align here
 	statsWindow = 8  // months visible at once before scrolling
 )
