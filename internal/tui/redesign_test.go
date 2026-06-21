@@ -241,6 +241,23 @@ func TestRenderSubscriptionRow_hasPlanLabel(t *testing.T) {
 	}
 }
 
+// The PLAN label is shorter than AGENT, so it gets extra padding to keep the
+// switcher chevrons vertically aligned between the two rows.
+func TestRenderSubscriptionRow_chevronAlignsWithAgentRow(t *testing.T) {
+	m := subFocusMenu(t, "claude", true)
+	agentRow := stripAnsi(m.renderTitleRow("│", "│"))
+	planRow := stripAnsi(m.renderSubscriptionRow("│", "│"))
+	agentChevron := strings.Index(agentRow, "◂")
+	planChevron := strings.Index(planRow, "◂")
+	if agentChevron < 0 || planChevron < 0 {
+		t.Fatalf("both rows should carry a ◂ chevron: agent=%q plan=%q", agentRow, planRow)
+	}
+	if agentChevron != planChevron {
+		t.Errorf("PLAN chevron should align with AGENT chevron: agent col %d (%q), plan col %d (%q)",
+			agentChevron, agentRow, planChevron, planRow)
+	}
+}
+
 // The footer hint spells out the rare shortcuts instead of cryptic "O once".
 func TestFocusHint_projectsBodyExpandsAbbreviations(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none") // focus body, projects tab

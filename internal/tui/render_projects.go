@@ -102,9 +102,10 @@ func (m *MainMenuModel) renderSubscriptionRow(leftBorder, rightBorder string) st
 		nameStyle = lipgloss.NewStyle().Foreground(m.theme.Bright).Bold(true)
 	}
 
-	// "PLAN" caption mirrors the AGENT label above it.
+	// "PLAN" caption mirrors the AGENT label above it. The extra trailing space
+	// pads it to the width of "AGENT " so the switcher chevrons line up vertically.
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	planLabel := labelStyle.Render("PLAN ")
+	planLabel := labelStyle.Render("PLAN  ")
 	// Show cycle chevrons only when there is something to switch to. Idle chevrons
 	// are neutral gray; they brighten only when this row holds focus.
 	var content string
