@@ -88,6 +88,48 @@ func TestSync_preserves_existing_user_file(t *testing.T) {
 	}
 }
 
+func TestSync_file_mode_new_file(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "") // ensure ~/.config path
+	in := seed(t, home, "work-glm-zhipu.json")
+	if err := Sync(in); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	path := filepath.Join(home, ".config", "opencode", "opencode.json")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("opencode.json not written: %v", err)
+	}
+	if got := info.Mode().Perm(); got != os.FileMode(0600) {
+		t.Errorf("new file: mode = %04o, want 0600", got)
+	}
+}
+
+func TestSync_file_mode_existing_0644(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "") // ensure ~/.config path
+	ocDir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(ocDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(ocDir, "opencode.json")
+	// Pre-create the file at 0644 — Sync must tighten it to 0600.
+	if err := os.WriteFile(path, []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	in := seed(t, home, "work-glm-zhipu.json")
+	if err := Sync(in); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("opencode.json missing after Sync: %v", err)
+	}
+	if got := info.Mode().Perm(); got != os.FileMode(0600) {
+		t.Errorf("pre-existing 0644 file: mode = %04o, want 0600", got)
+	}
+}
+
 func TestBuildSubscriptions_marks_active_and_resolves(t *testing.T) {
 	home := t.TempDir()
 	in := seed(t, home, "work-glm-zhipu.json")

@@ -108,9 +108,12 @@ func Sync(in Inputs) error {
 		fmt.Fprintf(os.Stderr, "ghost-tab: opencode sync: mkdir: %v\n", err)
 		return nil
 	}
-	if err := os.WriteFile(path, out, 0644); err != nil {
+	if err := os.WriteFile(path, out, 0600); err != nil {
 		fmt.Fprintf(os.Stderr, "ghost-tab: opencode sync: write %s: %v\n", path, err)
 		return nil
 	}
+	// os.WriteFile only sets perms on creation; tighten an existing file too,
+	// since it now holds the plaintext API key. Best-effort.
+	_ = os.Chmod(path, 0600)
 	return nil
 }
