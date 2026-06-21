@@ -66,12 +66,14 @@ func TestSubFocus_downFromAISkipsWhenNoConfigs(t *testing.T) {
 	}
 }
 
-func TestSubFocus_downFromAISkipsWhenNonClaude(t *testing.T) {
+// Subscriptions are shared across agents, so the PLAN row is a reachable focus
+// stop for non-Claude agents too (when a keyed config exists).
+func TestSubFocus_downFromAIReachesSubscriptionNonClaude(t *testing.T) {
 	m := subFocusMenu(t, "codex", true)
 	m.SetFocus(FocusAI)
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	if m.Focus() != FocusTabs {
-		t.Errorf("Down from AI (codex) = %v, want FocusTabs", m.Focus())
+	if m.Focus() != FocusSubscription {
+		t.Errorf("Down from AI (codex) = %v, want FocusSubscription", m.Focus())
 	}
 }
 

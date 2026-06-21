@@ -66,14 +66,17 @@ func TestClaudeConfig_active_preselected(t *testing.T) {
 	}
 }
 
-func TestClaudeConfig_visibility_follows_tool(t *testing.T) {
+// Subscriptions are shared across every agent (the active plan drives Claude's
+// --settings file AND OpenCode's default model), so the control is shown for all
+// agents, not just Claude.
+func TestClaudeConfig_visibility_all_agents(t *testing.T) {
 	m, _ := newClaudeMenu(t)
 	if !m.ClaudeConfigVisible() {
 		t.Fatal("should be visible for claude")
 	}
 	m.CycleAITool("next") // -> codex
-	if m.ClaudeConfigVisible() {
-		t.Fatal("should hide for non-claude")
+	if !m.ClaudeConfigVisible() {
+		t.Fatal("should stay visible for non-claude agents (subscriptions are shared)")
 	}
 }
 
@@ -89,24 +92,24 @@ func TestSettings_shows_config_row_for_claude(t *testing.T) {
 	}
 }
 
-func TestSettings_hides_config_row_for_non_claude(t *testing.T) {
+func TestSettings_shows_config_row_for_non_claude(t *testing.T) {
 	m, _ := newClaudeMenu(t)
 	m.CycleAITool("next") // codex
 	m.OpenSettings()
 	view := m.renderSettingsForTest()
-	if strings.Contains(view, "Config") {
-		t.Fatalf("config row must be hidden for non-claude:\n%s", view)
+	if !strings.Contains(view, "Subscription") {
+		t.Fatalf("Subscription row must be shown for non-claude agents (subscriptions are shared):\n%s", view)
 	}
 }
 
-func TestSettings_nav_count_includes_config_when_visible(t *testing.T) {
+func TestSettings_nav_count_includes_config_for_all_agents(t *testing.T) {
 	m, _ := newClaudeMenu(t)
 	if got := m.settingsItemCount(); got != 6 {
 		t.Fatalf("claude should have 6 settings items, got %d", got)
 	}
 	m.CycleAITool("next")
-	if got := m.settingsItemCount(); got != 5 {
-		t.Fatalf("non-claude should have 5 settings items, got %d", got)
+	if got := m.settingsItemCount(); got != 6 {
+		t.Fatalf("non-claude should also have 6 settings items (shared subscription), got %d", got)
 	}
 }
 

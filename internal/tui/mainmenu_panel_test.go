@@ -107,9 +107,10 @@ func TestRenderSettingsBox_panelRowColor_yellowForCompact(t *testing.T) {
 
 func TestSettingsItemCount_includesPanelRow(t *testing.T) {
 	m := NewMainMenu(nil, []string{"codex"}, "codex", "animated")
-	// Without Claude config visible: 5 items (ghost, tab title, sound, panel, projects dir)
-	if m.settingsItemCount() != 5 {
-		t.Errorf("settingsItemCount = %d, want 5", m.settingsItemCount())
+	// The subscription row is shared across agents, so codex also has 6 items
+	// (ghost, tab title, sound, panel, projects dir, subscription).
+	if m.settingsItemCount() != 6 {
+		t.Errorf("settingsItemCount = %d, want 6", m.settingsItemCount())
 	}
 }
 

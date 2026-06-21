@@ -854,8 +854,11 @@ func (m *MainMenuModel) CurrentClaudeConfigFile() string {
 	return m.claudeConfigs[m.selectedConfig-1].File
 }
 
-// ClaudeConfigVisible reports whether the config control should be shown.
-func (m *MainMenuModel) ClaudeConfigVisible() bool { return m.CurrentAITool() == "claude" }
+// ClaudeConfigVisible reports whether the subscription control should be shown.
+// Subscriptions are shared across every agent — the active plan selects Claude's
+// --settings file AND drives OpenCode's default model via the sync — so the
+// control is shown regardless of the selected agent.
+func (m *MainMenuModel) ClaudeConfigVisible() bool { return true }
 
 // subscriptionFocusable reports whether the main-page subscription line is a
 // reachable focus stop: its PLAN row only renders on the Projects tab, it must

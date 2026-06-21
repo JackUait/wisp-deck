@@ -66,38 +66,40 @@ func TestMainPage_ShowsActiveSubscriptionName(t *testing.T) {
 	}
 }
 
-// Non-Claude tools have no subscription, so the line is hidden.
-func TestMainPage_NoSubscription_NonClaude(t *testing.T) {
+// Subscriptions are shared across agents, so the PLAN line is shown for non-Claude
+// tools too.
+func TestMainPage_ShowsSubscription_NonClaude(t *testing.T) {
 	m := subTestMenu("codex")
 	out := stripAnsi(m.renderMenuBox())
-	if strings.Contains(out, "Standard Claude") {
-		t.Errorf("non-claude main page should not show a subscription line:\n%s", out)
+	if !strings.Contains(out, "Standard Claude") {
+		t.Errorf("non-claude main page should also show the subscription line:\n%s", out)
 	}
 }
 
 // The subscription row shifts the project rows down by one; click mapping and
-// the layout height must stay in sync.
+// the layout height must stay in sync. The row is present for every agent.
 func TestMapRowToItem_accountsForSubscriptionRow(t *testing.T) {
-	// Header rows: top, title, [subscription], switcher-gap, tab bar, separator,
-	// leading blank — so the first project lands at row 6 (+1 for the Claude
-	// subscription row).
+	// Header rows: top, title, subscription, switcher-gap, tab bar, separator,
+	// leading blank — so the first project lands at row 7 for every agent.
 	mClaude := subTestMenu("claude")
 	if got := mClaude.MapRowToItem(7); got != 0 {
 		t.Errorf("claude: first project should be at row 7, MapRowToItem(7)=%d", got)
 	}
 
 	mCodex := subTestMenu("codex")
-	if got := mCodex.MapRowToItem(6); got != 0 {
-		t.Errorf("codex: first project should be at row 6, MapRowToItem(6)=%d", got)
+	if got := mCodex.MapRowToItem(7); got != 0 {
+		t.Errorf("codex: first project should also be at row 7, MapRowToItem(7)=%d", got)
 	}
 }
 
-func TestCalculateLayout_subscriptionRowAddsHeight(t *testing.T) {
+// The subscription row is now present for every agent, so claude and a non-claude
+// agent compute the same menu height (the row is no longer tool-gated).
+func TestCalculateLayout_subscriptionRowSharedAcrossAgents(t *testing.T) {
 	mClaude := subTestMenu("claude")
 	mCodex := subTestMenu("codex")
 	lc := mClaude.CalculateLayout(120, 50)
 	lx := mCodex.CalculateLayout(120, 50)
-	if lc.MenuHeight != lx.MenuHeight+1 {
-		t.Errorf("claude menu height %d should be codex height %d + 1 (subscription row)", lc.MenuHeight, lx.MenuHeight)
+	if lc.MenuHeight != lx.MenuHeight {
+		t.Errorf("claude menu height %d should equal codex height %d (subscription row shared)", lc.MenuHeight, lx.MenuHeight)
 	}
 }
