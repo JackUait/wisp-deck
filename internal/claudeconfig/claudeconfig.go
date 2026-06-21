@@ -282,19 +282,6 @@ func ModelsForConfig(configName string) []string {
 	return ProviderModels[providerFor(configName).Key]
 }
 
-// AllModels returns a deduplicated list of all catalog model ids.
-func AllModels() []string {
-	seen := make(map[string]bool)
-	var out []string
-	for _, m := range CatalogModels() {
-		if !seen[m.ID] {
-			seen[m.ID] = true
-			out = append(out, m.ID)
-		}
-	}
-	return out
-}
-
 // envKeys maps AnthropicAliases indices to their env var names.
 var envKeys = []string{
 	"ANTHROPIC_DEFAULT_OPUS_MODEL",

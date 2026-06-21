@@ -221,11 +221,13 @@ func (m *MainMenuModel) renderModelMapPanel() string {
 }
 
 // configAPIKeyIndicator returns a display string showing mapping status for a config.
-func configAPIKeyIndicator(configsDir, file string) string {
+// Mappings are counted against the config's own provider models (resolved from its
+// name), so a value belonging to a different provider isn't mis-counted.
+func configAPIKeyIndicator(configsDir, file, name string) string {
 	if file == "" {
 		return ""
 	}
-	mappings := claudeconfig.ReadModelMappings(configsDir, file, claudeconfig.AllModels())
+	mappings := claudeconfig.ReadModelMappings(configsDir, file, claudeconfig.ModelsForConfig(name))
 	mapped := 0
 	for _, v := range mappings {
 		if v >= 0 {

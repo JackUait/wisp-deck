@@ -166,7 +166,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 		cfgFile := m.CurrentClaudeConfigFile()
 		state := "[" + cfgName + "]"
 		if cfgFile != "" {
-			indicator := configAPIKeyIndicator(m.claudeConfigsDir, cfgFile)
+			indicator := configAPIKeyIndicator(m.claudeConfigsDir, cfgFile, cfgName)
 			dimIndicator := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(" " + indicator)
 			state = state + dimIndicator
 		}
