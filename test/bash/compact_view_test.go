@@ -280,6 +280,51 @@ func TestCompactView_header_shows_changed_file_count(t *testing.T) {
 	}
 }
 
+// The branch heading must show the active subscription/plan (GHOST_TAB_PLAN)
+// inline next to the branch name, so the ledger always states which plan the
+// session is running on. Shown even with no working-tree changes.
+func TestCompactView_header_shows_active_plan(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not available")
+	}
+	root := projectRoot(t)
+	module := filepath.Join(root, "lib", "compact-view.sh")
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	writeTempFile(t, dir, "a.txt", "one\n")
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "init") // clean tree -> "no changes"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, zsh, "-c", "source "+module+" && compact_view "+dir)
+	env := []string{}
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "TMUX=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=0.1", "TERM=xterm", "GHOST_TAB_PLAN=Work Max")
+	out, _ := cmd.CombinedOutput()
+
+	if !strings.Contains(string(out), "Work Max") {
+		t.Errorf("header should show the active plan (\"Work Max\"):\n%q", string(out))
+	}
+}
+
 // Regression: the refresh loop must not leak the `w` (pane width) variable to
 // stdout. The pane runs the script under zsh, where `local NAME` with no
 // assignment on an already-set variable acts as a *display* command and prints

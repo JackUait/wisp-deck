@@ -24,6 +24,25 @@ get_active_claude_config() {
   printf '%s\n' "$line"
 }
 
+# get_active_claude_config_name <pointer_file> <list_file> — prints the active
+# subscription's display name, mirroring the menu's PLAN label. Standard (no
+# active pointer) and any filename not found in the list read as "Standard
+# Claude".
+get_active_claude_config_name() {
+  local pointer_file="$1" list_file="$2" active name file
+  active="$(get_active_claude_config "$pointer_file")"
+  if [ -n "$active" ] && [ -f "$list_file" ]; then
+    while IFS=: read -r name file; do
+      [[ -z "$name" || "$name" == \#* ]] && continue
+      if [ "$file" = "$active" ]; then
+        printf '%s\n' "$name"
+        return 0
+      fi
+    done < "$list_file"
+  fi
+  printf 'Standard Claude\n'
+}
+
 # set_active_claude_config <pointer_file> <filename> — empty/standard removes the file.
 set_active_claude_config() {
   local file="$1" filename="$2"

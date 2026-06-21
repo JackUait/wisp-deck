@@ -58,6 +58,50 @@ func TestResolveClaudeConfigPath_existing_vs_missing(t *testing.T) {
 	}
 }
 
+// get_active_claude_config_name maps the active pointer to its display name so
+// the compact-view ledger can show which subscription/plan is in use. Standard
+// (no pointer) reads as "Standard Claude", mirroring the menu's PLAN label.
+func TestActiveConfigName_standard_when_no_pointer(t *testing.T) {
+	dir := t.TempDir()
+	ptr := filepath.Join(dir, "claude-config")
+	list := filepath.Join(dir, "claude-configs.list")
+	writeTempFile(t, dir, "claude-configs.list", "Work:work.json\n")
+	out, code := runBashFunc(t, "lib/claude-configs.sh", "get_active_claude_config_name",
+		[]string{ptr, list}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "Standard Claude" {
+		t.Fatalf("got %q, want %q", strings.TrimSpace(out), "Standard Claude")
+	}
+}
+
+func TestActiveConfigName_maps_active_file_to_list_name(t *testing.T) {
+	dir := t.TempDir()
+	ptr := filepath.Join(dir, "claude-config")
+	list := filepath.Join(dir, "claude-configs.list")
+	writeTempFile(t, dir, "claude-config", "work.json")
+	writeTempFile(t, dir, "claude-configs.list", "Work Max:work.json\nPersonal:personal.json\n")
+	out, code := runBashFunc(t, "lib/claude-configs.sh", "get_active_claude_config_name",
+		[]string{ptr, list}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "Work Max" {
+		t.Fatalf("got %q, want %q", strings.TrimSpace(out), "Work Max")
+	}
+}
+
+func TestActiveConfigName_unknown_file_falls_back_to_standard(t *testing.T) {
+	dir := t.TempDir()
+	ptr := filepath.Join(dir, "claude-config")
+	list := filepath.Join(dir, "claude-configs.list")
+	writeTempFile(t, dir, "claude-config", "ghost.json")
+	writeTempFile(t, dir, "claude-configs.list", "Work:work.json\n")
+	out, code := runBashFunc(t, "lib/claude-configs.sh", "get_active_claude_config_name",
+		[]string{ptr, list}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "Standard Claude" {
+		t.Fatalf("got %q, want %q", strings.TrimSpace(out), "Standard Claude")
+	}
+}
+
 // Mutations (add / rename / delete / slugify and collision handling) moved to
 // Go — see internal/claudeconfig/claudeconfig_test.go. Only the read/launch
 // helpers remain in bash, tested above.

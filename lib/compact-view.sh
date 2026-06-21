@@ -247,11 +247,20 @@ compact_view() {
       if [ "$total_files" -gt 0 ]; then
         stamp="${total_files} ${funit}  +${ta} −${td}"
       fi
+      # Active subscription/plan (PLAN control), shown inline after the branch so
+      # the ledger always states which plan the session runs on. The " · "
+      # separator is 3 columns wide; reserve them (plus the name) in the pad so
+      # the right-aligned stamp can't collide with it.
+      local plan="${GHOST_TAB_PLAN:-}"
+      local plan_w=0
+      [ -n "$plan" ] && plan_w=$(( ${#plan} + 3 ))
+
       # Right-align the stamp on the heading line when it fits.
       local headtext="${ns}${leaf}"
-      local pad=$((iw - ${#headtext} - ${#stamp}))
+      local pad=$((iw - ${#headtext} - plan_w - ${#stamp}))
       printf " ${dim}%s${reset}${bold}${bright}%s${reset}" "$ns" "$leaf"
       [ -n "$ahead_behind" ] && printf "%s" "$ahead_behind"
+      [ -n "$plan" ] && printf " ${dim}·${reset} ${dim}%s${reset}" "$plan"
       if [ -n "$stamp" ] && [ "$pad" -ge 1 ]; then
         printf '%*s' "$pad" ''
         printf "${dim}%s %s${reset}  ${green}+%s${reset} ${red}−%s${reset}" \

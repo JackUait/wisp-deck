@@ -216,12 +216,17 @@ if [ "$RESTORE_MODE" -eq 1 ]; then
 fi
 
 # Resolve active Claude config (settings file) and export for build_ai_launch_cmd.
+_gt_cfg_root="${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab"
 GHOST_TAB_CLAUDE_SETTINGS=""
 if [ "$SELECTED_AI_TOOL" = "claude" ]; then
-  _gt_cfg_root="${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab"
   GHOST_TAB_CLAUDE_SETTINGS="$(resolve_claude_config_path "$_gt_cfg_root/claude-configs" "$_gt_cfg_root/claude-config")"
 fi
 export GHOST_TAB_CLAUDE_SETTINGS
+
+# Resolve the active subscription/plan display name for the compact-view ledger.
+# Subscriptions are shared across agents, so this is resolved for every tool.
+GHOST_TAB_PLAN="$(get_active_claude_config_name "$_gt_cfg_root/claude-config" "$_gt_cfg_root/claude-configs.list")"
+export GHOST_TAB_PLAN
 
 # Claude-only: run Claude behind the screenshot-drag filter so dragging a
 # screenshot into the pane works (the filter copies the dropped screencaptureui
@@ -282,7 +287,7 @@ fi
 #      regardless of which pane is active. See lib/screenshot.sh.
 _screenshot_bind="bash -c 'source \"$_WRAPPER_DIR/lib/screenshot.sh\" && gt_paste_latest_screenshot'"
 
-"$TMUX_CMD" new-session -s "$SESSION_NAME" -e "PATH=$PATH" -e "GHOST_TAB_MARKER_FILE=$GHOST_TAB_MARKER_FILE" -e "GHOST_TAB=1" -e "GHOST_TAB_BOOT=$GHOST_TAB_BOOT_ID" -e "GHOST_TAB_PROJECT=$PROJECT_NAME" -e "GHOST_TAB_PATH=$PROJECT_DIR" -e "GHOST_TAB_TOOL=$SELECTED_AI_TOOL" -e "GHOST_TAB_TERMINAL=$GHOST_TAB_TERMINAL" -c "$PROJECT_DIR" \
+"$TMUX_CMD" new-session -s "$SESSION_NAME" -e "PATH=$PATH" -e "GHOST_TAB_MARKER_FILE=$GHOST_TAB_MARKER_FILE" -e "GHOST_TAB=1" -e "GHOST_TAB_BOOT=$GHOST_TAB_BOOT_ID" -e "GHOST_TAB_PROJECT=$PROJECT_NAME" -e "GHOST_TAB_PATH=$PROJECT_DIR" -e "GHOST_TAB_TOOL=$SELECTED_AI_TOOL" -e "GHOST_TAB_TERMINAL=$GHOST_TAB_TERMINAL" -e "GHOST_TAB_PLAN=$GHOST_TAB_PLAN" -c "$PROJECT_DIR" \
   "$_pane0_cmd" \; \
   set-option status-left " ⬡ ${PROJECT_NAME} " \; \
   set-option status-left-style "fg=white,bg=colour236,bold" \; \
