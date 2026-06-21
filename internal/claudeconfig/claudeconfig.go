@@ -255,57 +255,41 @@ func WriteAPIKey(configsDir, file, key string) error {
 // AnthropicAliases are the model alias slots that can be mapped.
 var AnthropicAliases = []string{"opus", "sonnet", "haiku", "fable"}
 
-// ProviderModels maps provider names to their available model lists.
-var ProviderModels = map[string][]string{
-	"zhipu":  {"glm-5.2", "glm-5.1", "glm-5", "glm-4.7", "glm-4.6", "glm-4.5-air"},
-	"mimo":   {"mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-pro", "mimo-v2-omni", "mimo-v2-flash"},
-}
+// ProviderModels maps each provider key to its model id list. Derived from the
+// Providers catalog so the ids stay identical everywhere they are referenced.
+var ProviderModels = func() map[string][]string {
+	m := make(map[string][]string, len(Providers))
+	for _, p := range Providers {
+		ids := make([]string, len(p.Models))
+		for i, mod := range p.Models {
+			ids[i] = mod.ID
+		}
+		m[p.Key] = ids
+	}
+	return m
+}()
 
-// ProviderBaseURLs maps a provider key to its Anthropic-compatible gateway base
-// URL. Subscriptions store no base URL, so OpenCode mirroring derives it from the
-// config name. Both endpoints are verified Anthropic Messages API gateways (per
-// each vendor's docs, June 2026); the mimo value is the pay-as-you-go endpoint
-// (regional Token-Plan URLs differ and can't be derived from the name alone).
-var ProviderBaseURLs = map[string]string{
-	"zhipu": "https://api.z.ai/api/anthropic",
-	"mimo":  "https://api.xiaomimimo.com/anthropic",
-}
-
-// ProviderBaseURL returns the base URL for the provider whose key appears in the
-// config name (case-insensitive), or "" if no known provider matches.
+// ProviderBaseURL returns the Anthropic-compatible gateway base URL for the
+// provider selected by the config name (defaulting to the first provider, so the
+// result always matches the provider ModelsForConfig picks).
 func ProviderBaseURL(configName string) string {
-	lower := strings.ToLower(configName)
-	for key, url := range ProviderBaseURLs {
-		if strings.Contains(lower, key) {
-			return url
-		}
-	}
-	return ""
+	return providerFor(configName).BaseURL
 }
 
-// ModelsForConfig returns the model list for the provider matching the config
-// name. Falls back to GLM models if no provider matches.
+// ModelsForConfig returns the model ids for the provider selected by the config
+// name (defaulting to the first provider's models).
 func ModelsForConfig(configName string) []string {
-	lower := strings.ToLower(configName)
-	for key, models := range ProviderModels {
-		if strings.Contains(lower, key) {
-			return models
-		}
-	}
-	// Default fallback
-	return ProviderModels["zhipu"]
+	return ProviderModels[providerFor(configName).Key]
 }
 
-// AllModels returns a deduplicated list of all provider models.
+// AllModels returns a deduplicated list of all catalog model ids.
 func AllModels() []string {
 	seen := make(map[string]bool)
 	var out []string
-	for _, models := range ProviderModels {
-		for _, m := range models {
-			if !seen[m] {
-				seen[m] = true
-				out = append(out, m)
-			}
+	for _, m := range CatalogModels() {
+		if !seen[m.ID] {
+			seen[m.ID] = true
+			out = append(out, m.ID)
 		}
 	}
 	return out

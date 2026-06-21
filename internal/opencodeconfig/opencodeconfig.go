@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/jackuait/ghost-tab/internal/claudeconfig"
-	"github.com/jackuait/ghost-tab/internal/usage"
 )
 
 // ProviderPrefix namespaces every provider Ghost Tab owns in opencode.json, so a
@@ -17,31 +16,18 @@ const ProviderPrefix = "ghost-tab-"
 
 const schemaURL = "https://opencode.ai/config.json"
 
-// modelLimits holds context-window and max-output token limits for the provider
-// models we mirror. Custom-provider models aren't in models.dev, so without these
-// OpenCode shows an unknown context size. Values are from the vendors' official
-// docs / models.dev (June 2026). Models with no verified limit are omitted.
-var modelLimits = map[string]struct{ context, output int }{
-	"glm-4.5-air":   {128000, 96000},
-	"glm-4.6":       {200000, 128000},
-	"glm-4.7":       {200000, 128000},
-	"glm-5":         {200000, 128000},
-	"glm-5.1":       {200000, 128000},
-	"glm-5.2":       {1000000, 128000},
-	"mimo-v2.5":     {1048576, 131072},
-	"mimo-v2.5-pro": {1048576, 131072},
-}
-
 // modelEntry builds the OpenCode model object for a provider model id, enriching
-// it with cost (from the shared pricing catalog) and context/output limits when
-// known. Both are best-effort: an unpriced or unknown-limit model gets name only.
+// it with cost and context/output limits from the shared claudeconfig catalog —
+// the single source for these values. Custom-provider models aren't in models.dev,
+// so without this OpenCode shows $0 cost and an unknown context size. Both fields
+// are best-effort: a model not in the catalog gets name only.
 func modelEntry(id string) map[string]any {
 	entry := map[string]any{"name": id}
-	if in, out, ok := usage.RateFor(id); ok {
+	if in, out, ok := claudeconfig.ModelCost(id); ok {
 		entry["cost"] = map[string]any{"input": in, "output": out}
 	}
-	if lim, ok := modelLimits[id]; ok {
-		entry["limit"] = map[string]any{"context": lim.context, "output": lim.output}
+	if ctx, out, ok := claudeconfig.ModelLimit(id); ok {
+		entry["limit"] = map[string]any{"context": ctx, "output": out}
 	}
 	return entry
 }

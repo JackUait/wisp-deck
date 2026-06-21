@@ -1,6 +1,10 @@
 package usage
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/jackuait/ghost-tab/internal/claudeconfig"
+)
 
 type modelRate struct{ inPerMTok, outPerMTok float64 }
 
@@ -25,14 +29,11 @@ var modelRates = map[string]modelRate{
 	"sonnet": {3, 15},
 	"haiku":  {1, 5},
 
-	// Non-Anthropic models routed through Claude Code via a custom provider. Priced
-	// at each provider's published standard API rates (per 1M tokens). mimo-v2.5 is
-	// a prefix of mimo-v2.5-pro; rateFor's longest-prefix match keeps them distinct.
-	"glm-5.2":       {1.40, 4.40},  // Z.ai
-	"glm-4.7":       {0.40, 1.75},  // Z.ai
-	"glm-4.5-air":   {0.13, 0.85},  // Z.ai
-	"mimo-v2.5":     {0.14, 0.28},  // Xiaomi
-	"mimo-v2.5-pro": {0.435, 0.87}, // Xiaomi
+	// GLM (Z.ai) and MiMo (Xiaomi) subscription-provider models are defined once in
+	// claudeconfig's catalog and folded into this map by init() below, so their ids
+	// and prices stay identical in the mapping UI, this cost calc, and the OpenCode
+	// mirror. mimo-v2.5 is a prefix of mimo-v2.5-pro; rateFor's longest-prefix match
+	// keeps them distinct.
 
 	// Models routed through OpenCode (and other tools), priced from models.dev —
 	// the catalog OpenCode itself uses — input/output USD per 1M tokens, sourced
@@ -94,16 +95,23 @@ var modelRates = map[string]modelRate{
 	"kimi-k2.6":              {0.95, 4},
 	"kimi-k2.7-code":         {0.95, 4},
 
-	// Z.ai GLM (additions; existing glm-5.2 / glm-4.7 / glm-4.5-air above win by prefix)
-	"glm-5":   {1, 3.2},
-	"glm-5.1": {6, 24},
-	"glm-4.6": {0.6, 2.2},
+	// Z.ai GLM base model kept as a prefix fallback for historical usage; the
+	// offered glm-5/5.1/5.2/4.6/4.7/4.5-air come from the catalog (folded in init).
 	"glm-4.5": {0.6, 2.2},
 
 	// Mistral (coding models)
 	"codestral":       {0.3, 0.9},
 	"devstral-small":  {0.1, 0.3},
 	"devstral-medium": {0.4, 2},
+}
+
+// init folds the subscription-provider model prices from claudeconfig's catalog
+// into modelRates, so the GLM/MiMo ids and prices are maintained in exactly one
+// place and can never drift between the catalog and the Stats cost calculator.
+func init() {
+	for _, m := range claudeconfig.CatalogModels() {
+		modelRates[m.ID] = modelRate{m.InPerM, m.OutPerM}
+	}
 }
 
 const (

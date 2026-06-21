@@ -452,11 +452,49 @@ func TestModelsForConfig_zhipu(t *testing.T) {
 
 func TestModelsForConfig_mimo(t *testing.T) {
 	models := ModelsForConfig("Xiaomi MiMo")
-	if len(models) != 5 {
-		t.Fatalf("expected 5 mimo models, got %d", len(models))
+	if len(models) != 2 {
+		t.Fatalf("expected 2 mimo models, got %d", len(models))
 	}
 	if models[0] != "mimo-v2.5-pro" {
 		t.Fatalf("expected mimo-v2.5-pro, got %s", models[0])
+	}
+}
+
+func TestCatalog_every_model_fully_described(t *testing.T) {
+	// Single-source guarantee: every offered model has both a cost and a limit,
+	// so OpenCode never shows $0 / unknown-context for an offered model.
+	for _, m := range CatalogModels() {
+		if _, _, ok := ModelCost(m.ID); !ok {
+			t.Errorf("catalog model %q has no cost", m.ID)
+		}
+		if _, _, ok := ModelLimit(m.ID); !ok {
+			t.Errorf("catalog model %q has no limit", m.ID)
+		}
+	}
+}
+
+func TestProviderResolution_never_skips(t *testing.T) {
+	// The model list and the base URL must resolve to the SAME provider for any
+	// name, so a config offered models is always mirrorable (no silent skip).
+	for _, name := range []string{"GLM", "Z.ai work", "zhipu", "mimo", "Xiaomi", "random plan", ""} {
+		if ProviderBaseURL(name) == "" {
+			t.Errorf("ProviderBaseURL(%q) is empty", name)
+		}
+		if len(ModelsForConfig(name)) == 0 {
+			t.Errorf("ModelsForConfig(%q) is empty", name)
+		}
+	}
+}
+
+func TestModelCost_and_ModelLimit_lookup(t *testing.T) {
+	if in, out, ok := ModelCost("glm-4.6"); !ok || in != 0.6 || out != 2.2 {
+		t.Errorf("ModelCost(glm-4.6) = %v, %v, %v; want 0.6, 2.2, true", in, out, ok)
+	}
+	if ctx, out, ok := ModelLimit("glm-5.2"); !ok || ctx != 1000000 || out != 128000 {
+		t.Errorf("ModelLimit(glm-5.2) = %v, %v, %v; want 1000000, 128000, true", ctx, out, ok)
+	}
+	if _, _, ok := ModelCost("not-a-model"); ok {
+		t.Errorf("ModelCost(unknown) ok=true, want false")
 	}
 }
 
@@ -505,14 +543,19 @@ func TestWriteModelMappings_writes_file_with_0600_perms(t *testing.T) {
 }
 
 func TestProviderBaseURL(t *testing.T) {
+	const zhipuURL = "https://api.z.ai/api/anthropic"
+	const mimoURL = "https://api.xiaomimimo.com/anthropic"
 	cases := map[string]string{
-		"Work GLM zhipu": "https://api.z.ai/api/anthropic",
-		"my zhipu plan":  "https://api.z.ai/api/anthropic",
-		"ZHIPU upper":    "https://api.z.ai/api/anthropic",
-		"work mimo plan": "https://api.xiaomimimo.com/anthropic",
-		"MIMO caps":      "https://api.xiaomimimo.com/anthropic",
-		"unknown vendor": "",
-		"":               "",
+		"Work GLM zhipu":  zhipuURL,
+		"my zhipu plan":   zhipuURL,
+		"GLM coder":       zhipuURL, // common name, no literal "zhipu"
+		"Z.ai production": zhipuURL,
+		"work mimo plan":  mimoURL,
+		"Xiaomi MiMo":     mimoURL,
+		// Unmatched names default to the first provider, matching ModelsForConfig's
+		// fallback, so a config is never offered models it cannot mirror.
+		"random name": zhipuURL,
+		"":            zhipuURL,
 	}
 	for name, want := range cases {
 		if got := ProviderBaseURL(name); got != want {

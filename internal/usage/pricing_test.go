@@ -95,9 +95,10 @@ func TestModelCostUSD_customProviderModels(t *testing.T) {
 		model string
 		want  float64
 	}{
-		{"glm-5.2", 1.40 + 4.40},        // Z.ai
-		{"glm-4.7", 0.40 + 1.75},        // Z.ai
-		{"glm-4.5-air", 0.13 + 0.85},    // Z.ai
+		{"glm-5.2", 1.40 + 4.40},        // Z.ai (official list price)
+		{"glm-5.1", 1.40 + 4.40},        // Z.ai
+		{"glm-4.7", 0.60 + 2.20},        // Z.ai
+		{"glm-4.5-air", 0.20 + 1.10},    // Z.ai
 		{"mimo-v2.5", 0.14 + 0.28},      // Xiaomi
 		{"mimo-v2.5-pro", 0.435 + 0.87}, // Xiaomi
 	}
@@ -177,9 +178,9 @@ func TestModelCostUSD_openCodeProviders(t *testing.T) {
 		{"kimi-k2-0905-preview", 0.6 + 2.5}, // base kimi-k2
 		{"kimi-k2-turbo-preview", 2.4 + 10},
 		{"kimi-k2.6", 0.95 + 4},
-		// Z.ai GLM (new additions)
+		// Z.ai GLM (from the shared model catalog)
 		{"glm-4.6", 0.6 + 2.2},
-		{"glm-5.1", 6 + 24},
+		{"glm-5.1", 1.40 + 4.40},
 		// Mistral
 		{"codestral-latest", 0.3 + 0.9},
 		{"devstral-medium-latest", 0.4 + 2},
