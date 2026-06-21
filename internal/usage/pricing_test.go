@@ -121,6 +121,19 @@ func TestRateFor_longestPrefixWins(t *testing.T) {
 	}
 }
 
+func TestRateFor_exported(t *testing.T) {
+	if in, out, ok := RateFor("glm-4.6"); !ok || in != 0.6 || out != 2.2 {
+		t.Errorf("RateFor(glm-4.6) = %v, %v, %v; want 0.6, 2.2, true", in, out, ok)
+	}
+	// longest-prefix: pro rate, not the shorter mimo-v2.5 standard rate
+	if in, out, ok := RateFor("mimo-v2.5-pro"); !ok || in != 0.435 || out != 0.87 {
+		t.Errorf("RateFor(mimo-v2.5-pro) = %v, %v, %v; want 0.435, 0.87, true", in, out, ok)
+	}
+	if _, _, ok := RateFor("totally-unknown-model"); ok {
+		t.Errorf("RateFor(unknown) ok = true, want false")
+	}
+}
+
 func TestModelCostUSD_openCodeProviders(t *testing.T) {
 	// Non-Anthropic models routed through OpenCode, priced at their models.dev
 	// (the catalog OpenCode uses) input+output rates. Each case is 1M input +

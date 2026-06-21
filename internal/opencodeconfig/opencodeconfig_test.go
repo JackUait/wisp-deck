@@ -162,3 +162,54 @@ func TestProviderPrefixConst(t *testing.T) {
 		t.Errorf("ProviderPrefix = %q", ProviderPrefix)
 	}
 }
+
+// modelsOf returns the models map of the single ghost-tab provider in out.
+func modelsOf(t *testing.T, out []byte) map[string]any {
+	t.Helper()
+	m := parse(t, out)
+	prov := m["provider"].(map[string]any)["ghost-tab-work-glm"].(map[string]any)
+	return prov["models"].(map[string]any)
+}
+
+func TestMerge_enriches_known_model_with_cost_and_limit(t *testing.T) {
+	out, ok := MergeSubscriptions(nil, []Subscription{glmSub(true)})
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	g46 := modelsOf(t, out)["glm-4.6"].(map[string]any)
+	cost, ok := g46["cost"].(map[string]any)
+	if !ok {
+		t.Fatalf("glm-4.6 has no cost: %v", g46)
+	}
+	// JSON round-trip yields float64 for all numbers.
+	if cost["input"].(float64) != 0.6 || cost["output"].(float64) != 2.2 {
+		t.Errorf("glm-4.6 cost = %v, want input 0.6 / output 2.2", cost)
+	}
+	lim, ok := g46["limit"].(map[string]any)
+	if !ok {
+		t.Fatalf("glm-4.6 has no limit: %v", g46)
+	}
+	if lim["context"].(float64) != 200000 || lim["output"].(float64) != 128000 {
+		t.Errorf("glm-4.6 limit = %v, want context 200000 / output 128000", lim)
+	}
+}
+
+func TestMerge_unknown_model_has_name_only(t *testing.T) {
+	s := glmSub(true)
+	s.Models = []string{"mimo-v2-omni"} // valid provider model, but no cost/limit data
+	s.OpusModel = "mimo-v2-omni"
+	out, ok := MergeSubscriptions(nil, []Subscription{s})
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	e := modelsOf(t, out)["mimo-v2-omni"].(map[string]any)
+	if e["name"] != "mimo-v2-omni" {
+		t.Errorf("name = %v", e["name"])
+	}
+	if _, ok := e["cost"]; ok {
+		t.Errorf("unexpected cost for unpriced model: %v", e)
+	}
+	if _, ok := e["limit"]; ok {
+		t.Errorf("unexpected limit for unknown-limit model: %v", e)
+	}
+}

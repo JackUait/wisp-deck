@@ -263,11 +263,12 @@ var ProviderModels = map[string][]string{
 
 // ProviderBaseURLs maps a provider key to its Anthropic-compatible gateway base
 // URL. Subscriptions store no base URL, so OpenCode mirroring derives it from the
-// config name. zhipu (z.ai GLM Coding Plan) is verified; add new providers here as
-// their endpoints are confirmed. mimo is intentionally absent until verified, so
-// mimo subscriptions are skipped rather than pointed at a guessed endpoint.
+// config name. Both endpoints are verified Anthropic Messages API gateways (per
+// each vendor's docs, June 2026); the mimo value is the pay-as-you-go endpoint
+// (regional Token-Plan URLs differ and can't be derived from the name alone).
 var ProviderBaseURLs = map[string]string{
 	"zhipu": "https://api.z.ai/api/anthropic",
+	"mimo":  "https://api.xiaomimimo.com/anthropic",
 }
 
 // ProviderBaseURL returns the base URL for the provider whose key appears in the

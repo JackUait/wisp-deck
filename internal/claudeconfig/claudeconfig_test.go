@@ -509,6 +509,8 @@ func TestProviderBaseURL(t *testing.T) {
 		"Work GLM zhipu": "https://api.z.ai/api/anthropic",
 		"my zhipu plan":  "https://api.z.ai/api/anthropic",
 		"ZHIPU upper":    "https://api.z.ai/api/anthropic",
+		"work mimo plan": "https://api.xiaomimimo.com/anthropic",
+		"MIMO caps":      "https://api.xiaomimimo.com/anthropic",
 		"unknown vendor": "",
 		"":               "",
 	}

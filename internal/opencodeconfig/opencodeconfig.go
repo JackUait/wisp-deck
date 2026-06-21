@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jackuait/ghost-tab/internal/claudeconfig"
+	"github.com/jackuait/ghost-tab/internal/usage"
 )
 
 // ProviderPrefix namespaces every provider Ghost Tab owns in opencode.json, so a
@@ -15,6 +16,35 @@ import (
 const ProviderPrefix = "ghost-tab-"
 
 const schemaURL = "https://opencode.ai/config.json"
+
+// modelLimits holds context-window and max-output token limits for the provider
+// models we mirror. Custom-provider models aren't in models.dev, so without these
+// OpenCode shows an unknown context size. Values are from the vendors' official
+// docs / models.dev (June 2026). Models with no verified limit are omitted.
+var modelLimits = map[string]struct{ context, output int }{
+	"glm-4.5-air":   {128000, 96000},
+	"glm-4.6":       {200000, 128000},
+	"glm-4.7":       {200000, 128000},
+	"glm-5":         {200000, 128000},
+	"glm-5.1":       {200000, 128000},
+	"glm-5.2":       {1000000, 128000},
+	"mimo-v2.5":     {1048576, 131072},
+	"mimo-v2.5-pro": {1048576, 131072},
+}
+
+// modelEntry builds the OpenCode model object for a provider model id, enriching
+// it with cost (from the shared pricing catalog) and context/output limits when
+// known. Both are best-effort: an unpriced or unknown-limit model gets name only.
+func modelEntry(id string) map[string]any {
+	entry := map[string]any{"name": id}
+	if in, out, ok := usage.RateFor(id); ok {
+		entry["cost"] = map[string]any{"input": in, "output": out}
+	}
+	if lim, ok := modelLimits[id]; ok {
+		entry["limit"] = map[string]any{"context": lim.context, "output": lim.output}
+	}
+	return entry
+}
 
 // Subscription is the resolved view of a Ghost Tab subscription that OpenCode
 // needs. BaseURL is pre-resolved by the caller (empty -> not mirrorable).
@@ -84,7 +114,7 @@ func MergeSubscriptions(existing []byte, subs []Subscription) ([]byte, bool) {
 		}
 		models := map[string]any{}
 		for _, id := range s.Models {
-			models[id] = map[string]any{"name": id}
+			models[id] = modelEntry(id)
 		}
 		provider[s.providerID()] = map[string]any{
 			"npm":  "@ai-sdk/anthropic",

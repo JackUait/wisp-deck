@@ -132,6 +132,15 @@ func rateFor(model string) (modelRate, bool) {
 	return best, found
 }
 
+// RateFor returns the published input/output price per 1,000,000 tokens for a
+// model id, resolved by longest-prefix match, plus whether a rate was found.
+// Exported so other packages (e.g. OpenCode config mirroring) can enrich model
+// metadata without duplicating this catalog.
+func RateFor(model string) (inPerMTok, outPerMTok float64, ok bool) {
+	r, found := rateFor(model)
+	return r.inPerMTok, r.outPerMTok, found
+}
+
 // ModelCostUSD returns the estimated USD cost for a model's usage and whether the
 // model had a pricing entry. Input and output use the model's rates; cache-write
 // is 1.25x the input rate and cache-read is 0.1x.
