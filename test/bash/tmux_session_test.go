@@ -16,7 +16,7 @@ func aiCmd(t *testing.T, tool string, resume bool) string {
 		env = buildEnv(t, nil, "GHOST_TAB_RESUME=0")
 	}
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{tool, "claude", "codex", "npx opencode-ai@latest", "/p/app"}, env)
+		[]string{tool, "claude", "npx opencode-ai@latest", "/p/app"}, env)
 	assertExitCode(t, code, 0)
 	return strings.TrimSpace(out)
 }
@@ -27,7 +27,6 @@ func TestBuildAiLaunchCmd_resume_flags(t *testing.T) {
 		want string
 	}{
 		{"claude", "claude -c"},
-		{"codex", "codex resume --last"},
 		{"opencode", "npx opencode-ai@latest --continue"},
 	}
 	for _, c := range cases {
@@ -38,28 +37,28 @@ func TestBuildAiLaunchCmd_resume_flags(t *testing.T) {
 }
 
 func TestBuildAiLaunchCmd_normal_unaffected(t *testing.T) {
-	if got := aiCmd(t, "codex", false); got != `codex --cd "/p/app"` {
-		t.Errorf("normal codex: got %q", got)
+	if got := aiCmd(t, "opencode", false); got != `npx opencode-ai@latest "/p/app"` {
+		t.Errorf("normal opencode: got %q", got)
 	}
 }
 
 // When GHOST_TAB_CLAUDE_FILTER is set (wrapper sets it after confirming the TUI
 // binary supports the screenshot-drag filter), the Claude launch is prefixed
 // with it so a dropped screenshot's temp path is rewritten to a stable copy
-// before Claude reads it. Codex/OpenCode are never wrapped.
+// before Claude reads it. OpenCode is never wrapped.
 func TestBuildAiLaunchCmd_wraps_claude_with_filter(t *testing.T) {
 	env := buildEnv(t, nil, "GHOST_TAB_RESUME=0",
 		"GHOST_TAB_CLAUDE_FILTER=ghost-tab-tui screenshot-filter -- ")
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{"claude", "claude", "codex", "npx opencode-ai@latest", "/p/app"}, env)
+		[]string{"claude", "claude", "npx opencode-ai@latest", "/p/app"}, env)
 	assertExitCode(t, code, 0)
 	if got := strings.TrimSpace(out); got != `ghost-tab-tui screenshot-filter -- claude /p/app` {
 		t.Errorf("claude wrap: got %q", got)
 	}
 	out, _ = runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{"codex", "claude", "codex", "npx opencode-ai@latest", "/p/app"}, env)
+		[]string{"opencode", "claude", "npx opencode-ai@latest", "/p/app"}, env)
 	if strings.Contains(out, "screenshot-filter") {
-		t.Errorf("codex must not be wrapped: %q", strings.TrimSpace(out))
+		t.Errorf("opencode must not be wrapped: %q", strings.TrimSpace(out))
 	}
 }
 
@@ -67,7 +66,7 @@ func TestBuildAiLaunchCmd_wraps_claude_resume_with_filter(t *testing.T) {
 	env := buildEnv(t, nil, "GHOST_TAB_RESUME=1",
 		"GHOST_TAB_CLAUDE_FILTER=ghost-tab-tui screenshot-filter -- ")
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{"claude", "claude", "codex", "npx opencode-ai@latest", "/p/app"}, env)
+		[]string{"claude", "claude", "npx opencode-ai@latest", "/p/app"}, env)
 	assertExitCode(t, code, 0)
 	if got := strings.TrimSpace(out); got != `ghost-tab-tui screenshot-filter -- claude -c` {
 		t.Errorf("claude resume wrap: got %q", got)

@@ -109,7 +109,7 @@ func TestActionBarFor_usesRealKeyLetters(t *testing.T) {
 // The agent picker gets a tiny AGENT label so the right-hand control reads as
 // "this switches the agent" rather than a cramped, unlabeled chevron cluster.
 func TestRenderTitleRow_hasAgentLabel(t *testing.T) {
-	m := NewMainMenu(nil, []string{"claude", "codex"}, "claude", "none") // 2 tools → chevrons
+	m := NewMainMenu(nil, []string{"claude", "opencode"}, "claude", "none") // 2 tools → chevrons
 	_, _, _, lb, rb := m.boxBorders()
 	row := stripAnsi(m.renderTitleRow(lb, rb))
 	if !strings.Contains(row, "AGENT") {

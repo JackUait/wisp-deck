@@ -33,22 +33,6 @@ func TestGhostForTool_sleeping_returns_correct_tool(t *testing.T) {
 			},
 		},
 		{
-			name: "codex sleeping has blush marks",
-			tool: "codex",
-			check: func(t *testing.T, lines []string) {
-				found := false
-				for _, line := range lines {
-					if strings.Contains(line, "\033[38;5;66m") {
-						found = true
-						break
-					}
-				}
-				if !found {
-					t.Error("codex sleeping ghost should contain SleepBlush (66) blush marks")
-				}
-			},
-		},
-		{
 			name: "opencode sleeping has blush marks",
 			tool: "opencode",
 			check: func(t *testing.T, lines []string) {
@@ -84,9 +68,9 @@ func TestGhostForTool_sleeping_body_has_color_variation(t *testing.T) {
 	// Line 4 (index 4) is upper body — should use SleepPrimary (166)
 	// Line 9 (index 9) is lower body — should use SleepDim (130, darker)
 	// Line 14 (index 14) is the feet row — should use SleepDarkFeet (94)
-	upperLine := lines[4]  // upper body (above eyes)
-	lowerLine := lines[9]  // lower body (below blush)
-	feetLine := lines[14]  // feet row
+	upperLine := lines[4] // upper body (above eyes)
+	lowerLine := lines[9] // lower body (below blush)
+	feetLine := lines[14] // feet row
 
 	// Upper body should contain SleepPrimary
 	if !strings.Contains(upperLine, "\033[38;5;166m") {
@@ -133,7 +117,7 @@ func TestGhostForTool_sleeping_has_closed_eyes(t *testing.T) {
 }
 
 func TestGhostForTool_sleeping_line_count(t *testing.T) {
-	tools := []string{"claude", "codex", "opencode"}
+	tools := []string{"claude", "opencode"}
 	for _, tool := range tools {
 		t.Run(tool, func(t *testing.T) {
 			lines := GhostForTool(tool, true)

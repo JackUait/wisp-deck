@@ -29,7 +29,7 @@ func subTestMenu(tool string) *MainMenuModel {
 		{Name: "alpha", Path: "/tmp/alpha"},
 		{Name: "beta", Path: "/tmp/beta"},
 	}
-	m := NewMainMenu(projects, []string{"claude", "codex"}, tool, "animated")
+	m := NewMainMenu(projects, []string{"claude", "opencode"}, tool, "animated")
 	m.SetSize(100, 40)
 	return m
 }
@@ -69,7 +69,7 @@ func TestMainPage_ShowsActiveSubscriptionName(t *testing.T) {
 // Subscriptions are shared across agents, so the PLAN line is shown for non-Claude
 // tools too.
 func TestMainPage_ShowsSubscription_NonClaude(t *testing.T) {
-	m := subTestMenu("codex")
+	m := subTestMenu("opencode")
 	out := stripAnsi(m.renderMenuBox())
 	if !strings.Contains(out, "Standard Claude") {
 		t.Errorf("non-claude main page should also show the subscription line:\n%s", out)
@@ -83,7 +83,7 @@ func TestMapRowToItem_accountsForSubscriptionRow(t *testing.T) {
 	// leading blank(6) — so the first project lands at row 7 for every agent.
 	// Asserting row 6 maps to -1 (and row 7 to item 0) is what makes this catch a
 	// regression: without the subscription row the first project would sit at row 6.
-	for _, tool := range []string{"claude", "codex"} {
+	for _, tool := range []string{"claude", "opencode"} {
 		m := subTestMenu(tool)
 		if got := m.MapRowToItem(6); got != -1 {
 			t.Errorf("%s: row 6 should be the leading blank (-1) once the subscription row is present, got %d", tool, got)
@@ -98,10 +98,10 @@ func TestMapRowToItem_accountsForSubscriptionRow(t *testing.T) {
 // agent compute the same menu height (the row is no longer tool-gated).
 func TestCalculateLayout_subscriptionRowSharedAcrossAgents(t *testing.T) {
 	mClaude := subTestMenu("claude")
-	mCodex := subTestMenu("codex")
+	mOpencode := subTestMenu("opencode")
 	lc := mClaude.CalculateLayout(120, 50)
-	lx := mCodex.CalculateLayout(120, 50)
+	lx := mOpencode.CalculateLayout(120, 50)
 	if lc.MenuHeight != lx.MenuHeight {
-		t.Errorf("claude menu height %d should equal codex height %d (subscription row shared)", lc.MenuHeight, lx.MenuHeight)
+		t.Errorf("claude menu height %d should equal opencode height %d (subscription row shared)", lc.MenuHeight, lx.MenuHeight)
 	}
 }

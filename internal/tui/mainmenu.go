@@ -153,7 +153,6 @@ var actionLabels = []struct {
 // aiToolDisplayNames maps tool names to their display names.
 var aiToolDisplayNames = map[string]string{
 	"claude":   "Claude Code",
-	"codex":    "Codex CLI",
 	"opencode": "OpenCode",
 }
 

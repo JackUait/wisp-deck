@@ -16,7 +16,7 @@ func newTestMenu() *MainMenuModel {
 	projects := []models.Project{
 		{Name: "test-proj", Path: "/tmp/test-proj"},
 	}
-	m := NewMainMenu(projects, []string{"claude", "codex"}, "claude", "animated")
+	m := NewMainMenu(projects, []string{"claude", "opencode"}, "claude", "animated")
 	m.width = 100
 	m.height = 40
 	return m
@@ -496,7 +496,7 @@ func TestMenuBox_ActionBarShowsWorktreesForProject(t *testing.T) {
 			},
 		},
 	}
-	m := NewMainMenu(projects, []string{"claude", "codex"}, "claude", "animated")
+	m := NewMainMenu(projects, []string{"claude", "opencode"}, "claude", "animated")
 	m.width = 100
 	m.height = 40
 	m.selectedItem = 0 // project row
@@ -521,7 +521,7 @@ func TestMenuBox_HelpTextFitsWithinBorders(t *testing.T) {
 			},
 		},
 	}
-	m := NewMainMenu(projects, []string{"claude", "codex"}, "claude", "animated")
+	m := NewMainMenu(projects, []string{"claude", "opencode"}, "claude", "animated")
 	m.width = 100
 	m.height = 40
 	box := m.renderMenuBox()

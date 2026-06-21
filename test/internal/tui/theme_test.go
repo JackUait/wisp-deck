@@ -18,14 +18,6 @@ func TestThemeForTool_Claude(t *testing.T) {
 	}
 }
 
-func TestThemeForTool_Codex(t *testing.T) {
-	theme := tui.ThemeForTool("codex")
-
-	if theme.Primary != lipgloss.Color("114") {
-		t.Errorf("Expected Primary to be '114', got %q", theme.Primary)
-	}
-}
-
 func TestThemeForTool_OpenCode(t *testing.T) {
 	theme := tui.ThemeForTool("opencode")
 
@@ -46,7 +38,7 @@ func TestThemeForTool_Unknown(t *testing.T) {
 }
 
 func TestApplyTheme(t *testing.T) {
-	tools := []string{"claude", "codex", "opencode"}
+	tools := []string{"claude", "opencode"}
 
 	for _, tool := range tools {
 		t.Run(tool, func(t *testing.T) {
@@ -75,7 +67,6 @@ func TestAnsiFromThemeColor(t *testing.T) {
 func TestAllThemes(t *testing.T) {
 	expectedNames := map[string]string{
 		"claude":   "claude",
-		"codex":    "codex",
 		"opencode": "opencode",
 	}
 
@@ -90,7 +81,6 @@ func TestAllThemes(t *testing.T) {
 func TestThemeTextColors(t *testing.T) {
 	expectedText := map[string]lipgloss.Color{
 		"claude":   lipgloss.Color("223"),
-		"codex":    lipgloss.Color("157"),
 		"opencode": lipgloss.Color("252"),
 	}
 
@@ -105,13 +95,12 @@ func TestThemeTextColors(t *testing.T) {
 }
 
 // TestThemeBrightColors corresponds to the BATS ai_tool_bright_color tests.
-// The bash bright_color function uses the same ANSI-256 codes for claude/codex
-// as the normal color (209/114) while the Go theme uses slightly different shades
-// (208/113) for visual distinction. OpenCode bright is 255 in both implementations.
+// The bash bright_color function uses the same ANSI-256 code for claude as the
+// normal color (209) while the Go theme uses a slightly different shade (208) for
+// visual distinction. OpenCode bright is 255 in both implementations.
 func TestThemeBrightColors(t *testing.T) {
 	expectedBright := map[string]lipgloss.Color{
 		"claude":   lipgloss.Color("208"),
-		"codex":    lipgloss.Color("113"),
 		"opencode": lipgloss.Color("255"),
 	}
 
@@ -142,7 +131,6 @@ func TestThemeBrightColor_UnknownFallback(t *testing.T) {
 func TestThemeDimColors(t *testing.T) {
 	expectedDim := map[string]lipgloss.Color{
 		"claude":   lipgloss.Color("166"),
-		"codex":    lipgloss.Color("71"),
 		"opencode": lipgloss.Color("244"),
 	}
 
@@ -175,7 +163,6 @@ func TestAnsiFromThemeColor_AllTools(t *testing.T) {
 		expected string
 	}{
 		{"claude", lipgloss.Color("209"), "\033[38;5;209m"},
-		{"codex", lipgloss.Color("114"), "\033[38;5;114m"},
 		{"opencode", lipgloss.Color("250"), "\033[38;5;250m"},
 	}
 

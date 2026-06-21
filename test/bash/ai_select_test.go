@@ -49,7 +49,7 @@ func TestAiSelect_CallsGhostTabTuiMultiSelectAiTool(t *testing.T) {
 
 	ghostTabTuiBody := `
 if [ "$1" = "multi-select-ai-tool" ]; then
-    echo '{"tools":["claude","codex"],"confirmed":true}'
+    echo '{"tools":["claude","opencode"],"confirmed":true}'
     exit 0
 fi
 exit 1
@@ -64,7 +64,7 @@ echo "$count" > "$counter_file"
 if [ "$2" = ".confirmed" ]; then
     echo "true"
 elif [ "$2" = ".tools[]" ]; then
-    printf "claude\ncodex\n"
+    printf "claude\nopencode\n"
 fi
 exit 0
 `, tmpDir)
@@ -100,7 +100,7 @@ func TestAiSelect_SetsSelectedAiTools(t *testing.T) {
 
 	ghostTabTuiBody := `
 if [ "$1" = "multi-select-ai-tool" ]; then
-    echo '{"tools":["codex","opencode"],"confirmed":true}'
+    echo '{"tools":["claude","opencode"],"confirmed":true}'
     exit 0
 fi
 exit 1
@@ -114,7 +114,7 @@ echo "$count" > "$counter_file"
 if [ "$2" = ".confirmed" ]; then
     echo "true"
 elif [ "$2" = ".tools[]" ]; then
-    printf "codex\nopencode\n"
+    printf "claude\nopencode\n"
 fi
 exit 0
 `, tmpDir)
@@ -141,7 +141,7 @@ exit $result
 
 	out, code := runBashSnippet(t, script, nil)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, "codex")
+	assertContains(t, out, "claude")
 	assertContains(t, out, "opencode")
 }
 
@@ -194,12 +194,12 @@ exit $result
 	assertContains(t, out, "SELECTED_TOOL=claude")
 }
 
-func TestAiSelect_PicksCodexWhenClaudeNotSelected(t *testing.T) {
+func TestAiSelect_PicksOpencodeWhenClaudeNotSelected(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	ghostTabTuiBody := `
 if [ "$1" = "multi-select-ai-tool" ]; then
-    echo '{"tools":["opencode","codex"],"confirmed":true}'
+    echo '{"tools":["opencode"],"confirmed":true}'
     exit 0
 fi
 exit 1
@@ -213,7 +213,7 @@ echo "$count" > "$counter_file"
 if [ "$2" = ".confirmed" ]; then
     echo "true"
 elif [ "$2" = ".tools[]" ]; then
-    printf "opencode\ncodex\n"
+    printf "opencode\n"
 fi
 exit 0
 `, tmpDir)
@@ -239,7 +239,7 @@ exit $result
 
 	out, code := runBashSnippet(t, script, nil)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, "SELECTED_TOOL=codex")
+	assertContains(t, out, "SELECTED_TOOL=opencode")
 }
 
 func TestAiSelect_ReturnsFailureWhenCancelled(t *testing.T) {

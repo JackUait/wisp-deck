@@ -12,7 +12,7 @@ func focusTestMenu() *MainMenuModel {
 		{Name: "alpha", Path: "/tmp/alpha"},
 		{Name: "beta", Path: "/tmp/beta"},
 	}
-	m := NewMainMenu(projects, []string{"claude", "codex", "opencode"}, "claude", "animated")
+	m := NewMainMenu(projects, []string{"claude", "opencode"}, "claude", "animated")
 	m.SetSize(100, 40)
 	return m
 }
@@ -120,8 +120,8 @@ func TestFocus_leftRightOnAICyclesTool(t *testing.T) {
 	m := focusTestMenu()
 	m.SetFocus(FocusAI)
 	m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	if m.CurrentAITool() != "codex" {
-		t.Errorf("Right on AI = %q, want codex", m.CurrentAITool())
+	if m.CurrentAITool() != "opencode" {
+		t.Errorf("Right on AI = %q, want opencode", m.CurrentAITool())
 	}
 	m.Update(tea.KeyMsg{Type: tea.KeyLeft})
 	if m.CurrentAITool() != "claude" {

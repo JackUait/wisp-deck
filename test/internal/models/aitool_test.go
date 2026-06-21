@@ -15,9 +15,10 @@ func TestDetectAITools(t *testing.T) {
 	binDir := filepath.Join(tmpDir, "bin")
 	os.Mkdir(binDir, 0755)
 
-	// Create mock executables
+	// Create mock executables. OpenCode is detected via "npx" availability
+	// (launched as npx opencode-ai@latest).
 	os.WriteFile(filepath.Join(binDir, "claude"), []byte("#!/bin/bash\necho test"), 0755)
-	os.WriteFile(filepath.Join(binDir, "codex"), []byte("#!/bin/bash\necho test"), 0755)
+	os.WriteFile(filepath.Join(binDir, "npx"), []byte("#!/bin/bash\necho test"), 0755)
 
 	// Update PATH for test
 	oldPath := os.Getenv("PATH")
@@ -26,24 +27,24 @@ func TestDetectAITools(t *testing.T) {
 
 	tools := models.DetectAITools()
 
-	// Check that claude and codex are detected
+	// Check that claude and opencode are detected
 	claudeFound := false
-	codexFound := false
+	opencodeFound := false
 
 	for _, tool := range tools {
 		if tool.Name == "claude" && tool.Installed {
 			claudeFound = true
 		}
-		if tool.Name == "codex" && tool.Installed {
-			codexFound = true
+		if tool.Name == "opencode" && tool.Installed {
+			opencodeFound = true
 		}
 	}
 
 	if !claudeFound {
 		t.Error("Expected claude to be detected")
 	}
-	if !codexFound {
-		t.Error("Expected codex to be detected")
+	if !opencodeFound {
+		t.Error("Expected opencode to be detected")
 	}
 }
 
@@ -73,7 +74,7 @@ func TestDetectAITools_AllToolsDetected(t *testing.T) {
 
 	// Create mock executables. OpenCode is detected via "npx" availability
 	// (launched as npx opencode-ai@latest).
-	for _, cmd := range []string{"claude", "codex", "npx"} {
+	for _, cmd := range []string{"claude", "npx"} {
 		os.WriteFile(filepath.Join(binDir, cmd), []byte("#!/bin/bash\necho test"), 0755)
 	}
 
@@ -83,14 +84,14 @@ func TestDetectAITools_AllToolsDetected(t *testing.T) {
 
 	tools := models.DetectAITools()
 
-	if len(tools) != 3 {
-		t.Fatalf("Expected 3 tools, got %d", len(tools))
+	if len(tools) != 2 {
+		t.Fatalf("Expected 2 tools, got %d", len(tools))
 	}
 
-	// claude, codex, opencode should be installed (their commands are single binaries)
+	// claude and opencode should be installed (claude is a single binary,
+	// opencode is detected via the npx binary)
 	expected := map[string]bool{
 		"claude":   true,
-		"codex":    true,
 		"opencode": true,
 	}
 
@@ -127,7 +128,6 @@ func TestDisplayName(t *testing.T) {
 		want string
 	}{
 		{"claude", "Claude Code"},
-		{"codex", "Codex CLI"},
 		{"opencode", "OpenCode"},
 		{"vim", "vim"},
 		{"unknown-tool", "unknown-tool"},
@@ -153,21 +153,21 @@ func TestCycleTool(t *testing.T) {
 	}{
 		{
 			name:      "next wraps from last to first",
-			tools:     []string{"claude", "codex", "opencode"},
+			tools:     []string{"claude", "opencode"},
 			current:   "opencode",
 			direction: 1,
 			want:      "claude",
 		},
 		{
 			name:      "next advances by one",
-			tools:     []string{"claude", "codex", "opencode"},
+			tools:     []string{"claude", "opencode"},
 			current:   "claude",
 			direction: 1,
-			want:      "codex",
+			want:      "opencode",
 		},
 		{
 			name:      "prev wraps from first to last",
-			tools:     []string{"claude", "codex", "opencode"},
+			tools:     []string{"claude", "opencode"},
 			current:   "claude",
 			direction: -1,
 			want:      "opencode",
@@ -181,7 +181,7 @@ func TestCycleTool(t *testing.T) {
 		},
 		{
 			name:      "current not found returns first",
-			tools:     []string{"claude", "codex"},
+			tools:     []string{"claude", "opencode"},
 			current:   "vim",
 			direction: 1,
 			want:      "claude",
@@ -208,21 +208,21 @@ func TestValidateTool(t *testing.T) {
 	}{
 		{
 			name:  "keeps valid preference",
-			tools: []string{"claude", "codex"},
-			pref:  "codex",
-			want:  "codex",
+			tools: []string{"claude", "opencode"},
+			pref:  "opencode",
+			want:  "opencode",
 		},
 		{
 			name:  "falls back to first when pref is invalid",
-			tools: []string{"claude", "codex"},
+			tools: []string{"claude", "opencode"},
 			pref:  "vim",
 			want:  "claude",
 		},
 		{
 			name:  "falls back to first when pref is empty",
-			tools: []string{"codex", "opencode"},
+			tools: []string{"opencode", "claude"},
 			pref:  "",
-			want:  "codex",
+			want:  "opencode",
 		},
 	}
 
@@ -245,8 +245,6 @@ func TestAIToolString_AllTools(t *testing.T) {
 	}{
 		{"claude", true, "Claude Code ✓"},
 		{"claude", false, "Claude Code (not installed)"},
-		{"codex", true, "Codex CLI ✓"},
-		{"codex", false, "Codex CLI (not installed)"},
 		{"opencode", true, "OpenCode ✓"},
 		{"opencode", false, "OpenCode (not installed)"},
 	}

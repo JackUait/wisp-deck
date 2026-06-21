@@ -24,7 +24,7 @@ func testProjects() []models.Project {
 }
 
 func testAITools() []string {
-	return []string{"claude", "codex", "opencode"}
+	return []string{"claude", "opencode"}
 }
 
 func TestMainMenu_Navigation(t *testing.T) {
@@ -104,13 +104,7 @@ func TestMainMenu_AIToolCycling(t *testing.T) {
 		t.Errorf("Initial AI tool: expected 'claude', got %q", m.CurrentAITool())
 	}
 
-	// Cycle next: claude -> codex
-	m.CycleAITool("next")
-	if m.CurrentAITool() != "codex" {
-		t.Errorf("After next: expected 'codex', got %q", m.CurrentAITool())
-	}
-
-	// Cycle next: codex -> opencode
+	// Cycle next: claude -> opencode
 	m.CycleAITool("next")
 	if m.CurrentAITool() != "opencode" {
 		t.Errorf("After next: expected 'opencode', got %q", m.CurrentAITool())
@@ -128,10 +122,10 @@ func TestMainMenu_AIToolCycling(t *testing.T) {
 		t.Errorf("After prev wrap: expected 'opencode', got %q", m.CurrentAITool())
 	}
 
-	// Cycle prev: opencode -> codex
+	// Cycle prev: opencode wraps back to claude
 	m.CycleAITool("prev")
-	if m.CurrentAITool() != "codex" {
-		t.Errorf("After prev: expected 'codex', got %q", m.CurrentAITool())
+	if m.CurrentAITool() != "claude" {
+		t.Errorf("After prev: expected 'claude', got %q", m.CurrentAITool())
 	}
 }
 
@@ -142,23 +136,23 @@ func TestMainMenu_CycleAITool_PersistsToFile(t *testing.T) {
 	m := tui.NewMainMenu(testProjects(), testAITools(), "claude", "animated")
 	m.SetAIToolFile(aiToolFile)
 
-	// Cycle to codex
+	// Cycle to opencode
 	m.CycleAITool("next")
 
-	// File should be written with "codex"
+	// File should be written with "opencode"
 	data, err := os.ReadFile(aiToolFile)
 	if err != nil {
 		t.Fatalf("ai-tool file not found after cycle: %v", err)
 	}
-	if strings.TrimSpace(string(data)) != "codex" {
-		t.Errorf("ai-tool file should be 'codex', got %q", strings.TrimSpace(string(data)))
+	if strings.TrimSpace(string(data)) != "opencode" {
+		t.Errorf("ai-tool file should be 'opencode', got %q", strings.TrimSpace(string(data)))
 	}
 
-	// Cycle again to opencode
+	// Cycle again wraps back to claude
 	m.CycleAITool("next")
 	data, _ = os.ReadFile(aiToolFile)
-	if strings.TrimSpace(string(data)) != "opencode" {
-		t.Errorf("ai-tool file should be 'opencode' after second cycle, got %q", strings.TrimSpace(string(data)))
+	if strings.TrimSpace(string(data)) != "claude" {
+		t.Errorf("ai-tool file should be 'claude' after second cycle, got %q", strings.TrimSpace(string(data)))
 	}
 }
 
@@ -193,15 +187,15 @@ func TestMainMenu_AIToolCycling_SingleTool(t *testing.T) {
 }
 
 func TestMainMenu_AIToolCycling_StartNonFirst(t *testing.T) {
-	m := tui.NewMainMenu(testProjects(), testAITools(), "codex", "animated")
+	m := tui.NewMainMenu(testProjects(), testAITools(), "opencode", "animated")
 
-	if m.CurrentAITool() != "codex" {
-		t.Errorf("Initial: expected 'codex', got %q", m.CurrentAITool())
+	if m.CurrentAITool() != "opencode" {
+		t.Errorf("Initial: expected 'opencode', got %q", m.CurrentAITool())
 	}
 
 	m.CycleAITool("next")
-	if m.CurrentAITool() != "opencode" {
-		t.Errorf("After next from codex: expected 'opencode', got %q", m.CurrentAITool())
+	if m.CurrentAITool() != "claude" {
+		t.Errorf("After next from opencode: expected 'claude' (wrap), got %q", m.CurrentAITool())
 	}
 }
 
@@ -257,9 +251,9 @@ func TestMainMenu_LayoutCalculation(t *testing.T) {
 func TestMainMenu_LayoutCalculation_MenuHeight(t *testing.T) {
 	// 3 projects (2 rows each). Chrome = 13 fixed lines (tab-bar + action-bar +
 	// add-project hint included in the constant; old 4 action-item rows removed).
-	// The subscription row is shared across agents, so it is included for codex too.
+	// The subscription row is shared across agents, so it is included for opencode too.
 	projects := testProjects()
-	m := tui.NewMainMenu(projects, testAITools(), "codex", "animated")
+	m := tui.NewMainMenu(projects, testAITools(), "opencode", "animated")
 	layout := m.CalculateLayout(100, 40)
 
 	// MenuHeight = 13 (chrome, incl. subscription row) + 3*2 (projects) = 19
@@ -270,7 +264,7 @@ func TestMainMenu_LayoutCalculation_MenuHeight(t *testing.T) {
 
 	// 0 projects: empty-state row adds 1 line.
 	// MenuHeight = 13 (chrome, incl. subscription row) + 1 (empty-state row) = 14
-	m2 := tui.NewMainMenu(nil, testAITools(), "codex", "animated")
+	m2 := tui.NewMainMenu(nil, testAITools(), "opencode", "animated")
 	layout2 := m2.CalculateLayout(100, 40)
 	expectedHeight2 := 13 + 1
 	if layout2.MenuHeight != expectedHeight2 {
@@ -344,7 +338,7 @@ func TestMainMenu_SelectProject(t *testing.T) {
 	}
 
 	// Select second project
-	m2 := tui.NewMainMenu(projects, testAITools(), "codex", "animated")
+	m2 := tui.NewMainMenu(projects, testAITools(), "opencode", "animated")
 	m2.MoveDown()
 	newModel2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	mm2 := newModel2.(*tui.MainMenuModel)
@@ -356,8 +350,8 @@ func TestMainMenu_SelectProject(t *testing.T) {
 	if result2.Name != "my-app" {
 		t.Errorf("Expected name 'my-app', got %q", result2.Name)
 	}
-	if result2.AITool != "codex" {
-		t.Errorf("Expected ai_tool 'codex', got %q", result2.AITool)
+	if result2.AITool != "opencode" {
+		t.Errorf("Expected ai_tool 'opencode', got %q", result2.AITool)
 	}
 }
 
@@ -497,7 +491,7 @@ func TestMainMenu_QuitEsc(t *testing.T) {
 
 func TestMainMenu_QuitEsc_IncludesCycledAITool(t *testing.T) {
 	m := tui.NewMainMenu(testProjects(), testAITools(), "claude", "animated")
-	// Cycle to codex
+	// Cycle to opencode
 	m.CycleAITool("next")
 	// Quit via Ctrl-C (which still sets a result with the current AI tool)
 	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -507,8 +501,8 @@ func TestMainMenu_QuitEsc_IncludesCycledAITool(t *testing.T) {
 	if result == nil {
 		t.Fatal("Expected result for Ctrl-C, got nil")
 	}
-	if result.AITool != "codex" {
-		t.Errorf("Expected ai_tool 'codex' after cycling, got %q", result.AITool)
+	if result.AITool != "opencode" {
+		t.Errorf("Expected ai_tool 'opencode' after cycling, got %q", result.AITool)
 	}
 }
 
@@ -577,8 +571,8 @@ func TestMainMenu_KeyBindings_AIToolCycling(t *testing.T) {
 		m.SetFocus(tui.FocusAI) // AI switcher is the top focus stop
 		newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
 		mm := newModel.(*tui.MainMenuModel)
-		if mm.CurrentAITool() != "codex" {
-			t.Errorf("After right arrow: expected 'codex', got %q", mm.CurrentAITool())
+		if mm.CurrentAITool() != "opencode" {
+			t.Errorf("After right arrow: expected 'opencode', got %q", mm.CurrentAITool())
 		}
 	})
 
@@ -709,7 +703,7 @@ func TestMainMenu_ViewContainsBorders(t *testing.T) {
 
 func TestMainMenu_ViewShowsAIToolWithArrows(t *testing.T) {
 	projects := []models.Project{}
-	tools := []string{"claude", "codex"}
+	tools := []string{"claude", "opencode"}
 	m := tui.NewMainMenu(projects, tools, "claude", "animated")
 	m.SetSize(80, 30)
 	view := m.View()
@@ -731,7 +725,7 @@ func TestMainMenu_ViewNoArrowsSingleTool(t *testing.T) {
 }
 
 func TestMainMenu_ViewHelpRow(t *testing.T) {
-	m := tui.NewMainMenu(nil, []string{"claude", "codex"}, "claude", "animated")
+	m := tui.NewMainMenu(nil, []string{"claude", "opencode"}, "claude", "animated")
 	m.SetSize(80, 30)
 	view := m.View()
 	if strings.Contains(view, "navigate") {
@@ -814,7 +808,6 @@ func TestMainMenu_AIToolDisplayName(t *testing.T) {
 		expected string
 	}{
 		{"claude", "Claude Code"},
-		{"codex", "Codex CLI"},
 		{"opencode", "OpenCode"},
 		{"unknown", "unknown"},
 	}
@@ -1021,7 +1014,7 @@ func TestMainMenu_MapRowToItem_Projects(t *testing.T) {
 		{Name: "p2", Path: "/p2"},
 	}
 	// The subscription row is shared across agents, so projects start at row 7.
-	m := tui.NewMainMenu(projects, []string{"codex"}, "codex", "animated")
+	m := tui.NewMainMenu(projects, []string{"opencode"}, "opencode", "animated")
 	m.SetSize(80, 30)
 
 	// Layout: row 0 border, 1 title, 2 subscription, 3 switcher gap, 4 tab bar,
@@ -1045,8 +1038,8 @@ func TestMainMenu_MapRowToItem_AddProjectRow(t *testing.T) {
 	projects := []models.Project{
 		{Name: "p1", Path: "/p1"},
 	}
-	// The subscription row is shared across agents, present for codex too.
-	m := tui.NewMainMenu(projects, []string{"codex"}, "codex", "animated")
+	// The subscription row is shared across agents, present for opencode too.
+	m := tui.NewMainMenu(projects, []string{"opencode"}, "opencode", "animated")
 	m.SetSize(80, 30)
 
 	// Layout: 1 project at rows 7-8, blank spacer at row 9, add-project label at
@@ -1069,8 +1062,8 @@ func TestMainMenu_MapRowToItem_AddProjectRow(t *testing.T) {
 
 func TestMainMenu_MapRowToItem_Invalid(t *testing.T) {
 	projects := []models.Project{{Name: "p1", Path: "/p1"}}
-	// The subscription row is shared across agents, present for codex too.
-	m := tui.NewMainMenu(projects, []string{"codex"}, "codex", "animated")
+	// The subscription row is shared across agents, present for opencode too.
+	m := tui.NewMainMenu(projects, []string{"opencode"}, "opencode", "animated")
 	m.SetSize(80, 30)
 
 	// Row 0 is border
@@ -1112,8 +1105,8 @@ func TestMainMenu_MapRowToItem_Invalid(t *testing.T) {
 }
 
 func TestMainMenu_MapRowToItem_NoProjects(t *testing.T) {
-	// The subscription row is shared across agents, present for codex too.
-	m := tui.NewMainMenu(nil, []string{"codex"}, "codex", "animated")
+	// The subscription row is shared across agents, present for opencode too.
+	m := tui.NewMainMenu(nil, []string{"opencode"}, "opencode", "animated")
 	m.SetSize(80, 30)
 
 	// No projects: row 0 border, 1 title, 2 subscription, 3 switcher gap, 4 tab bar,
@@ -1128,8 +1121,8 @@ func TestMainMenu_MapRowToItem_NoProjects(t *testing.T) {
 
 func TestMainMenu_MapRowToItem_WithUpdateVersion(t *testing.T) {
 	projects := []models.Project{{Name: "p1", Path: "/p1"}}
-	// The subscription row is shared across agents, present for codex too.
-	m := tui.NewMainMenu(projects, []string{"codex"}, "codex", "animated")
+	// The subscription row is shared across agents, present for opencode too.
+	m := tui.NewMainMenu(projects, []string{"opencode"}, "opencode", "animated")
 	m.SetUpdateVersion("v1.2.3")
 	m.SetSize(80, 30)
 
@@ -1149,8 +1142,8 @@ func TestMainMenu_MouseClickSelectsItem(t *testing.T) {
 		{Name: "p1", Path: "/p1"},
 		{Name: "p2", Path: "/p2"},
 	}
-	// The subscription row is shared across agents, present for codex too.
-	m := tui.NewMainMenu(projects, []string{"codex"}, "codex", "animated")
+	// The subscription row is shared across agents, present for opencode too.
+	m := tui.NewMainMenu(projects, []string{"opencode"}, "opencode", "animated")
 	m.SetSize(80, 30)
 	_ = m.View() // compute the vertical centering offset
 
@@ -1178,8 +1171,8 @@ func TestMainMenu_MouseDoubleClickActivates(t *testing.T) {
 		{Name: "p1", Path: "/p1"},
 		{Name: "p2", Path: "/p2"},
 	}
-	// The subscription row is shared across agents, present for codex too.
-	m := tui.NewMainMenu(projects, []string{"codex"}, "codex", "animated")
+	// The subscription row is shared across agents, present for opencode too.
+	m := tui.NewMainMenu(projects, []string{"opencode"}, "opencode", "animated")
 	m.SetSize(80, 30)
 	_ = m.View() // compute the vertical centering offset
 
@@ -2061,8 +2054,8 @@ func TestMainMenu_MouseClickWorksWithCentering(t *testing.T) {
 		{Name: "p1", Path: "/p1"},
 		{Name: "p2", Path: "/p2"},
 	}
-	// The subscription row is shared across agents, present for codex too.
-	m := tui.NewMainMenu(projects, []string{"codex"}, "codex", "none")
+	// The subscription row is shared across agents, present for opencode too.
+	m := tui.NewMainMenu(projects, []string{"opencode"}, "opencode", "none")
 	m.SetSize(80, 40) // Large terminal -> centering will offset content
 
 	// Need to call View() first so centerOffsetY is calculated
@@ -2348,7 +2341,7 @@ func TestMainMenu_ViewFillsFullTerminalHeight(t *testing.T) {
 		{Name: "p3", Path: "/p3"},
 	}
 	termHeight := 50
-	m := tui.NewMainMenu(projects, []string{"claude", "codex"}, "codex", "animated")
+	m := tui.NewMainMenu(projects, []string{"claude", "opencode"}, "opencode", "animated")
 	m.SetSize(120, termHeight)
 
 	view := m.View()
@@ -2370,7 +2363,7 @@ func TestMainMenu_ViewVerticalCenteringIsSymmetric(t *testing.T) {
 		{Name: "p6", Path: "/p6"},
 	}
 	termHeight := 50
-	m := tui.NewMainMenu(projects, []string{"claude", "codex"}, "codex", "animated")
+	m := tui.NewMainMenu(projects, []string{"claude", "opencode"}, "opencode", "animated")
 	m.SetSize(120, termHeight)
 
 	view := m.View()
@@ -3861,9 +3854,9 @@ func TestMainMenu_SelectWorktree(t *testing.T) {
 
 func TestMainMenu_MapRowToItemWithWorktrees(t *testing.T) {
 	projects := testProjectsWithWorktrees()
-	// The subscription row is shared across agents, present for codex too — it
+	// The subscription row is shared across agents, present for opencode too — it
 	// shifts every row below the title down by one.
-	m := tui.NewMainMenu(projects, testAITools(), "codex", "animated")
+	m := tui.NewMainMenu(projects, testAITools(), "opencode", "animated")
 	m.SetSize(100, 40)
 
 	// Expand first project (2 worktrees)
@@ -3912,8 +3905,8 @@ func TestMainMenu_MapRowToItemWithWorktrees(t *testing.T) {
 
 func TestMainMenu_CalculateLayoutWithWorktrees(t *testing.T) {
 	projects := testProjectsWithWorktrees()
-	// The subscription row is shared across agents, so chrome includes it for codex too.
-	m := tui.NewMainMenu(projects, testAITools(), "codex", "animated")
+	// The subscription row is shared across agents, so chrome includes it for opencode too.
+	m := tui.NewMainMenu(projects, testAITools(), "opencode", "animated")
 	m.SetSize(100, 40)
 
 	layout1 := m.CalculateLayout(100, 40)
@@ -4086,9 +4079,9 @@ func TestMainMenu_CollapseWithAddWorktreeAdjustsSelection(t *testing.T) {
 
 func TestMainMenu_MapRowToItemWithAddWorktree(t *testing.T) {
 	projects := testProjectsWithWorktrees()
-	// The subscription row is shared across agents, present for codex too — it
+	// The subscription row is shared across agents, present for opencode too — it
 	// shifts every project/worktree row down by one.
-	m := tui.NewMainMenu(projects, testAITools(), "codex", "animated")
+	m := tui.NewMainMenu(projects, testAITools(), "opencode", "animated")
 	m.SetSize(100, 40)
 
 	m.ToggleWorktrees(0)
@@ -4103,8 +4096,8 @@ func TestMainMenu_MapRowToItemWithAddWorktree(t *testing.T) {
 
 func TestMainMenu_CalculateLayoutWithAddWorktree(t *testing.T) {
 	projects := testProjectsWithWorktrees()
-	// The subscription row is shared across agents, so chrome includes it for codex too.
-	m := tui.NewMainMenu(projects, testAITools(), "codex", "animated")
+	// The subscription row is shared across agents, so chrome includes it for opencode too.
+	m := tui.NewMainMenu(projects, testAITools(), "opencode", "animated")
 
 	m.ToggleWorktrees(0)
 	m.ToggleWorktrees(2)
@@ -5048,9 +5041,9 @@ func TestSettings_NavWrapsWithFiveItems(t *testing.T) {
 }
 
 func TestSettings_NavWrapsWithSixItems_NonClaude(t *testing.T) {
-	// The subscription row is shared across agents, so codex also shows 6 settings
+	// The subscription row is shared across agents, so opencode also shows 6 settings
 	// items (Ghost Display, Tab Title, Sound, Panel, Default projects dir, Subscription).
-	m := tui.NewMainMenu(nil, []string{"codex"}, "codex", "animated")
+	m := tui.NewMainMenu(nil, []string{"opencode"}, "opencode", "animated")
 	m.EnterSettings()
 	// j 6 times — wraps back to 0 (vim accelerator wraps within the list)
 	for i := 0; i < 6; i++ {

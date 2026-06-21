@@ -52,7 +52,7 @@ maybe_restore_session ` + quote(configDir) + ` ` + quote(curBoot) + ` "/w/wrappe
 func TestMaybeRestore_spawns_prior_boot_lines_and_writes_marker(t *testing.T) {
 	dir := t.TempDir()
 	writeTempFile(t, dir, "last-session",
-		"111|app|/p/app|claude|ghostty\n111|web|/p/web|codex|ghostty\n")
+		"111|app|/p/app|claude|ghostty\n111|web|/p/web|opencode|ghostty\n")
 	rec := filepath.Join(dir, "rec")
 	_, code := runMaybeRestore(t, dir, "222", rec)
 	assertExitCode(t, code, 0)
@@ -62,7 +62,7 @@ func TestMaybeRestore_spawns_prior_boot_lines_and_writes_marker(t *testing.T) {
 		t.Fatalf("no spawns recorded: %v", err)
 	}
 	got := strings.TrimSpace(string(data))
-	want := "ghostty|/w/wrapper.sh|/p/app|claude\nghostty|/w/wrapper.sh|/p/web|codex"
+	want := "ghostty|/w/wrapper.sh|/p/app|claude\nghostty|/w/wrapper.sh|/p/web|opencode"
 	if got != want {
 		t.Errorf("spawns:\n got %q\nwant %q", got, want)
 	}

@@ -28,7 +28,7 @@ func main() {
 	// Set renderer to TTY like the real app does
 	lipgloss.SetDefaultRenderer(lipgloss.NewRenderer(tty))
 
-	ghostLines := tui.GhostForTool("codex", false)
+	ghostLines := tui.GhostForTool("opencode", false)
 	ghost := tui.RenderGhost(ghostLines)
 
 	menuBox := strings.Repeat("X", 48)

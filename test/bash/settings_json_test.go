@@ -1128,8 +1128,8 @@ func TestCleanupHooksRemoval_skips_when_not_claude(t *testing.T) {
 }
 `)
 
-	// No marker files, but AI tool is codex — hooks should NOT be removed
-	snippet := cleanupHooksSnippet(t, "codex", settingsFile, markerDir)
+	// No marker files, but AI tool is opencode — hooks should NOT be removed
+	snippet := cleanupHooksSnippet(t, "opencode", settingsFile, markerDir)
 	_, code := runBashSnippet(t, snippet, nil)
 	assertExitCode(t, code, 0)
 

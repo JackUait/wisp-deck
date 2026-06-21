@@ -23,7 +23,6 @@ ART
 # Falls back to Claude palette for unknown or empty tool names.
 get_tool_palette() {
   case "${1:-}" in
-    codex)    echo "22 28 29 34 35 41 42 47" ;;          # green
     opencode) echo "240 242 244 246 248 250 252 254" ;;   # gray/silver (OpenCode mascot)
     *)        echo "130 166 172 208 209 214 215 220" ;;   # orange/amber (claude default)
   esac

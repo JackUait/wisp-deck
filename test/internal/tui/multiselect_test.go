@@ -11,7 +11,6 @@ import (
 func testTools() []models.AITool {
 	return []models.AITool{
 		{Name: "claude", Command: "claude", Installed: true},
-		{Name: "codex", Command: "codex", Installed: true},
 		{Name: "opencode", Command: "opencode", Installed: false},
 	}
 }
@@ -29,7 +28,7 @@ func TestNewMultiSelect_InitialState(t *testing.T) {
 func TestNewMultiSelect_ClaudeAlwaysPreChecked(t *testing.T) {
 	tools := []models.AITool{
 		{Name: "claude", Command: "claude", Installed: false},
-		{Name: "codex", Command: "codex", Installed: true},
+		{Name: "opencode", Command: "opencode", Installed: true},
 	}
 	model := tui.NewMultiSelect(tools)
 
@@ -50,12 +49,8 @@ func TestNewMultiSelect_InstalledToolsPreChecked(t *testing.T) {
 	if !checked[0] {
 		t.Error("Expected claude (installed) to be pre-checked")
 	}
-	// codex (installed) -> checked
-	if !checked[1] {
-		t.Error("Expected codex (installed) to be pre-checked")
-	}
 	// opencode (not installed) -> not checked
-	if checked[2] {
+	if checked[1] {
 		t.Error("Expected opencode (not installed) to not be pre-checked")
 	}
 }
@@ -120,9 +115,9 @@ func TestMultiSelect_CursorWrapsAtBottom(t *testing.T) {
 	tools := testTools()
 	model := tui.NewMultiSelect(tools)
 
-	// Navigate past the end
+	// Navigate past the end (2 tools -> 2 downs wraps back to 0)
 	var updated tea.Model = model
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 2; i++ {
 		updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
 	m := updated.(tui.MultiSelectModel)
@@ -136,12 +131,12 @@ func TestMultiSelect_CursorWrapsAtTop(t *testing.T) {
 	tools := testTools()
 	model := tui.NewMultiSelect(tools)
 
-	// Navigate up from position 0
+	// Navigate up from position 0 (2 tools -> wraps to last index 1)
 	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyUp})
 	m := updated.(tui.MultiSelectModel)
 
-	if m.Cursor() != 2 {
-		t.Errorf("Expected cursor to wrap to 2, got %d", m.Cursor())
+	if m.Cursor() != 1 {
+		t.Errorf("Expected cursor to wrap to 1, got %d", m.Cursor())
 	}
 }
 
@@ -170,14 +165,13 @@ func TestMultiSelect_ToggleOnDifferentItem(t *testing.T) {
 	tools := testTools()
 	model := tui.NewMultiSelect(tools)
 
-	// Navigate to opencode (index 2, not installed, unchecked)
+	// Navigate to opencode (index 1, not installed, unchecked)
 	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
-	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyDown})
 	// Toggle opencode on
 	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
 	m := updated.(tui.MultiSelectModel)
 
-	if !m.Checked()[2] {
+	if !m.Checked()[1] {
 		t.Error("Expected opencode to be checked after toggle")
 	}
 }
@@ -186,8 +180,10 @@ func TestMultiSelect_EnterConfirmsWithSelection(t *testing.T) {
 	tools := testTools()
 	model := tui.NewMultiSelect(tools)
 
-	// claude and codex are pre-checked; press Enter
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// claude (installed) is pre-checked; opencode is not. Check opencode too, then Enter.
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	updated, cmd := updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m := updated.(tui.MultiSelectModel)
 
 	// Should have quit command
@@ -208,8 +204,8 @@ func TestMultiSelect_EnterConfirmsWithSelection(t *testing.T) {
 	if result.Tools[0] != "claude" {
 		t.Errorf("Expected first tool 'claude', got %q", result.Tools[0])
 	}
-	if result.Tools[1] != "codex" {
-		t.Errorf("Expected second tool 'codex', got %q", result.Tools[1])
+	if result.Tools[1] != "opencode" {
+		t.Errorf("Expected second tool 'opencode', got %q", result.Tools[1])
 	}
 }
 
@@ -289,7 +285,7 @@ func TestMultiSelect_ViewContainsToolNames(t *testing.T) {
 	view := model.View()
 
 	// Should contain all tool display names
-	expectedNames := []string{"Claude Code", "Codex CLI", "OpenCode"}
+	expectedNames := []string{"Claude Code", "OpenCode"}
 	for _, name := range expectedNames {
 		if !containsString(view, name) {
 			t.Errorf("Expected view to contain %q", name)
@@ -371,13 +367,9 @@ func TestMultiSelect_ResultToolsInSelectionOrder(t *testing.T) {
 	tools := testTools()
 	model := tui.NewMultiSelect(tools)
 
-	// Pre-checked: claude (0), codex (1)
-	// Uncheck codex, check opencode
-	// Navigate to codex (index 1) and uncheck
+	// Pre-checked: claude (0). opencode (1) is not installed -> unchecked.
+	// Navigate to opencode (index 1) and check it.
 	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
-	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
-	// Navigate to opencode (index 2) and check
-	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyDown})
 	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
 
 	// Confirm

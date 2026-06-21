@@ -24,7 +24,7 @@ func newPanelMenu(t *testing.T) (*MainMenuModel, string, string) {
 	os.WriteFile(filepath.Join(cfgDir, "personal.json"), []byte("{}"), 0o644)
 	os.WriteFile(list, []byte("Work:work.json\nPersonal:personal.json\n"), 0o644)
 
-	m := NewMainMenu([]models.Project{{Name: "p", Path: "/p"}}, []string{"claude", "codex"}, "claude", "none")
+	m := NewMainMenu([]models.Project{{Name: "p", Path: "/p"}}, []string{"claude", "opencode"}, "claude", "none")
 	m.SetClaudeConfigFile(ptr)
 	m.SetClaudeConfigPaths(list, cfgDir)
 	m.SetClaudeConfigs(LoadClaudeConfigsList(list))
@@ -152,7 +152,7 @@ func TestModelMap_ShowsMappedIndicator(t *testing.T) {
 	os.WriteFile(list, []byte("Work:work.json\nPersonal:personal.json\n"), 0o644)
 	ptr := filepath.Join(dir, "claude-config")
 
-	m := NewMainMenu([]models.Project{{Name: "p", Path: "/p"}}, []string{"claude", "codex"}, "claude", "none")
+	m := NewMainMenu([]models.Project{{Name: "p", Path: "/p"}}, []string{"claude", "opencode"}, "claude", "none")
 	m.SetClaudeConfigFile(ptr)
 	m.SetClaudeConfigPaths(list, cfgDir)
 	m.SetClaudeConfigs(LoadClaudeConfigsList(list))
@@ -256,7 +256,7 @@ func TestModelMap_APIKeyInput_ShowsInPanel(t *testing.T) {
 	os.WriteFile(list, []byte("Work:work.json\nPersonal:personal.json\n"), 0o644)
 	ptr := filepath.Join(dir, "claude-config")
 
-	m := NewMainMenu([]models.Project{{Name: "p", Path: "/p"}}, []string{"claude", "codex"}, "claude", "none")
+	m := NewMainMenu([]models.Project{{Name: "p", Path: "/p"}}, []string{"claude", "opencode"}, "claude", "none")
 	m.SetClaudeConfigFile(ptr)
 	m.SetClaudeConfigPaths(list, cfgDir)
 	m.SetClaudeConfigs(LoadClaudeConfigsList(list))

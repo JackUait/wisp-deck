@@ -3,10 +3,10 @@
 # Depends on: process.sh (kill_tree)
 
 # Build the AI tool launch command string.
-# Usage: build_ai_launch_cmd <tool> <claude_cmd> <codex_cmd> <opencode_cmd> [extra_args_or_project_dir]
+# Usage: build_ai_launch_cmd <tool> <claude_cmd> <opencode_cmd> [extra_args_or_project_dir]
 build_ai_launch_cmd() {
-  local tool="$1" claude_cmd="$2" codex_cmd="$3" opencode_cmd="$4"
-  shift 4
+  local tool="$1" claude_cmd="$2" opencode_cmd="$3"
+  shift 3
   local extra="$*"
 
   # Claude-only: append --settings when a config is active.
@@ -26,7 +26,6 @@ build_ai_launch_cmd() {
   # Resume mode: relaunch into the most recent (cwd-scoped) conversation.
   if [ "${GHOST_TAB_RESUME:-0}" = "1" ]; then
     case "$tool" in
-      codex)    echo "$codex_cmd resume --last" ;;
       opencode) echo "$opencode_cmd --continue" ;;
       *)        echo "${claude_filter}$claude_cmd -c${claude_settings}" ;;
     esac
@@ -34,9 +33,6 @@ build_ai_launch_cmd() {
   fi
 
   case "$tool" in
-    codex)
-      echo "$codex_cmd --cd \"$extra\""
-      ;;
     opencode)
       echo "$opencode_cmd \"$extra\""
       ;;

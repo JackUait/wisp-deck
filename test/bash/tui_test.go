@@ -130,13 +130,13 @@ func TestTui_set_tab_title_includes_project_and_tool_separated_by_middot(t *test
 func TestTui_set_tab_title_outputs_OSC_escape_sequence(t *testing.T) {
 	root := projectRoot(t)
 	modulePath := filepath.Join(root, "lib/tui.sh")
-	script := fmt.Sprintf(`source %q && set_tab_title "myproject" "codex"`, modulePath)
+	script := fmt.Sprintf(`source %q && set_tab_title "myproject" "opencode"`, modulePath)
 
 	out, code := runBashSnippet(t, script, nil)
 	assertExitCode(t, code, 0)
 
 	// OSC 0 sets window title: \033]0;TITLE\007
-	expected := "\033]0;myproject \u00b7 codex\007"
+	expected := "\033]0;myproject \u00b7 opencode\007"
 	if out != expected {
 		t.Errorf("set_tab_title output = %q, want %q", out, expected)
 	}
@@ -171,12 +171,12 @@ func TestTui_set_tab_title_waiting_includes_bullet_prefix_with_project_and_tool(
 func TestTui_set_tab_title_waiting_outputs_OSC_escape_with_bullet_prefix(t *testing.T) {
 	root := projectRoot(t)
 	modulePath := filepath.Join(root, "lib/tui.sh")
-	script := fmt.Sprintf(`source %q && set_tab_title_waiting "myproject" "codex"`, modulePath)
+	script := fmt.Sprintf(`source %q && set_tab_title_waiting "myproject" "opencode"`, modulePath)
 
 	out, code := runBashSnippet(t, script, nil)
 	assertExitCode(t, code, 0)
 
-	expected := "\033]0;● myproject · codex\007"
+	expected := "\033]0;● myproject · opencode\007"
 	if out != expected {
 		t.Errorf("set_tab_title_waiting output = %q, want %q", out, expected)
 	}

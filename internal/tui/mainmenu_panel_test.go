@@ -106,8 +106,8 @@ func TestRenderSettingsBox_panelRowColor_yellowForCompact(t *testing.T) {
 }
 
 func TestSettingsItemCount_includesPanelRow(t *testing.T) {
-	m := NewMainMenu(nil, []string{"codex"}, "codex", "animated")
-	// The subscription row is shared across agents, so codex also has 6 items
+	m := NewMainMenu(nil, []string{"opencode"}, "opencode", "animated")
+	// The subscription row is shared across agents, so opencode also has 6 items
 	// (ghost, tab title, sound, panel, projects dir, subscription).
 	if m.settingsItemCount() != 6 {
 		t.Errorf("settingsItemCount = %d, want 6", m.settingsItemCount())

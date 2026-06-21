@@ -85,8 +85,8 @@ func TestRenderMenuBox_emptyState(t *testing.T) {
 
 func TestCalculateLayout_accountsForTabBar(t *testing.T) {
 	projects := []models.Project{{Name: "a", Path: "/tmp/a"}}
-	// The subscription row is shared across agents, so it is present for codex too.
-	m := NewMainMenu(projects, []string{"codex"}, "codex", "none")
+	// The subscription row is shared across agents, so it is present for opencode too.
+	m := NewMainMenu(projects, []string{"opencode"}, "opencode", "none")
 	layout := m.CalculateLayout(120, 40)
 	// Rendered line count for 1 project = 15 (box 14 + help 1), including the
 	// subscription row and the add-project hint subtitle row. MenuHeight must equal that.
@@ -98,7 +98,7 @@ func TestCalculateLayout_accountsForTabBar(t *testing.T) {
 func TestCalculateLayout_emptyStateAddsRow(t *testing.T) {
 	// 0 projects: renderMenuBox emits empty-state row plus the add-project hint
 	// subtitle → 14 total lines, including the shared subscription row.
-	m := NewMainMenu(nil, []string{"codex"}, "codex", "none")
+	m := NewMainMenu(nil, []string{"opencode"}, "opencode", "none")
 	layout := m.CalculateLayout(120, 40)
 	if layout.MenuHeight != 14 {
 		t.Errorf("MenuHeight (0 proj) = %d, want 14", layout.MenuHeight)
@@ -110,8 +110,8 @@ func TestMapRowToItem_matchesRenderedLayout(t *testing.T) {
 		{Name: "alpha", Path: "/tmp/a"},
 		{Name: "beta", Path: "/tmp/b"},
 	}
-	// The subscription row is shared across agents, present for codex too.
-	m := NewMainMenu(projects, []string{"codex"}, "codex", "none")
+	// The subscription row is shared across agents, present for opencode too.
+	m := NewMainMenu(projects, []string{"opencode"}, "opencode", "none")
 	m.width = 100
 	m.height = 60
 

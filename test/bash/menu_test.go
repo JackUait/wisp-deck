@@ -65,8 +65,8 @@ echo '{"action":"quit"}'
 source %q 2>/dev/null || true
 source %q
 error() { echo "ERROR: $*" >&2; }
-AI_TOOLS_AVAILABLE=("claude" "codex")
-SELECTED_AI_TOOL="codex"
+AI_TOOLS_AVAILABLE=("claude" "opencode")
+SELECTED_AI_TOOL="opencode"
 _update_version="2.0.0"
 select_project_interactive %q || true
 `, filepath.Join(root, "lib/tui.sh"),
@@ -83,9 +83,9 @@ select_project_interactive %q || true
 	assertContains(t, args, "main-menu")
 	assertContains(t, args, "--projects-file")
 	assertContains(t, args, "--ai-tool")
-	assertContains(t, args, "codex")
+	assertContains(t, args, "opencode")
 	assertContains(t, args, "--ai-tools")
-	assertContains(t, args, "claude,codex")
+	assertContains(t, args, "claude,opencode")
 	assertContains(t, args, "--ghost-display")
 	assertContains(t, args, "static")
 	assertContains(t, args, "--update-version")
@@ -94,7 +94,7 @@ select_project_interactive %q || true
 
 func TestMenu_handles_AI_tool_change(t *testing.T) {
 	dir := t.TempDir()
-	binDir := mockCommand(t, dir, "ghost-tab-tui", `echo '{"action":"select-project","name":"proj1","path":"/tmp/p1","ai_tool":"codex"}'`)
+	binDir := mockCommand(t, dir, "ghost-tab-tui", `echo '{"action":"select-project","name":"proj1","path":"/tmp/p1","ai_tool":"opencode"}'`)
 	projectsFile := writeTempFile(t, dir, "projects", "proj1:/tmp/p1\n")
 	root := projectRoot(t)
 	env := buildEnv(t, []string{binDir},
@@ -105,7 +105,7 @@ func TestMenu_handles_AI_tool_change(t *testing.T) {
 source %q 2>/dev/null || true
 source %q
 error() { echo "ERROR: $*" >&2; }
-AI_TOOLS_AVAILABLE=("claude" "codex")
+AI_TOOLS_AVAILABLE=("claude" "opencode")
 SELECTED_AI_TOOL="claude"
 _update_version=""
 select_project_interactive %q
@@ -116,7 +116,7 @@ echo "ai_tool=$_selected_ai_tool"
 
 	out, code := runBashSnippet(t, script, env)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, "ai_tool=codex")
+	assertContains(t, out, "ai_tool=opencode")
 }
 
 func TestMenu_handles_quit_action(t *testing.T) {
@@ -570,7 +570,7 @@ select_project_interactive %q || true
 
 func TestMenu_persists_ai_tool_change_to_file(t *testing.T) {
 	dir := t.TempDir()
-	binDir := mockCommand(t, dir, "ghost-tab-tui", `echo '{"action":"select-project","name":"proj1","path":"/tmp/p1","ai_tool":"codex"}'`)
+	binDir := mockCommand(t, dir, "ghost-tab-tui", `echo '{"action":"select-project","name":"proj1","path":"/tmp/p1","ai_tool":"opencode"}'`)
 	projectsFile := writeTempFile(t, dir, "projects", "proj1:/tmp/p1\n")
 
 	configDir := filepath.Join(dir, "config", "ghost-tab")
@@ -587,7 +587,7 @@ func TestMenu_persists_ai_tool_change_to_file(t *testing.T) {
 source %q 2>/dev/null || true
 source %q
 error() { echo "ERROR: $*" >&2; }
-AI_TOOLS_AVAILABLE=("claude" "codex")
+AI_TOOLS_AVAILABLE=("claude" "opencode")
 SELECTED_AI_TOOL="claude"
 _update_version=""
 select_project_interactive %q
@@ -603,8 +603,8 @@ select_project_interactive %q
 	if err != nil {
 		t.Fatalf("ai-tool file not created: %v", err)
 	}
-	if strings.TrimSpace(string(data)) != "codex" {
-		t.Errorf("ai-tool file content = %q, want %q", strings.TrimSpace(string(data)), "codex")
+	if strings.TrimSpace(string(data)) != "opencode" {
+		t.Errorf("ai-tool file content = %q, want %q", strings.TrimSpace(string(data)), "opencode")
 	}
 }
 
@@ -646,7 +646,7 @@ select_project_interactive %q
 
 func TestMenu_sets_selected_ai_tool_for_settings_action(t *testing.T) {
 	dir := t.TempDir()
-	binDir := mockCommand(t, dir, "ghost-tab-tui", `echo '{"action":"settings","ai_tool":"codex"}'`)
+	binDir := mockCommand(t, dir, "ghost-tab-tui", `echo '{"action":"settings","ai_tool":"opencode"}'`)
 	projectsFile := writeTempFile(t, dir, "projects", "proj1:/tmp/p1\n")
 	root := projectRoot(t)
 	env := buildEnv(t, []string{binDir},
@@ -657,7 +657,7 @@ func TestMenu_sets_selected_ai_tool_for_settings_action(t *testing.T) {
 source %q 2>/dev/null || true
 source %q
 error() { echo "ERROR: $*" >&2; }
-AI_TOOLS_AVAILABLE=("claude" "codex")
+AI_TOOLS_AVAILABLE=("claude" "opencode")
 SELECTED_AI_TOOL="claude"
 _update_version=""
 select_project_interactive %q
@@ -668,7 +668,7 @@ echo "ai_tool=$_selected_ai_tool"
 
 	out, code := runBashSnippet(t, script, env)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, "ai_tool=codex")
+	assertContains(t, out, "ai_tool=opencode")
 }
 
 func TestMenu_ai_tool_persists_between_sessions(t *testing.T) {
@@ -681,8 +681,8 @@ func TestMenu_ai_tool_persists_between_sessions(t *testing.T) {
 	root := projectRoot(t)
 	projectsFile := writeTempFile(t, dir, "projects", "proj1:/tmp/p1\n")
 
-	// Session 1: user cycles to codex and selects a project
-	binDir := mockCommand(t, dir, "ghost-tab-tui", `echo '{"action":"select-project","name":"proj1","path":"/tmp/p1","ai_tool":"codex"}'`)
+	// Session 1: user cycles to opencode and selects a project
+	binDir := mockCommand(t, dir, "ghost-tab-tui", `echo '{"action":"select-project","name":"proj1","path":"/tmp/p1","ai_tool":"opencode"}'`)
 	env := buildEnv(t, []string{binDir},
 		"XDG_CONFIG_HOME="+filepath.Join(dir, "config"),
 	)
@@ -691,7 +691,7 @@ func TestMenu_ai_tool_persists_between_sessions(t *testing.T) {
 source %q 2>/dev/null || true
 source %q
 error() { echo "ERROR: $*" >&2; }
-AI_TOOLS_AVAILABLE=("claude" "codex" "opencode")
+AI_TOOLS_AVAILABLE=("claude" "opencode" "opencode")
 SELECTED_AI_TOOL="claude"
 _update_version=""
 select_project_interactive %q
@@ -708,8 +708,8 @@ select_project_interactive %q
 	if err != nil {
 		t.Fatalf("ai-tool file not created: %v", err)
 	}
-	if strings.TrimSpace(string(data)) != "codex" {
-		t.Errorf("ai-tool file = %q, want %q", strings.TrimSpace(string(data)), "codex")
+	if strings.TrimSpace(string(data)) != "opencode" {
+		t.Errorf("ai-tool file = %q, want %q", strings.TrimSpace(string(data)), "opencode")
 	}
 
 	// Session 2: simulate wrapper reading the file and passing to TUI
@@ -745,7 +745,7 @@ source %q 2>/dev/null || true
 source %q
 source %q
 error() { echo "ERROR: $*" >&2; }
-AI_TOOLS_AVAILABLE=("claude" "codex" "opencode")
+AI_TOOLS_AVAILABLE=("claude" "opencode" "opencode")
 # Read the saved preference like the wrapper does
 AI_TOOL_PREF_FILE="%s"
 SELECTED_AI_TOOL=""
@@ -765,30 +765,30 @@ echo "ai_tool=$_selected_ai_tool"
 	out2, code2 := runBashSnippet(t, script2, env2)
 	assertExitCode(t, code2, 0)
 
-	// Verify the TUI received "codex"
+	// Verify the TUI received "opencode"
 	capturedData, err := os.ReadFile(argsFile)
 	if err != nil {
 		t.Fatalf("captured args not found: %v", err)
 	}
-	if strings.TrimSpace(string(capturedData)) != "codex" {
-		t.Errorf("captured ai_tool = %q, want %q", strings.TrimSpace(string(capturedData)), "codex")
+	if strings.TrimSpace(string(capturedData)) != "opencode" {
+		t.Errorf("captured ai_tool = %q, want %q", strings.TrimSpace(string(capturedData)), "opencode")
 	}
 
-	assertContains(t, out2, "ai_tool=codex")
+	assertContains(t, out2, "ai_tool=opencode")
 
-	// File should still have codex
+	// File should still have opencode
 	finalData, err := os.ReadFile(aiToolFile)
 	if err != nil {
 		t.Fatalf("ai-tool file not found: %v", err)
 	}
-	if strings.TrimSpace(string(finalData)) != "codex" {
-		t.Errorf("ai-tool file = %q, want %q", strings.TrimSpace(string(finalData)), "codex")
+	if strings.TrimSpace(string(finalData)) != "opencode" {
+		t.Errorf("ai-tool file = %q, want %q", strings.TrimSpace(string(finalData)), "opencode")
 	}
 }
 
 func TestMenu_persists_ai_tool_on_quit(t *testing.T) {
 	dir := t.TempDir()
-	binDir := mockCommand(t, dir, "ghost-tab-tui", `echo '{"action":"quit","ai_tool":"codex"}'`)
+	binDir := mockCommand(t, dir, "ghost-tab-tui", `echo '{"action":"quit","ai_tool":"opencode"}'`)
 	projectsFile := writeTempFile(t, dir, "projects", "proj1:/tmp/p1\n")
 
 	// Pre-set ai-tool file to "claude"
@@ -803,7 +803,7 @@ func TestMenu_persists_ai_tool_on_quit(t *testing.T) {
 source %q 2>/dev/null || true
 source %q
 error() { echo "ERROR: $*" >&2; }
-AI_TOOLS_AVAILABLE=("claude" "codex")
+AI_TOOLS_AVAILABLE=("claude" "opencode")
 SELECTED_AI_TOOL="claude"
 _update_version=""
 select_project_interactive %q || true
@@ -818,8 +818,8 @@ select_project_interactive %q || true
 	if err != nil {
 		t.Fatalf("ai-tool file not found: %v", err)
 	}
-	if strings.TrimSpace(string(data)) != "codex" {
-		t.Errorf("ai-tool should be 'codex' after quit with tool change, got %q", strings.TrimSpace(string(data)))
+	if strings.TrimSpace(string(data)) != "opencode" {
+		t.Errorf("ai-tool should be 'opencode' after quit with tool change, got %q", strings.TrimSpace(string(data)))
 	}
 }
 
@@ -976,8 +976,8 @@ select_project_interactive %q
 
 func TestAITools_validate_persists_fallback_to_file(t *testing.T) {
 	dir := t.TempDir()
-	// ai-tool file has "codex" but codex is not available
-	writeTempFile(t, dir, "config/ghost-tab/ai-tool", "codex")
+	// ai-tool file has "opencode" but opencode is not available
+	writeTempFile(t, dir, "config/ghost-tab/ai-tool", "opencode")
 	aiToolFile := filepath.Join(dir, "config", "ghost-tab", "ai-tool")
 
 	root := projectRoot(t)
@@ -987,8 +987,8 @@ func TestAITools_validate_persists_fallback_to_file(t *testing.T) {
 
 	script := fmt.Sprintf(`
 source %q
-AI_TOOLS_AVAILABLE=("claude" "opencode")
-SELECTED_AI_TOOL="codex"
+AI_TOOLS_AVAILABLE=("claude")
+SELECTED_AI_TOOL="opencode"
 validate_ai_tool %q
 echo "tool=$SELECTED_AI_TOOL"
 `, filepath.Join(root, "lib/ai-tools.sh"),
@@ -1023,8 +1023,8 @@ func TestAITools_validate_does_not_write_when_valid(t *testing.T) {
 
 	script := fmt.Sprintf(`
 source %q
-AI_TOOLS_AVAILABLE=("claude" "codex")
-SELECTED_AI_TOOL="codex"
+AI_TOOLS_AVAILABLE=("claude" "opencode")
+SELECTED_AI_TOOL="opencode"
 validate_ai_tool %q
 echo "tool=$SELECTED_AI_TOOL"
 `, filepath.Join(root, "lib/ai-tools.sh"),
@@ -1032,7 +1032,7 @@ echo "tool=$SELECTED_AI_TOOL"
 
 	out, code := runBashSnippet(t, script, env)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, "tool=codex")
+	assertContains(t, out, "tool=opencode")
 
 	// File should NOT be created (tool was valid, no change needed)
 	if _, err := os.Stat(aiToolFile); err == nil {
@@ -1056,7 +1056,7 @@ func TestAITools_validate_without_file_arg_does_not_write(t *testing.T) {
 	script := fmt.Sprintf(`
 source %q
 AI_TOOLS_AVAILABLE=("claude")
-SELECTED_AI_TOOL="codex"
+SELECTED_AI_TOOL="opencode"
 validate_ai_tool
 echo "tool=$SELECTED_AI_TOOL"
 `, filepath.Join(root, "lib/ai-tools.sh"))

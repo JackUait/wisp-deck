@@ -18,14 +18,6 @@ func TestBuildAILaunchCmd(t *testing.T) {
 		}
 	})
 
-	t.Run("codex uses --cd flag", func(t *testing.T) {
-		result := util.BuildAILaunchCmd("codex", "/usr/bin/codex", "/my/project", nil)
-		expected := `/usr/bin/codex --cd "/my/project"`
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
-
 	t.Run("opencode passes project dir via npx", func(t *testing.T) {
 		result := util.BuildAILaunchCmd("opencode", "npx opencode-ai@latest", "/my/project", nil)
 		expected := `npx opencode-ai@latest "/my/project"`
@@ -34,35 +26,11 @@ func TestBuildAILaunchCmd(t *testing.T) {
 		}
 	})
 
-	// --- codex edge cases ---
-
-	t.Run("handles project path with spaces (codex)", func(t *testing.T) {
-		result := util.BuildAILaunchCmd("codex", "/usr/bin/codex", "/path/with spaces", nil)
-		expected := `/usr/bin/codex --cd "/path/with spaces"`
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
+	// --- opencode edge cases ---
 
 	t.Run("handles project path with spaces (opencode)", func(t *testing.T) {
 		result := util.BuildAILaunchCmd("opencode", "npx opencode-ai@latest", "/path/with spaces", nil)
 		expected := `npx opencode-ai@latest "/path/with spaces"`
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
-
-	t.Run("handles project path with single quotes (codex)", func(t *testing.T) {
-		result := util.BuildAILaunchCmd("codex", "/usr/bin/codex", "/path/with'quotes", nil)
-		expected := `/usr/bin/codex --cd "/path/with'quotes"`
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
-
-	t.Run("handles project path with double quotes (codex)", func(t *testing.T) {
-		result := util.BuildAILaunchCmd("codex", "/usr/bin/codex", `/path/with"quotes`, nil)
-		expected := `/usr/bin/codex --cd "/path/with"quotes"`
 		if result != expected {
 			t.Errorf("got %q, want %q", result, expected)
 		}
@@ -76,26 +44,9 @@ func TestBuildAILaunchCmd(t *testing.T) {
 		}
 	})
 
-	t.Run("handles project path with unicode (codex)", func(t *testing.T) {
-		result := util.BuildAILaunchCmd("codex", "/usr/bin/codex", "/path/\u00e9moji/\U0001F47B", nil)
-		expected := "/usr/bin/codex --cd \"/path/\u00e9moji/\U0001F47B\""
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
-
 	t.Run("handles project path with unicode (opencode)", func(t *testing.T) {
-		result := util.BuildAILaunchCmd("opencode", "npx opencode-ai@latest", "/path/\u00e9moji/\U0001F47B", nil)
-		expected := "npx opencode-ai@latest \"/path/\u00e9moji/\U0001F47B\""
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
-
-	t.Run("handles very long project path (codex)", func(t *testing.T) {
-		longPath := strings.Repeat("/very/long/path", 50)
-		result := util.BuildAILaunchCmd("codex", "/usr/bin/codex", longPath, nil)
-		expected := `/usr/bin/codex --cd "` + longPath + `"`
+		result := util.BuildAILaunchCmd("opencode", "npx opencode-ai@latest", "/path/émoji/\U0001F47B", nil)
+		expected := "npx opencode-ai@latest \"/path/émoji/\U0001F47B\""
 		if result != expected {
 			t.Errorf("got %q, want %q", result, expected)
 		}
@@ -110,77 +61,9 @@ func TestBuildAILaunchCmd(t *testing.T) {
 		}
 	})
 
-	t.Run("handles project path with backslash (codex)", func(t *testing.T) {
-		result := util.BuildAILaunchCmd("codex", "/usr/bin/codex", `/path/with\backslash`, nil)
-		expected := `/usr/bin/codex --cd "/path/with\backslash"`
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
-
-	t.Run("handles project path with dollar sign (codex)", func(t *testing.T) {
-		result := util.BuildAILaunchCmd("codex", "/usr/bin/codex", "/path/with$dollar", nil)
-		expected := `/usr/bin/codex --cd "/path/with$dollar"`
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
-
-	t.Run("handles project path with newline (codex)", func(t *testing.T) {
-		path := "/path/with\nnewline"
-		result := util.BuildAILaunchCmd("codex", "/usr/bin/codex", path, nil)
-		if !strings.Contains(result, "newline") {
-			t.Errorf("expected result to contain 'newline', got %q", result)
-		}
-		if !strings.Contains(result, "/usr/bin/codex --cd \"") {
-			t.Errorf("expected result to start with codex --cd prefix, got %q", result)
-		}
-	})
-
-	t.Run("handles project path with tab (codex)", func(t *testing.T) {
-		path := "/path/with\ttab"
-		result := util.BuildAILaunchCmd("codex", "/usr/bin/codex", path, nil)
-		expected := "/usr/bin/codex --cd \"/path/with\ttab\""
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
-
-	t.Run("handles empty project path (codex)", func(t *testing.T) {
-		result := util.BuildAILaunchCmd("codex", "/usr/bin/codex", "", nil)
-		expected := `/usr/bin/codex --cd ""`
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
-
 	t.Run("handles empty project path (opencode)", func(t *testing.T) {
 		result := util.BuildAILaunchCmd("opencode", "npx opencode-ai@latest", "", nil)
 		expected := `npx opencode-ai@latest ""`
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
-
-	t.Run("handles tilde in project path (codex)", func(t *testing.T) {
-		result := util.BuildAILaunchCmd("codex", "/usr/bin/codex", "~/projects/app", nil)
-		expected := `/usr/bin/codex --cd "~/projects/app"`
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
-
-	t.Run("handles relative path (codex)", func(t *testing.T) {
-		result := util.BuildAILaunchCmd("codex", "/usr/bin/codex", "./relative/path", nil)
-		expected := `/usr/bin/codex --cd "./relative/path"`
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
-
-	t.Run("handles path with colons (codex)", func(t *testing.T) {
-		result := util.BuildAILaunchCmd("codex", "/usr/bin/codex", "/path:with:colons", nil)
-		expected := `/usr/bin/codex --cd "/path:with:colons"`
 		if result != expected {
 			t.Errorf("got %q, want %q", result, expected)
 		}
@@ -219,37 +102,6 @@ func TestBuildAILaunchCmd(t *testing.T) {
 			t.Errorf("got %q, want %q", result, expected)
 		}
 	})
-
-	t.Run("handles command path with spaces (codex)", func(t *testing.T) {
-		result := util.BuildAILaunchCmd("codex", "/path/with spaces/codex", "/project", nil)
-		expected := `/path/with spaces/codex --cd "/project"`
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
-
-	t.Run("preserves exact quoting structure for shell safety", func(t *testing.T) {
-		result := util.BuildAILaunchCmd("codex", "/usr/bin/codex", "/path/with spaces", nil)
-		if !strings.Contains(result, `"/path/with spaces"`) {
-			t.Errorf("expected result to contain quoted path, got %q", result)
-		}
-	})
-
-	t.Run("handles multiple tildes in path", func(t *testing.T) {
-		result := util.BuildAILaunchCmd("codex", "/usr/bin/codex", "~/foo/~/bar", nil)
-		expected := `/usr/bin/codex --cd "~/foo/~/bar"`
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
-
-	t.Run("handles .. components in path", func(t *testing.T) {
-		result := util.BuildAILaunchCmd("codex", "/usr/bin/codex", "/foo/../bar", nil)
-		expected := `/usr/bin/codex --cd "/foo/../bar"`
-		if result != expected {
-			t.Errorf("got %q, want %q", result, expected)
-		}
-	})
 }
 
 // Table-driven tests for comprehensive coverage
@@ -272,25 +124,11 @@ func TestBuildAILaunchCmdTable(t *testing.T) {
 			expected: "/usr/bin/claude --resume",
 		},
 		{
-			name:       "codex basic",
-			tool:       "codex",
-			command:    "/usr/bin/codex",
-			projectDir: "/my/project",
-			expected:   `/usr/bin/codex --cd "/my/project"`,
-		},
-		{
 			name:       "opencode basic",
 			tool:       "opencode",
 			command:    "npx opencode-ai@latest",
 			projectDir: "/my/project",
 			expected:   `npx opencode-ai@latest "/my/project"`,
-		},
-		{
-			name:       "codex spaces in path",
-			tool:       "codex",
-			command:    "/usr/bin/codex",
-			projectDir: "/path/with spaces",
-			expected:   `/usr/bin/codex --cd "/path/with spaces"`,
 		},
 		{
 			name:       "opencode spaces in path",
@@ -300,20 +138,6 @@ func TestBuildAILaunchCmdTable(t *testing.T) {
 			expected:   `npx opencode-ai@latest "/path/with spaces"`,
 		},
 		{
-			name:       "codex single quotes in path",
-			tool:       "codex",
-			command:    "/usr/bin/codex",
-			projectDir: "/path/with'quotes",
-			expected:   `/usr/bin/codex --cd "/path/with'quotes"`,
-		},
-		{
-			name:       "codex double quotes in path",
-			tool:       "codex",
-			command:    "/usr/bin/codex",
-			projectDir: `/path/with"quotes`,
-			expected:   `/usr/bin/codex --cd "/path/with"quotes"`,
-		},
-		{
 			name:       "opencode double quotes in path",
 			tool:       "opencode",
 			command:    "npx opencode-ai@latest",
@@ -321,25 +145,11 @@ func TestBuildAILaunchCmdTable(t *testing.T) {
 			expected:   `npx opencode-ai@latest "/path/with"quotes"`,
 		},
 		{
-			name:       "codex unicode",
-			tool:       "codex",
-			command:    "/usr/bin/codex",
-			projectDir: "/path/\u00e9moji/\U0001F47B",
-			expected:   "/usr/bin/codex --cd \"/path/\u00e9moji/\U0001F47B\"",
-		},
-		{
 			name:       "opencode unicode",
 			tool:       "opencode",
 			command:    "npx opencode-ai@latest",
-			projectDir: "/path/\u00e9moji/\U0001F47B",
-			expected:   "npx opencode-ai@latest \"/path/\u00e9moji/\U0001F47B\"",
-		},
-		{
-			name:       "codex long path",
-			tool:       "codex",
-			command:    "/usr/bin/codex",
-			projectDir: longPath,
-			expected:   `/usr/bin/codex --cd "` + longPath + `"`,
+			projectDir: "/path/émoji/\U0001F47B",
+			expected:   "npx opencode-ai@latest \"/path/émoji/\U0001F47B\"",
 		},
 		{
 			name:       "opencode long path",
@@ -349,60 +159,11 @@ func TestBuildAILaunchCmdTable(t *testing.T) {
 			expected:   `npx opencode-ai@latest "` + longPath + `"`,
 		},
 		{
-			name:       "codex backslash",
-			tool:       "codex",
-			command:    "/usr/bin/codex",
-			projectDir: `/path/with\backslash`,
-			expected:   `/usr/bin/codex --cd "/path/with\backslash"`,
-		},
-		{
-			name:       "codex dollar sign",
-			tool:       "codex",
-			command:    "/usr/bin/codex",
-			projectDir: "/path/with$dollar",
-			expected:   `/usr/bin/codex --cd "/path/with$dollar"`,
-		},
-		{
-			name:       "codex tab",
-			tool:       "codex",
-			command:    "/usr/bin/codex",
-			projectDir: "/path/with\ttab",
-			expected:   "/usr/bin/codex --cd \"/path/with\ttab\"",
-		},
-		{
-			name:       "codex empty path",
-			tool:       "codex",
-			command:    "/usr/bin/codex",
-			projectDir: "",
-			expected:   `/usr/bin/codex --cd ""`,
-		},
-		{
 			name:       "opencode empty path",
 			tool:       "opencode",
 			command:    "npx opencode-ai@latest",
 			projectDir: "",
 			expected:   `npx opencode-ai@latest ""`,
-		},
-		{
-			name:       "codex tilde path",
-			tool:       "codex",
-			command:    "/usr/bin/codex",
-			projectDir: "~/projects/app",
-			expected:   `/usr/bin/codex --cd "~/projects/app"`,
-		},
-		{
-			name:       "codex relative path",
-			tool:       "codex",
-			command:    "/usr/bin/codex",
-			projectDir: "./relative/path",
-			expected:   `/usr/bin/codex --cd "./relative/path"`,
-		},
-		{
-			name:       "codex colons in path",
-			tool:       "codex",
-			command:    "/usr/bin/codex",
-			projectDir: "/path:with:colons",
-			expected:   `/usr/bin/codex --cd "/path:with:colons"`,
 		},
 		{
 			name:     "claude args with spaces",
@@ -430,27 +191,6 @@ func TestBuildAILaunchCmdTable(t *testing.T) {
 			command:  "/usr/bin/unknown",
 			args:     []string{"--some-flag"},
 			expected: "/usr/bin/unknown --some-flag",
-		},
-		{
-			name:       "codex command path with spaces",
-			tool:       "codex",
-			command:    "/path/with spaces/codex",
-			projectDir: "/project",
-			expected:   `/path/with spaces/codex --cd "/project"`,
-		},
-		{
-			name:       "codex multiple tildes",
-			tool:       "codex",
-			command:    "/usr/bin/codex",
-			projectDir: "~/foo/~/bar",
-			expected:   `/usr/bin/codex --cd "~/foo/~/bar"`,
-		},
-		{
-			name:       "codex dotdot components",
-			tool:       "codex",
-			command:    "/usr/bin/codex",
-			projectDir: "/foo/../bar",
-			expected:   `/usr/bin/codex --cd "/foo/../bar"`,
 		},
 	}
 

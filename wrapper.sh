@@ -56,7 +56,6 @@ unset _gt_libs _gt_lib
 TMUX_CMD="$(command -v tmux)"
 LAZYGIT_CMD="$(command -v lazygit)"
 CLAUDE_CMD="$(command -v claude)"
-CODEX_CMD="$(command -v codex)"
 if command -v npx &>/dev/null; then
   OPENCODE_CMD="npx opencode-ai@latest"
 else
@@ -67,7 +66,6 @@ fi
 AI_TOOL_PREF_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab/ai-tool"
 AI_TOOLS_AVAILABLE=()
 [ -n "$CLAUDE_CMD" ] && AI_TOOLS_AVAILABLE+=("claude")
-[ -n "$CODEX_CMD" ] && AI_TOOLS_AVAILABLE+=("codex")
 [ -n "$OPENCODE_CMD" ] && AI_TOOLS_AVAILABLE+=("opencode")
 
 # Read saved preference, default to first available
@@ -240,11 +238,11 @@ export GHOST_TAB_CLAUDE_FILTER
 
 # Build the AI tool launch command
 case "$SELECTED_AI_TOOL" in
-  codex|opencode)
-    AI_LAUNCH_CMD="$(build_ai_launch_cmd "$SELECTED_AI_TOOL" "$CLAUDE_CMD" "$CODEX_CMD" "$OPENCODE_CMD" "$PROJECT_DIR")"
+  opencode)
+    AI_LAUNCH_CMD="$(build_ai_launch_cmd "$SELECTED_AI_TOOL" "$CLAUDE_CMD" "$OPENCODE_CMD" "$PROJECT_DIR")"
     ;;
   *)
-    AI_LAUNCH_CMD="$(build_ai_launch_cmd "$SELECTED_AI_TOOL" "$CLAUDE_CMD" "$CODEX_CMD" "$OPENCODE_CMD" "$*")"
+    AI_LAUNCH_CMD="$(build_ai_launch_cmd "$SELECTED_AI_TOOL" "$CLAUDE_CMD" "$OPENCODE_CMD" "$*")"
     ;;
 esac
 

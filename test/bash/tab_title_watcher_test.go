@@ -101,7 +101,7 @@ func TestTabTitleWatcher_check_ai_tool_state_claude_returns_active_when_marker_a
 
 // --- check_ai_tool_state: non-Claude with mock tmux ---
 
-func TestTabTitleWatcher_check_ai_tool_state_codex_returns_waiting_when_prompt_detected(t *testing.T) {
+func TestTabTitleWatcher_check_ai_tool_state_opencode_returns_waiting_when_prompt_detected(t *testing.T) {
 	tmpDir := t.TempDir()
 	binDir := mockCommand(t, tmpDir, "tmux", `
 if [ "$1" = "capture-pane" ]; then
@@ -114,7 +114,7 @@ exit 0
 	tmuxPath := filepath.Join(binDir, "tmux")
 
 	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`check_ai_tool_state "codex" "dev-test-123" %q ""`, tmuxPath))
+		fmt.Sprintf(`check_ai_tool_state "opencode" "dev-test-123" %q ""`, tmuxPath))
 
 	out, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
@@ -123,7 +123,7 @@ exit 0
 	}
 }
 
-func TestTabTitleWatcher_check_ai_tool_state_codex_returns_active_when_no_prompt(t *testing.T) {
+func TestTabTitleWatcher_check_ai_tool_state_opencode_returns_active_when_no_prompt(t *testing.T) {
 	tmpDir := t.TempDir()
 	binDir := mockCommand(t, tmpDir, "tmux", `
 if [ "$1" = "capture-pane" ]; then
@@ -136,7 +136,7 @@ exit 0
 	tmuxPath := filepath.Join(binDir, "tmux")
 
 	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`check_ai_tool_state "codex" "dev-test-123" %q ""`, tmuxPath))
+		fmt.Sprintf(`check_ai_tool_state "opencode" "dev-test-123" %q ""`, tmuxPath))
 
 	out, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
@@ -208,7 +208,7 @@ exit 0
 	tmuxPath := filepath.Join(binDir, "tmux")
 
 	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`check_ai_tool_state "codex" "dev-test-123" %q "" "3"`, tmuxPath))
+		fmt.Sprintf(`check_ai_tool_state "opencode" "dev-test-123" %q "" "3"`, tmuxPath))
 
 	out, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
@@ -235,7 +235,7 @@ exit 0
 
 	// Pass pane_index "1" — simulating pane-base-index 1
 	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`check_ai_tool_state "codex" "dev-test-123" %q "" "1"`, tmuxPath))
+		fmt.Sprintf(`check_ai_tool_state "opencode" "dev-test-123" %q "" "1"`, tmuxPath))
 
 	out, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)

@@ -17,8 +17,6 @@ func (t AITool) String() string {
 	switch t.Name {
 	case "claude":
 		displayName = "Claude Code"
-	case "codex":
-		displayName = "Codex CLI"
 	case "opencode":
 		displayName = "OpenCode"
 	}
@@ -33,7 +31,6 @@ func (t AITool) String() string {
 func DetectAITools() []AITool {
 	tools := []AITool{
 		{Name: "claude", Command: "claude"},
-		{Name: "codex", Command: "codex"},
 		{Name: "opencode", Command: "npx opencode-ai@latest"},
 	}
 
@@ -60,8 +57,6 @@ func DisplayName(tool string) string {
 	switch tool {
 	case "claude":
 		return "Claude Code"
-	case "codex":
-		return "Codex CLI"
 	case "opencode":
 		return "OpenCode"
 	default:

@@ -216,8 +216,6 @@ func (m MultiSelectModel) View() string {
 func installerToolDisplayName(name string) string {
 	base := AIToolDisplayName(name)
 	switch name {
-	case "codex":
-		return base + " (OpenAI)"
 	case "opencode":
 		return base + " (anomalyco)"
 	default:

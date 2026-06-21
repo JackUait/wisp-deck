@@ -11,7 +11,7 @@ import (
 func TestNewAIToolSelector(t *testing.T) {
 	tools := []models.AITool{
 		{Name: "claude", Command: "claude", Installed: true},
-		{Name: "codex", Command: "codex", Installed: false},
+		{Name: "opencode", Command: "opencode", Installed: false},
 	}
 
 	model := tui.NewAIToolSelector(tools)
@@ -73,7 +73,7 @@ func TestAIToolSelector_CtrlCCancels(t *testing.T) {
 func TestAIToolSelector_EnterSelectsInstalled(t *testing.T) {
 	tools := []models.AITool{
 		{Name: "claude", Command: "claude", Installed: true},
-		{Name: "codex", Command: "codex", Installed: false},
+		{Name: "opencode", Command: "opencode", Installed: false},
 	}
 	m := tui.NewAIToolSelector(tools)
 	// First item (claude, installed) is selected by default
@@ -92,7 +92,7 @@ func TestAIToolSelector_EnterSelectsInstalled(t *testing.T) {
 
 func TestAIToolSelector_EnterSkipsUninstalled(t *testing.T) {
 	tools := []models.AITool{
-		{Name: "codex", Command: "codex", Installed: false},
+		{Name: "opencode", Command: "opencode", Installed: false},
 	}
 	m := tui.NewAIToolSelector(tools)
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})

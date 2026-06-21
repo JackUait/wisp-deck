@@ -8,7 +8,7 @@ import (
 )
 
 func TestGhostForTool_AllTools(t *testing.T) {
-	tools := []string{"claude", "codex", "opencode"}
+	tools := []string{"claude", "opencode"}
 
 	for _, tool := range tools {
 		t.Run(tool+"_awake", func(t *testing.T) {
@@ -28,7 +28,7 @@ func TestGhostForTool_AllTools(t *testing.T) {
 }
 
 func TestGhostForTool_SleepingVariants(t *testing.T) {
-	tools := []string{"claude", "codex", "opencode"}
+	tools := []string{"claude", "opencode"}
 
 	for _, tool := range tools {
 		t.Run(tool, func(t *testing.T) {

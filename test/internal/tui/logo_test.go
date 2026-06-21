@@ -25,7 +25,7 @@ func TestLogo_QuitOnKeypress(t *testing.T) {
 }
 
 func TestLogo_AllToolsRender(t *testing.T) {
-	tools := []string{"claude", "codex", "opencode"}
+	tools := []string{"claude", "opencode"}
 	for _, tool := range tools {
 		t.Run(tool, func(t *testing.T) {
 			m := tui.NewLogo(tool)

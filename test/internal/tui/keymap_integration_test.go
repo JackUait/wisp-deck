@@ -165,7 +165,7 @@ func TestNonEnglish_Confirm_HebrewY(t *testing.T) {
 func TestNonEnglish_MultiSelect_RussianJK(t *testing.T) {
 	tools := []models.AITool{
 		{Name: "claude", Command: "claude", Installed: true},
-		{Name: "codex", Command: "codex", Installed: true},
+		{Name: "opencode", Command: "opencode", Installed: true},
 	}
 	model := tui.NewMultiSelect(tools)
 

@@ -65,64 +65,6 @@ func ghostClaudeSleeping(theme AIToolTheme) []string {
 	}
 }
 
-// ghostCodex returns the awake Codex ghost ASCII art.
-func ghostCodex(theme AIToolTheme) []string {
-	G := AnsiFromThemeColor(theme.Primary)   // green
-	Y := AnsiFromThemeColor(theme.Bright)    // yellow-green
-	D := AnsiFromThemeColor(theme.DarkFeet)  // dark green
-	L := AnsiFromThemeColor(theme.Cap)       // light green
-	W := AnsiFromThemeColor(theme.EyeWhite)  // white
-	K := AnsiFromThemeColor(theme.EyePupil)  // black
-	H := AnsiFromThemeColor(theme.Accent)    // teal
-
-	return []string{
-		r + "       " + L + "\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584" + r + "       ",
-		r + "     " + L + "\u2584" + G + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + L + "\u2584" + r + "     ",
-		r + "    " + L + "\u2584" + G + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + L + "\u2584" + r + "    ",
-		r + "   " + G + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "   ",
-		r + "  " + G + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + G + "\u2588\u2588\u2588\u2588" + W + "\u2588\u2588\u2588" + K + "\u2588\u2588" + G + "\u2588\u2588\u2588\u2588\u2588\u2588" + W + "\u2588\u2588\u2588" + K + "\u2588\u2588" + G + "\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + G + "\u2588\u2588\u2588\u2588" + W + "\u2588\u2588\u2588" + K + "\u2588\u2588" + G + "\u2588\u2588\u2588\u2588\u2588\u2588" + W + "\u2588\u2588\u2588" + K + "\u2588\u2588" + G + "\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + Y + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + Y + "\u2588\u2588\u2588\u2588" + H + "\u2584\u2580\u2580\u2580\u2584" + Y + "\u2588\u2588\u2588\u2588\u2588\u2588" + H + "\u2584\u2580\u2580\u2580\u2584" + Y + "\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + Y + "\u2588\u2588\u2588\u2588" + H + "\u2588" + Y + "\u2588\u2588\u2588\u2588" + H + "\u2588" + Y + "\u2588\u2588\u2588\u2588" + H + "\u2588" + Y + "\u2588\u2588\u2588\u2588" + H + "\u2588" + Y + "\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + Y + "\u2588\u2588\u2588\u2588" + H + "\u2580\u2584\u2584\u2584\u2580" + Y + "\u2588\u2588\u2588\u2588\u2588\u2588" + H + "\u2580\u2584\u2584\u2584\u2580" + Y + "\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + Y + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + D + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + D + "\u2588\u2588 \u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588 \u2588\u2588" + r + "  ",
-		r + "  " + D + "\u2588" + r + "  " + D + "\u2580\u2588\u2588\u2588\u2588\u2580" + r + " " + D + "\u2588\u2588\u2588\u2588" + r + " " + D + "\u2580\u2588\u2588\u2588\u2588\u2580" + r + "  " + D + "\u2588" + r + "  ",
-	}
-}
-
-// ghostCodexSleeping returns the sleeping Codex ghost (dimmed, closed eyes, rosy cheeks).
-func ghostCodexSleeping(theme AIToolTheme) []string {
-	G := AnsiFromThemeColor(theme.SleepPrimary)  // dimmed green
-	Y := AnsiFromThemeColor(theme.SleepDim)      // dimmed yellow-green
-	D := AnsiFromThemeColor(theme.SleepDarkFeet) // dimmed dark
-	L := AnsiFromThemeColor(theme.SleepCap)      // dimmed light
-	K := AnsiFromThemeColor(theme.EyePupil)      // black
-	P := AnsiFromThemeColor(theme.SleepBlush)    // rosy cheeks
-
-	return []string{
-		r + "       " + L + "\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584" + r + "       ",
-		r + "     " + L + "\u2584" + G + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + L + "\u2584" + r + "     ",
-		r + "    " + L + "\u2584" + G + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + L + "\u2584" + r + "    ",
-		r + "   " + G + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "   ",
-		r + "  " + G + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + Y + "\u2588\u2588\u2588\u2588" + K + "\u25ac\u25ac\u25ac\u25ac\u25ac" + Y + "\u2588\u2588\u2588\u2588\u2588\u2588" + K + "\u25ac\u25ac\u25ac\u25ac\u25ac" + Y + "\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + Y + "\u2588\u2588\u2588\u2588" + P + "\u2588\u2588" + Y + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + P + "\u2588\u2588" + Y + "\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + Y + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + Y + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + Y + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + Y + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + Y + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + Y + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + D + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + D + "\u2588\u2588 \u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588 \u2588\u2588" + r + "  ",
-		r + "  " + D + "\u2588" + r + "  " + D + "\u2580\u2588\u2588\u2588\u2588\u2580" + r + " " + D + "\u2588\u2588\u2588\u2588" + r + " " + D + "\u2580\u2588\u2588\u2588\u2588\u2580" + r + "  " + D + "\u2588" + r + "  ",
-	}
-}
-
 // ghostOpencode returns the awake OpenCode ghost ASCII art.
 func ghostOpencode(theme AIToolTheme) []string {
 	W := AnsiFromThemeColor(theme.Bright)    // white (upper body)
@@ -189,11 +131,6 @@ func ghostOpencodeSleeping(theme AIToolTheme) []string {
 func GhostForTool(tool string, sleeping bool) []string {
 	theme := ThemeForTool(tool)
 	switch tool {
-	case "codex":
-		if sleeping {
-			return ghostCodexSleeping(theme)
-		}
-		return ghostCodex(theme)
 	case "opencode":
 		if sleeping {
 			return ghostOpencodeSleeping(theme)

@@ -158,12 +158,6 @@ func TestLoading_get_tool_palette_returns_claude_palette(t *testing.T) {
 	assertContains(t, out, "130 166 172 208 209 214 215 220")
 }
 
-func TestLoading_get_tool_palette_returns_codex_palette(t *testing.T) {
-	out, code := runBashFunc(t, "lib/loading.sh", "get_tool_palette", []string{"codex"}, nil)
-	assertExitCode(t, code, 0)
-	assertContains(t, out, "22 28 29 34 35 41 42 47")
-}
-
 func TestLoading_get_tool_palette_returns_opencode_palette(t *testing.T) {
 	out, code := runBashFunc(t, "lib/loading.sh", "get_tool_palette", []string{"opencode"}, nil)
 	assertExitCode(t, code, 0)
@@ -184,14 +178,14 @@ func TestLoading_get_tool_palette_defaults_to_claude_for_empty(t *testing.T) {
 
 func TestLoading_render_loading_frame_uses_tool_palette(t *testing.T) {
 	root := projectRoot(t)
-	// Codex palette starts with color 22
+	// OpenCode palette starts with color 240
 	script := fmt.Sprintf(
-		`source %q/lib/loading.sh && render_loading_frame codex 0 90 24`,
+		`source %q/lib/loading.sh && render_loading_frame opencode 0 90 24`,
 		root)
 	out, code := runBashSnippet(t, script, nil)
 	assertExitCode(t, code, 0)
-	// Should contain ANSI color code from green palette
-	assertContains(t, out, "38;5;22m")
+	// Should contain ANSI color code from the gray/silver palette
+	assertContains(t, out, "38;5;240m")
 }
 
 func TestLoading_render_loading_frame_shifts_colors_between_frames(t *testing.T) {

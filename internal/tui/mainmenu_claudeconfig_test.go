@@ -13,7 +13,7 @@ func newClaudeMenu(t *testing.T) (*MainMenuModel, string) {
 	t.Helper()
 	dir := t.TempDir()
 	ptr := filepath.Join(dir, "claude-config")
-	m := NewMainMenu([]models.Project{{Name: "p", Path: "/p"}}, []string{"claude", "codex"}, "claude", "none")
+	m := NewMainMenu([]models.Project{{Name: "p", Path: "/p"}}, []string{"claude", "opencode"}, "claude", "none")
 	m.SetClaudeConfigFile(ptr)
 	m.SetClaudeConfigs([]ClaudeConfig{{Name: "Work", File: "work.json"}, {Name: "Personal", File: "personal.json"}})
 	m.SetActiveClaudeConfig("")
@@ -74,7 +74,7 @@ func TestClaudeConfig_visibility_all_agents(t *testing.T) {
 	if !m.ClaudeConfigVisible() {
 		t.Fatal("should be visible for claude")
 	}
-	m.CycleAITool("next") // -> codex
+	m.CycleAITool("next") // -> opencode
 	if !m.ClaudeConfigVisible() {
 		t.Fatal("should stay visible for non-claude agents (subscriptions are shared)")
 	}
@@ -94,7 +94,7 @@ func TestSettings_shows_config_row_for_claude(t *testing.T) {
 
 func TestSettings_shows_config_row_for_non_claude(t *testing.T) {
 	m, _ := newClaudeMenu(t)
-	m.CycleAITool("next") // codex
+	m.CycleAITool("next") // opencode
 	m.OpenSettings()
 	view := m.renderSettingsForTest()
 	if !strings.Contains(view, "Subscription") {

@@ -37,7 +37,7 @@ func subFocusMenu(t *testing.T, tool string, withConfigs bool) *MainMenuModel {
 		{Name: "alpha", Path: "/tmp/alpha"},
 		{Name: "beta", Path: "/tmp/beta"},
 	}
-	m := NewMainMenu(projects, []string{"claude", "codex"}, tool, "animated")
+	m := NewMainMenu(projects, []string{"claude", "opencode"}, tool, "animated")
 	m.SetSize(100, 40)
 	if withConfigs {
 		dir := t.TempDir()
@@ -69,11 +69,11 @@ func TestSubFocus_downFromAISkipsWhenNoConfigs(t *testing.T) {
 // Subscriptions are shared across agents, so the PLAN row is a reachable focus
 // stop for non-Claude agents too (when a keyed config exists).
 func TestSubFocus_downFromAIReachesSubscriptionNonClaude(t *testing.T) {
-	m := subFocusMenu(t, "codex", true)
+	m := subFocusMenu(t, "opencode", true)
 	m.SetFocus(FocusAI)
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	if m.Focus() != FocusSubscription {
-		t.Errorf("Down from AI (codex) = %v, want FocusSubscription", m.Focus())
+		t.Errorf("Down from AI (opencode) = %v, want FocusSubscription", m.Focus())
 	}
 }
 
@@ -197,7 +197,7 @@ func TestSubFocus_helpHintMentionsSubscription(t *testing.T) {
 // A custom config without an API key is not a reachable main-page focus stop.
 func TestMainSub_keylessConfigNotFocusable(t *testing.T) {
 	projects := []models.Project{{Name: "a", Path: "/a"}}
-	m := NewMainMenu(projects, []string{"claude", "codex"}, "claude", "animated")
+	m := NewMainMenu(projects, []string{"claude", "opencode"}, "claude", "animated")
 	m.SetSize(100, 40)
 	dir := t.TempDir()
 	writeKeylessConfig(t, dir, "nokey.json")
@@ -214,7 +214,7 @@ func TestMainSub_keylessConfigNotFocusable(t *testing.T) {
 // The main-page cycle skips keyless configs and only visits Standard + keyed.
 func TestMainSub_cycleSkipsKeylessConfig(t *testing.T) {
 	projects := []models.Project{{Name: "a", Path: "/a"}}
-	m := NewMainMenu(projects, []string{"claude", "codex"}, "claude", "animated")
+	m := NewMainMenu(projects, []string{"claude", "opencode"}, "claude", "animated")
 	m.SetSize(100, 40)
 	dir := t.TempDir()
 	writeKeyedConfig(t, dir, "work.json")
@@ -242,7 +242,7 @@ func TestMainSub_cycleSkipsKeylessConfig(t *testing.T) {
 // other keyless configs are present.
 func TestMainSub_focusableWhenAnyKeyedConfigExists(t *testing.T) {
 	projects := []models.Project{{Name: "a", Path: "/a"}}
-	m := NewMainMenu(projects, []string{"claude", "codex"}, "claude", "animated")
+	m := NewMainMenu(projects, []string{"claude", "opencode"}, "claude", "animated")
 	m.SetSize(100, 40)
 	dir := t.TempDir()
 	writeKeyedConfig(t, dir, "work.json")

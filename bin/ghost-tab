@@ -173,9 +173,6 @@ if select_ai_tool_interactive; then
       ensure_command "claude" "curl -fsSL https://claude.ai/install.sh | bash" \
         "Run 'claude' to authenticate before launching Ghost Tab." "Claude Code"
       ;;
-    codex)
-      ensure_command "codex" "brew install --cask codex" "" "Codex CLI"
-      ;;
     opencode)
       ensure_opencode
       ;;
@@ -343,22 +340,6 @@ else
   info "Status line features are only available with Claude Code"
 fi
 
-# Codex CLI status line (always configure if Codex is selected)
-if [ "$SELECTED_AI_TOOL" = "codex" ]; then
-  header "Setting up Codex CLI status line..."
-  mkdir -p ~/.codex
-  # Only add status_line if not already present
-  if [ ! -f ~/.codex/config.toml ] || ! grep -q 'status_line' ~/.codex/config.toml 2>/dev/null; then
-    if ! grep -q '^\[tui\]' ~/.codex/config.toml 2>/dev/null; then
-      printf '\n[tui]\n' >> ~/.codex/config.toml
-    fi
-    printf 'status_line = ["model-with-reasoning", "git-branch", "context-remaining", "used-tokens"]\n' >> ~/.codex/config.toml
-    success "Codex CLI status line configured (model, branch, context, tokens)"
-  else
-    success "Codex CLI status line already configured"
-  fi
-fi
-
 # OpenCode plugin (install/upgrade for idle notification debounce)
 if [ "$SELECTED_AI_TOOL" = "opencode" ]; then
   header "Setting up OpenCode plugin..."
@@ -381,14 +362,11 @@ success "Wrapper script:  ~/.config/ghost-tab/wrapper.sh (symlink)"
 _terminal_pref="$(cat "${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab/terminal" 2>/dev/null)"
 success "Terminal:        $(get_terminal_display_name "$_terminal_pref")"
 _ai_default="$(cat "${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab/ai-tool" 2>/dev/null)"
-success "AI tool:         $(echo "$_ai_default" | sed 's/claude/Claude Code/;s/codex/Codex CLI/;s/opencode/OpenCode/')"
+success "AI tool:         $(echo "$_ai_default" | sed 's/claude/Claude Code/;s/opencode/OpenCode/')"
 success "Projects file:   $PROJECTS_FILE"
 success "Config command:  ghost-tab (in ~/.local/bin/)"
 if [ -f ~/.claude/statusline-wrapper.sh ]; then
   success "Status line:     ~/.claude/statusline-wrapper.sh"
-fi
-if [ -f ~/.codex/config.toml ]; then
-  success "Codex config:    ~/.codex/config.toml"
 fi
 if [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins/ghost-tab.ts" ]; then
   success "OpenCode plugin: ~/.config/opencode/plugins/ghost-tab.ts"
