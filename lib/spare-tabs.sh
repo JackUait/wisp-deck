@@ -25,7 +25,19 @@ spare_tabs_socket() {
 spare_tabs_config() {
   local project="$1" dir="$2" lib="$3" label="$4"
 
-  # Common cell styling for the tab bar.
+  # Powerline half-circle caps that round each pill's ends. Built via octal
+  # printf so they survive bash 3.2 --posix (no \u escapes): U+E0B6 (left) and
+  # U+E0B4 (right).
+  local lcap rcap
+  lcap="$(printf '\356\202\266')"
+  rcap="$(printf '\356\202\264')"
+
+  # Tab bar styling. Each tab is a rounded "pill" built from Powerline
+  # half-circle caps ($lcap body $rcap): a neutral grey pill for inactive tabs,
+  # the orange brand accent (tied to the active pane border) reserved for the
+  # selected tab, and a matching dark pill for the [ + ] add button. The
+  # half-circles and ✕ are Nerd Font glyphs (Ghostty renders them natively).
+  # Palette: 235 bar bg · 238 idle pill · 209 accent · 250/243 idle text/×.
   cat <<EOF
 set -g mouse on
 set -g status-position top
@@ -34,12 +46,12 @@ set -g remain-on-exit on
 set -g base-index 1
 set -g status-justify left
 set -g status-style "bg=colour235"
-set -g status-left ""
-set -g status-right "#[range=user|new]#[fg=colour209,bg=colour236,bold] + #[norange]#[bg=colour235] "
+set -g status-left " "
+set -g status-right "#[range=user|new]#[fg=colour238,bg=colour235]$lcap#[fg=colour209,bg=colour238,bold] + #[nobold]#[norange]#[fg=colour238,bg=colour235]$rcap "
 set -g window-status-separator " "
 set -g @gt_dir "$dir"
-set -g window-status-format "#[range=user|sel:#{window_id}]#[fg=colour245,bg=colour236] #{?#{==:#{window_index},1},$project,#{window_index}} #[range=user|close:#{window_id}]#[fg=colour245,bg=colour236]×#[norange] "
-set -g window-status-current-format "#[range=user|sel:#{window_id}]#[fg=colour16,bg=colour209,bold] #{?#{==:#{window_index},1},$project,#{window_index}} #[range=user|close:#{window_id}]#[fg=colour16,bg=colour209,bold]×#[norange] "
+set -g window-status-format "#[range=user|sel:#{window_id}]#[fg=colour238,bg=colour235]$lcap#[fg=colour250,bg=colour238] #{?#{==:#{window_index},1},$project,#{window_index}} #[norange]#[range=user|close:#{window_id}]#[fg=colour243,bg=colour238]✕ #[norange]#[fg=colour238,bg=colour235]$rcap"
+set -g window-status-current-format "#[range=user|sel:#{window_id}]#[fg=colour209,bg=colour235]$lcap#[fg=colour235,bg=colour209,bold] #{?#{==:#{window_index},1},$project,#{window_index}} #[nobold]#[norange]#[range=user|close:#{window_id}]#[fg=colour237,bg=colour209]✕ #[norange]#[fg=colour209,bg=colour235]$rcap"
 bind -n MouseDown1Status run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""
 bind -n MouseDown1StatusLeft run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""
 bind -n MouseDown1StatusRight run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""
