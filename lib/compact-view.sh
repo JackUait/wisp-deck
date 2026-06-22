@@ -263,7 +263,10 @@ compact_view() {
       local headtext="${ns}${leaf}"
       local pad=$((iw - ${#headtext} - plan_w - ${#stamp}))
       printf " ${dim}%s${reset}${bold}${bright}%s${reset}" "$ns" "$leaf"
-      [ -n "$ahead_behind" ] && printf "%s" "$ahead_behind"
+      # %b (not %s): ahead_behind carries the literal "\033[..." color escapes,
+      # which printf only interprets in a format string / via %b — a plain %s
+      # would leak them as visible "\033[36m↑1\033[0m" text on the branch line.
+      [ -n "$ahead_behind" ] && printf '%b' "$ahead_behind"
       [ -n "$plan" ] && printf " ${dim}·${reset} ${dim}%s${reset}" "$plan"
       if [ -n "$stamp" ] && [ "$pad" -ge 1 ]; then
         printf '%*s' "$pad" ''

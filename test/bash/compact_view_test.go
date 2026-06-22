@@ -488,6 +488,73 @@ func TestCompactView_separator_spans_full_width(t *testing.T) {
 	}
 }
 
+// Regression: the ahead/behind marker must render as a REAL ANSI escape, not the
+// literal text "\033[36m↑1\033[0m". The color vars are stored as the literal
+// string "\033[36m" (backslash-0-3-3), which printf only interprets when it sits
+// in the FORMAT string. `ahead_behind` was printed via `printf "%s" "$ahead_behind"`
+// — a %s ARGUMENT — where printf does NOT process backslash escapes, so the raw
+// "\033[36m↑1\033[0m" leaked onto the branch line. The fix prints it with %b (or
+// embeds it in the format) so the escapes are interpreted.
+func TestCompactView_ahead_marker_renders_real_escape_not_literal(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not available")
+	}
+	root := projectRoot(t)
+	module := filepath.Join(root, "lib", "compact-view.sh")
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	// A bare "remote" the local branch tracks, with HEAD one commit ahead of it.
+	remote := t.TempDir()
+	bare := exec.Command("git", "init", "-q", "--bare", remote)
+	if out, err := bare.CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v\n%s", err, out)
+	}
+	git("init", "-q")
+	git("checkout", "-q", "-b", "master")
+	writeTempFile(t, dir, "a.txt", "one\n")
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "init")
+	git("remote", "add", "origin", remote)
+	git("push", "-q", "-u", "origin", "master")
+	writeTempFile(t, dir, "a.txt", "one\ntwo\n")
+	git("commit", "-q", "-am", "ahead by one") // HEAD now 1 ahead of @{u}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, zsh, "-c", "source "+module+" && compact_view "+dir)
+	env := []string{}
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "TMUX=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=0.1", "TERM=xterm")
+	out, _ := cmd.CombinedOutput()
+	got := string(out)
+
+	// The bug printed the four literal chars backslash-0-3-3. After the fix the
+	// output carries only real ESC (0x1b) bytes.
+	if strings.Contains(got, `\033`) {
+		t.Errorf("ahead marker leaked literal escape text %q:\n%q", `\033`, got)
+	}
+	// And the arrow must be there, preceded by a real cyan escape.
+	if !strings.Contains(got, "\x1b[36m↑") {
+		t.Errorf("expected a real cyan escape before the up-arrow (\\x1b[36m↑):\n%q", got)
+	}
+}
+
 // Regression: the panel must size itself to ITS OWN pane, not the active pane.
 // `tmux display-message -p '#{pane_width}'` with no -t target returns the
 // *active* pane's width. In the real layout the AI pane is active and far wider
