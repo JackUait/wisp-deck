@@ -141,11 +141,13 @@ body_line_for_click() {
 # blocking, so the ledger loop pauses until the user closes it (q/Esc). No-op
 # when tmux is unavailable. The path is shell-quoted so spaces survive.
 #
-# Presentation: a rounded, dim-bordered popup; a calm editorial palette that
-# overrides git's default diff colors (dim the noisy file/index metadata, make
-# hunk headers pop in cyan for quick navigation, keep classic red/green for
-# content); less with mouse-wheel scrolling and a persistent control bar — key
-# hints on the left, live scroll position on the right — rendered in standout.
+# Presentation: a rounded, ORANGE-bordered popup. The redundant header block
+# (diff --git / index / --- / +++ and the @@ hunk line) is stripped — the
+# filename already lives in the popup title — so file content starts at the top.
+# Because -U999999 emits the whole file as a single hunk, dropping everything
+# through the first @@ line removes the header exactly. Content keeps git's
+# classic red/green coloring; less adds mouse-wheel scrolling and a persistent
+# control bar (key hints left, live scroll position right) drawn in standout.
 # Usage: open_diff_popup <project_dir> <file>
 open_diff_popup() {
   local dir="$1" file="$2"
@@ -154,18 +156,19 @@ open_diff_popup() {
   qd=$(printf '%q' "$dir")
   qf=$(printf '%q' "$file")
 
-  # Diff color overrides applied only inside this viewer (the user's own
-  # `git diff` is untouched). dim metadata, cyan hunk headers, soft func ctx.
-  local colors="-c color.diff.meta='dim' -c color.diff.frag='bold cyan' -c color.diff.func='dim cyan' -c color.diff.old='red' -c color.diff.new='green'"
+  # Print every line only AFTER the first @@ hunk header (which the @@ rule then
+  # marks); the header line itself is not printed. /@@/ matches even when the
+  # line is wrapped in ANSI color escapes.
+  local strip="awk 'f;/@@/{f=1}'"
 
   # less control bar. `%lb`/`%L` = bottom/total line, `%pb` = percent into file,
   # `\%` = a literal percent. less draws the short prompt in standout video, so
   # this reads as a status bar without needing -m/-M.
   local bar=' ↑↓/jk scroll · g/G top·end · / search · n/N next · q quit    %lb/%L · %pb\% '
 
-  tmux display-popup -E -w 90% -h 90% -b rounded -S 'fg=colour244' \
+  tmux display-popup -E -w 90% -h 90% -b rounded -S 'fg=colour208' \
     -T " git diff: ${file} " \
-    "git -C ${qd} ${colors} --no-pager diff HEAD -U999999 --color=always -- ${qf} | less -R --mouse --wheel-lines=3 -P'${bar}'"
+    "git -C ${qd} --no-pager diff HEAD -U999999 --color=always -- ${qf} | ${strip} | less -R --mouse --wheel-lines=3 -P'${bar}'"
 }
 
 # enter_ui_mode prepares the live pane's terminal for the ledger UI: the

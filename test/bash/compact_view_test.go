@@ -426,10 +426,11 @@ func TestOpenDiffPopup_quotes_path_with_spaces(t *testing.T) {
 	}
 }
 
-// The diff popup should look like a polished viewer, not a bare pager: a rounded,
-// styled tmux border; a calm color palette overriding git's default diff colors;
-// mouse-wheel scrolling inside less; and a persistent control bar (key hints +
-// scroll position) at the bottom.
+// The diff popup should look like a polished viewer, not a bare pager: a rounded
+// ORANGE border; the redundant header block (diff --git / index / --- / +++ /
+// the hunk @@ line) stripped so content starts at the top (the filename already
+// lives in the popup title); mouse-wheel scrolling inside less; and a persistent
+// control bar (key hints + scroll position) at the bottom.
 func TestOpenDiffPopup_styled_controls_and_scroll(t *testing.T) {
 	dir := t.TempDir()
 	binDir := mockCommand(t, dir, "tmux", `echo "$@"`)
@@ -445,14 +446,14 @@ func TestOpenDiffPopup_styled_controls_and_scroll(t *testing.T) {
 	}
 	got := string(out)
 
-	// Rounded, styled popup frame.
+	// Rounded popup frame with an ORANGE border.
 	assertContains(t, got, "rounded")
 	assertContains(t, got, "-S ")
+	assertContains(t, got, "colour208") // 256-color orange
 
-	// Calm editorial palette: git diff color overrides for the noisy metadata
-	// and hunk-header lines.
-	assertContains(t, got, "color.diff.frag")
-	assertContains(t, got, "color.diff.meta")
+	// Strip the redundant diff header: drop everything through the first @@.
+	assertContains(t, got, "awk")
+	assertContains(t, got, "/@@/")
 
 	// Mouse-wheel scroll inside the popup.
 	assertContains(t, got, "--mouse")
@@ -464,6 +465,34 @@ func TestOpenDiffPopup_styled_controls_and_scroll(t *testing.T) {
 	assertContains(t, got, "quit")
 	assertContains(t, got, "search")
 	assertContains(t, got, `%pb`) // percent-into-file escape -> live position
+}
+
+// The header filter must drop the diff --git / index / --- / +++ metadata AND
+// the @@ hunk header (matching even when the @@ line is wrapped in ANSI color),
+// leaving only the file content (context + added/removed lines).
+func TestOpenDiffPopup_strips_diff_header_lines(t *testing.T) {
+	dir := t.TempDir()
+	sample := "diff --git a/x b/x\n" +
+		"index 111aaa..222bbb 100644\n" +
+		"--- a/x\n" +
+		"+++ b/x\n" +
+		"\x1b[36m@@ -1,2 +1,2 @@\x1b[m\n" +
+		" context line\n" +
+		"-removed\n" +
+		"+added\n"
+	path := writeTempFile(t, dir, "diff.txt", sample)
+	out, code := runBashSnippet(t, "awk 'f;/@@/{f=1}' "+path, nil)
+	assertExitCode(t, code, 0)
+	// metadata + hunk header gone
+	assertNotContains(t, out, "diff --git")
+	assertNotContains(t, out, "index 111aaa")
+	assertNotContains(t, out, "--- a/x")
+	assertNotContains(t, out, "+++ b/x")
+	assertNotContains(t, out, "@@ -1,2")
+	// content preserved
+	assertContains(t, out, "context line")
+	assertContains(t, out, "-removed")
+	assertContains(t, out, "+added")
 }
 
 // enter_ui_mode must also enable any-motion mouse tracking (\033[?1003h) so the
