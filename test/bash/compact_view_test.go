@@ -487,3 +487,90 @@ func TestCompactView_separator_spans_full_width(t *testing.T) {
 		t.Errorf("separator should span the pane as a full-width rule, got %d '─' chars:\n%q", n, got)
 	}
 }
+
+// Regression: the panel must size itself to ITS OWN pane, not the active pane.
+// `tmux display-message -p '#{pane_width}'` with no -t target returns the
+// *active* pane's width. In the real layout the AI pane is active and far wider
+// than the (left, inactive) compact-view pane, so the panel built a heading and
+// separator sized for the wide pane that then WRAPPED across several rows in the
+// narrow pane — a wrapped heading and a doubled separator. The fix targets
+// "$TMUX_PANE". Asserts the separator fits on a single row of the narrow pane.
+func TestCompactView_sizes_to_own_pane_not_active_pane(t *testing.T) {
+	tmuxBin, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux not available")
+	}
+	root := projectRoot(t)
+	module := filepath.Join(root, "lib", "compact-view.sh")
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	writeTempFile(t, dir, "a.txt", "one\n")
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "init") // clean tree -> "no changes"
+
+	session := "gtcv_test"
+	tmux := func(args ...string) (string, error) {
+		t.Helper()
+		c := exec.Command(tmuxBin, args...)
+		// A standalone server, isolated from any developer tmux.
+		c.Env = append(os.Environ(), "TMUX=")
+		out, err := c.CombinedOutput()
+		return string(out), err
+	}
+	_, _ = tmux("kill-session", "-t", session)
+	t.Cleanup(func() { _, _ = tmux("kill-session", "-t", session) })
+
+	// Pane 0 (left) runs the panel; it will be the NARROW, INACTIVE pane.
+	pane0Cmd := "source " + module + " && GHOST_TAB_PLAN='Standard Claude' compact_view " + dir
+	if out, err := tmux("new-session", "-d", "-s", session, "-x", "160", "-y", "24",
+		pane0Cmd); err != nil {
+		t.Fatalf("new-session: %v\n%s", err, out)
+	}
+	// Split off a WIDE pane on the right and focus it, mirroring ghost-tab's
+	// layout where the AI pane is active and wider than the compact view.
+	widePane, err := tmux("split-window", "-h", "-t", session, "-l", "120",
+		"-P", "-F", "#{pane_id}", "sleep", "30")
+	if err != nil {
+		t.Fatalf("split-window: %v\n%s", err, widePane)
+	}
+	if out, err := tmux("select-pane", "-t", strings.TrimSpace(widePane)); err != nil {
+		t.Fatalf("select-pane: %v\n%s", err, out)
+	}
+
+	// Let the panel render at least one refresh tick.
+	time.Sleep(1500 * time.Millisecond)
+
+	cap, err := tmux("capture-pane", "-t", session+".0", "-p")
+	if err != nil {
+		t.Fatalf("capture-pane: %v\n%s", err, cap)
+	}
+
+	// Confirm pane 0 really is the narrow one (sanity for the test setup).
+	wOut, _ := tmux("display-message", "-p", "-t", session+".0", "#{pane_width}")
+	paneW := strings.TrimSpace(wOut)
+
+	// Count rows that are a horizontal rule (a long run of box-drawing dashes).
+	// One pinned separator => exactly one such row. The bug sized the rule for
+	// the wide active pane, so it wrapped into several full-dash rows here.
+	ruleRows := 0
+	for _, line := range strings.Split(cap, "\n") {
+		if strings.Count(line, "─") >= 10 {
+			ruleRows++
+		}
+	}
+	if ruleRows != 1 {
+		t.Errorf("expected exactly 1 separator row in the narrow (pane_width=%s) pane, got %d:\n%s",
+			paneW, ruleRows, cap)
+	}
+}

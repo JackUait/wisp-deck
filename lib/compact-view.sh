@@ -185,8 +185,12 @@ compact_view() {
     # Capture pane width/height outside subshell.
     # tput may return wrong values in tmux; query tmux directly.
     if [ -n "${TMUX:-}" ] && command -v tmux &>/dev/null; then
-      w=$(tmux display-message -p '#{pane_width}' 2>/dev/null || tput cols 2>/dev/null || echo 80)
-      h=$(tmux display-message -p '#{pane_height}' 2>/dev/null || tput lines 2>/dev/null || echo 24)
+      # Target THIS pane ($TMUX_PANE). Without -t, display-message reports the
+      # *active* pane's size — and in ghost-tab the AI pane is active and far
+      # wider than this (left) one, so the heading/separator got sized for the
+      # wide pane and wrapped into extra rows here.
+      w=$(tmux display-message -p -t "${TMUX_PANE:-}" '#{pane_width}' 2>/dev/null || tput cols 2>/dev/null || echo 80)
+      h=$(tmux display-message -p -t "${TMUX_PANE:-}" '#{pane_height}' 2>/dev/null || tput lines 2>/dev/null || echo 24)
     else
       w=$(tput cols 2>/dev/null || echo 80)
       h=$(tput lines 2>/dev/null || echo 24)
