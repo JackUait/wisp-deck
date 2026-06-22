@@ -175,11 +175,13 @@ exit_ui_mode() {
 # highlight_body_line wraps the Nth (1-based) line of <body> in an SGR <style>
 # (e.g. a background colour) to show it as the hovered file row. File rows carry
 # their own \033[0m resets between the +/- columns and the name, so the style is
-# re-asserted after every internal reset to keep spanning the whole row. Other
+# re-asserted after every internal reset to keep spanning the whole row. When
+# <width> > 0 the row is padded with spaces (inside the highlight) so the bar
+# spans the full pane width — left edge to right edge — not just the text. Other
 # lines pass through untouched; an out-of-range line index returns the body as-is.
-# Usage: highlight_body_line <body> <line> <style>
+# Usage: highlight_body_line <body> <line> <style> [width]
 highlight_body_line() {
-  local body="$1" ln="$2" style="$3"
+  local body="$1" ln="$2" style="$3" width="${4:-0}"
   if [ "$ln" -lt 1 ]; then printf '%s' "$body"; return; fi
   # Build the substitution strings as variables holding REAL ESC bytes. zsh (the
   # pane's shell) does NOT interpret a $'...' literal inside the replacement half
@@ -189,12 +191,22 @@ highlight_body_line() {
   local reset="${esc}[0m"
   local on="${esc}[${style}m"
   local reassert="${reset}${on}"   # each internal reset becomes reset+re-style
-  local i=0 row out=""
+  local i=0 row out="" visible pad padlen
   while IFS= read -r row; do
     i=$((i + 1))
     if [ "$i" -eq "$ln" ]; then
+      pad=""
+      if [ "$width" -gt 0 ]; then
+        # Visible width = the row with its ANSI escapes stripped. The +/- ledger
+        # and names are single-column glyphs (the "−" sign included), so a
+        # character count matches the rendered columns.
+        visible=$(printf '%s' "$row" | sed $'s/\033\\[[0-9;]*m//g')
+        padlen=$((width - ${#visible}))
+        [ "$padlen" -lt 0 ] && padlen=0
+        [ "$padlen" -gt 0 ] && pad=$(printf '%*s' "$padlen" '')
+      fi
       row="${row//${esc}\[0m/${reassert}}"
-      out="${out}${on}${row}${reset}"$'\n'
+      out="${out}${on}${row}${pad}${reset}"$'\n'
     else
       out="${out}${row}"$'\n'
     fi
@@ -462,7 +474,7 @@ compact_view() {
     # Redraw only when something visible changed (need_draw). Hover motion that
     # lands on the same row leaves need_draw=0, so the screen doesn't flicker.
     if [ "$need_draw" = 1 ]; then
-      draw_body=$(highlight_body_line "$body" "$hover_line" "$hover_style")
+      draw_body=$(highlight_body_line "$body" "$hover_line" "$hover_style" "$w")
       printf '\033[2J\033[H'
       printf '%s\n' "$header"
       if [ "$body_total" -le "$body_rows" ]; then

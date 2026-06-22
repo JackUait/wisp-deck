@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -522,6 +523,46 @@ func TestHighlightBodyLine_leaves_other_lines_untouched(t *testing.T) {
 	lines := strings.Split(out, "\n")
 	if lines[0] != "alpha" || lines[2] != "charlie" {
 		t.Errorf("non-target lines must be unchanged, got %q", lines)
+	}
+}
+
+var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+func highlightBodyLineW(t *testing.T, body, line, style, width string) string {
+	t.Helper()
+	root := projectRoot(t)
+	module := filepath.Join(root, "lib", "compact-view.sh")
+	script := `source "$0" && highlight_body_line "$1" "$2" "$3" "$4"`
+	cmd := exec.Command("bash", "-c", script, module, body, line, style, width)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("highlight_body_line: %v\n%s", err, out)
+	}
+	return string(out)
+}
+
+// With a width argument, the hovered row must be padded (inside the highlight)
+// so the background bar spans the full pane width — from the very left to the
+// very right — instead of stopping at the end of the filename.
+func TestHighlightBodyLine_pads_highlighted_line_to_full_width(t *testing.T) {
+	body := "ab" // visible width 2
+	out := highlightBodyLineW(t, body, "1", "48;5;238", "10")
+	visible := ansiRe.ReplaceAllString(out, "")
+	if got := len([]rune(visible)); got != 10 {
+		t.Errorf("padded visible width = %d, want 10: %q", got, visible)
+	}
+	// The padding spaces must sit under the background (before the final reset).
+	if !strings.HasSuffix(out, "        \x1b[0m") { // 8 trailing spaces + reset
+		t.Errorf("expected 8 trailing padding spaces before reset, got %q", out)
+	}
+}
+
+func TestHighlightBodyLine_no_width_does_not_pad(t *testing.T) {
+	body := "ab"
+	out := highlightBodyLineW(t, body, "1", "48;5;238", "0")
+	visible := ansiRe.ReplaceAllString(out, "")
+	if visible != "ab" {
+		t.Errorf("width 0 should not pad, got visible %q", visible)
 	}
 }
 
