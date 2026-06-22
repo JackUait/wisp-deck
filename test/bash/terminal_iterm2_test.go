@@ -86,6 +86,41 @@ func TestIterm2Adapter_setup_config_creates_json_file(t *testing.T) {
 	}
 }
 
+func TestIterm2Adapter_setup_config_sets_nerd_font_for_non_ascii(t *testing.T) {
+	tmpDir := t.TempDir()
+	profilePath := filepath.Join(tmpDir, "DynamicProfiles", "ghost-tab.json")
+	wrapperPath := "/test/wrapper.sh"
+
+	binDir, _ := mockDefaultsCommand(t, tmpDir, "mock-guid")
+	env := buildEnv(t, []string{binDir}, "HOME="+tmpDir)
+
+	snippet := iterm2AdapterSnippet(t,
+		fmt.Sprintf(`terminal_setup_config %q %q`, profilePath, wrapperPath))
+	_, code := runBashSnippet(t, snippet, env)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatalf("failed to read profile JSON: %v", err)
+	}
+	var profile map[string]interface{}
+	if err := json.Unmarshal(data, &profile); err != nil {
+		t.Fatalf("invalid JSON: %v\ncontent: %s", err, string(data))
+	}
+	profiles := profile["Profiles"].([]interface{})
+	p := profiles[0].(map[string]interface{})
+
+	// iTerm2 has no automatic fallback for Nerd Font (PUA) glyphs, so the
+	// statusline icons render only when a Nerd Font is set for non-ASCII text.
+	if use, ok := p["Use Non-ASCII Font"].(bool); !ok || !use {
+		t.Errorf("expected \"Use Non-ASCII Font\": true, got %v", p["Use Non-ASCII Font"])
+	}
+	font, _ := p["Non Ascii Font"].(string)
+	if !strings.Contains(font, "SymbolsNerdFontMono") {
+		t.Errorf("expected non-ASCII font to be a Symbols Nerd Font, got %q", font)
+	}
+}
+
 func TestIterm2Adapter_setup_config_json_has_correct_profile(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilePath := filepath.Join(tmpDir, "DynamicProfiles", "ghost-tab.json")

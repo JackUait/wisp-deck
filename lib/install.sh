@@ -174,6 +174,28 @@ ensure_cask() {
   fi
 }
 
+# Install the Symbols Nerd Font so the statusline metric icons (context/memory/
+# CPU glyphs) render in terminals that don't ship Nerd Font fallback. Ghostty and
+# WezTerm bundle their own symbols; kitty (via symbol_map) and iTerm2 (via the
+# non-ASCII font) need this font installed on the system. Non-fatal: a failure
+# only degrades the icons to tofu, so setup continues. Respects FONTS_DIR for
+# testing (defaults to ~/Library/Fonts, where Homebrew installs font casks).
+ensure_nerd_font() {
+  local fonts_dir="${FONTS_DIR:-$HOME/Library/Fonts}"
+  if ls "$fonts_dir"/*SymbolsNerdFont* >/dev/null 2>&1; then
+    success "Symbols Nerd Font found"
+    return 0
+  fi
+
+  info "Installing Symbols Nerd Font..."
+  if brew install --cask font-symbols-only-nerd-font; then
+    success "Symbols Nerd Font installed"
+  else
+    warn "Failed to install Symbols Nerd Font — statusline icons may show as boxes in kitty/iTerm2"
+  fi
+  return 0
+}
+
 # Ensure OpenCode is available via npx, removing any brew-installed version first.
 ensure_opencode() {
   # Remove brew-installed opencode if present

@@ -391,6 +391,61 @@ func TestEnsureCask_exits_nonzero_when_brew_fails(t *testing.T) {
 }
 
 // ============================================================
+// ensure_nerd_font tests
+// ============================================================
+
+func TestEnsureNerdFont_skips_when_font_already_installed(t *testing.T) {
+	tmpDir := t.TempDir()
+	fontsDir := filepath.Join(tmpDir, "Fonts")
+	os.MkdirAll(fontsDir, 0755)
+	// A Symbols Nerd Font file is already present.
+	writeTempFile(t, fontsDir, "SymbolsNerdFontMono-Regular.ttf", "x")
+
+	// brew must NOT be invoked; if it is, fail loudly.
+	binDir := mockCommand(t, tmpDir, "brew", `echo "brew should not run" >&2; exit 3`)
+	env := buildEnv(t, []string{binDir})
+
+	snippet := installSnippet(t, fmt.Sprintf(`FONTS_DIR=%q ensure_nerd_font`, fontsDir))
+	out, code := runBashSnippet(t, snippet, env)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "Symbols Nerd Font found")
+}
+
+func TestEnsureNerdFont_installs_via_brew_when_missing(t *testing.T) {
+	tmpDir := t.TempDir()
+	fontsDir := filepath.Join(tmpDir, "Fonts")
+	os.MkdirAll(fontsDir, 0755)
+	logFile := filepath.Join(tmpDir, "brew.log")
+	binDir := mockCommand(t, tmpDir, "brew", fmt.Sprintf(`echo "$@" >> %q`, logFile))
+	env := buildEnv(t, []string{binDir})
+
+	snippet := installSnippet(t, fmt.Sprintf(`FONTS_DIR=%q ensure_nerd_font`, fontsDir))
+	out, code := runBashSnippet(t, snippet, env)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "Symbols Nerd Font installed")
+
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("failed to read brew log: %v", err)
+	}
+	assertContains(t, string(data), "install --cask font-symbols-only-nerd-font")
+}
+
+func TestEnsureNerdFont_gracefully_warns_when_brew_fails(t *testing.T) {
+	tmpDir := t.TempDir()
+	fontsDir := filepath.Join(tmpDir, "Fonts")
+	os.MkdirAll(fontsDir, 0755)
+	binDir := mockCommand(t, tmpDir, "brew", `exit 1`)
+	env := buildEnv(t, []string{binDir})
+
+	snippet := installSnippet(t, fmt.Sprintf(`FONTS_DIR=%q ensure_nerd_font`, fontsDir))
+	out, code := runBashSnippet(t, snippet, env)
+	// Non-fatal: setup must continue even if the font fails to install.
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "Failed to install Symbols Nerd Font")
+}
+
+// ============================================================
 // ensure_opencode tests
 // ============================================================
 

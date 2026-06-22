@@ -335,6 +335,9 @@ if [ "$SELECTED_AI_TOOL" = "claude" ]; then
   header "Setting up Claude Code status line..."
   CLAUDE_SETTINGS="$HOME/.claude/settings.json"
   setup_statusline "$SHARE_DIR" "$CLAUDE_SETTINGS" "$HOME"
+  # The status line uses Nerd Font glyphs for the context/memory/CPU metrics;
+  # install the Symbols Nerd Font so they render in kitty and iTerm2.
+  ensure_nerd_font
 else
   header "Skipping Claude Code status line..."
   info "Status line features are only available with Claude Code"

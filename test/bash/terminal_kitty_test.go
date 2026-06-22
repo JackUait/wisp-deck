@@ -69,6 +69,69 @@ func TestKittyAdapter_setup_config_replaces_existing_shell(t *testing.T) {
 	assertNotContains(t, content, "/old/path")
 }
 
+func TestKittyAdapter_setup_config_adds_nerd_font_symbol_map(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "kitty.conf")
+	wrapperPath := filepath.Join(tmpDir, "wrapper.sh")
+
+	snippet := kittyAdapterSnippet(t,
+		fmt.Sprintf(`terminal_setup_config %q %q`, configFile, wrapperPath))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	content := string(data)
+	// A symbol_map line maps the Nerd Font glyph ranges to the installed font.
+	assertContains(t, content, "symbol_map ")
+	assertContains(t, content, "Symbols Nerd Font Mono")
+	// Must cover the three statusline icons: brain U+F09D1, memory U+F035B
+	// (Material Design Icons range) and cpu U+F4BC (Octicons range).
+	assertContains(t, content, "U+F0001-U+F1AF0")
+	assertContains(t, content, "U+F400-U+F532")
+}
+
+func TestKittyAdapter_setup_config_symbol_map_is_idempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "kitty.conf")
+	wrapperPath := filepath.Join(tmpDir, "wrapper.sh")
+
+	body := fmt.Sprintf(`terminal_setup_config %q %q && terminal_setup_config %q %q`,
+		configFile, wrapperPath, configFile, wrapperPath)
+	snippet := kittyAdapterSnippet(t, body)
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	if n := strings.Count(string(data), "symbol_map "); n != 1 {
+		t.Errorf("expected exactly one symbol_map line after two setups, got %d:\n%s", n, string(data))
+	}
+}
+
+func TestKittyAdapter_cleanup_config_removes_symbol_map(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := writeTempFile(t, tmpDir, "kitty.conf",
+		"font_size 14\nshell /Users/u/.config/ghost-tab/wrapper.sh\nsymbol_map U+F0001-U+F1AF0,U+F400-U+F532 Symbols Nerd Font Mono\n")
+
+	snippet := kittyAdapterSnippet(t,
+		fmt.Sprintf(`terminal_cleanup_config %q`, configFile))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	content := string(data)
+	assertContains(t, content, "font_size 14")
+	assertNotContains(t, content, "symbol_map ")
+}
+
 func TestKittyAdapter_install_calls_ensure_cask(t *testing.T) {
 	tmpDir := t.TempDir()
 	// Create fake app so ensure_cask finds it
