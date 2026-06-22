@@ -154,13 +154,14 @@ open_diff_popup() {
 # enter_ui_mode prepares the live pane's terminal for the ledger UI: the
 # ALTERNATE screen buffer (\033[?1049h) — which has NO scrollback, so the mouse
 # wheel can't scroll past the rendered viewport into a pile of stale refresh
-# frames — plus a hidden cursor and SGR mouse-wheel reporting. Emits nothing
-# unless $1 is "1" (an interactive tty); the Go harness pipes stdin and must
-# stay quiet so its output assertions hold.
+# frames — plus a hidden cursor and SGR mouse reporting. ?1003h is any-motion
+# tracking, so hover (no-button) motion reports arrive and the row under the
+# cursor can be highlighted. Emits nothing unless $1 is "1" (an interactive
+# tty); the Go harness pipes stdin and must stay quiet so its assertions hold.
 # Usage: enter_ui_mode <interactive>
 enter_ui_mode() {
   [ "$1" = 1 ] || return 0
-  printf '\033[?1049h\033[?25l\033[?1000h\033[?1006h'
+  printf '\033[?1049h\033[?25l\033[?1000h\033[?1003h\033[?1006h'
 }
 
 # exit_ui_mode reverses enter_ui_mode: disable mouse reporting, show the cursor,
@@ -168,7 +169,37 @@ enter_ui_mode() {
 # Usage: exit_ui_mode <interactive>
 exit_ui_mode() {
   [ "$1" = 1 ] || return 0
-  printf '\033[?1000l\033[?1006l\033[?25h\033[?1049l\033[0m'
+  printf '\033[?1003l\033[?1000l\033[?1006l\033[?25h\033[?1049l\033[0m'
+}
+
+# highlight_body_line wraps the Nth (1-based) line of <body> in an SGR <style>
+# (e.g. a background colour) to show it as the hovered file row. File rows carry
+# their own \033[0m resets between the +/- columns and the name, so the style is
+# re-asserted after every internal reset to keep spanning the whole row. Other
+# lines pass through untouched; an out-of-range line index returns the body as-is.
+# Usage: highlight_body_line <body> <line> <style>
+highlight_body_line() {
+  local body="$1" ln="$2" style="$3"
+  if [ "$ln" -lt 1 ]; then printf '%s' "$body"; return; fi
+  # Build the substitution strings as variables holding REAL ESC bytes. zsh (the
+  # pane's shell) does NOT interpret a $'...' literal inside the replacement half
+  # of ${var//pat/repl} — only a variable's value is used verbatim — so a $'\033'
+  # written inline there would leak as literal "$'\033'" text on the hovered row.
+  local esc=$'\033'
+  local reset="${esc}[0m"
+  local on="${esc}[${style}m"
+  local reassert="${reset}${on}"   # each internal reset becomes reset+re-style
+  local i=0 row out=""
+  while IFS= read -r row; do
+    i=$((i + 1))
+    if [ "$i" -eq "$ln" ]; then
+      row="${row//${esc}\[0m/${reassert}}"
+      out="${out}${on}${row}${reset}"$'\n'
+    else
+      out="${out}${row}"$'\n'
+    fi
+  done <<< "$body"
+  printf '%s' "${out%$'\n'}"   # drop the single trailing newline the loop added
 }
 
 compact_view() {
@@ -260,11 +291,15 @@ compact_view() {
   # under zsh, where `local NAME` (no assignment) on an already-set variable is
   # a *display* command that prints "NAME=value" to stdout. Re-declaring `local
   # w` each iteration flashed "w=141" on screen until the next refresh.
-  local w h content header body body_total avail mbtn
+  local w h content header body body_total avail mbtn draw_body
   local staged unstaged body_map
-  local mterm mrest mrow bl cpath
+  local mterm mrest mrow bl cpath hv prev_hover
   local scroll=0
   local need_build=1
+  local need_draw=1
+  local hover_line=0
+  # SGR background for the hovered file row (a subtle selection bar).
+  local hover_style='48;5;238'
   local interval="${COMPACT_VIEW_INTERVAL:-2}"
   while true; do
     [ "$_quit" = 1 ] && break   # Ctrl-C / TERM -> leave the loop, then clean up
@@ -415,27 +450,47 @@ compact_view() {
     fi
     scroll=$(clamp_scroll "$scroll" "$body_total" "$avail")
 
-    printf '\033[2J\033[H'
-    printf '%s\n' "$header"
-    if [ "$body_total" -le "$body_rows" ]; then
-      printf '%s' "$body"
-    else
-      printf '%s\n' "$body" | viewport_slice "$scroll" "$avail"
-      scroll_status "$scroll" "$avail" "$body_total"
+    # Keep the hover highlight only on an actual file row: drop it if the
+    # changeset refreshed out from under it (line gone or no longer a file).
+    if [ "$hover_line" -gt 0 ]; then
+      if [ "$hover_line" -gt "$body_total" ] || \
+         [ -z "$(printf '%s\n' "$body_map" | sed -n "${hover_line}p")" ]; then
+        hover_line=0
+      fi
+    fi
+
+    # Redraw only when something visible changed (need_draw). Hover motion that
+    # lands on the same row leaves need_draw=0, so the screen doesn't flicker.
+    if [ "$need_draw" = 1 ]; then
+      draw_body=$(highlight_body_line "$body" "$hover_line" "$hover_style")
+      printf '\033[2J\033[H'
+      printf '%s\n' "$header"
+      if [ "$body_total" -le "$body_rows" ]; then
+        printf '%s' "$draw_body"
+      else
+        printf '%s\n' "$draw_body" | viewport_slice "$scroll" "$avail"
+        scroll_status "$scroll" "$avail" "$body_total"
+      fi
+      need_draw=0
     fi
 
     # Idle: just refresh on a timer. Interactive: refresh OR react to a key.
     if [ "$interactive" != 1 ]; then
       sleep "$interval"
       need_build=1
+      need_draw=1
       continue
     fi
 
     if ! read_key "$interval"; then
       need_build=1   # timed out -> refresh the ledger
+      need_draw=1
       continue
     fi
     need_build=0     # a key arrived -> re-slice cached content, stay snappy
+    prev_hover="$hover_line"
+    hover_line=0     # most keys clear the hover; mouse motion (below) re-sets it
+    need_draw=1
     case "$KEY" in
       k) scroll=$((scroll - 1)) ;;
       j) scroll=$((scroll + 1)) ;;
@@ -470,6 +525,21 @@ compact_view() {
               case "${mbtn%%;*}" in
                 64) scroll=$((scroll - 3)) ;;
                 65) scroll=$((scroll + 3)) ;;
+                32|33|34|35)
+                  # Mouse motion (hover/drag, SGR adds 32 to the button code):
+                  # highlight the file row under the cursor. Only real file rows
+                  # highlight; if the hovered row didn't change, skip the redraw
+                  # so the screen doesn't flicker on every motion event.
+                  mrest="${mbtn#*;}"; mrow="${mrest#*;}"
+                  bl=$(body_line_for_click "$mrow" "$scroll" "$avail" "$body_total")
+                  hv=0
+                  if [ "$bl" != 0 ] && \
+                     [ -n "$(printf '%s\n' "$body_map" | sed -n "${bl}p")" ]; then
+                    hv="$bl"
+                  fi
+                  hover_line="$hv"
+                  [ "$hv" = "$prev_hover" ] && need_draw=0
+                  ;;
                 0)
                   # Left-click: map the report's row (the 3rd ";"-field of
                   # "btn;col;row") to a body line, then to a path, and float the

@@ -425,6 +425,116 @@ func TestOpenDiffPopup_quotes_path_with_spaces(t *testing.T) {
 	}
 }
 
+// enter_ui_mode must also enable any-motion mouse tracking (\033[?1003h) so the
+// ledger receives hover (no-button) motion reports and can highlight the file
+// row under the cursor; exit_ui_mode must turn it back off (\033[?1003l).
+
+func TestEnterUiMode_enables_motion_tracking_for_hover(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "enter_ui_mode",
+		[]string{"1"}, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "\x1b[?1003h") // any-motion tracking -> hover events
+}
+
+func TestExitUiMode_disables_motion_tracking(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "exit_ui_mode",
+		[]string{"1"}, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "\x1b[?1003l")
+}
+
+// highlight_body_line wraps the Nth (1-based) line of a body in a hover style,
+// re-asserting that style after every internal ANSI reset so it spans the whole
+// row (the file rows carry their own \033[0m resets between the +/- columns and
+// the name). Other lines pass through untouched; an out-of-range line index
+// leaves the body unchanged.
+
+func highlightBodyLine(t *testing.T, body, line, style string) string {
+	t.Helper()
+	root := projectRoot(t)
+	module := filepath.Join(root, "lib", "compact-view.sh")
+	script := `source "$0" && highlight_body_line "$1" "$2" "$3"`
+	cmd := exec.Command("bash", "-c", script, module, body, line, style)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("highlight_body_line: %v\n%s", err, out)
+	}
+	return string(out)
+}
+
+func TestHighlightBodyLine_styles_target_line(t *testing.T) {
+	body := "plain\n\x1b[32m+2\x1b[0m hi\nlast"
+	out := highlightBodyLine(t, body, "2", "7")
+	lines := strings.Split(out, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines, got %d: %q", len(lines), lines)
+	}
+	if !strings.HasPrefix(lines[1], "\x1b[7m") {
+		t.Errorf("target line should start with the hover style \\x1b[7m, got %q", lines[1])
+	}
+	if !strings.HasSuffix(lines[1], "\x1b[0m") {
+		t.Errorf("target line should end with a reset, got %q", lines[1])
+	}
+}
+
+func TestHighlightBodyLine_reasserts_internal_resets(t *testing.T) {
+	// The internal \x1b[0m must be followed by a re-assertion of the style so the
+	// highlight keeps spanning the rest of the row.
+	body := "\x1b[32m+2\x1b[0m hi"
+	out := highlightBodyLine(t, body, "1", "7")
+	if !strings.Contains(out, "\x1b[0m\x1b[7m") {
+		t.Errorf("internal reset should be followed by re-asserted style, got %q", out)
+	}
+}
+
+// Regression: the re-assertion must emit REAL escape bytes, not the literal
+// text "$'\033'". zsh (the pane's shell) does NOT interpret a $'...' literal
+// inside the replacement half of ${var//pat/repl}; bash does. So the function
+// must build the replacement from a variable holding real ESC bytes, or the row
+// shows raw "$'\033'[0m" garbage when hovered. Run under BOTH shells.
+func TestHighlightBodyLine_emits_real_escapes_not_literal_under_both_shells(t *testing.T) {
+	body := "\x1b[32m+2\x1b[0m hi"
+	for _, sh := range []string{"bash", "zsh"} {
+		if _, err := exec.LookPath(sh); err != nil {
+			t.Logf("%s not available, skipping", sh)
+			continue
+		}
+		root := projectRoot(t)
+		module := filepath.Join(root, "lib", "compact-view.sh")
+		script := `source "$0" && highlight_body_line "$1" "$2" "$3"`
+		cmd := exec.Command(sh, "-c", script, module, body, "1", "7")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("[%s] highlight_body_line: %v\n%s", sh, err, out)
+		}
+		if strings.Contains(string(out), `$'`) || strings.Contains(string(out), `\033`) {
+			t.Errorf("[%s] highlight leaked a literal escape token, got %q", sh, string(out))
+		}
+		if !strings.Contains(string(out), "\x1b[0m\x1b[7m") {
+			t.Errorf("[%s] expected real re-asserted escapes, got %q", sh, string(out))
+		}
+	}
+}
+
+func TestHighlightBodyLine_leaves_other_lines_untouched(t *testing.T) {
+	body := "alpha\nbravo\ncharlie"
+	out := highlightBodyLine(t, body, "2", "7")
+	lines := strings.Split(out, "\n")
+	if lines[0] != "alpha" || lines[2] != "charlie" {
+		t.Errorf("non-target lines must be unchanged, got %q", lines)
+	}
+}
+
+func TestHighlightBodyLine_out_of_range_unchanged(t *testing.T) {
+	body := "alpha\nbravo"
+	for _, ln := range []string{"0", "99"} {
+		out := highlightBodyLine(t, body, ln, "7")
+		if strings.Contains(out, "\x1b[7m") {
+			t.Errorf("line %s out of range should not style anything, got %q", ln, out)
+		}
+	}
+}
+
 // The pinned header must state the number of changed files (not just the net
 // +/- line stamp), so the user always sees the changeset size at a glance.
 func TestCompactView_header_shows_changed_file_count(t *testing.T) {
