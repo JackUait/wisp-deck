@@ -61,12 +61,16 @@ while [ -n "$pid" ] && [ "$pid" != "1" ]; do
   pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
 done
 
-line=$(printf '%s | %s' "$git_info" "$context_pct")
+# Nerd Font glyphs prefix each metric so the three numbers — context %, memory,
+# and CPU — are distinguishable at a glance (two of them are bare percentages).
+# Literal UTF-8 is embedded directly: the wrapper runs under macOS bash 3.2
+# (--posix), whose printf has no \u/\U escape support.
+line=$(printf '%s | \033[01;33m󰧑\033[00m %s' "$git_info" "$context_pct")
 if [ -n "$mem_label" ]; then
-  line="$line$(printf ' | \033[01;35m%s\033[00m' "$mem_label")"
+  line="$line$(printf ' | \033[01;35m󰍛 %s\033[00m' "$mem_label")"
 fi
 if [ -n "$cpu_label" ]; then
-  line="$line$(printf ' | \033[01;33m%s\033[00m' "$cpu_label")"
+  line="$line$(printf ' | \033[01;33m %s\033[00m' "$cpu_label")"
 fi
 if [ -n "$model_name" ]; then
   line="$line$(printf ' | \033[01;34m%s\033[00m' "$model_name")"

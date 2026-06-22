@@ -266,6 +266,67 @@ func TestStatusline_statusline_command_omits_branch_name(t *testing.T) {
 	assertNotContains(t, out, branchName)
 }
 
+// Nerd Font glyphs the wrapper prefixes onto each metric so context %, memory,
+// and CPU are distinguishable at a glance. Kept in sync with statusline-wrapper.sh.
+const (
+	ctxIcon = "\U000F09D1" // nf-md-brain   — context window
+	memIcon = "\U000F035B" // nf-md-memory  — memory load
+	cpuIcon = "\U0000F4BC" // nf-oct-cpu    — CPU load
+)
+
+// --- statusline-wrapper.sh: metric icons ---
+
+func TestStatusline_wrapper_prefixes_memory_segment_with_icon(t *testing.T) {
+	env := setupWrapperMemTest(t, "/Users/test/.local/bin/claude", "50")
+
+	root := projectRoot(t)
+	wrapperPath := filepath.Join(root, "templates", "statusline-wrapper.sh")
+	stdinData := `{"workspace":{"current_dir":"/tmp"}}`
+	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, wrapperPath)
+
+	out, code := runBashSnippet(t, script, env)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, memIcon+" 50M")
+}
+
+func TestStatusline_wrapper_prefixes_cpu_segment_with_icon(t *testing.T) {
+	dir, fakeHome := wrapperHomeWithCmd(t)
+	mockCommand(t, dir, "footprint", `printf '    phys_footprint: 30 MB\n'`)
+	mockCommand(t, dir, "ps", `
+case "$*" in
+  *comm=*)  printf '%s\n' "/Users/test/.local/bin/claude" ;;
+  *%cpu=*)  printf '%s\n' " 42.4" ;;
+  *rss=*)   printf '%s\n' "51200" ;;
+  *ppid=*)  printf '%s\n' "1" ;;
+esac
+`)
+	env := buildEnv(t, []string{filepath.Join(dir, "bin")}, "HOME="+fakeHome)
+
+	root := projectRoot(t)
+	wrapperPath := filepath.Join(root, "templates", "statusline-wrapper.sh")
+	stdinData := `{"workspace":{"current_dir":"/tmp"}}`
+	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, wrapperPath)
+
+	out, code := runBashSnippet(t, script, env)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, cpuIcon+" 42%")
+}
+
+func TestStatusline_wrapper_prefixes_context_segment_with_icon(t *testing.T) {
+	env := setupWrapperTest(t)
+
+	root := projectRoot(t)
+	wrapperPath := filepath.Join(root, "templates", "statusline-wrapper.sh")
+	stdinData := `{"workspace":{"current_dir":"/tmp"}}`
+	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, wrapperPath)
+
+	out, code := runBashSnippet(t, script, env)
+	assertExitCode(t, code, 0)
+	// The icon is colored (yellow) and reset before the uncolored context value
+	// that ccstatusline emits, so a reset sequence sits between them.
+	assertContains(t, out, "\x1b[01;33m"+ctxIcon+"\x1b[00m 12.3%")
+}
+
 // --- statusline-wrapper.sh: model segment ---
 
 // setupWrapperTest creates a fake home with a mock statusline-command.sh and
@@ -547,7 +608,7 @@ func TestStatusline_wrapper_omits_memory_when_no_claude_ancestor(t *testing.T) {
 
 	out, code := runBashSnippet(t, script, env)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "GITINFO | 12.3%" {
+	if strings.TrimSpace(out) != "GITINFO | \x1b[01;33m"+ctxIcon+"\x1b[00m 12.3%" {
 		t.Errorf("expected no memory segment without a claude ancestor, got %q", strings.TrimSpace(out))
 	}
 }
@@ -575,7 +636,7 @@ func TestStatusline_wrapper_omits_model_segment_when_model_missing(t *testing.T)
 
 	out, code := runBashSnippet(t, script, env)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "GITINFO | 12.3%" {
+	if strings.TrimSpace(out) != "GITINFO | \x1b[01;33m"+ctxIcon+"\x1b[00m 12.3%" {
 		t.Errorf("expected output without model segment, got %q", strings.TrimSpace(out))
 	}
 }
@@ -727,7 +788,7 @@ func TestStatusline_wrapper_omits_cpu_when_no_claude_ancestor(t *testing.T) {
 
 	out, code := runBashSnippet(t, script, env)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "GITINFO | 12.3%" {
+	if strings.TrimSpace(out) != "GITINFO | \x1b[01;33m"+ctxIcon+"\x1b[00m 12.3%" {
 		t.Errorf("expected no cpu segment without a claude ancestor, got %q", strings.TrimSpace(out))
 	}
 }
