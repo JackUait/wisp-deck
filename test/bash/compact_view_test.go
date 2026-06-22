@@ -657,6 +657,75 @@ func TestHighlightBodyLine_pads_to_width_under_both_shells(t *testing.T) {
 	}
 }
 
+// split_content splits the rendered ledger into the 2-line pinned HEADER and the
+// scrollable BODY and counts the body lines into BODY_TOTAL — all via globals and
+// WITHOUT forking (no `sed`/`wc`). The refresh loop used to derive these with two
+// `sed` calls plus `wc | tr` on EVERY loop iteration — including every mouse-motion
+// event under any-motion tracking — which (with the per-event tmux size query) made
+// the hover highlight crawl ~60ms behind the cursor. Moving it behind a build tick
+// AND making it fork-free is the fix; it must behave identically under both shells.
+func runSplitContent(t *testing.T, sh, content string) string {
+	t.Helper()
+	root := projectRoot(t)
+	module := filepath.Join(root, "lib", "compact-view.sh")
+	script := `source "$0" && split_content "$1" && printf 'H<%s>B<%s>T<%s>' "$HEADER" "$BODY" "$BODY_TOTAL"`
+	cmd := exec.Command(sh, "-c", script, module, content)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("[%s] split_content: %v\n%s", sh, err, out)
+	}
+	return string(out)
+}
+
+func TestSplitContent_splits_and_counts_under_both_shells(t *testing.T) {
+	cases := []struct {
+		name, content, want string
+	}{
+		{"basic", "branch\n────\nA\nB\nC", "H<branch\n────>B<A\nB\nC>T<3>"},
+		{"internal blank preserved", "h1\nh2\nA\n\nB", "H<h1\nh2>B<A\n\nB>T<3>"},
+		{"single body line", "h1\nh2\nonly", "H<h1\nh2>B<only>T<1>"},
+		{"path with spaces in body", "h1\nh2\napp x.sh", "H<h1\nh2>B<app x.sh>T<1>"},
+	}
+	for _, sh := range []string{"bash", "zsh"} {
+		if _, err := exec.LookPath(sh); err != nil {
+			t.Logf("%s not available, skipping", sh)
+			continue
+		}
+		for _, c := range cases {
+			t.Run(sh+"/"+c.name, func(t *testing.T) {
+				if got := runSplitContent(t, sh, c.content); got != c.want {
+					t.Errorf("[%s] split_content(%q) = %q, want %q", sh, c.content, got, c.want)
+				}
+			})
+		}
+	}
+}
+
+// viewport_slice is on the hover redraw path (one slice per repaint while the list
+// overflows), so it must be fork-free (no `sed`) and behave identically under zsh,
+// the pane's shell — not just bash.
+func TestViewportSlice_under_both_shells(t *testing.T) {
+	in := "a\nb\nc\nd\ne\n"
+	for _, sh := range []string{"bash", "zsh"} {
+		if _, err := exec.LookPath(sh); err != nil {
+			t.Logf("%s not available, skipping", sh)
+			continue
+		}
+		root := projectRoot(t)
+		module := filepath.Join(root, "lib", "compact-view.sh")
+		script := `source "$0" && viewport_slice "$1" "$2"`
+		cmd := exec.Command(sh, "-c", script, module, "1", "2")
+		cmd.Stdin = strings.NewReader(in)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("[%s] viewport_slice: %v\n%s", sh, err, out)
+		}
+		if got := strings.TrimSpace(string(out)); got != "b\nc" {
+			t.Errorf("[%s] viewport_slice 1 2 = %q, want %q", sh, got, "b\nc")
+		}
+	}
+}
+
 var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
 func highlightBodyLineW(t *testing.T, body, line, style, width string) string {

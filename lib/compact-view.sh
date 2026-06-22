@@ -47,11 +47,18 @@ clamp_scroll() {
 
 # viewport_slice prints <count> lines of stdin starting after <scroll> lines,
 # clipping at end-of-input. Line-based (no array indexing) so it behaves the
-# same under bash and zsh.
+# same under bash and zsh. Pure shell (no `sed`): this runs on the hover redraw
+# path — one slice per repaint while the list overflows — and a `sed` fork there
+# (~12ms) added to the per-motion-event cost that made the highlight crawl.
 # Usage: printf '%s\n' "$content" | viewport_slice <scroll> <count>
 viewport_slice() {
-  local start=$(($1 + 1)) end=$(($1 + $2))
-  sed -n "${start},${end}p"
+  local start=$(($1 + 1)) end=$(($1 + $2)) i=0 line
+  while IFS= read -r line; do
+    i=$((i + 1))
+    [ "$i" -lt "$start" ] && continue
+    [ "$i" -gt "$end" ] && break
+    printf '%s\n' "$line"
+  done
 }
 
 # scroll_status renders the bottom position indicator "first-last/total" with
@@ -149,6 +156,29 @@ nth_line() {
   while IFS= read -r line; do
     i=$((i + 1))
     if [ "$i" -eq "$n" ]; then NTH_LINE="$line"; return 0; fi
+  done <<< "$1"
+  return 0
+}
+
+# split_content splits the rendered ledger <content> into the 2-line pinned
+# HEADER (branch heading + separator) and the scrollable BODY, and counts the
+# body lines into BODY_TOTAL — all via globals, WITHOUT forking (no `sed`/`wc`).
+# The refresh loop used to derive these with two `sed` calls plus `wc | tr` on
+# EVERY iteration — including every mouse-motion event under any-motion tracking
+# (~31ms/event) — so this is gated behind a build tick AND kept fork-free. The
+# content is captured via $() upstream, so it carries no trailing blank line.
+# Usage: split_content <content>   -> $HEADER, $BODY, $BODY_TOTAL
+split_content() {
+  HEADER=""; BODY=""; BODY_TOTAL=0
+  local i=0 line
+  while IFS= read -r line; do
+    i=$((i + 1))
+    if [ "$i" -le 2 ]; then
+      if [ "$i" -eq 1 ]; then HEADER="$line"; else HEADER="${HEADER}"$'\n'"${line}"; fi
+    else
+      if [ "$BODY_TOTAL" -eq 0 ]; then BODY="$line"; else BODY="${BODY}"$'\n'"${line}"; fi
+      BODY_TOTAL=$((BODY_TOTAL + 1))
+    fi
   done <<< "$1"
   return 0
 }
@@ -361,18 +391,26 @@ compact_view() {
   local interval="${COMPACT_VIEW_INTERVAL:-2}"
   while true; do
     [ "$_quit" = 1 ] && break   # Ctrl-C / TERM -> leave the loop, then clean up
-    # Capture pane width/height outside subshell.
-    # tput may return wrong values in tmux; query tmux directly.
-    if [ -n "${TMUX:-}" ] && command -v tmux &>/dev/null; then
-      # Target THIS pane ($TMUX_PANE). Without -t, display-message reports the
-      # *active* pane's size — and in ghost-tab the AI pane is active and far
-      # wider than this (left) one, so the heading/separator got sized for the
-      # wide pane and wrapped into extra rows here.
-      w=$(tmux display-message -p -t "${TMUX_PANE:-}" '#{pane_width}' 2>/dev/null || tput cols 2>/dev/null || echo 80)
-      h=$(tmux display-message -p -t "${TMUX_PANE:-}" '#{pane_height}' 2>/dev/null || tput lines 2>/dev/null || echo 24)
-    else
-      w=$(tput cols 2>/dev/null || echo 80)
-      h=$(tput lines 2>/dev/null || echo 24)
+    # Capture pane width/height — but ONLY on a build tick, never per keystroke.
+    # Each `tmux display-message` is a fork+exec round-trip to the tmux server
+    # (~11ms); querying both dimensions on EVERY mouse-motion event (any-motion
+    # tracking floods them as the cursor moves) added ~23ms/event and made the
+    # hover highlight crawl. The pane size only changes on a resize, which raises
+    # SIGWINCH — that interrupts read_key, so the loop falls through to
+    # need_build=1 and re-measures promptly without polling every event.
+    if [ "$need_build" = 1 ] || [ -z "${w:-}" ]; then
+      # tput may return wrong values in tmux; query tmux directly when attached.
+      if [ -n "${TMUX:-}" ] && command -v tmux &>/dev/null; then
+        # Target THIS pane ($TMUX_PANE). Without -t, display-message reports the
+        # *active* pane's size — and in ghost-tab the AI pane is active and far
+        # wider than this (left) one, so the heading/separator got sized for the
+        # wide pane and wrapped into extra rows here.
+        w=$(tmux display-message -p -t "${TMUX_PANE:-}" '#{pane_width}' 2>/dev/null || tput cols 2>/dev/null || echo 80)
+        h=$(tmux display-message -p -t "${TMUX_PANE:-}" '#{pane_height}' 2>/dev/null || tput lines 2>/dev/null || echo 24)
+      else
+        w=$(tput cols 2>/dev/null || echo 80)
+        h=$(tput lines 2>/dev/null || echo 24)
+      fi
     fi
     [ -z "$h" ] && h=24
     [ "$h" -lt 4 ] && h=4
@@ -488,14 +526,14 @@ compact_view() {
         printf " ${dim}no changes${reset}\n\n"
       fi
     )
-    fi
-
     # The header is the first 2 lines (branch heading + separator); it is PINNED
     # — always drawn at the top, never part of the scroll region. Only the body
-    # (the file groups) scrolls beneath it.
-    header=$(printf '%s\n' "$content" | sed -n '1,2p')
-    body=$(printf '%s\n' "$content" | sed -n '3,$p')
-    body_total=$(printf '%s\n' "$body" | wc -l | tr -d ' ')
+    # (the file groups) scrolls beneath it. Derived ONCE per build (fork-free, via
+    # split_content) — NOT per keystroke: the old per-iteration `sed`×2 + `wc|tr`
+    # cost ~31ms on every mouse-motion event and helped the hover highlight crawl.
+    split_content "$content"
+    header="$HEADER"; body="$BODY"; body_total="$BODY_TOTAL"
+    fi
 
     local body_rows=$((h - 2))
     [ "$body_rows" -lt 1 ] && body_rows=1
