@@ -24,11 +24,13 @@ terminal_setup_config() {
   mkdir -p "$(dirname "$profile_path")"
 
   # "Use Non-ASCII Font" + "Non Ascii Font" route the statusline's Nerd Font
-  # icons (private-use-area glyphs) to the Symbols Nerd Font. iTerm2 has no
+  # icons (private-use-area glyphs) to the Hack Nerd Font. iTerm2 has no
   # automatic fallback for these, so without it they render as tofu. iTerm2
-  # resolves each glyph between the ASCII font and this non-ASCII font, so
-  # box-drawing stays in the user's normal font — only the icon glyphs use the
-  # symbols font.
+  # routes ALL non-ASCII text (>=U+0080) to this font, so a COMPLETE Nerd Font is
+  # used (not a symbols-only one): box-drawing and accented glyphs come from the
+  # same font instead of relying on fallback, which avoids breaking tmux/lazygit
+  # borders. "HackNFM-Regular" is the font's PostScript name (how iTerm2 resolves
+  # it); the family name would not resolve.
   cat > "$profile_path" << EOF
 {
   "Profiles": [
@@ -38,7 +40,7 @@ terminal_setup_config() {
       "Custom Command": "Yes",
       "Command": "/bin/bash -l $wrapper_path",
       "Use Non-ASCII Font": true,
-      "Non Ascii Font": "SymbolsNFM 13",
+      "Non Ascii Font": "HackNFM-Regular 13",
       "Non-ASCII Anti Aliased": true
     }
   ]

@@ -16,13 +16,13 @@ terminal_install() {
   ensure_cask "kitty" "kitty"
 }
 
-# symbol_map directive routing the Nerd Font glyph ranges to the Symbols Nerd
-# Font. kitty has no automatic fallback for missing glyphs, so without this the
+# symbol_map directive routing the Nerd Font glyph ranges to the Hack Nerd Font.
+# kitty has no automatic fallback for missing glyphs, so without this the
 # statusline icons render as tofu. The mapping is surgical (only icon ranges),
 # leaving the user's primary font in charge of text and box-drawing. The two
 # ranges that carry the statusline icons are U+F0001-U+F1AF0 (Material Design
 # Icons: brain U+F09D1, memory U+F01BC) and U+F400-U+F532 (Octicons: cpu U+F4BC).
-_KITTY_NERD_SYMBOL_MAP="symbol_map U+23FB-U+23FE,U+2665,U+26A1,U+2B58,U+E000-U+E00A,U+E0A0-U+E0A3,U+E0B0-U+E0D4,U+E200-U+E2A9,U+E300-U+E3E3,U+E5FA-U+E6B7,U+E700-U+E8EF,U+EA60-U+EC1E,U+ED00-U+EFCE,U+F000-U+F2FF,U+F300-U+F375,U+F400-U+F532,U+F0001-U+F1AF0 Symbols Nerd Font Mono"
+_KITTY_NERD_SYMBOL_MAP="symbol_map U+23FB-U+23FE,U+2665,U+26A1,U+2B58,U+E000-U+E00A,U+E0A0-U+E0A3,U+E0B0-U+E0D4,U+E200-U+E2A9,U+E300-U+E3E3,U+E5FA-U+E6B7,U+E700-U+E8EF,U+EA60-U+EC1E,U+ED00-U+EFCE,U+F000-U+F2FF,U+F300-U+F375,U+F400-U+F532,U+F0001-U+F1AF0 Hack Nerd Font Mono"
 
 # Write or merge the wrapper command into kitty config, and ensure the Nerd Font
 # symbol_map is present so the statusline icons render.
@@ -40,7 +40,7 @@ terminal_setup_config() {
   fi
 
   # Append the symbol_map once (idempotent — keyed on our exact font name).
-  if [ ! -f "$config_path" ] || ! grep -q '^symbol_map .*Symbols Nerd Font Mono' "$config_path"; then
+  if [ ! -f "$config_path" ] || ! grep -q '^symbol_map .*Hack Nerd Font Mono' "$config_path"; then
     echo "$_KITTY_NERD_SYMBOL_MAP" >> "$config_path"
     success "Mapped Nerd Font glyph ranges to Symbols Nerd Font"
   fi
@@ -53,7 +53,7 @@ terminal_cleanup_config() {
   local config_path="$1"
   if [ -f "$config_path" ]; then
     sed -i '' '/^shell[[:space:]].*ghost-tab\/wrapper\.sh/d' "$config_path"
-    sed -i '' '/^symbol_map .*Symbols Nerd Font Mono/d' "$config_path"
+    sed -i '' '/^symbol_map .*Hack Nerd Font Mono/d' "$config_path"
   fi
 }
 

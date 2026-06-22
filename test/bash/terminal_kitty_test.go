@@ -86,7 +86,7 @@ func TestKittyAdapter_setup_config_adds_nerd_font_symbol_map(t *testing.T) {
 	content := string(data)
 	// A symbol_map line maps the Nerd Font glyph ranges to the installed font.
 	assertContains(t, content, "symbol_map ")
-	assertContains(t, content, "Symbols Nerd Font Mono")
+	assertContains(t, content, "Hack Nerd Font Mono")
 	// Must cover the three statusline icons: brain U+F09D1 and memory U+F01BC
 	// (Material Design Icons range U+F0001-U+F1AF0) and cpu chip U+F4BC
 	// (Octicons range U+F400-U+F532).
@@ -117,7 +117,7 @@ func TestKittyAdapter_setup_config_symbol_map_is_idempotent(t *testing.T) {
 func TestKittyAdapter_cleanup_config_removes_symbol_map(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := writeTempFile(t, tmpDir, "kitty.conf",
-		"font_size 14\nshell /Users/u/.config/ghost-tab/wrapper.sh\nsymbol_map U+F0001-U+F1AF0,U+F400-U+F532 Symbols Nerd Font Mono\n")
+		"font_size 14\nshell /Users/u/.config/ghost-tab/wrapper.sh\nsymbol_map U+F0001-U+F1AF0,U+F400-U+F532 Hack Nerd Font Mono\n")
 
 	snippet := kittyAdapterSnippet(t,
 		fmt.Sprintf(`terminal_cleanup_config %q`, configFile))

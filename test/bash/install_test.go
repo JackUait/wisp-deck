@@ -398,8 +398,8 @@ func TestEnsureNerdFont_skips_when_font_already_installed(t *testing.T) {
 	tmpDir := t.TempDir()
 	fontsDir := filepath.Join(tmpDir, "Fonts")
 	os.MkdirAll(fontsDir, 0755)
-	// A Symbols Nerd Font file is already present.
-	writeTempFile(t, fontsDir, "SymbolsNerdFontMono-Regular.ttf", "x")
+	// A Hack Nerd Font file is already present.
+	writeTempFile(t, fontsDir, "HackNerdFontMono-Regular.ttf", "x")
 
 	// brew must NOT be invoked; if it is, fail loudly.
 	binDir := mockCommand(t, tmpDir, "brew", `echo "brew should not run" >&2; exit 3`)
@@ -408,7 +408,7 @@ func TestEnsureNerdFont_skips_when_font_already_installed(t *testing.T) {
 	snippet := installSnippet(t, fmt.Sprintf(`FONTS_DIR=%q ensure_nerd_font`, fontsDir))
 	out, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, "Symbols Nerd Font found")
+	assertContains(t, out, "Nerd Font found")
 }
 
 func TestEnsureNerdFont_installs_via_brew_when_missing(t *testing.T) {
@@ -422,13 +422,13 @@ func TestEnsureNerdFont_installs_via_brew_when_missing(t *testing.T) {
 	snippet := installSnippet(t, fmt.Sprintf(`FONTS_DIR=%q ensure_nerd_font`, fontsDir))
 	out, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, "Symbols Nerd Font installed")
+	assertContains(t, out, "Nerd Font installed")
 
 	data, err := os.ReadFile(logFile)
 	if err != nil {
 		t.Fatalf("failed to read brew log: %v", err)
 	}
-	assertContains(t, string(data), "install --cask font-symbols-only-nerd-font")
+	assertContains(t, string(data), "install --cask font-hack-nerd-font")
 }
 
 func TestEnsureNerdFont_gracefully_warns_when_brew_fails(t *testing.T) {
@@ -442,7 +442,7 @@ func TestEnsureNerdFont_gracefully_warns_when_brew_fails(t *testing.T) {
 	out, code := runBashSnippet(t, snippet, env)
 	// Non-fatal: setup must continue even if the font fails to install.
 	assertExitCode(t, code, 0)
-	assertContains(t, out, "Failed to install Symbols Nerd Font")
+	assertContains(t, out, "Failed to install Nerd Font")
 }
 
 // ============================================================
