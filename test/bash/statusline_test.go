@@ -244,6 +244,26 @@ func TestStatusline_statusline_command_non_git_directory_shows_just_dirname(t *t
 	assertNotContains(t, out, "/ -")
 }
 
+func TestStatusline_statusline_command_prefixes_worktree_icon_before_name(t *testing.T) {
+	const worktreeIcon = "\U000F0645" // Nerd Font file-tree glyph 󰙅
+
+	nonGitDir := t.TempDir()
+	dirBasename := filepath.Base(nonGitDir)
+
+	root := projectRoot(t)
+	cmdPath := filepath.Join(root, "templates", "statusline-command.sh")
+	stdinData := fmt.Sprintf(`{"current_dir":"%s"}`, nonGitDir)
+	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, cmdPath)
+
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, worktreeIcon)
+	// The icon must come first, before the project name.
+	if strings.Index(out, worktreeIcon) > strings.Index(out, dirBasename) {
+		t.Errorf("worktree icon should precede the project name in %q", out)
+	}
+}
+
 func TestStatusline_statusline_command_omits_branch_name(t *testing.T) {
 	repoDir := statuslineCmdSetupGitRepo(t)
 	repoBasename := filepath.Base(repoDir)
