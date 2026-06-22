@@ -51,7 +51,7 @@ while [ -n "$pid" ] && [ "$pid" != "1" ]; do
       cpu_pct=$(get_tree_cpu_pct "$pid")
     else
       cpu_pct=$(ps -o %cpu= -p "$pid" 2>/dev/null | tr -d ' ' \
-        | awk 'NF { printf "%d\n", $0 + 0.5 }')
+        | LC_ALL=C awk 'NF { gsub(/,/, "."); printf "%d\n", $0 + 0.5 }')
     fi
     if [ -n "$cpu_pct" ]; then
       cpu_label="${cpu_pct}%"

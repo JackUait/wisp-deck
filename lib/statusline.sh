@@ -57,9 +57,12 @@ get_tree_footprint_kb() {
   done
 
   # Sum the per-process `phys_footprint:` lines (ignoring `phys_footprint_peak:`).
-  footprint "${pids[@]}" 2>/dev/null | awk '
+  # gsub + LC_ALL=C make the parse locale-independent: macOS emits a comma
+  # decimal (e.g. "1,5 GB") under comma-locales, which would otherwise truncate.
+  footprint "${pids[@]}" 2>/dev/null | LC_ALL=C awk '
     /^[[:space:]]*phys_footprint:/ {
       val = $2; unit = $3; mult = 1
+      gsub(/,/, ".", val)
       if (unit == "B")  mult = 1 / 1024
       else if (unit == "KB") mult = 1
       else if (unit == "MB") mult = 1024
@@ -103,8 +106,11 @@ get_tree_cpu_pct() {
 
   [ ${#cpus[@]} -eq 0 ] && return 0
 
-  printf '%s\n' "${cpus[@]}" | awk '
-    { total += $0 }
+  # gsub + LC_ALL=C make the sum locale-independent: macOS `ps` emits a comma
+  # decimal (e.g. "10,4") under comma-locales, which awk would otherwise read as
+  # 10 and silently under-report the CPU load.
+  printf '%s\n' "${cpus[@]}" | LC_ALL=C awk '
+    { gsub(/,/, "."); total += $0 }
     END { printf "%d\n", total + 0.5 }
   '
 }

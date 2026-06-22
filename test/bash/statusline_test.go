@@ -434,6 +434,24 @@ func TestStatusline_get_tree_footprint_kb_empty_when_footprint_yields_nothing(t 
 	}
 }
 
+// Under a comma-locale, `footprint` emits "1,5 GB". The fractional part must be
+// parsed — truncating at the comma would report 1 GB instead of 1.5 GB and
+// under-state the memory load.
+func TestStatusline_get_tree_footprint_kb_handles_comma_decimal_locale(t *testing.T) {
+	dir := t.TempDir()
+	mockCommand(t, dir, "pgrep", `exit 1`)
+	mockCommand(t, dir, "footprint", `printf '    phys_footprint: 1,5 GB\n'`)
+
+	binDir := filepath.Join(dir, "bin")
+	env := buildEnv(t, []string{binDir})
+	out, code := runBashFunc(t, "lib/statusline.sh", "get_tree_footprint_kb", []string{"100"}, env)
+	assertExitCode(t, code, 0)
+	// 1,5 GB = 1.5 * 1024 * 1024 = 1572864 KB (NOT 1 GB = 1048576 KB)
+	if strings.TrimSpace(out) != "1572864" {
+		t.Errorf("expected 1572864 (1,5 GB parsed), got %q", strings.TrimSpace(out))
+	}
+}
+
 // --- wrapper: prefer phys_footprint, fall back to RSS ---
 
 // wrapperHomeWithCmd creates a fake home + statusline-command.sh and returns the
@@ -618,6 +636,37 @@ func TestStatusline_get_tree_cpu_pct_empty_when_process_gone(t *testing.T) {
 	assertExitCode(t, code, 0)
 	if strings.TrimSpace(out) != "" {
 		t.Errorf("expected empty output when no pid yields a reading, got %q", strings.TrimSpace(out))
+	}
+}
+
+// macOS `ps -o %cpu` honors LC_NUMERIC and emits a COMMA decimal under
+// comma-locales (ru_RU, de_DE). The sum must still be parsed correctly — a
+// naive awk would read "10,4" as 10 and silently under-report the CPU load.
+func TestStatusline_get_tree_cpu_pct_handles_comma_decimal_locale(t *testing.T) {
+	dir := t.TempDir()
+	mockCommand(t, dir, "pgrep", `
+pid="${@: -1}"
+case "$pid" in
+  100) printf '101\n' ;;
+  *) exit 1 ;;
+esac
+`)
+	mockCommand(t, dir, "ps", `
+pid="${@: -1}"
+case "$pid" in
+  100) echo " 10,4" ;;
+  101) echo "  5,3" ;;
+  *) echo "" ;;
+esac
+`)
+
+	binDir := filepath.Join(dir, "bin")
+	env := buildEnv(t, []string{binDir})
+	out, code := runBashFunc(t, "lib/statusline.sh", "get_tree_cpu_pct", []string{"100"}, env)
+	assertExitCode(t, code, 0)
+	// 10,4 + 5,3 = 15,7 -> 16 (NOT 10+5=15 from truncating at the comma)
+	if strings.TrimSpace(out) != "16" {
+		t.Errorf("expected 16 (comma decimals parsed), got %q", strings.TrimSpace(out))
 	}
 }
 
