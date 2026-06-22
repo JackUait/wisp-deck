@@ -1,6 +1,6 @@
 #!/bin/bash
 # Session restore — snapshot alive Ghost Tab tmux sessions and reopen them
-# after a reboot. Depends on: terminals/adapter.sh (load_terminal_adapter).
+# after a reboot. Depends on: terminals/ghostty.sh (terminal_launch_restore).
 
 # Print the current macOS boot id (the kern.boottime sec value).
 # Stable for one uptime; changes on every reboot. Empty on failure.
@@ -39,13 +39,14 @@ write_session_snapshot() {
   mv "$tmp" "$snap_file"
 }
 
-# Load the adapter for <terminal> and open a window restoring <path>/<tool>.
+# Open a window restoring <path>/<tool>. Ghostty is the only supported
+# terminal; the <terminal> argument is accepted for backward compatibility
+# with the snapshot format but is ignored.
 # Usage: launch_restore_window <terminal> <wrapper_path> <project_path> <ai_tool>
-# Relies on load_terminal_adapter + terminal_launch_restore being available
-# (sourced by the caller, e.g. wrapper.sh).
+# Relies on terminal_launch_restore being available (sourced by the caller,
+# e.g. wrapper.sh).
 launch_restore_window() {
-  local terminal="$1" wrapper="$2" path="$3" tool="$4"
-  load_terminal_adapter "$terminal" || return 1
+  local wrapper="$2" path="$3" tool="$4"
   terminal_launch_restore "$wrapper" "$path" "$tool"
 }
 

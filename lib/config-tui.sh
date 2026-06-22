@@ -6,10 +6,6 @@
 _config_tui_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/tui.sh
 [ "$(type -t header 2>/dev/null)" = "function" ] || source "$_config_tui_dir/tui.sh"
-# shellcheck source=lib/terminal-select-tui.sh
-[ "$(type -t select_terminal_interactive 2>/dev/null)" = "function" ] || source "$_config_tui_dir/terminal-select-tui.sh"
-# shellcheck source=lib/terminals/registry.sh
-[ "$(type -t get_terminal_display_name 2>/dev/null)" = "function" ] || source "$_config_tui_dir/terminals/registry.sh"
 # shellcheck source=lib/claude-configs.sh
 [ "$(type -t load_claude_configs 2>/dev/null)" = "function" ] || source "$_config_tui_dir/claude-configs.sh"
 
@@ -61,8 +57,6 @@ config_menu_interactive() {
     return 1
   fi
 
-  local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab"
-
   # Read VERSION from project root
   local version=""
   local version_file="$_config_tui_dir/../VERSION"
@@ -71,15 +65,8 @@ config_menu_interactive() {
   fi
 
   while true; do
-    # Resolve terminal display name from saved preference
-    local terminal_slug="" terminal_display=""
-    if [ -f "$config_dir/terminal" ]; then
-      terminal_slug="$(tr -d '[:space:]' < "$config_dir/terminal")"
-      terminal_display="$(get_terminal_display_name "$terminal_slug")"
-    fi
-
     local result
-    if ! result=$(ghost-tab-tui config-menu --terminal-name "$terminal_display" --version "$version" 2>/dev/null); then
+    if ! result=$(ghost-tab-tui config-menu --version "$version" 2>/dev/null); then
       return 1
     fi
 
@@ -90,16 +77,6 @@ config_menu_interactive() {
     fi
 
     case "$action" in
-      manage-terminals)
-        export GHOST_TAB_TERMINAL_PREF="$config_dir/terminal"
-        if select_terminal_interactive; then
-          # shellcheck disable=SC2154
-          echo "$_selected_terminal" > "$config_dir/terminal"
-          success "Terminal set to $(get_terminal_display_name "$_selected_terminal")"
-          echo ""
-          read -rsn1 -p "Press any key to continue..." </dev/tty
-        fi
-        ;;
       reinstall)
         local script_dir
         script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

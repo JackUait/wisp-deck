@@ -15,9 +15,7 @@ SHARE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$SHARE_DIR/lib/tui.sh"
 source "$SHARE_DIR/lib/install.sh"
-source "$SHARE_DIR/lib/terminal-select-tui.sh"
-source "$SHARE_DIR/lib/terminals/registry.sh"
-source "$SHARE_DIR/lib/terminals/adapter.sh"
+source "$SHARE_DIR/lib/terminals/ghostty.sh"
 source "$SHARE_DIR/lib/settings-json.sh"
 source "$SHARE_DIR/lib/ai-select-tui.sh"
 source "$SHARE_DIR/lib/statusline-setup.sh"
@@ -25,101 +23,11 @@ source "$SHARE_DIR/lib/project-actions.sh"
 source "$SHARE_DIR/lib/project-actions-tui.sh"
 source "$SHARE_DIR/lib/update.sh"
 
-# ---------- Terminal-only setup ----------
-run_terminal_setup() {
-  local share_dir="$1"
-
-  # Ensure TUI binary is up to date (--terminal path skips main flow checks)
-  header "Checking TUI binary..."
-  if ! ensure_ghost_tab_tui "$share_dir"; then
-    exit 1
-  fi
-
-  header "Selecting terminal..."
-  echo ""
-  echo -e "  Ghost Tab supports multiple terminal emulators."
-  echo -e "  Select your preferred terminal:"
-  echo ""
-
-  if select_terminal_interactive; then
-    if [[ -z "$_selected_terminal" ]]; then
-      error "Internal error: TUI did not set terminal"
-      exit 1
-    fi
-    local selected_terminal="$_selected_terminal"
-
-    # Save preference (cleaning up the previous terminal's config on switch)
-    local pref_dir="${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab"
-    mkdir -p "$pref_dir"
-    cleanup_previous_terminal "$pref_dir/terminal" "$selected_terminal"
-    save_terminal_preference "$selected_terminal" "$pref_dir/terminal"
-
-    echo ""
-    success "Selected terminal: $(get_terminal_display_name "$selected_terminal")"
-
-    # Install terminal if needed
-    header "Checking $(get_terminal_display_name "$selected_terminal")..."
-    load_terminal_adapter "$selected_terminal"
-    if ! terminal_install; then
-      error "Terminal installation failed. Install manually and re-run: ghost-tab --terminal"
-      exit 1
-    fi
-
-    # Ensure wrapper symlink exists
-    header "Setting up wrapper script..."
-    local wrapper_dir="${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab"
-    mkdir -p "$wrapper_dir"
-    ln -sf "$share_dir/wrapper.sh" "$wrapper_dir/wrapper.sh"
-    success "Linked wrapper.sh in $wrapper_dir/"
-
-    if [ -d "$share_dir/lib" ]; then
-      [ -d "$wrapper_dir/lib" ] && [ ! -L "$wrapper_dir/lib" ] && rm -rf "${wrapper_dir:?}/lib"
-      ln -sfn "$share_dir/lib" "$wrapper_dir/lib"
-    fi
-
-    # Configure terminal
-    header "Setting up $(get_terminal_display_name "$selected_terminal") config..."
-    local terminal_config
-    terminal_config="$(terminal_get_config_path)"
-    local wrapper_path
-    wrapper_path="$(terminal_get_wrapper_path)"
-
-    if [ -f "$terminal_config" ]; then
-      warn "Existing config found at $terminal_config"
-      echo ""
-      echo -e "  ${_BOLD}1)${_NC} Merge — add the wrapper command to your existing config"
-      echo -e "  ${_BOLD}2)${_NC} Skip — don't modify the config (manual setup required)"
-      echo ""
-      read -rn1 -p "$(echo -e "${_BLUE}Choose (1/2):${_NC} ")" config_choice </dev/tty
-      echo ""
-
-      case "$config_choice" in
-        1) terminal_setup_config "$terminal_config" "$wrapper_path" ;;
-        *) info "Skipped config modification. Add the wrapper manually." ;;
-      esac
-    else
-      mkdir -p "$(dirname "$terminal_config")"
-      terminal_setup_config "$terminal_config" "$wrapper_path"
-    fi
-
-    echo ""
-    success "Terminal configured: $(get_terminal_display_name "$selected_terminal")"
-    info "Open a new $(get_terminal_display_name "$selected_terminal") window to start coding."
-  else
-    warn "Terminal setup did not complete. Run 'ghost-tab --terminal' to try again."
-    exit 1
-  fi
-}
-
 # ---------- Argument parsing ----------
 case "${1:-}" in
-  --terminal)
-    run_terminal_setup "$SHARE_DIR"
-    exit 0
-    ;;
   --*)
     error "Unknown flag: $1"
-    echo "Usage: ghost-tab [--terminal]"
+    echo "Usage: ghost-tab"
     exit 1
     ;;
 esac
@@ -182,38 +90,10 @@ else
   exit 1
 fi
 
-# ---------- Terminal Selection ----------
-header "Selecting terminal..."
-echo ""
-echo -e "  Ghost Tab supports multiple terminal emulators."
-echo -e "  Select your preferred terminal:"
-echo ""
-
-if select_terminal_interactive; then
-  if [[ -z "$_selected_terminal" ]]; then
-    error "Internal error: TUI did not set terminal"
-    exit 1
-  fi
-  SELECTED_TERMINAL="$_selected_terminal"
-
-  # Save preference (cleaning up the previous terminal's config on switch)
-  TERMINAL_PREF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab"
-  mkdir -p "$TERMINAL_PREF_DIR"
-  cleanup_previous_terminal "$TERMINAL_PREF_DIR/terminal" "$SELECTED_TERMINAL"
-  save_terminal_preference "$SELECTED_TERMINAL" "$TERMINAL_PREF_DIR/terminal"
-
-  echo ""
-  success "Selected terminal: $(get_terminal_display_name "$SELECTED_TERMINAL")"
-else
-  warn "Terminal setup did not complete. Run 'ghost-tab --terminal' to try again."
-  exit 1
-fi
-
 # ---------- Terminal Installation ----------
-header "Checking $(get_terminal_display_name "$SELECTED_TERMINAL")..."
-load_terminal_adapter "$SELECTED_TERMINAL"
+header "Checking Ghostty..."
 if ! terminal_install; then
-  error "Terminal installation failed. Install manually and re-run: ghost-tab --terminal"
+  error "Terminal installation failed. Install Ghostty manually and re-run: ghost-tab"
   exit 1
 fi
 
@@ -243,7 +123,7 @@ ln -sf "$SHARE_DIR/bin/ghost-tab-config" "$HOME/.local/bin/ghost-tab"
 success "Created ghost-tab command at ~/.local/bin/ghost-tab"
 
 # ---------- Terminal Config ----------
-header "Setting up $(get_terminal_display_name "$SELECTED_TERMINAL") config..."
+header "Setting up Ghostty config..."
 TERMINAL_CONFIG="$(terminal_get_config_path)"
 WRAPPER_PATH="$(terminal_get_wrapper_path)"
 
@@ -362,8 +242,7 @@ fi
 header "Setup complete!"
 echo ""
 success "Wrapper script:  ~/.config/ghost-tab/wrapper.sh (symlink)"
-_terminal_pref="$(cat "${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab/terminal" 2>/dev/null)"
-success "Terminal:        $(get_terminal_display_name "$_terminal_pref")"
+success "Terminal:        Ghostty"
 _ai_default="$(cat "${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab/ai-tool" 2>/dev/null)"
 success "AI tool:         $(echo "$_ai_default" | sed 's/claude/Claude Code/;s/opencode/OpenCode/')"
 success "Projects file:   $PROJECTS_FILE"
@@ -375,7 +254,7 @@ if [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins/ghost-tab.ts" ]; the
   success "OpenCode plugin: ~/.config/opencode/plugins/ghost-tab.ts"
 fi
 echo ""
-info "Run 'ghost-tab' to manage configuration, or open a new $(get_terminal_display_name "${SELECTED_TERMINAL:-$_terminal_pref}") window to start coding."
+info "Run 'ghost-tab' to manage configuration, or open a new Ghostty window to start coding."
 
 } # end main
 

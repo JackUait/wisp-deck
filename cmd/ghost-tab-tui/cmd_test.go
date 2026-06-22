@@ -43,7 +43,6 @@ func TestRootCmd_SubcommandRegistered(t *testing.T) {
 		"main-menu",
 		"multi-select-ai-tool",
 		"select-branch",
-		"select-terminal",
 		"claude-config-menu",
 	}
 
@@ -245,16 +244,6 @@ func TestSelectAIToolCmd_Exists(t *testing.T) {
 	}
 }
 
-func TestSelectTerminalCmd_Exists(t *testing.T) {
-	cmd, _, err := rootCmd.Find([]string{"select-terminal"})
-	if err != nil {
-		t.Fatalf("Failed to find select-terminal: %v", err)
-	}
-	if cmd.Name() != "select-terminal" {
-		t.Errorf("Expected 'select-terminal', got %q", cmd.Name())
-	}
-}
-
 func TestRunMainMenu_ProjectsFileFlagRequired(t *testing.T) {
 	cmd, _, _ := rootCmd.Find([]string{"main-menu"})
 	flag := cmd.Flags().Lookup("projects-file")
@@ -358,14 +347,6 @@ func TestRunSelectBranch_NonGitDir(t *testing.T) {
 
 	if !strings.Contains(output, `"selected":false`) {
 		t.Errorf("Expected {\"selected\":false} for non-git dir, got: %s", output)
-	}
-}
-
-func TestConfigMenuCmd_HasTerminalNameFlag(t *testing.T) {
-	cmd, _, _ := rootCmd.Find([]string{"config-menu"})
-	flag := cmd.Flags().Lookup("terminal-name")
-	if flag == nil {
-		t.Fatal("Expected --terminal-name flag on config-menu")
 	}
 }
 

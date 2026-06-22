@@ -39,7 +39,7 @@ if [ ! -d "$_WRAPPER_DIR/lib" ]; then
   exit 1
 fi
 
-_gt_libs=(ai-tools projects process input tui menu-tui project-actions tmux-session settings-json notification-setup tab-title-watcher terminals/registry terminals/adapter session-restore claude-configs compact-view screenshot)
+_gt_libs=(ai-tools projects process input tui menu-tui project-actions tmux-session settings-json notification-setup tab-title-watcher terminals/ghostty session-restore claude-configs compact-view screenshot)
 for _gt_lib in "${_gt_libs[@]}"; do
   if [ ! -f "$_WRAPPER_DIR/lib/${_gt_lib}.sh" ]; then
     printf '\033[31mError:\033[0m Missing library %s/lib/%s.sh\n' "$_WRAPPER_DIR" "$_gt_lib" >&2
@@ -257,7 +257,9 @@ start_tab_title_watcher "$SESSION_NAME" "$SELECTED_AI_TOOL" "$PROJECT_NAME" "$_t
 # Session-restore snapshot: stamp metadata into the tmux session env via -e
 # flags on new-session (below), and run a heartbeat that re-derives the
 # snapshot from all alive Ghost Tab sessions.
-GHOST_TAB_TERMINAL="$(load_terminal_preference "$SHARE_DIR/terminal")"
+# Ghostty is the only supported terminal; the snapshot's terminal field is
+# kept for backward compatibility with restore.
+GHOST_TAB_TERMINAL="ghostty"
 GHOST_TAB_SNAPSHOT="$SHARE_DIR/last-session"
 (
   while true; do

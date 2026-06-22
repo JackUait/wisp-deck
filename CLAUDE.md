@@ -113,7 +113,7 @@ Scroll up to "IMMEDIATE COMPLETION CHECKLIST" and verify ALL items before declar
 
 ## Project Overview
 
-Ghost Tab is a terminal + tmux wrapper that launches a three-pane dev session with AI coding tools (Claude Code, OpenCode), lazygit, and a spare terminal. It supports multiple terminal emulators (Ghostty, iTerm2, WezTerm, kitty) and handles complete process cleanup when windows close (no zombie processes).
+Ghost Tab is a terminal + tmux wrapper that launches a three-pane dev session with AI coding tools (Claude Code, OpenCode), lazygit, and a spare terminal. It runs on Ghostty and handles complete process cleanup when windows close (no zombie processes).
 
 **Key Features:**
 - Interactive project selector with TUI
@@ -200,13 +200,7 @@ All reusable functionality lives in `lib/` as sourced shell scripts:
 - **project-actions-tui.sh**: Interactive project input wrapper (Go TUI)
 - **menu-tui.sh**: Project selection wrapper (Go TUI)
 - **settings-menu-tui.sh**: Settings menu wrapper (Go TUI)
-- **terminal-select-tui.sh**: Interactive terminal selection wrapper (Go TUI)
-- **terminals/registry.sh**: Terminal list, display names, preference management
-- **terminals/adapter.sh**: Dynamic terminal adapter loader
-- **terminals/ghostty.sh**: Ghostty terminal adapter
-- **terminals/kitty.sh**: kitty terminal adapter
-- **terminals/wezterm.sh**: WezTerm terminal adapter
-- **terminals/iterm2.sh**: iTerm2 terminal adapter (Dynamic Profiles)
+- **terminals/ghostty.sh**: Ghostty terminal adapter (the only supported terminal)
 - **tmux-session.sh**: tmux session creation and pane setup
 - **process.sh**: Process tree management and cleanup
 - **statusline.sh**: Status line generation logic
@@ -219,14 +213,13 @@ All reusable functionality lives in `lib/` as sourced shell scripts:
 **Data Files:**
 - `~/.config/ghost-tab/projects` - Project list (name:path format)
 - `~/.config/ghost-tab/ai-tool` - Default AI tool preference
-- `~/.config/ghost-tab/terminal` - Selected terminal preference
 - `~/.config/ghost-tab/*-features.json` - AI tool feature flags
 - `~/.claude/settings.json` - Claude Code settings
 - `~/.config/ghostty/config` - Ghostty terminal config
 
 **Process Hierarchy:**
 ```
-Terminal window (Ghostty/iTerm2/WezTerm/kitty)
+Terminal window (Ghostty)
 └─ wrapper.sh (shell command)
    └─ tmux session
       ├─ AI tool (Claude Code/OpenCode)

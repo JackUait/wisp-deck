@@ -10,17 +10,14 @@ import (
 
 func TestConfigMenuItems(t *testing.T) {
 	items := tui.GetConfigMenuItems()
-	if len(items) != 3 {
-		t.Errorf("Expected 3 menu items, got %d", len(items))
+	if len(items) != 2 {
+		t.Errorf("Expected 2 menu items, got %d", len(items))
 	}
-	if items[0].Action != "manage-terminals" {
-		t.Errorf("Expected first action 'manage-terminals', got %q", items[0].Action)
+	if items[0].Action != "manage-claude-configs" {
+		t.Errorf("Expected first action 'manage-claude-configs', got %q", items[0].Action)
 	}
-	if items[1].Action != "manage-claude-configs" {
-		t.Errorf("Expected second action 'manage-claude-configs', got %q", items[1].Action)
-	}
-	if items[2].Action != "reinstall" {
-		t.Errorf("Expected third action 'reinstall', got %q", items[2].Action)
+	if items[1].Action != "reinstall" {
+		t.Errorf("Expected second action 'reinstall', got %q", items[1].Action)
 	}
 }
 
@@ -33,8 +30,7 @@ func TestConfigMenu_New(t *testing.T) {
 
 func TestConfigMenu_NewWithOptions(t *testing.T) {
 	m := tui.NewConfigMenu(tui.ConfigMenuOptions{
-		TerminalName: "Ghostty",
-		Version:      "2.6.0",
+		Version: "2.6.0",
 	})
 	if m.Selected() != nil {
 		t.Error("Selected should be nil initially")
@@ -58,8 +54,8 @@ func TestConfigMenu_EnterSelectsFirstItem(t *testing.T) {
 	if result.Selected() == nil {
 		t.Fatal("Enter should select current item")
 	}
-	if result.Selected().Action != "manage-terminals" {
-		t.Errorf("Expected 'manage-terminals', got %q", result.Selected().Action)
+	if result.Selected().Action != "manage-claude-configs" {
+		t.Errorf("Expected 'manage-claude-configs', got %q", result.Selected().Action)
 	}
 }
 
@@ -74,8 +70,8 @@ func TestConfigMenu_DownThenEnterSelectsSecondItem(t *testing.T) {
 	if result.Selected() == nil {
 		t.Fatal("Enter should select current item")
 	}
-	if result.Selected().Action != "manage-claude-configs" {
-		t.Errorf("Expected 'manage-claude-configs', got %q", result.Selected().Action)
+	if result.Selected().Action != "reinstall" {
+		t.Errorf("Expected 'reinstall', got %q", result.Selected().Action)
 	}
 }
 
@@ -83,10 +79,9 @@ func TestConfigMenu_CursorWrapsDown(t *testing.T) {
 	m := tui.NewConfigMenu(tui.ConfigMenuOptions{})
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	updated, _ = updated.(tui.ConfigMenuModel).Update(tea.KeyMsg{Type: tea.KeyDown})
-	updated, _ = updated.(tui.ConfigMenuModel).Update(tea.KeyMsg{Type: tea.KeyDown})
 	updated, _ = updated.(tui.ConfigMenuModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
 	result := updated.(tui.ConfigMenuModel)
-	if result.Selected().Action != "manage-terminals" {
+	if result.Selected().Action != "manage-claude-configs" {
 		t.Errorf("Expected wrap to first item, got %q", result.Selected().Action)
 	}
 }
@@ -106,7 +101,7 @@ func TestConfigMenu_JKNavigation(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	updated, _ = updated.(tui.ConfigMenuModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
 	result := updated.(tui.ConfigMenuModel)
-	if result.Selected().Action != "manage-claude-configs" {
+	if result.Selected().Action != "reinstall" {
 		t.Errorf("Expected 'j' to move down, got %q", result.Selected().Action)
 	}
 }
@@ -137,28 +132,17 @@ func TestConfigMenu_CtrlCSelectsQuit(t *testing.T) {
 
 func TestConfigMenu_ViewContainsBorder(t *testing.T) {
 	m := tui.NewConfigMenu(tui.ConfigMenuOptions{
-		TerminalName: "Ghostty",
-		Version:      "2.6.0",
+		Version: "2.6.0",
 	})
 	view := m.View()
 	if !strings.Contains(view, "Ghost Tab Configuration") {
 		t.Error("View should contain title")
 	}
-	if !strings.Contains(view, "Terminals") {
-		t.Error("View should contain Terminals item")
+	if !strings.Contains(view, "Manage Claude configs") {
+		t.Error("View should contain Manage Claude configs item")
 	}
 	if !strings.Contains(view, "Reinstall") {
 		t.Error("View should contain Reinstall item")
-	}
-}
-
-func TestConfigMenu_ViewShowsTerminalStatus(t *testing.T) {
-	m := tui.NewConfigMenu(tui.ConfigMenuOptions{
-		TerminalName: "Ghostty",
-	})
-	view := m.View()
-	if !strings.Contains(view, "Ghostty") {
-		t.Error("View should show terminal name as status")
 	}
 }
 
@@ -169,14 +153,6 @@ func TestConfigMenu_ViewShowsVersion(t *testing.T) {
 	view := m.View()
 	if !strings.Contains(view, "v2.6.0") {
 		t.Error("View should show version with v prefix")
-	}
-}
-
-func TestConfigMenu_ViewShowsFallbackWhenNoTerminal(t *testing.T) {
-	m := tui.NewConfigMenu(tui.ConfigMenuOptions{})
-	view := m.View()
-	if !strings.Contains(view, "not set") {
-		t.Error("View should show 'not set' when no terminal configured")
 	}
 }
 

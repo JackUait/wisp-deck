@@ -193,14 +193,15 @@ func TestParseRestoreFlag_empty_when_not_restore(t *testing.T) {
 	}
 }
 
-func TestLaunchRestoreWindow_loads_adapter_and_calls_hook(t *testing.T) {
-	// Stub load_terminal_adapter + terminal_launch_restore so we can record args.
+func TestLaunchRestoreWindow_calls_hook(t *testing.T) {
+	// Ghostty is the only terminal; launch_restore_window calls
+	// terminal_launch_restore directly (no adapter loader). Stub the hook to
+	// record args.
 	root := projectRoot(t)
 	mod := filepath.Join(root, "lib", "session-restore.sh")
 	rec := filepath.Join(t.TempDir(), "rec")
 	script := `
 source ` + quote(mod) + `
-load_terminal_adapter() { :; }                 # stub: pretend adapter loaded
 terminal_launch_restore() { echo "$1|$2|$3" > ` + quote(rec) + `; }
 launch_restore_window "ghostty" "/w/wrapper.sh" "/p/app" "claude"
 `

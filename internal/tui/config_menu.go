@@ -27,8 +27,7 @@ func (i ConfigMenuItem) FilterValue() string { return i.ItemTitle }
 
 // ConfigMenuOptions holds options for creating a ConfigMenuModel.
 type ConfigMenuOptions struct {
-	TerminalName string
-	Version      string
+	Version string
 }
 
 // ConfigMenuModel is a custom-rendered Bubbletea model for the config menu.
@@ -43,7 +42,6 @@ type ConfigMenuModel struct {
 // GetConfigMenuItems returns the config menu items.
 func GetConfigMenuItems() []ConfigMenuItem {
 	return []ConfigMenuItem{
-		{ItemTitle: "Terminals", ItemDesc: "Add, remove, or switch terminal emulator", Action: "manage-terminals"},
 		{ItemTitle: "Manage Claude configs", ItemDesc: "Add, rename, or delete Claude settings profiles", Action: "manage-claude-configs"},
 		{ItemTitle: "Reinstall / Update", ItemDesc: "Re-run the installer", Action: "reinstall"},
 	}
@@ -53,16 +51,9 @@ func GetConfigMenuItems() []ConfigMenuItem {
 func NewConfigMenu(opts ConfigMenuOptions) ConfigMenuModel {
 	items := GetConfigMenuItems()
 
-	// Set status for Terminals item
-	if opts.TerminalName != "" {
-		items[0].Status = opts.TerminalName
-	} else {
-		items[0].Status = "not set"
-	}
-
 	// Set status for Reinstall / Update item
 	if opts.Version != "" {
-		items[2].Status = "v" + opts.Version
+		items[1].Status = "v" + opts.Version
 	}
 
 	return ConfigMenuModel{

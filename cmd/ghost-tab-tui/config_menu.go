@@ -10,10 +10,7 @@ import (
 	"github.com/jackuait/ghost-tab/internal/util"
 )
 
-var (
-	configTerminalName string
-	configVersion      string
-)
+var configVersion string
 
 var configMenuCmd = &cobra.Command{
 	Use:   "config-menu",
@@ -23,7 +20,6 @@ var configMenuCmd = &cobra.Command{
 }
 
 func init() {
-	configMenuCmd.Flags().StringVar(&configTerminalName, "terminal-name", "", "Current terminal display name")
 	configMenuCmd.Flags().StringVar(&configVersion, "version", "", "Current version string")
 	rootCmd.AddCommand(configMenuCmd)
 }
@@ -32,8 +28,7 @@ func runConfigMenu(cmd *cobra.Command, args []string) error {
 	tui.ApplyTheme(tui.ThemeForTool(aiToolFlag))
 
 	model := tui.NewConfigMenu(tui.ConfigMenuOptions{
-		TerminalName: configTerminalName,
-		Version:      configVersion,
+		Version: configVersion,
 	})
 
 	ttyOpts, cleanup, err := util.TUITeaOptions()

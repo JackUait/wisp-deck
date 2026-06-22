@@ -383,101 +383,21 @@ echo "done"
 }
 
 // ============================================================
-// TestGhostTab_TerminalFlag_* — --terminal flag tests
+// TestGhostTab_Flags_* — argument parsing (terminal selection removed)
 // ============================================================
 
-func TestGhostTab_TerminalFlag_recognized_and_skips_full_setup(t *testing.T) {
-	root := projectRoot(t)
-	dir := t.TempDir()
-	configDir := filepath.Join(dir, "config", "ghost-tab")
-	os.MkdirAll(configDir, 0755)
-
-	// Mock ghost-tab-tui to simulate terminal selection
-	binDir := mockCommand(t, dir, "ghost-tab-tui", `
-if [ "$1" = "select-terminal" ]; then
-  echo '{"terminal":"kitty","selected":true}'
-else
-  echo '{"selected":false}'
-fi
-`)
-	// Mock brew to avoid real installations
-	mockCommand(t, dir, "brew", `echo "mock brew"`)
-
-	scriptContent := fmt.Sprintf(`#!/bin/bash
-export XDG_CONFIG_HOME=%q
-export PATH=%q:$PATH
-source %q
-source %q
-source %q
-source %q
-source %q
-
-case "${1:-}" in
-  --terminal)
-    echo "TERMINAL_FLAG_DETECTED"
-    ;;
-  *)
-    echo "FULL_SETUP"
-    ;;
-esac
-`, filepath.Join(dir, "config"),
-		binDir,
-		filepath.Join(root, "lib/tui.sh"),
-		filepath.Join(root, "lib/install.sh"),
-		filepath.Join(root, "lib/terminal-select-tui.sh"),
-		filepath.Join(root, "lib/terminals/registry.sh"),
-		filepath.Join(root, "lib/terminals/adapter.sh"))
-
-	scriptPath := writeTempFile(t, dir, "test-flag.sh", scriptContent)
-	os.Chmod(scriptPath, 0755)
-
-	env := buildEnv(t, []string{binDir})
-	out, code := runBashSnippet(t, fmt.Sprintf("bash %q --terminal", scriptPath), env)
-	assertExitCode(t, code, 0)
-	assertContains(t, out, "TERMINAL_FLAG_DETECTED")
-	assertNotContains(t, out, "FULL_SETUP")
-}
-
-func TestGhostTab_TerminalFlag_no_flag_runs_full_setup(t *testing.T) {
+func TestGhostTab_Flags_unknown_flag_shows_usage(t *testing.T) {
 	root := projectRoot(t)
 	dir := t.TempDir()
 
+	// Mirror bin/ghost-tab's arg-parsing case (Ghostty-only: no terminal flag).
 	scriptContent := fmt.Sprintf(`#!/bin/bash
 source %q
 
 case "${1:-}" in
-  --terminal)
-    echo "TERMINAL_FLAG_DETECTED"
-    ;;
-  *)
-    echo "FULL_SETUP"
-    ;;
-esac
-`, filepath.Join(root, "lib/tui.sh"))
-
-	scriptPath := writeTempFile(t, dir, "test-no-flag.sh", scriptContent)
-	os.Chmod(scriptPath, 0755)
-
-	out, code := runBashSnippet(t, fmt.Sprintf("bash %q", scriptPath), nil)
-	assertExitCode(t, code, 0)
-	assertContains(t, out, "FULL_SETUP")
-	assertNotContains(t, out, "TERMINAL_FLAG_DETECTED")
-}
-
-func TestGhostTab_TerminalFlag_unknown_flag_shows_usage(t *testing.T) {
-	root := projectRoot(t)
-	dir := t.TempDir()
-
-	scriptContent := fmt.Sprintf(`#!/bin/bash
-source %q
-
-case "${1:-}" in
-  --terminal)
-    echo "TERMINAL_SETUP"
-    ;;
   --*)
     error "Unknown flag: $1"
-    echo "Usage: ghost-tab [--terminal]"
+    echo "Usage: ghost-tab"
     exit 1
     ;;
 esac
@@ -492,63 +412,68 @@ esac
 	assertContains(t, out, "Usage:")
 }
 
-func TestGhostTab_TerminalFlag_saves_preference_and_configures(t *testing.T) {
+// ============================================================
+// Terminal-support removal regression tests (Ghostty-only)
+// ============================================================
+
+func TestTerminalSupport_removed_files_do_not_exist(t *testing.T) {
 	root := projectRoot(t)
-	dir := t.TempDir()
-	configDir := filepath.Join(dir, "config", "ghost-tab")
-	os.MkdirAll(configDir, 0755)
-
-	// Mock ghost-tab-tui to return kitty
-	binDir := mockCommand(t, dir, "ghost-tab-tui", `
-if [ "$1" = "select-terminal" ]; then
-  echo '{"terminal":"kitty","selected":true}'
-fi
-`)
-	// Mock brew
-	mockCommand(t, dir, "brew", `echo "mock brew"`)
-
-	script := fmt.Sprintf(`
-export HOME=%q
-export XDG_CONFIG_HOME=%q
-export PATH=%q:$PATH
-source %q
-source %q
-source %q
-source %q
-source %q
-
-SHARE_DIR=%q
-
-# Simulate the terminal-only setup flow
-if select_terminal_interactive; then
-  SELECTED_TERMINAL="$_selected_terminal"
-  TERMINAL_PREF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab"
-  mkdir -p "$TERMINAL_PREF_DIR"
-  save_terminal_preference "$SELECTED_TERMINAL" "$TERMINAL_PREF_DIR/terminal"
-  echo "SAVED:$SELECTED_TERMINAL"
-fi
-`, dir, filepath.Join(dir, "config"),
-		binDir,
-		filepath.Join(root, "lib/tui.sh"),
-		filepath.Join(root, "lib/install.sh"),
-		filepath.Join(root, "lib/terminal-select-tui.sh"),
-		filepath.Join(root, "lib/terminals/registry.sh"),
-		filepath.Join(root, "lib/terminals/adapter.sh"),
-		root)
-
-	env := buildEnv(t, []string{binDir})
-	out, code := runBashSnippet(t, script, env)
-	assertExitCode(t, code, 0)
-	assertContains(t, out, "SAVED:kitty")
-
-	// Verify preference file was written
-	prefFile := filepath.Join(configDir, "terminal")
-	content, err := os.ReadFile(prefFile)
-	if err != nil {
-		t.Fatalf("failed to read terminal preference: %v", err)
+	deletedFiles := []string{
+		"lib/terminals/iterm2.sh",
+		"lib/terminals/wezterm.sh",
+		"lib/terminals/kitty.sh",
+		"lib/terminals/adapter.sh",
+		"lib/terminals/registry.sh",
+		"lib/terminal-select-tui.sh",
+		"cmd/ghost-tab-tui/select_terminal.go",
+		"internal/tui/terminal_selector.go",
+		"internal/models/terminal.go",
 	}
-	if strings.TrimSpace(string(content)) != "kitty" {
-		t.Errorf("expected preference %q, got %q", "kitty", strings.TrimSpace(string(content)))
+	for _, f := range deletedFiles {
+		t.Run(f, func(t *testing.T) {
+			path := filepath.Join(root, f)
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Errorf("%s should not exist — only Ghostty is supported now", f)
+			}
+		})
+	}
+}
+
+func TestGhostTab_does_not_reference_terminal_selection(t *testing.T) {
+	root := projectRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "bin", "ghost-tab"))
+	if err != nil {
+		t.Fatalf("failed to read bin/ghost-tab: %v", err)
+	}
+	content := string(data)
+	for _, ref := range []string{
+		"select_terminal_interactive",
+		"load_terminal_adapter",
+		"get_terminal_display_name",
+		"save_terminal_preference",
+		"--terminal",
+	} {
+		if strings.Contains(content, ref) {
+			t.Errorf("bin/ghost-tab still references %q — terminal selection was removed", ref)
+		}
+	}
+}
+
+func TestWrapper_does_not_source_terminal_registry_or_adapter(t *testing.T) {
+	root := projectRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "wrapper.sh"))
+	if err != nil {
+		t.Fatalf("failed to read wrapper.sh: %v", err)
+	}
+	content := string(data)
+	if strings.Contains(content, "terminals/registry") {
+		t.Errorf("wrapper.sh still sources terminals/registry — it was removed")
+	}
+	if strings.Contains(content, "terminals/adapter") {
+		t.Errorf("wrapper.sh still sources terminals/adapter — it was removed")
+	}
+	if !strings.Contains(content, "terminals/ghostty") {
+		t.Errorf("wrapper.sh should source terminals/ghostty (the only terminal)")
 	}
 }
 
