@@ -57,7 +57,6 @@ func TestSpareTabs_config_core(t *testing.T) {
 		"remain-on-exit on",        // pane-died hook can guard the last tab
 		"range=user|new",           // [ + ] add button
 		"range=user|sel:",          // click a tab to select it
-		"range=user|close:",        // per-tab close button
 		"@gt_dir",                  // cwd for new/respawned tabs
 		"ghost-tab",                // first tab shows the project name
 		"/abs/lib/spare-tabs.sh",   // dispatch sources the lib
@@ -112,13 +111,17 @@ func TestSpareTabs_config_inactive_tabs_are_plain(t *testing.T) {
 		assertNotContains(t, inactive, forbidden)
 	}
 
-	// The current/active tab keeps its colour and close button.
+	// The current/active tab keeps its colour but is otherwise stripped: just
+	// the name in the orange chip — no hexagon, no close ✕ (close is keyboard-
+	// only via prefix+w).
 	active := lineWithPrefix(out, "set -g window-status-current-format ", "")
 	if active == "" {
 		t.Fatalf("could not find window-status-current-format line in:\n%s", out)
 	}
-	assertContains(t, active, "colour209") // orange accent
-	assertContains(t, active, "✕")         // close button
+	assertContains(t, active, "colour209") // orange accent kept
+	for _, forbidden := range []string{"✕", "⬡", "range=user|close:"} {
+		assertNotContains(t, active, forbidden)
+	}
 }
 
 // The launch command must escape the outer $TMUX guard (tmux refuses to nest

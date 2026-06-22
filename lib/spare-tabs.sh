@@ -25,12 +25,11 @@ spare_tabs_socket() {
 spare_tabs_config() {
   local project="$1" dir="$2" lib="$3" label="$4"
 
-  # Tab bar styling — matches the rest of Ghost Tab. Mirrors the outer (bottom)
-  # tmux status bar: grey colour236 chips on a colour235 bar, the ⬡ hexagon
-  # brand mark on the project tab (exactly as the bottom bar shows the session),
-  # and the orange colour209 accent — the app's focus colour (pane-active
-  # border) — for the selected tab. Idle tabs are muted; extras are numbered.
-  # ⬡ (U+2B21) and ✕ are literal UTF-8 (bash 3.2 --posix has no \u escapes).
+  # Tab bar styling — deliberately minimal. The selected tab is the only thing
+  # with colour: its name on the orange colour209 accent (the app's focus
+  # colour, matching the pane-active border). Inactive tabs are plain bracketed
+  # labels — [project] for the first tab, [index] for extras — no chip, no
+  # decoration. Closing is keyboard-only (prefix+w); there is no per-tab ✕.
   cat <<EOF
 set -g mouse on
 set -g status-position top
@@ -45,7 +44,7 @@ set -g status-right "#[range=user|new]#[fg=colour209,bg=colour236,bold] + #[nobo
 set -g window-status-separator " "
 set -g @gt_dir "$dir"
 set -g window-status-format "#[range=user|sel:#{window_id}]#[default fg=colour245][#{?#{==:#{window_index},1},$project,#{window_index}}]#[norange]"
-set -g window-status-current-format "#[range=user|sel:#{window_id}]#[fg=colour235,bg=colour209,bold] #{?#{==:#{window_index},1},⬡ $project,#{window_index}} #[norange]#[range=user|close:#{window_id}]#[fg=colour235,bg=colour209,bold]✕ #[nobold]#[norange]#[bg=colour235]"
+set -g window-status-current-format "#[range=user|sel:#{window_id}]#[fg=colour235,bg=colour209,bold] #{?#{==:#{window_index},1},$project,#{window_index}} #[nobold]#[norange]#[bg=colour235]"
 bind -n MouseDown1Status run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""
 bind -n MouseDown1StatusLeft run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""
 bind -n MouseDown1StatusRight run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""
