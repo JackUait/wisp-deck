@@ -111,6 +111,57 @@ func ParseBackdrop(data string) []string {
 
 var diffAnsiSeq = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
+// diffGutterStyle renders the line-number gutter faint/gray so it sits behind
+// the code without competing with the diff's own green/red.
+var diffGutterStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("240"))
+
+// isRemovedLine reports whether a (possibly ANSI-colored) diff line is a removal
+// (leading '-' once color is stripped). The +++/--- markers are stripped
+// upstream, so a leading '-' here is a removed file line.
+func isRemovedLine(line string) bool {
+	s := diffAnsiSeq.ReplaceAllString(line, "")
+	return s != "" && s[0] == '-'
+}
+
+// numberLines prefixes each diff line with a right-aligned NEW-file line-number
+// gutter ("<n> │ "). Context and added (+) lines advance the counter and show
+// their number; removed (-) lines aren't in the current file, so their gutter is
+// blank. The gutter is dim; the line's own ANSI color (after it) is preserved. A
+// trailing empty line (from a final newline) gets no gutter.
+func numberLines(content string) string {
+	lines := strings.Split(content, "\n")
+	maxNo := 0
+	for _, ln := range lines {
+		if ln != "" && !isRemovedLine(ln) {
+			maxNo++
+		}
+	}
+	width := len(itoa(maxNo))
+	if width < 1 {
+		width = 1
+	}
+	var b strings.Builder
+	n := 0
+	for i, ln := range lines {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		if ln == "" {
+			continue
+		}
+		var num string
+		if isRemovedLine(ln) {
+			num = strings.Repeat(" ", width)
+		} else {
+			n++
+			num = fmt.Sprintf("%*d", width, n)
+		}
+		b.WriteString(diffGutterStyle.Render(num + " │ "))
+		b.WriteString(ln)
+	}
+	return b.String()
+}
+
 // countDiffLines tallies the added (+) and deleted (-) lines of the diff body.
 // The body is pre-colored (git --color=always) and the +++/--- file markers are
 // stripped upstream, so after dropping the ANSI escapes a leading +/- is an
@@ -194,7 +245,7 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if !m.ready {
 			m.viewport = viewport.New(cw, h)
-			m.viewport.SetContent(m.content)
+			m.viewport.SetContent(numberLines(m.content))
 			m.ready = true
 		} else {
 			m.viewport.Width = cw

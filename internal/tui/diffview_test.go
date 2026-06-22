@@ -182,6 +182,54 @@ func TestDiffView_View_is_rounded_border_box(t *testing.T) {
 	}
 }
 
+// numberLines prefixes each diff line with a right-aligned NEW-file line number
+// gutter. Context and added (+) lines advance and show their number; removed (-)
+// lines are not in the current file, so their gutter is blank. The diff's own
+// ANSI color after the gutter is preserved.
+func TestNumberLines_numbers_nonremoved_blank_for_removed(t *testing.T) {
+	content := " ctx\n+add\n-del\n ctx2\n"
+	out := diffAnsiSeq.ReplaceAllString(numberLines(content), "")
+	lines := strings.Split(out, "\n")
+	want := []string{
+		"1 │  ctx",
+		"2 │ +add",
+		"  │ -del", // removed line: blank gutter
+		"3 │  ctx2",
+		"", // trailing element from the final newline: no gutter
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("got %d lines %q, want %d %q", len(lines), lines, len(want), want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d: got %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestNumberLines_pads_gutter_to_widest_number(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 12; i++ { // 12 lines -> 2-digit gutter
+		b.WriteString(" x\n")
+	}
+	out := diffAnsiSeq.ReplaceAllString(numberLines(b.String()), "")
+	first := strings.SplitN(out, "\n", 2)[0]
+	if first != " 1 │  x" { // right-aligned in a 2-wide gutter
+		t.Errorf("first line gutter should be 2-wide right-aligned, got %q", first)
+	}
+}
+
+func TestDiffView_View_shows_line_numbers(t *testing.T) {
+	content := " line one\n line two\n line three\n"
+	m := sizeDiff(NewDiffView("lib/x.sh", content), 80, 24)
+	out := diffAnsiSeq.ReplaceAllString(m.View(), "")
+	for _, g := range []string{"1 │", "2 │", "3 │"} {
+		if !strings.Contains(out, g) {
+			t.Errorf("view should show line-number gutter %q, got:\n%s", g, out)
+		}
+	}
+}
+
 // ParseBackdrop composites the serialized screen capture (a "W H" header, then
 // "PANE left top" blocks of captured lines ending in "ENDPANE") into W×H rows,
 // placing each pane's lines at its window position. This is what the pager
