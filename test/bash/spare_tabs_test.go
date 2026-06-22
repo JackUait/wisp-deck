@@ -68,6 +68,15 @@ func TestSpareTabs_config_core(t *testing.T) {
 	}
 }
 
+// The tab bar must sit flush against the pane's left edge — no leading
+// status-left padding before the first tab.
+func TestSpareTabs_config_flush_left(t *testing.T) {
+	out, code := runBashFunc(t, "lib/spare-tabs.sh", "spare_tabs_config",
+		[]string{"ghost-tab", "/proj/dir", "/abs/lib/spare-tabs.sh", "gtspare_x"}, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, `set -g status-left ""`)
+}
+
 // The launch command must escape the outer $TMUX guard (tmux refuses to nest
 // otherwise) and fall back to a plain shell if tmux is unavailable.
 func TestSpareTabs_launch_cmd(t *testing.T) {

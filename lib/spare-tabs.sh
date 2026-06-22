@@ -40,7 +40,7 @@ set -g base-index 1
 set -g status-justify left
 set -g status-style "fg=colour250,bg=colour235"
 set -g window-status-style "bg=colour235"
-set -g status-left "#[bg=colour235] "
+set -g status-left ""
 set -g status-right "#[range=user|new]#[fg=colour209,bg=colour236,bold] + #[nobold]#[norange]#[bg=colour235] "
 set -g window-status-separator " "
 set -g @gt_dir "$dir"
