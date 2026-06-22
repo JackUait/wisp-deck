@@ -135,6 +135,24 @@ body_line_for_click() {
   printf '%d' "$line"
 }
 
+# nth_line stores the Nth (1-based) line of a newline-delimited string in the
+# global NTH_LINE, WITHOUT forking — no `sed`, no `$()` subshell. The hover hot
+# path calls this per mouse-motion event (any-motion tracking floods events as
+# the cursor moves), and the old `printf | sed -n` spawned a subprocess every
+# time, so the highlight crawled behind the cursor. Empty lines are preserved;
+# an out-of-range or non-positive index yields an empty NTH_LINE.
+# Usage: nth_line <text> <n>   -> result in $NTH_LINE
+nth_line() {
+  NTH_LINE=""
+  local n="$2" i=0 line
+  [ "$n" -lt 1 ] && return 0
+  while IFS= read -r line; do
+    i=$((i + 1))
+    if [ "$i" -eq "$n" ]; then NTH_LINE="$line"; return 0; fi
+  done <<< "$1"
+  return 0
+}
+
 # open_diff_popup floats a whole-window tmux popup showing the WHOLE-FILE diff
 # (full context, -U999999) for the clicked path versus HEAD, piped through less.
 # display-popup overlays the entire client window (not just this pane) and is
@@ -207,7 +225,7 @@ highlight_body_line() {
   local reset="${esc}[0m"
   local on="${esc}[${style}m"
   local reassert="${reset}${on}"   # each internal reset becomes reset+re-style
-  local i=0 row out="" visible pad padlen
+  local i=0 row out="" visible rest pre pad padlen
   while IFS= read -r row; do
     i=$((i + 1))
     if [ "$i" -eq "$ln" ]; then
@@ -215,8 +233,20 @@ highlight_body_line() {
       if [ "$width" -gt 0 ]; then
         # Visible width = the row with its ANSI escapes stripped. The +/- ledger
         # and names are single-column glyphs (the "−" sign included), so a
-        # character count matches the rendered columns.
-        visible=$(printf '%s' "$row" | sed $'s/\033\\[[0-9;]*m//g')
+        # character count matches the rendered columns. Strip inline with pure
+        # parameter expansion (no `sed` fork) — this runs on every hover redraw.
+        visible=""; rest="$row"
+        while [ -n "$rest" ]; do
+          case "$rest" in
+            *"${esc}["*)
+              pre="${rest%%"${esc}["*}"   # text before the first ESC[
+              visible="${visible}${pre}"
+              rest="${rest#*"${esc}["}"    # drop up to and including ESC[
+              rest="${rest#*m}"            # drop the SGR params up to 'm'
+              ;;
+            *) visible="${visible}${rest}"; rest="" ;;
+          esac
+        done
         padlen=$((width - ${#visible}))
         [ "$padlen" -lt 0 ] && padlen=0
         [ "$padlen" -gt 0 ] && pad=$(printf '%*s' "$padlen" '')
@@ -481,8 +511,8 @@ compact_view() {
     # Keep the hover highlight only on an actual file row: drop it if the
     # changeset refreshed out from under it (line gone or no longer a file).
     if [ "$hover_line" -gt 0 ]; then
-      if [ "$hover_line" -gt "$body_total" ] || \
-         [ -z "$(printf '%s\n' "$body_map" | sed -n "${hover_line}p")" ]; then
+      nth_line "$body_map" "$hover_line"
+      if [ "$hover_line" -gt "$body_total" ] || [ -z "$NTH_LINE" ]; then
         hover_line=0
       fi
     fi
@@ -561,8 +591,8 @@ compact_view() {
                   mrest="${mbtn#*;}"; mrow="${mrest#*;}"
                   bl=$(body_line_for_click "$mrow" "$scroll" "$avail" "$body_total")
                   hv=0
-                  if [ "$bl" != 0 ] && \
-                     [ -n "$(printf '%s\n' "$body_map" | sed -n "${bl}p")" ]; then
+                  nth_line "$body_map" "$bl"
+                  if [ "$bl" != 0 ] && [ -n "$NTH_LINE" ]; then
                     hv="$bl"
                   fi
                   hover_line="$hv"
@@ -577,7 +607,7 @@ compact_view() {
                     mrow="${mrest#*;}"          # "row"
                     bl=$(body_line_for_click "$mrow" "$scroll" "$avail" "$body_total")
                     if [ "$bl" != 0 ]; then
-                      cpath=$(printf '%s\n' "$body_map" | sed -n "${bl}p")
+                      nth_line "$body_map" "$bl"; cpath="$NTH_LINE"
                       if [ -n "$cpath" ]; then
                         open_diff_popup "$project_dir" "$cpath"
                         enter_ui_mode "$interactive"   # re-assert alt-screen + mouse

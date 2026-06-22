@@ -588,6 +588,75 @@ func TestHighlightBodyLine_leaves_other_lines_untouched(t *testing.T) {
 	}
 }
 
+// nth_line extracts the Nth (1-based) line of a newline-delimited string into the
+// global NTH_LINE WITHOUT forking — the hover hot path calls it per mouse-motion
+// event, and the old `printf | sed -n` forked a subprocess every time, which made
+// the highlight crawl behind the cursor. Must behave identically under zsh (the
+// pane's shell) and bash, preserving empty lines and returning empty out-of-range.
+func runNthLine(t *testing.T, sh, text, n string) string {
+	t.Helper()
+	root := projectRoot(t)
+	module := filepath.Join(root, "lib", "compact-view.sh")
+	script := `source "$0" && nth_line "$1" "$2" && printf '[%s]' "$NTH_LINE"`
+	cmd := exec.Command(sh, "-c", script, module, text, n)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("[%s] nth_line: %v\n%s", sh, err, out)
+	}
+	return string(out)
+}
+
+func TestNthLine_extracts_line_under_both_shells(t *testing.T) {
+	cases := []struct {
+		name, text, n, want string
+	}{
+		{"second", "a\nb\nc", "2", "[b]"},
+		{"first", "a\nb\nc", "1", "[a]"},
+		{"last", "a\nb\nc", "3", "[c]"},
+		{"empty middle line preserved", "a\n\nc", "2", "[]"},
+		{"out of range", "a\nb", "5", "[]"},
+		{"zero index", "a\nb", "0", "[]"},
+		{"path with spaces", "app x.sh\nlib/y.sh", "1", "[app x.sh]"},
+	}
+	for _, sh := range []string{"bash", "zsh"} {
+		if _, err := exec.LookPath(sh); err != nil {
+			t.Logf("%s not available, skipping", sh)
+			continue
+		}
+		for _, c := range cases {
+			t.Run(sh+"/"+c.name, func(t *testing.T) {
+				if got := runNthLine(t, sh, c.text, c.n); got != c.want {
+					t.Errorf("[%s] nth_line(%q,%s) = %q, want %q", sh, c.text, c.n, got, c.want)
+				}
+			})
+		}
+	}
+}
+
+// The hovered row's full-width padding (which strips ANSI to measure visible
+// width) must work under zsh too, since the strip is now pure shell (no sed).
+func TestHighlightBodyLine_pads_to_width_under_both_shells(t *testing.T) {
+	body := "\x1b[32m+2\x1b[0m hi" // visible "+2 hi" = 5 cols
+	for _, sh := range []string{"bash", "zsh"} {
+		if _, err := exec.LookPath(sh); err != nil {
+			t.Logf("%s not available, skipping", sh)
+			continue
+		}
+		root := projectRoot(t)
+		module := filepath.Join(root, "lib", "compact-view.sh")
+		script := `source "$0" && highlight_body_line "$1" "$2" "$3" "$4"`
+		cmd := exec.Command(sh, "-c", script, module, body, "1", "48;5;238", "12")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("[%s] highlight_body_line: %v\n%s", sh, err, out)
+		}
+		visible := ansiRe.ReplaceAllString(string(out), "")
+		if got := len([]rune(visible)); got != 12 {
+			t.Errorf("[%s] padded visible width = %d, want 12: %q", sh, got, visible)
+		}
+	}
+}
+
 var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
 func highlightBodyLineW(t *testing.T, body, line, style, width string) string {
