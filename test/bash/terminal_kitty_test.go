@@ -87,11 +87,11 @@ func TestKittyAdapter_setup_config_adds_nerd_font_symbol_map(t *testing.T) {
 	// A symbol_map line maps the Nerd Font glyph ranges to the installed font.
 	assertContains(t, content, "symbol_map ")
 	assertContains(t, content, "Symbols Nerd Font Mono")
-	// Must cover the three statusline icons: brain U+F09D1 and memory U+F035B
-	// (Material Design Icons range U+F0001-U+F1AF0) and cpu gauge U+F0E4
-	// (FontAwesome range U+F000-U+F2FF).
+	// Must cover the three statusline icons: brain U+F09D1 and memory U+F01BC
+	// (Material Design Icons range U+F0001-U+F1AF0) and cpu chip U+F4BC
+	// (Octicons range U+F400-U+F532).
 	assertContains(t, content, "U+F0001-U+F1AF0")
-	assertContains(t, content, "U+F000-U+F2FF")
+	assertContains(t, content, "U+F400-U+F532")
 }
 
 func TestKittyAdapter_setup_config_symbol_map_is_idempotent(t *testing.T) {

@@ -21,8 +21,7 @@ terminal_install() {
 # statusline icons render as tofu. The mapping is surgical (only icon ranges),
 # leaving the user's primary font in charge of text and box-drawing. The two
 # ranges that carry the statusline icons are U+F0001-U+F1AF0 (Material Design
-# Icons: brain U+F09D1, memory U+F035B) and U+F000-U+F2FF (FontAwesome: cpu
-# gauge U+F0E4).
+# Icons: brain U+F09D1, memory U+F01BC) and U+F400-U+F532 (Octicons: cpu U+F4BC).
 _KITTY_NERD_SYMBOL_MAP="symbol_map U+23FB-U+23FE,U+2665,U+26A1,U+2B58,U+E000-U+E00A,U+E0A0-U+E0A3,U+E0B0-U+E0D4,U+E200-U+E2A9,U+E300-U+E3E3,U+E5FA-U+E6B7,U+E700-U+E8EF,U+EA60-U+EC1E,U+ED00-U+EFCE,U+F000-U+F2FF,U+F300-U+F375,U+F400-U+F532,U+F0001-U+F1AF0 Symbols Nerd Font Mono"
 
 # Write or merge the wrapper command into kitty config, and ensure the Nerd Font
