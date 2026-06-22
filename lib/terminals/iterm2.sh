@@ -38,7 +38,7 @@ terminal_setup_config() {
       "Custom Command": "Yes",
       "Command": "/bin/bash -l $wrapper_path",
       "Use Non-ASCII Font": true,
-      "Non Ascii Font": "SymbolsNerdFontMono-Regular 13",
+      "Non Ascii Font": "SymbolsNFM 13",
       "Non-ASCII Anti Aliased": true
     }
   ]

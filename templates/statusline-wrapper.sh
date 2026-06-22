@@ -70,7 +70,7 @@ if [ -n "$mem_label" ]; then
   line="$line$(printf ' | \033[01;35m󰍛 %s\033[00m' "$mem_label")"
 fi
 if [ -n "$cpu_label" ]; then
-  line="$line$(printf ' | \033[01;33m %s\033[00m' "$cpu_label")"
+  line="$line$(printf ' | \033[01;33m %s\033[00m' "$cpu_label")"
 fi
 if [ -n "$model_name" ]; then
   line="$line$(printf ' | \033[01;34m%s\033[00m' "$model_name")"

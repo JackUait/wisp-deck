@@ -269,9 +269,9 @@ func TestStatusline_statusline_command_omits_branch_name(t *testing.T) {
 // Nerd Font glyphs the wrapper prefixes onto each metric so context %, memory,
 // and CPU are distinguishable at a glance. Kept in sync with statusline-wrapper.sh.
 const (
-	ctxIcon = "\U000F09D1" // nf-md-brain   — context window
-	memIcon = "\U000F035B" // nf-md-memory  — memory load
-	cpuIcon = "\U0000F4BC" // nf-oct-cpu    — CPU load
+	ctxIcon = "\U000F09D1" // nf-md-brain       — context window
+	memIcon = "\U000F035B" // nf-md-memory      — memory load (chip)
+	cpuIcon = "\U0000F0E4" // nf-fa-tachometer  — CPU load (gauge; distinct from the memory chip)
 )
 
 // --- statusline-wrapper.sh: metric icons ---

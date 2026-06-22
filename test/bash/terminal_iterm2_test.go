@@ -115,9 +115,13 @@ func TestIterm2Adapter_setup_config_sets_nerd_font_for_non_ascii(t *testing.T) {
 	if use, ok := p["Use Non-ASCII Font"].(bool); !ok || !use {
 		t.Errorf("expected \"Use Non-ASCII Font\": true, got %v", p["Use Non-ASCII Font"])
 	}
+	// iTerm2 resolves the font via its PostScript name, which for the Symbols
+	// Nerd Font Mono is "SymbolsNFM" (NOT the family name or file stem). Using
+	// the wrong name makes iTerm2 silently fall back and the icons render as
+	// tofu, so assert the exact PostScript name.
 	font, _ := p["Non Ascii Font"].(string)
-	if !strings.Contains(font, "SymbolsNerdFontMono") {
-		t.Errorf("expected non-ASCII font to be a Symbols Nerd Font, got %q", font)
+	if !strings.HasPrefix(font, "SymbolsNFM ") {
+		t.Errorf("expected non-ASCII font to use PostScript name \"SymbolsNFM\", got %q", font)
 	}
 }
 
