@@ -29,7 +29,9 @@ spare_tabs_config() {
   # with colour: its name on the orange colour209 accent (the app's focus
   # colour, matching the pane-active border). Inactive tabs are plain bracketed
   # labels — [project] for the first tab, [index] for extras — no chip, no
-  # decoration. Closing is keyboard-only (prefix+w); there is no per-tab ✕.
+  # decoration. The bar itself is transparent (bg=default), so the tabs and the
+  # + button float on the terminal background. Closing is keyboard-only
+  # (prefix+w); there is no per-tab ✕.
   cat <<EOF
 set -g mouse on
 set -g status-position top
@@ -37,14 +39,14 @@ set -g exit-unattached on
 set -g remain-on-exit on
 set -g base-index 1
 set -g status-justify left
-set -g status-style "fg=colour250,bg=colour235"
-set -g window-status-style "bg=colour235"
+set -g status-style "fg=colour250,bg=default"
+set -g window-status-style "bg=default"
 set -g status-left ""
-set -g status-right "#[range=user|new]#[fg=colour209,bg=colour236,bold] + #[nobold]#[norange]#[bg=colour235] "
+set -g status-right "#[range=user|new]#[fg=colour209,bg=colour236,bold] + #[nobold]#[norange]#[bg=default] "
 set -g window-status-separator " "
 set -g @gt_dir "$dir"
 set -g window-status-format "#[range=user|sel:#{window_id}]#[default fg=colour245][#{?#{==:#{window_index},1},$project,#{window_index}}]#[norange]"
-set -g window-status-current-format "#[range=user|sel:#{window_id}]#[fg=colour235,bg=colour209,bold] #{?#{==:#{window_index},1},$project,#{window_index}} #[nobold]#[norange]#[bg=colour235]"
+set -g window-status-current-format "#[range=user|sel:#{window_id}]#[fg=colour235,bg=colour209,bold] #{?#{==:#{window_index},1},$project,#{window_index}} #[nobold]#[norange]#[bg=default]"
 bind -n MouseDown1Status run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""
 bind -n MouseDown1StatusLeft run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""
 bind -n MouseDown1StatusRight run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""

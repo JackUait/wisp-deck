@@ -76,6 +76,18 @@ func TestSpareTabs_config_flush_left(t *testing.T) {
 	assertContains(t, out, `set -g status-left ""`)
 }
 
+// The tab-bar strip itself is transparent (bg=default), so the tabs and the +
+// button float on the terminal background instead of a grey colour235 strip.
+func TestSpareTabs_config_transparent_bar(t *testing.T) {
+	out, code := runBashFunc(t, "lib/spare-tabs.sh", "spare_tabs_config",
+		[]string{"ghost-tab", "/proj/dir", "/abs/lib/spare-tabs.sh", "gtspare_x"}, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, `set -g status-style "fg=colour250,bg=default"`)
+	assertContains(t, out, `set -g window-status-style "bg=default"`)
+	// Nothing should repaint the bar with the old charcoal strip.
+	assertNotContains(t, out, "bg=colour235")
+}
+
 // lineWithPrefix returns the first line of out whose trimmed text starts with
 // prefix (and, when forbidden is non-empty, does NOT start with it).
 func lineWithPrefix(out, prefix, forbidden string) string {
