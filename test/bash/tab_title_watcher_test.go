@@ -595,15 +595,11 @@ func TestTabTitleWatcher_wrapper_disables_tmux_set_titles(t *testing.T) {
 	}
 	content := string(data)
 
-	// The tmux new-session command must set the set-titles option from the
-	// computed mode value (off in full/project so the watcher's title isn't
-	// overwritten; on in model mode so the AI tool's own title flows through).
-	if !strings.Contains(content, "set-option set-titles") {
-		t.Error("wrapper.sh must set the tmux set-titles option in the new-session command")
-	}
-	// It must no longer hard-code 'off' — the value comes from the mode.
-	if strings.Contains(content, "set-option set-titles off") {
-		t.Error("wrapper.sh must not hard-code 'set-option set-titles off'; the value must be derived from the tab title mode")
+	// The tmux new-session command must keep set-titles off so tmux never
+	// overwrites the tab title: Ghost Tab's watcher owns it in every mode,
+	// including model mode where the watcher mirrors the AI pane's own title.
+	if !strings.Contains(content, "set-option set-titles off") {
+		t.Error("wrapper.sh must contain 'set-option set-titles off' so tmux does not overwrite Ghost Tab's tab title")
 	}
 }
 
@@ -974,55 +970,57 @@ func TestTabTitleWatcher_loop_uses_apply_tab_title(t *testing.T) {
 	}
 }
 
-// --- tmux_set_titles_for_mode: let the model's title flow through in model mode ---
+// --- model_tab_title: mirror the AI pane's own title in model mode ---
 //
-// In "model" mode the AI tool sets the terminal title (via an OSC escape inside
-// its tmux pane) to describe its task. tmux only forwards a pane title to the
-// outer terminal tab when set-titles is "on", so model mode must enable it.
-// In full/project modes Ghost Tab's watcher owns the title, so set-titles is
-// "off" to stop tmux from overwriting it.
+// In "model" mode the AI tool sets its tmux pane's title (via an OSC escape) to
+// describe its task. The watcher reads that pane title and mirrors it to the
+// terminal tab. When the pane has no meaningful title yet, tmux reports the
+// hostname — so fall back to the project name instead of showing the host.
 
-func TestTabTitleWatcher_tmux_set_titles_for_mode_model_is_on(t *testing.T) {
-	snippet := tabTitleSnippet(t, `tmux_set_titles_for_mode "model"`)
+func TestTabTitleWatcher_model_tab_title_uses_pane_title(t *testing.T) {
+	snippet := tabTitleSnippet(t,
+		`model_tab_title "Refactoring auth module" "myhost.local" "blok"`)
 	out, code := runBashSnippet(t, snippet, nil)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "on" {
-		t.Errorf("model mode must enable tmux set-titles, got %q", strings.TrimSpace(out))
+	if strings.TrimSpace(out) != "Refactoring auth module" {
+		t.Errorf("model_tab_title should echo the AI pane title, got %q", strings.TrimSpace(out))
 	}
 }
 
-func TestTabTitleWatcher_tmux_set_titles_for_mode_full_is_off(t *testing.T) {
-	snippet := tabTitleSnippet(t, `tmux_set_titles_for_mode "full"`)
+func TestTabTitleWatcher_model_tab_title_falls_back_to_project_on_hostname(t *testing.T) {
+	snippet := tabTitleSnippet(t,
+		`model_tab_title "myhost.local" "myhost.local" "blok"`)
 	out, code := runBashSnippet(t, snippet, nil)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "off" {
-		t.Errorf("full mode must disable tmux set-titles, got %q", strings.TrimSpace(out))
+	if strings.TrimSpace(out) != "blok" {
+		t.Errorf("model_tab_title should fall back to project when the pane title is just the hostname, got %q", strings.TrimSpace(out))
 	}
 }
 
-func TestTabTitleWatcher_tmux_set_titles_for_mode_project_is_off(t *testing.T) {
-	snippet := tabTitleSnippet(t, `tmux_set_titles_for_mode "project"`)
+func TestTabTitleWatcher_model_tab_title_falls_back_to_project_on_empty(t *testing.T) {
+	snippet := tabTitleSnippet(t,
+		`model_tab_title "" "myhost.local" "blok"`)
 	out, code := runBashSnippet(t, snippet, nil)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "off" {
-		t.Errorf("project mode must disable tmux set-titles, got %q", strings.TrimSpace(out))
+	if strings.TrimSpace(out) != "blok" {
+		t.Errorf("model_tab_title should fall back to project when the pane title is empty, got %q", strings.TrimSpace(out))
 	}
 }
 
-// wrapper.sh must drive the tmux set-titles option from the saved mode (so model
-// mode turns it on) and point set-titles-string at the pane title so the AI
-// tool's own title is what reaches the terminal tab.
-func TestTabTitleWatcher_wrapper_forwards_pane_title_in_model_mode(t *testing.T) {
+// The watcher loop, in model mode, must read the AI pane's title and mirror it
+// to the tab (so the model's own title shows). It reads #{pane_title} and routes
+// it through model_tab_title with a hostname/project fallback.
+func TestTabTitleWatcher_loop_mirrors_ai_pane_title_in_model_mode(t *testing.T) {
 	root := projectRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, "wrapper.sh"))
+	data, err := os.ReadFile(filepath.Join(root, "lib", "tab-title-watcher.sh"))
 	if err != nil {
-		t.Fatalf("failed to read wrapper.sh: %v", err)
+		t.Fatalf("failed to read tab-title-watcher.sh: %v", err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "tmux_set_titles_for_mode") {
-		t.Error("wrapper.sh must derive the tmux set-titles option from the tab title mode via tmux_set_titles_for_mode")
+	if !strings.Contains(content, "model_tab_title") {
+		t.Error("watcher loop should mirror the AI pane title via model_tab_title in model mode")
 	}
-	if !strings.Contains(content, "set-titles-string") || !strings.Contains(content, "pane_title") {
-		t.Error("wrapper.sh must set set-titles-string to the pane title so the model's title reaches the tab")
+	if !strings.Contains(content, "pane_title") {
+		t.Error("watcher loop should read #{pane_title} of the AI pane in model mode")
 	}
 }

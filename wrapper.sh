@@ -176,10 +176,6 @@ if [ -f "$_settings_file" ]; then
   fi
 fi
 
-# In model mode, tmux must forward the AI tool's own pane title to the terminal
-# tab; otherwise the watcher owns the title and tmux must keep its hands off it.
-_tmux_set_titles="$(tmux_set_titles_for_mode "$_tab_title_setting")"
-
 if [ "$_tab_title_setting" = "full" ]; then
   set_tab_title "$PROJECT_NAME" "$SELECTED_AI_TOOL"
 else
@@ -332,8 +328,7 @@ _spare_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/spare-tabs.sh\" && spare_
   set-option status-left-style "fg=white,bg=colour236,bold" \; \
   set-option status-style "bg=colour235" \; \
   set-option status-right "" \; \
-  set-option set-titles "$_tmux_set_titles" \; \
-  set-option set-titles-string "#{pane_title}" \; \
+  set-option set-titles off \; \
   set-option exit-unattached on \; \
   set-option pane-border-style "fg=colour238" \; \
   set-option pane-active-border-style "fg=colour209" \; \

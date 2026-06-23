@@ -73,16 +73,17 @@ check_ai_tool_state() {
   fi
 }
 
-# Echo the tmux set-titles value ("on"/"off") for the given tab title mode.
-# Usage: tmux_set_titles_for_mode <mode>
-#   model -> "on":  let the AI tool's own pane title flow through to the tab.
-#   else  -> "off": Ghost Tab's watcher owns the title, so stop tmux from
-#                   overwriting it.
-tmux_set_titles_for_mode() {
-  case "$1" in
-    model) echo "on" ;;
-    *) echo "off" ;;
-  esac
+# Echo the tab title to show in model mode: the AI tool's own pane title (set via
+# an OSC escape inside its tmux pane), or the project name when the pane has no
+# meaningful title yet — tmux defaults a pane's title to the hostname.
+# Usage: model_tab_title <pane_title> <hostname> <project>
+model_tab_title() {
+  local pane_title="$1" host="$2" project="$3"
+  if [ -z "$pane_title" ] || [ "$pane_title" = "$host" ]; then
+    echo "$project"
+  else
+    echo "$pane_title"
+  fi
 }
 
 # Write the terminal tab title for the given state, honoring the title mode.
@@ -138,11 +139,25 @@ start_tab_title_watcher() {
       [ -z "$ai_pane" ] && sleep 0.5
     done
 
+    # Model mode mirrors the AI pane's own title; cache the hostname once so we
+    # can tell "the model set a title" from tmux's default (the hostname).
+    local host
+    host=$(hostname 2>/dev/null)
+
     local was_waiting=false
     while true; do
       sleep 0.5
       local state
       state=$(check_ai_tool_state "$ai_tool" "$session_name" "$tmux_cmd" "$marker_file" "$ai_pane")
+
+      # In model mode the AI tool owns the title: read the AI pane's title each
+      # poll and mirror it to the tab (falling back to the project name before
+      # the model has set one). The waiting/sound logic below still runs.
+      if [ "$tab_title_setting" = "model" ]; then
+        local pane_title
+        pane_title=$("$tmux_cmd" display-message -p -t "$session_name:0.$ai_pane" '#{pane_title}' 2>/dev/null)
+        set_tab_title "$(model_tab_title "$pane_title" "$host" "$project_name")"
+      fi
 
       if [ "$state" = "waiting" ] && [ "$was_waiting" = false ]; then
         # Debounce: require the marker to persist for ~1s before notifying.
