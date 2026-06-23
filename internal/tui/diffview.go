@@ -56,6 +56,14 @@ const (
 	diffTabFullText    = "[ Full ]"
 )
 
+// Nerd Font group-label icons shown to the left of each switcher: a columns
+// glyph for the inline/side-by-side layout group, and an eye glyph for the
+// changes-only/full-file visibility group.
+const (
+	diffLayoutIcon = "" // nf-fa-columns
+	diffCtxIcon    = "" // nf-fa-eye
+)
+
 // Context-switch tab ids, returned by contextTabAt.
 const (
 	ctxTabChanges = iota
@@ -92,6 +100,8 @@ var (
 	// Hovered (but inactive) tab: brightened + underlined so the pointer target
 	// reads as clickable without looking active.
 	diffTabHoverStyle = lipgloss.NewStyle().Bold(true).Underline(true).Foreground(lipgloss.Color("255"))
+	// Group-label icon: a dim accent glyph to the left of each switcher group.
+	diffTabIconStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("208"))
 
 	diffBarStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244")).
@@ -476,11 +486,13 @@ func (m DiffViewModel) tabRow() string {
 		sxs = diffTabHoverStyle
 	}
 	row := strings.Repeat(" ", diffTabIndent) +
+		diffTabIconStyle.Render(diffLayoutIcon) + " " +
 		inline.Render(diffTabInlineText) + " " + sxs.Render(diffTabSxsText)
 	if !m.collapsible {
 		return row
 	}
-	// The changes-only vs full switcher, to the right of the layout switcher.
+	// The changes-only vs full switcher, its own icon-labelled group set apart
+	// from the layout switcher by the gap.
 	changes, full := diffTabInactiveStyle, diffTabInactiveStyle
 	if m.compact {
 		changes = diffTabActiveStyle
@@ -494,21 +506,31 @@ func (m DiffViewModel) tabRow() string {
 		full = diffTabHoverStyle
 	}
 	return row + strings.Repeat(" ", diffCtxTabGap) +
+		diffTabIconStyle.Render(diffCtxIcon) + " " +
 		changes.Render(diffTabChangesText) + " " + full.Render(diffTabFullText)
 }
 
+// diffTabLayout returns the content-column start of each clickable button,
+// derived from the same icon/label widths tabRow renders with so the hit-tests
+// can't drift from the drawing. Layout: indent, layout-icon + space, Inline,
+// space, Side-by-side, gap, context-icon + space, Changes, space, Full.
+func diffTabLayout() (inlineStart, sxsStart, changesStart, fullStart int) {
+	inlineStart = diffTabIndent + lipgloss.Width(diffLayoutIcon) + 1
+	sxsStart = inlineStart + len(diffTabInlineText) + 1
+	layoutEnd := sxsStart + len(diffTabSxsText)
+	changesStart = layoutEnd + diffCtxTabGap + lipgloss.Width(diffCtxIcon) + 1
+	fullStart = changesStart + len(diffTabChangesText) + 1
+	return inlineStart, sxsStart, changesStart, fullStart
+}
+
 // tabAt maps a click's column (relative to the box content's left edge) to the
-// view mode whose button it lands on, or -1 if it misses both. Mirrors tabRow's
-// layout: indent, then the Inline label, a space, then the Side-by-side label.
+// layout-switch button it lands on, or -1 if it misses both.
 func tabAt(contentX int) int {
-	inStart := diffTabIndent
-	inEnd := inStart + len(diffTabInlineText)
-	sxStart := inEnd + 1
-	sxEnd := sxStart + len(diffTabSxsText)
+	inlineStart, sxsStart, _, _ := diffTabLayout()
 	switch {
-	case contentX >= inStart && contentX < inEnd:
+	case contentX >= inlineStart && contentX < inlineStart+len(diffTabInlineText):
 		return diffModeInline
-	case contentX >= sxStart && contentX < sxEnd:
+	case contentX >= sxsStart && contentX < sxsStart+len(diffTabSxsText):
 		return diffModeSideBySide
 	default:
 		return -1
@@ -516,17 +538,13 @@ func tabAt(contentX int) int {
 }
 
 // contextTabAt maps a click's content column to the context (changes/full)
-// switcher button it lands on, or -1 if it misses both. Mirrors tabRow's layout:
-// the layout switcher, then diffCtxTabGap spaces, then Changes, a space, Full.
+// switcher button it lands on, or -1 if it misses both.
 func contextTabAt(contentX int) int {
-	base := diffTabIndent + len(diffTabInlineText) + 1 + len(diffTabSxsText) + diffCtxTabGap
-	changesEnd := base + len(diffTabChangesText)
-	fullStart := changesEnd + 1
-	fullEnd := fullStart + len(diffTabFullText)
+	_, _, changesStart, fullStart := diffTabLayout()
 	switch {
-	case contentX >= base && contentX < changesEnd:
+	case contentX >= changesStart && contentX < changesStart+len(diffTabChangesText):
 		return ctxTabChanges
-	case contentX >= fullStart && contentX < fullEnd:
+	case contentX >= fullStart && contentX < fullStart+len(diffTabFullText):
 		return ctxTabFull
 	default:
 		return -1

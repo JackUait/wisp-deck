@@ -6,7 +6,20 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
+
+// cellOf finds the screen cell (x = display column, y = row) where needle starts
+// in the ANSI-stripped render, so click tests don't hardcode columns that shift
+// when the tab row's icons/spacing change.
+func cellOf(out, needle string) (x, y int, ok bool) {
+	for i, ln := range strings.Split(out, "\n") {
+		if c := strings.Index(ln, needle); c >= 0 {
+			return lipgloss.Width(ln[:c]), i, true
+		}
+	}
+	return 0, 0, false
+}
 
 // collapsibleDiff is a modified file with long unchanged runs both before and
 // after the single changed line, so the default (changes-only) view collapses
@@ -382,25 +395,30 @@ func TestDiffView_View_shows_view_buttons(t *testing.T) {
 }
 
 // At 200x40 the layout auto-picks side-by-side; clicking the Inline button must
-// force inline, and clicking Side-by-side must force it back. Button hit boxes
-// (computed in the model): the tabs row is screen y=5 (title at y=3, a blank gap
-// at y=4), content starts at screen x=11, Inline spans content cols [1,11),
-// Side-by-side [12,28).
+// force inline, and clicking Side-by-side must force it back. Button positions
+// are located in the render so the test survives changes to the tab row's
+// icons/spacing.
 func TestDiffView_click_buttons_switch_mode(t *testing.T) {
 	m := sizeDiff(NewDiffView("lib/x.sh", " ctx\n-del\n+add\n ctx2\n"), 200, 40)
 	if !isSideBySide(stripA(m.View())) {
 		t.Fatal("expected auto side-by-side at 200 wide")
 	}
-	// Click the Inline button (screen x=15, y=5).
-	m, cmd := clickDiff(m, 15, 5)
+	ix, iy, ok := cellOf(stripA(m.View()), "Inline")
+	if !ok {
+		t.Fatal("could not locate the Inline button")
+	}
+	m, cmd := clickDiff(m, ix, iy)
 	if quits(cmd) || m.quitting {
 		t.Fatal("clicking a button must not close the popup")
 	}
 	if isSideBySide(stripA(m.View())) || !strings.Contains(stripA(m.View()), "+add") {
 		t.Errorf("clicking Inline should switch to inline, got:\n%s", stripA(m.View()))
 	}
-	// Click the Side-by-side button (screen x=30, y=5).
-	m, _ = clickDiff(m, 30, 5)
+	sx, sy, ok := cellOf(stripA(m.View()), "Side-by-side")
+	if !ok {
+		t.Fatal("could not locate the Side-by-side button")
+	}
+	m, _ = clickDiff(m, sx, sy)
 	if !isSideBySide(stripA(m.View())) {
 		t.Errorf("clicking Side-by-side should switch back, got:\n%s", stripA(m.View()))
 	}
@@ -411,8 +429,12 @@ func TestDiffView_hover_highlights_tab_without_switching(t *testing.T) {
 	if !isSideBySide(stripA(m.View())) {
 		t.Fatal("expected auto side-by-side at 200 wide")
 	}
-	// Hover the Inline button (x=15, y=5) while side-by-side is active.
-	updated, cmd := m.Update(tea.MouseMsg{X: 15, Y: 5, Action: tea.MouseActionMotion})
+	ix, iy, ok := cellOf(stripA(m.View()), "Inline")
+	if !ok {
+		t.Fatal("could not locate the Inline button")
+	}
+	// Hover the Inline button while side-by-side is active.
+	updated, cmd := m.Update(tea.MouseMsg{X: ix, Y: iy, Action: tea.MouseActionMotion})
 	m = updated.(DiffViewModel)
 	if cmd != nil {
 		t.Error("hover should not emit a command")
@@ -777,6 +799,29 @@ func TestDiffView_f_key_toggles_full_context(t *testing.T) {
 	}
 }
 
+// Each switcher group is labelled with a Nerd Font icon to its left, so the two
+// groups read as distinct rather than one run of buttons.
+func TestDiffView_tab_row_has_group_icons(t *testing.T) {
+	m := sizeDiff(NewDiffView("f.go", collapsibleDiff()), 200, 40)
+	out := stripA(m.View())
+	if !strings.Contains(out, diffLayoutIcon) {
+		t.Errorf("tab row should show the layout-group icon, got:\n%s", out)
+	}
+	if !strings.Contains(out, diffCtxIcon) {
+		t.Errorf("tab row should show the context-group icon, got:\n%s", out)
+	}
+	// The layout icon must sit to the LEFT of the Inline button, and the context
+	// icon to the LEFT of the Changes button.
+	li := strings.Index(out, diffLayoutIcon)
+	ci := strings.Index(out, diffCtxIcon)
+	if li < 0 || li > strings.Index(out, "Inline") {
+		t.Error("layout icon should precede the Inline button")
+	}
+	if ci < strings.Index(out, "Side-by-side") || ci > strings.Index(out, "Changes") {
+		t.Error("context icon should sit between the layout group and the Changes button")
+	}
+}
+
 func TestDiffView_View_shows_changes_and_full_buttons(t *testing.T) {
 	m := sizeDiff(NewDiffView("f.go", collapsibleDiff()), 200, 40)
 	out := stripA(m.View())
@@ -788,22 +833,27 @@ func TestDiffView_View_shows_changes_and_full_buttons(t *testing.T) {
 	}
 }
 
-// Button hit boxes (content cols): Changes [32,43), Full [44,52); screen X adds
-// the left margin+border (mh+1 = 11 at width 200), tab row is screen y=5 (title
-// at y=3, a blank gap at y=4).
 func TestDiffView_click_full_button_switches_to_full(t *testing.T) {
 	m := sizeDiff(NewDiffView("f.go", collapsibleDiff()), 200, 40)
 	if strings.Contains(stripA(m.View()), "context-01") {
 		t.Fatal("should start in the changes-only view")
 	}
-	m, cmd := clickDiff(m, 58, 5) // Full button
+	fx, fy, ok := cellOf(stripA(m.View()), "Full")
+	if !ok {
+		t.Fatal("could not locate the Full button")
+	}
+	m, cmd := clickDiff(m, fx, fy)
 	if quits(cmd) || m.quitting {
 		t.Fatal("clicking a button must not close the popup")
 	}
 	if !strings.Contains(stripA(m.View()), "context-01") {
 		t.Errorf("clicking Full should reveal the full context, got:\n%s", stripA(m.View()))
 	}
-	m, _ = clickDiff(m, 46, 5) // Changes button
+	cx, cy, ok := cellOf(stripA(m.View()), "Changes")
+	if !ok {
+		t.Fatal("could not locate the Changes button")
+	}
+	m, _ = clickDiff(m, cx, cy)
 	if strings.Contains(stripA(m.View()), "context-01") {
 		t.Errorf("clicking Changes should hide the far context, got:\n%s", stripA(m.View()))
 	}
@@ -811,7 +861,11 @@ func TestDiffView_click_full_button_switches_to_full(t *testing.T) {
 
 func TestDiffView_hover_highlights_context_tab(t *testing.T) {
 	m := sizeDiff(NewDiffView("f.go", collapsibleDiff()), 200, 40)
-	updated, cmd := m.Update(tea.MouseMsg{X: 58, Y: 5, Action: tea.MouseActionMotion})
+	fx, fy, ok := cellOf(stripA(m.View()), "Full")
+	if !ok {
+		t.Fatal("could not locate the Full button")
+	}
+	updated, cmd := m.Update(tea.MouseMsg{X: fx, Y: fy, Action: tea.MouseActionMotion})
 	m = updated.(DiffViewModel)
 	if cmd != nil {
 		t.Error("hover should not emit a command")
