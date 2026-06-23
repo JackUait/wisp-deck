@@ -343,6 +343,33 @@ func isSideBySide(out string) bool {
 	return false
 }
 
+// A blank row separates the title (status badge + path + counts) from the
+// controls (the tab switchers), so the header doesn't read as one dense block.
+func TestDiffView_View_has_gap_between_title_and_controls(t *testing.T) {
+	m := sizeDiff(NewDiffView("lib/x.sh", " ctx\n-del\n+add\n ctx2\n"), 120, 30)
+	lines := strings.Split(stripA(m.View()), "\n")
+	titleIdx, tabIdx := -1, -1
+	for i, ln := range lines {
+		if strings.Contains(ln, "lib/x.sh") {
+			titleIdx = i
+		}
+		if strings.Contains(ln, "Inline") {
+			tabIdx = i
+		}
+	}
+	if titleIdx < 0 || tabIdx < 0 {
+		t.Fatalf("expected both a title row and a controls row, got:\n%s", strings.Join(lines, "\n"))
+	}
+	if tabIdx != titleIdx+2 {
+		t.Errorf("controls should sit one blank row below the title (title=%d, controls=%d)", titleIdx, tabIdx)
+	}
+	// The row between them must carry no text — only the box border and spaces.
+	gap := strings.ReplaceAll(lines[titleIdx+1], "│", "")
+	if strings.TrimSpace(gap) != "" {
+		t.Errorf("row between title and controls should be blank, got %q", lines[titleIdx+1])
+	}
+}
+
 func TestDiffView_View_shows_view_buttons(t *testing.T) {
 	m := sizeDiff(NewDiffView("lib/x.sh", " ctx\n+add\n"), 200, 40)
 	out := stripA(m.View())
@@ -356,23 +383,24 @@ func TestDiffView_View_shows_view_buttons(t *testing.T) {
 
 // At 200x40 the layout auto-picks side-by-side; clicking the Inline button must
 // force inline, and clicking Side-by-side must force it back. Button hit boxes
-// (computed in the model): tabs row is screen y=4, content starts at screen
-// x=11, Inline spans content cols [1,11), Side-by-side [12,28).
+// (computed in the model): the tabs row is screen y=5 (title at y=3, a blank gap
+// at y=4), content starts at screen x=11, Inline spans content cols [1,11),
+// Side-by-side [12,28).
 func TestDiffView_click_buttons_switch_mode(t *testing.T) {
 	m := sizeDiff(NewDiffView("lib/x.sh", " ctx\n-del\n+add\n ctx2\n"), 200, 40)
 	if !isSideBySide(stripA(m.View())) {
 		t.Fatal("expected auto side-by-side at 200 wide")
 	}
-	// Click the Inline button (screen x=15, y=4).
-	m, cmd := clickDiff(m, 15, 4)
+	// Click the Inline button (screen x=15, y=5).
+	m, cmd := clickDiff(m, 15, 5)
 	if quits(cmd) || m.quitting {
 		t.Fatal("clicking a button must not close the popup")
 	}
 	if isSideBySide(stripA(m.View())) || !strings.Contains(stripA(m.View()), "+add") {
 		t.Errorf("clicking Inline should switch to inline, got:\n%s", stripA(m.View()))
 	}
-	// Click the Side-by-side button (screen x=30, y=4).
-	m, _ = clickDiff(m, 30, 4)
+	// Click the Side-by-side button (screen x=30, y=5).
+	m, _ = clickDiff(m, 30, 5)
 	if !isSideBySide(stripA(m.View())) {
 		t.Errorf("clicking Side-by-side should switch back, got:\n%s", stripA(m.View()))
 	}
@@ -383,8 +411,8 @@ func TestDiffView_hover_highlights_tab_without_switching(t *testing.T) {
 	if !isSideBySide(stripA(m.View())) {
 		t.Fatal("expected auto side-by-side at 200 wide")
 	}
-	// Hover the Inline button (x=15, y=4) while side-by-side is active.
-	updated, cmd := m.Update(tea.MouseMsg{X: 15, Y: 4, Action: tea.MouseActionMotion})
+	// Hover the Inline button (x=15, y=5) while side-by-side is active.
+	updated, cmd := m.Update(tea.MouseMsg{X: 15, Y: 5, Action: tea.MouseActionMotion})
 	m = updated.(DiffViewModel)
 	if cmd != nil {
 		t.Error("hover should not emit a command")
@@ -761,20 +789,21 @@ func TestDiffView_View_shows_changes_and_full_buttons(t *testing.T) {
 }
 
 // Button hit boxes (content cols): Changes [32,43), Full [44,52); screen X adds
-// the left margin+border (mh+1 = 11 at width 200), tab row is screen y=4.
+// the left margin+border (mh+1 = 11 at width 200), tab row is screen y=5 (title
+// at y=3, a blank gap at y=4).
 func TestDiffView_click_full_button_switches_to_full(t *testing.T) {
 	m := sizeDiff(NewDiffView("f.go", collapsibleDiff()), 200, 40)
 	if strings.Contains(stripA(m.View()), "context-01") {
 		t.Fatal("should start in the changes-only view")
 	}
-	m, cmd := clickDiff(m, 58, 4) // Full button
+	m, cmd := clickDiff(m, 58, 5) // Full button
 	if quits(cmd) || m.quitting {
 		t.Fatal("clicking a button must not close the popup")
 	}
 	if !strings.Contains(stripA(m.View()), "context-01") {
 		t.Errorf("clicking Full should reveal the full context, got:\n%s", stripA(m.View()))
 	}
-	m, _ = clickDiff(m, 46, 4) // Changes button
+	m, _ = clickDiff(m, 46, 5) // Changes button
 	if strings.Contains(stripA(m.View()), "context-01") {
 		t.Errorf("clicking Changes should hide the far context, got:\n%s", stripA(m.View()))
 	}
@@ -782,7 +811,7 @@ func TestDiffView_click_full_button_switches_to_full(t *testing.T) {
 
 func TestDiffView_hover_highlights_context_tab(t *testing.T) {
 	m := sizeDiff(NewDiffView("f.go", collapsibleDiff()), 200, 40)
-	updated, cmd := m.Update(tea.MouseMsg{X: 58, Y: 4, Action: tea.MouseActionMotion})
+	updated, cmd := m.Update(tea.MouseMsg{X: 58, Y: 5, Action: tea.MouseActionMotion})
 	m = updated.(DiffViewModel)
 	if cmd != nil {
 		t.Error("hover should not emit a command")

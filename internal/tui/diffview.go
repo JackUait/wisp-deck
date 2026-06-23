@@ -738,17 +738,19 @@ func (m DiffViewModel) Init() tea.Cmd {
 }
 
 // headerHeight and footerHeight are the chrome rows reserved above and below the
-// scrolling viewport: a title line + a rule, and a single control bar.
+// scrolling viewport: the title block + a rule, and a single control bar.
 const (
-	diffHeaderHeight = 3 // path+counts line, view-switch tabs, rule
-	diffFooterHeight = 1
+	diffHeaderHeight       = 4 // title, blank gap, view-switch tabs, rule
+	diffSingleHeaderHeight = 2 // single-sided file: title, rule (no tabs, no gap)
+	diffFooterHeight       = 1
 )
 
 // headerHeight is the number of chrome rows above the scrolling viewport. A
-// single-sided file drops the view-switch tab row, so its header is one shorter.
+// single-sided file drops the view-switch tab row (and the gap before it), so
+// its header is shorter.
 func (m DiffViewModel) headerHeight() int {
 	if m.singleView {
-		return diffHeaderHeight - 1
+		return diffSingleHeaderHeight
 	}
 	return diffHeaderHeight
 }
@@ -807,10 +809,11 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMsg:
 		mh, mv, cw, _ := m.layout()
-		// The view-switch tabs live on content row 1 (screen row mv+2), their
-		// columns offset by the left border at mh+1. Single-sided files have no
-		// switcher. Track which tab the pointer is over so it can highlight.
-		onTabRow := !m.singleView && msg.Y == mv+2
+		// The view-switch tabs live on content row 2 (screen row mv+3) — below the
+		// title and the blank gap row — their columns offset by the left border at
+		// mh+1. Single-sided files have no switcher. Track which tab the pointer is
+		// over so it can highlight.
+		onTabRow := !m.singleView && msg.Y == mv+3
 		hovered, hoveredCtx := -1, -1
 		if onTabRow {
 			hovered = tabAt(msg.X - (mh + 1))
@@ -942,12 +945,14 @@ func (m DiffViewModel) View() string {
 	hints += " · click-out/q/Esc close"
 	bar := diffBarStyle.Render(hints + "    " + padPercent(pct))
 
-	// A single-sided file (whole-file add/delete) shows no view switcher row.
+	// A single-sided file (whole-file add/delete) shows no view switcher row. The
+	// others put a blank row between the title and the controls so the header
+	// reads as two distinct blocks, not one dense line.
 	var rows []string
 	if m.singleView {
 		rows = []string{title, rule, m.viewport.View(), bar}
 	} else {
-		rows = []string{title, m.tabRow(), rule, m.viewport.View(), bar}
+		rows = []string{title, "", m.tabRow(), rule, m.viewport.View(), bar}
 	}
 	inner := strings.Join(rows, "\n")
 	box := diffBoxStyle.Width(cw).Height(ch).Render(inner)
