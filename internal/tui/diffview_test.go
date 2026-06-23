@@ -377,6 +377,88 @@ func TestDiffView_tab_key_toggles_view(t *testing.T) {
 	}
 }
 
+// isSingleSided reports whether a diff is a whole-file addition or deletion:
+// every body line is the same kind (+ or -) with no context. Such files (git
+// status A or D) have nothing to compare across two columns.
+func TestIsSingleSided_pure_add_and_pure_delete(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"pure add (new file)", "+a\n+b\n+c\n", true},
+		{"pure delete (deleted file)", "-a\n-b\n-c\n", true},
+		{"colored pure add", "\x1b[32m+a\x1b[m\n\x1b[32m+b\x1b[m\n", true},
+		{"add with context (appended)", " ctx\n+a\n", false},
+		{"delete with context", " ctx\n-a\n", false},
+		{"modified (add and delete)", "-old\n+new\n", false},
+		{"all lines changed, no context", "-a\n-b\n+x\n+y\n", false},
+		{"empty diff", "\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isSingleSided(tc.content); got != tc.want {
+				t.Errorf("isSingleSided(%q) = %v, want %v", tc.content, got, tc.want)
+			}
+		})
+	}
+}
+
+// A whole-file addition or deletion has nothing to show side-by-side, so the
+// pager locks to the single (inline) view and hides the view switcher — even at
+// a width that would otherwise auto-pick side-by-side.
+func TestDiffView_added_file_has_no_view_switcher(t *testing.T) {
+	m := sizeDiff(NewDiffView("new.go", "+a\n+b\n+c\n"), 200, 40)
+	out := stripA(m.View())
+	if strings.Contains(out, "Inline") || strings.Contains(out, "Side-by-side") {
+		t.Errorf("added file should hide the view switcher, got:\n%s", out)
+	}
+	if isSideBySide(out) {
+		t.Errorf("added file should render single (inline) view, got:\n%s", out)
+	}
+}
+
+func TestDiffView_deleted_file_has_no_view_switcher(t *testing.T) {
+	m := sizeDiff(NewDiffView("gone.go", "-a\n-b\n-c\n"), 200, 40)
+	out := stripA(m.View())
+	if strings.Contains(out, "Inline") || strings.Contains(out, "Side-by-side") {
+		t.Errorf("deleted file should hide the view switcher, got:\n%s", out)
+	}
+}
+
+// The Tab key must not switch views for a single-sided file (there is no other
+// view to switch to).
+func TestDiffView_added_file_tab_key_is_noop(t *testing.T) {
+	m := sizeDiff(NewDiffView("new.go", "+a\n+b\n+c\n"), 200, 40)
+	m, _ = keyDiff(m, tea.KeyTab)
+	if isSideBySide(stripA(m.View())) {
+		t.Errorf("Tab must not switch a single-sided file to side-by-side, got:\n%s", stripA(m.View()))
+	}
+}
+
+// Clicking where the (now absent) switcher buttons would be must not switch
+// views nor close the popup for a single-sided file.
+func TestDiffView_added_file_click_on_tab_row_does_not_switch(t *testing.T) {
+	m := sizeDiff(NewDiffView("new.go", "+a\n+b\n+c\n"), 200, 40)
+	m, cmd := clickDiff(m, 15, 4)
+	if quits(cmd) || m.quitting {
+		t.Fatal("clicking the header of a single-sided file must not close the popup")
+	}
+	if isSideBySide(stripA(m.View())) {
+		t.Errorf("clicking the header must not switch a single-sided file, got:\n%s", stripA(m.View()))
+	}
+}
+
+// A file where every line changed (no context, but both adds and deletes) is a
+// modification, not an add/delete — it keeps the view switcher.
+func TestDiffView_all_lines_changed_keeps_view_switcher(t *testing.T) {
+	m := sizeDiff(NewDiffView("mod.go", "-a\n-b\n+x\n+y\n"), 200, 40)
+	out := stripA(m.View())
+	if !strings.Contains(out, "Inline") || !strings.Contains(out, "Side-by-side") {
+		t.Errorf("a fully-changed (but modified) file should keep the view switcher, got:\n%s", out)
+	}
+}
+
 // ParseBackdrop composites the serialized screen capture (a "W H" header, then
 // "PANE left top" blocks of captured lines ending in "ENDPANE") into W×H rows,
 // placing each pane's lines at its window position. This is what the pager

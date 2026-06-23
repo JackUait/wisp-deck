@@ -26,6 +26,7 @@ type DiffViewModel struct {
 	backdrop   []string // dimmed screen snapshot shown behind the box (may be nil)
 	mode       int      // diffModeInline | diffModeSideBySide
 	modeForced bool     // true once the user picks a view (stops width auto-pick)
+	singleView bool     // whole-file add/delete: lock to inline, hide the switcher
 	viewport   viewport.Model
 	ready      bool
 	quitting   bool
@@ -433,12 +434,48 @@ func countDiffLines(content string) (added, deleted int) {
 	return added, deleted
 }
 
+// isSingleSided reports whether the diff is a whole-file addition or deletion —
+// every body line is the same kind (+ or -) with no context. Because the diff
+// is produced with -U999999 (whole file as one hunk), a modified file always
+// carries context lines, so a context-free, one-sided diff is exactly a git
+// status A (added) or D (deleted) file. Such a diff has nothing to compare
+// across two columns, so the pager locks to the inline view and hides the
+// switcher.
+func isSingleSided(content string) bool {
+	added, deleted, context := 0, 0, 0
+	for _, line := range strings.Split(content, "\n") {
+		s := diffAnsiSeq.ReplaceAllString(line, "")
+		if s == "" {
+			continue
+		}
+		switch s[0] {
+		case '+':
+			added++
+		case '-':
+			deleted++
+		default:
+			context++
+		}
+	}
+	if context > 0 {
+		return false
+	}
+	return (added > 0 && deleted == 0) || (deleted > 0 && added == 0)
+}
+
 // NewDiffView builds the pager for the given title (the file path, shown in the
 // header) and content (the colored diff body). The added/deleted line counts
-// shown in the header are derived from the content.
+// shown in the header are derived from the content. A whole-file add/delete is
+// shown in a single (inline) view with no view switcher.
 func NewDiffView(title, content string) DiffViewModel {
 	added, deleted := countDiffLines(content)
-	return DiffViewModel{title: title, content: content, added: added, deleted: deleted}
+	return DiffViewModel{
+		title:      title,
+		content:    content,
+		added:      added,
+		deleted:    deleted,
+		singleView: isSingleSided(content),
+	}
 }
 
 // WithBackdrop sets the dimmed screen snapshot shown behind the floating box
@@ -458,6 +495,15 @@ const (
 	diffHeaderHeight = 3 // path+counts line, view-switch tabs, rule
 	diffFooterHeight = 1
 )
+
+// headerHeight is the number of chrome rows above the scrolling viewport. A
+// single-sided file drops the view-switch tab row, so its header is one shorter.
+func (m DiffViewModel) headerHeight() int {
+	if m.singleView {
+		return diffHeaderHeight - 1
+	}
+	return diffHeaderHeight
+}
 
 // layout derives the floating box geometry from the full popup size: mh/mv are
 // the click-to-close margins on each side, and contentW/contentH are the box's
@@ -490,7 +536,7 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		_, _, cw, ch := m.layout()
-		h := ch - diffHeaderHeight - diffFooterHeight
+		h := ch - m.headerHeight() - diffFooterHeight
 		if h < 1 {
 			h = 1
 		}
@@ -502,8 +548,10 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.Height = h
 		}
 		// Until the user picks a view, the layout auto-adapts to width: side-by-side
-		// when wide enough, inline otherwise.
-		if !m.modeForced {
+		// when wide enough, inline otherwise. A single-sided file is always inline.
+		if m.singleView {
+			m.mode = diffModeInline
+		} else if !m.modeForced {
 			m.mode = pickByWidth(cw)
 		}
 		m.viewport.SetContent(renderBodyMode(m.content, cw, m.mode))
@@ -514,7 +562,8 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			mh, mv, cw, _ := m.layout()
 			// A click on the view-switch tabs (content row 1 -> screen row mv+2,
 			// content cols offset by the left border at mh+1) switches the mode.
-			if msg.Y == mv+2 {
+			// Single-sided files have no switcher, so the click falls through.
+			if !m.singleView && msg.Y == mv+2 {
 				if mode := tabAt(msg.X - (mh + 1)); mode != -1 {
 					m.modeForced = true
 					m.mode = mode
@@ -536,7 +585,11 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case tea.KeyTab:
-			// Toggle inline <-> side-by-side from the keyboard.
+			// Toggle inline <-> side-by-side from the keyboard. A single-sided file
+			// has only the one view, so Tab is a no-op.
+			if m.singleView {
+				return m, nil
+			}
 			m.modeForced = true
 			if m.mode == diffModeSideBySide {
 				m.mode = diffModeInline
@@ -585,9 +638,19 @@ func (m DiffViewModel) View() string {
 
 	pct := int(m.viewport.ScrollPercent() * 100)
 	hints := "↑↓/jk scroll · space/b page · g/G top·end · tab view · click-out/q/Esc close"
+	if m.singleView { // no view switcher, so drop the "tab view" hint
+		hints = "↑↓/jk scroll · space/b page · g/G top·end · click-out/q/Esc close"
+	}
 	bar := diffBarStyle.Render(hints + "    " + padPercent(pct))
 
-	inner := strings.Join([]string{title, m.tabRow(), rule, m.viewport.View(), bar}, "\n")
+	// A single-sided file (whole-file add/delete) shows no view switcher row.
+	var rows []string
+	if m.singleView {
+		rows = []string{title, rule, m.viewport.View(), bar}
+	} else {
+		rows = []string{title, m.tabRow(), rule, m.viewport.View(), bar}
+	}
+	inner := strings.Join(rows, "\n")
 	box := diffBoxStyle.Width(cw).Height(ch).Render(inner)
 
 	// No backdrop: float the box on a blank surface.
