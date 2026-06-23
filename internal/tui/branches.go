@@ -80,6 +80,9 @@ func (m BranchPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+
 	case tea.KeyMsg:
 		// Clear feedback on any keypress after deletion
 		if m.feedback != "" {
@@ -536,6 +539,93 @@ func (m BranchPickerModel) renderDeleteBox() string {
 	lines = append(lines, bottomBorder)
 
 	return m.centerBox(lines)
+}
+
+// selectBoxItemRows returns how many branch rows the select box renders (the
+// "no matching branches" placeholder counts as one).
+func (m BranchPickerModel) selectBoxItemRows() int {
+	if len(m.filtered) == 0 {
+		return 1
+	}
+	if v := m.visibleItemCount(); len(m.filtered) > v {
+		return v
+	}
+	return len(m.filtered)
+}
+
+// mouseToFilteredIndex maps an absolute pointer coordinate to an index in the
+// filtered branch list, or -1. The select box layout is top(0) title(1) sep(2)
+// filter(3) blank(4) then items from row 5; the box is centered by centerBox,
+// so the same centering math recovers the box origin.
+func (m BranchPickerModel) mouseToFilteredIndex(x, y int) int {
+	const boxWidth = menuInnerWidth + 2
+	originX := 0
+	if m.width > 0 {
+		if lp := (m.width - boxWidth) / 2; lp > 0 {
+			originX = lp
+		}
+	}
+	if x < originX || x >= originX+boxWidth {
+		return -1
+	}
+	boxLines := 5 + m.selectBoxItemRows() + 4 // header(5) + items + footer(4)
+	originY := 0
+	if m.height > 0 {
+		if tp := (m.height - boxLines) / 2; tp > 0 {
+			originY = tp
+		}
+	}
+	const firstItemRow = 5
+	idx := (y - originY - firstItemRow) + m.offset
+	end := m.offset + m.visibleItemCount()
+	if end > len(m.filtered) {
+		end = len(m.filtered)
+	}
+	if idx >= m.offset && idx < end {
+		return idx
+	}
+	return -1
+}
+
+// handleMouse gives the branch picker pointer parity: hover moves the cursor,
+// left-click selects the branch under it (the Enter action), and the wheel
+// scrolls. The delete/filter sub-modes and post-action feedback own input.
+func (m BranchPickerModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.deleteMode || m.filtering || m.feedback != "" {
+		return m, nil
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelDown:
+		if m.cursor < len(m.filtered)-1 {
+			m.cursor++
+			m.clampScroll()
+		}
+		return m, nil
+	case tea.MouseButtonWheelUp:
+		if m.cursor > 0 {
+			m.cursor--
+			m.clampScroll()
+		}
+		return m, nil
+	}
+
+	idx := m.mouseToFilteredIndex(msg.X, msg.Y)
+	if idx < 0 {
+		return m, nil
+	}
+	switch msg.Action {
+	case tea.MouseActionMotion:
+		m.cursor = idx
+		return m, nil
+	case tea.MouseActionPress:
+		if msg.Button == tea.MouseButtonLeft {
+			name := m.filtered[idx]
+			m.selected = &name
+			m.quitting = true
+			return m, func() tea.Msg { return PopScreenMsg{} }
+		}
+	}
+	return m, nil
 }
 
 func (m BranchPickerModel) centerBox(lines []string) string {

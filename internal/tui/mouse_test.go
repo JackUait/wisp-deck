@@ -273,6 +273,49 @@ func TestUpdate_hoverAccountRow_movesCursor(t *testing.T) {
 	}
 }
 
+func TestBranchPicker_clickSelectsBranch(t *testing.T) {
+	m := NewBranchPicker([]string{"main", "dev", "feature"}, ThemeForTool("claude"), "/p")
+	m.width = 100
+	m.height = 40
+	// boxWidth=70 → originX=15; boxLines=5+3+4=12 → originY=14; items start at
+	// box row 5, so "dev" (index 1) is at absolute y = 14+5+1 = 20.
+	msg := tea.MouseMsg{X: 20, Y: 20, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
+	upd, cmd := m.Update(msg)
+	got := upd.(BranchPickerModel)
+	if got.Selected() == nil || *got.Selected() != "dev" {
+		t.Fatalf("click should select 'dev', got %v", got.Selected())
+	}
+	if cmd == nil {
+		t.Error("selecting a branch should emit a PopScreenMsg command")
+	}
+}
+
+func TestBranchPicker_hoverMovesCursor(t *testing.T) {
+	m := NewBranchPicker([]string{"main", "dev", "feature"}, ThemeForTool("claude"), "/p")
+	m.width = 100
+	m.height = 40
+	msg := tea.MouseMsg{X: 20, Y: 21, Action: tea.MouseActionMotion} // "feature" (index 2)
+	upd, _ := m.Update(msg)
+	got := upd.(BranchPickerModel)
+	if got.cursor != 2 {
+		t.Errorf("hover moved cursor to %d, want 2", got.cursor)
+	}
+	if got.Selected() != nil {
+		t.Error("hover must not select a branch")
+	}
+}
+
+func TestBranchPicker_wheelMovesCursor(t *testing.T) {
+	m := NewBranchPicker([]string{"main", "dev", "feature"}, ThemeForTool("claude"), "/p")
+	m.width = 100
+	m.height = 40
+	upd, _ := m.Update(tea.MouseMsg{X: 20, Y: 19, Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	got := upd.(BranchPickerModel)
+	if got.cursor != 1 {
+		t.Errorf("wheel down moved cursor to %d, want 1", got.cursor)
+	}
+}
+
 func TestRender_hoverHighlights(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
