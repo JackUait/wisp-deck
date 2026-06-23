@@ -45,6 +45,35 @@ check_ai_tool_state() {
   fi
 }
 
+# Write the terminal tab title for the given state, honoring the title mode.
+# Usage: apply_tab_title <state> <mode> <project> <tool>
+#   state: "waiting" (idle, ● prefix) or "active"
+#   mode:  "full" (project · tool), "project" (project only), or
+#          "model" (leave the AI tool's own title alone — it set the title itself)
+apply_tab_title() {
+  local state="$1" mode="$2" project="$3" tool="$4"
+  case "$mode" in
+    model)
+      # The model set the tab title to describe its task — don't clobber it.
+      return 0
+      ;;
+    full)
+      if [ "$state" = "waiting" ]; then
+        set_tab_title_waiting "$project" "$tool"
+      else
+        set_tab_title "$project" "$tool"
+      fi
+      ;;
+    *)
+      if [ "$state" = "waiting" ]; then
+        set_tab_title_waiting "$project"
+      else
+        set_tab_title "$project"
+      fi
+      ;;
+  esac
+}
+
 # Discover the AI tool pane (rightmost pane in the tmux session).
 # Usage: discover_ai_pane <session_name> <tmux_cmd>
 # Outputs the pane index of the rightmost pane.
@@ -101,22 +130,14 @@ start_tab_title_watcher() {
           fi
         fi
         if [ "$age" -ge "$debounce_threshold" ]; then
-          if [ "$tab_title_setting" = "full" ]; then
-            set_tab_title_waiting "$project_name" "$ai_tool"
-          else
-            set_tab_title_waiting "$project_name"
-          fi
+          apply_tab_title "waiting" "$tab_title_setting" "$project_name" "$ai_tool"
           if [[ -n "$config_dir" ]]; then
             play_notification_sound "$ai_tool" "$config_dir"
           fi
           was_waiting=true
         fi
       elif [ "$state" = "active" ] && [ "$was_waiting" = true ]; then
-        if [ "$tab_title_setting" = "full" ]; then
-          set_tab_title "$project_name" "$ai_tool"
-        else
-          set_tab_title "$project_name"
-        fi
+        apply_tab_title "active" "$tab_title_setting" "$project_name" "$ai_tool"
         was_waiting=false
       fi
     done

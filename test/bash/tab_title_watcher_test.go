@@ -791,3 +791,69 @@ func TestTabTitleWatcher_stop_tab_title_watcher_removes_ask_sidecar(t *testing.T
 		t.Errorf("expected -ask sidecar file to be removed")
 	}
 }
+
+// --- apply_tab_title: per-mode title writing ---
+//
+// apply_tab_title <state> <mode> <project> <tool> writes the terminal title for
+// the active/waiting state, EXCEPT in "model" mode where it leaves the title
+// untouched so the AI tool's own title (the one the model set) shows through.
+
+func TestTabTitleWatcher_apply_tab_title_full_active_includes_tool(t *testing.T) {
+	snippet := tabTitleSnippet(t, `apply_tab_title "active" "full" "myproj" "claude"`)
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "myproj · claude")
+	assertNotContains(t, out, "●") // no waiting dot when active
+}
+
+func TestTabTitleWatcher_apply_tab_title_full_waiting_prepends_dot(t *testing.T) {
+	snippet := tabTitleSnippet(t, `apply_tab_title "waiting" "full" "myproj" "claude"`)
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "● myproj · claude")
+}
+
+func TestTabTitleWatcher_apply_tab_title_project_active_omits_tool(t *testing.T) {
+	snippet := tabTitleSnippet(t, `apply_tab_title "active" "project" "myproj" "claude"`)
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "myproj")
+	assertNotContains(t, out, "claude")
+}
+
+func TestTabTitleWatcher_apply_tab_title_model_active_writes_nothing(t *testing.T) {
+	snippet := tabTitleSnippet(t, `apply_tab_title "active" "model" "myproj" "claude"`)
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("model mode must leave the title untouched, got %q", out)
+	}
+}
+
+func TestTabTitleWatcher_apply_tab_title_model_waiting_writes_nothing(t *testing.T) {
+	snippet := tabTitleSnippet(t, `apply_tab_title "waiting" "model" "myproj" "claude"`)
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("model mode must leave the title untouched even when waiting, got %q", out)
+	}
+}
+
+// The watcher loop must route title writes through apply_tab_title and must
+// still play the notification sound regardless of mode (so "model" mode still
+// signals idle audibly even though it never writes the title).
+func TestTabTitleWatcher_loop_uses_apply_tab_title(t *testing.T) {
+	root := projectRoot(t)
+	watcherPath := filepath.Join(root, "lib", "tab-title-watcher.sh")
+	data, err := os.ReadFile(watcherPath)
+	if err != nil {
+		t.Fatalf("failed to read tab-title-watcher.sh: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "apply_tab_title") {
+		t.Error("watcher loop should route title writes through apply_tab_title")
+	}
+	if !strings.Contains(content, "play_notification_sound") {
+		t.Error("watcher should still call play_notification_sound on the waiting transition")
+	}
+}

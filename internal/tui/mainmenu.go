@@ -726,11 +726,29 @@ func (m *MainMenuModel) CyclePanelModeReverse() {
 	m.CyclePanelMode() // binary toggle — same either direction
 }
 
-// CycleTabTitle cycles between "full" and "project".
+// CycleTabTitle cycles through tab title modes: full -> project -> model -> full.
+// "model" leaves the AI tool's own title (the one the model set) showing.
 func (m *MainMenuModel) CycleTabTitle() {
-	if m.tabTitle == "full" {
+	switch m.tabTitle {
+	case "full":
 		m.tabTitle = "project"
-	} else {
+	case "project":
+		m.tabTitle = "model"
+	default:
+		m.tabTitle = "full"
+	}
+	m.tabTitleChanged = m.tabTitle != m.initialTabTitle
+	m.persistSetting("tab_title", m.tabTitle)
+}
+
+// CycleTabTitleReverse cycles tab title modes in reverse: full -> model -> project -> full.
+func (m *MainMenuModel) CycleTabTitleReverse() {
+	switch m.tabTitle {
+	case "full":
+		m.tabTitle = "model"
+	case "model":
+		m.tabTitle = "project"
+	default:
 		m.tabTitle = "full"
 	}
 	m.tabTitleChanged = m.tabTitle != m.initialTabTitle
@@ -2194,7 +2212,7 @@ func (m *MainMenuModel) settingsValueLeft() {
 	case 0:
 		m.CycleGhostDisplayReverse()
 	case 1:
-		m.CycleTabTitle()
+		m.CycleTabTitleReverse()
 	case 2:
 		m.CycleSoundNameReverse()
 	case 3:
@@ -2812,6 +2830,8 @@ func tabTitleLabel(mode string) string {
 		return "Project \u00b7 Tool"
 	case "project":
 		return "Project Only"
+	case "model":
+		return "Model Set"
 	default:
 		return mode
 	}

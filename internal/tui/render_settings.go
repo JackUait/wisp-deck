@@ -89,10 +89,13 @@ func (m *MainMenuModel) renderSettingsBox() string {
 
 	// Tab Title item
 	var tabTitleColor lipgloss.Color
-	if m.tabTitle == "full" {
+	switch m.tabTitle {
+	case "full":
 		tabTitleColor = lipgloss.Color("114") // green
-	} else {
-		tabTitleColor = lipgloss.Color("220") // yellow
+	case "model":
+		tabTitleColor = lipgloss.Color("75") // blue — AI tool sets its own title
+	default:
+		tabTitleColor = lipgloss.Color("220") // yellow (project only)
 	}
 	tabTitleStyle := lipgloss.NewStyle().Foreground(tabTitleColor)
 	tabLabel := "Tab Title"

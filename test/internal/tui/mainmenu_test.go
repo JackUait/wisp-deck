@@ -2102,8 +2102,13 @@ func TestMainMenu_CycleTabTitle(t *testing.T) {
 	}
 
 	m.CycleTabTitle()
+	if m.TabTitle() != "model" {
+		t.Errorf("expected 'model' after cycling from project, got %q", m.TabTitle())
+	}
+
+	m.CycleTabTitle()
 	if m.TabTitle() != "full" {
-		t.Errorf("expected 'full' after cycling from project, got %q", m.TabTitle())
+		t.Errorf("expected 'full' after cycling from model, got %q", m.TabTitle())
 	}
 }
 
