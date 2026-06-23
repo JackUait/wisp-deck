@@ -308,6 +308,79 @@ select_project_interactive %q || true
 	assertContains(t, args, "animated")
 }
 
+func TestMenu_defaults_panel_mode_to_compact(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "captured_args")
+	binDir := mockCommand(t, dir, "ghost-tab-tui", fmt.Sprintf(`
+echo "$*" > %q
+echo '{"action":"quit"}'
+`, argsFile))
+	projectsFile := writeTempFile(t, dir, "projects", "proj1:/tmp/p1\n")
+	// No settings file
+
+	root := projectRoot(t)
+	env := buildEnv(t, []string{binDir},
+		"XDG_CONFIG_HOME="+filepath.Join(dir, "config"),
+	)
+
+	script := fmt.Sprintf(`
+source %q 2>/dev/null || true
+source %q
+error() { echo "ERROR: $*" >&2; }
+AI_TOOLS_AVAILABLE=("claude")
+SELECTED_AI_TOOL="claude"
+_update_version=""
+select_project_interactive %q || true
+`, filepath.Join(root, "lib/tui.sh"),
+		filepath.Join(root, "lib/menu-tui.sh"),
+		projectsFile)
+
+	_, _ = runBashSnippet(t, script, env)
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("args file not found: %v", err)
+	}
+	assertContains(t, string(data), "--panel-mode compact")
+}
+
+func TestMenu_reads_panel_mode_from_settings(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "captured_args")
+	binDir := mockCommand(t, dir, "ghost-tab-tui", fmt.Sprintf(`
+echo "$*" > %q
+echo '{"action":"quit"}'
+`, argsFile))
+	projectsFile := writeTempFile(t, dir, "projects", "proj1:/tmp/p1\n")
+
+	writeTempFile(t, dir, "config/ghost-tab/settings", "panel_mode=lazygit\n")
+
+	root := projectRoot(t)
+	env := buildEnv(t, []string{binDir},
+		"XDG_CONFIG_HOME="+filepath.Join(dir, "config"),
+	)
+
+	script := fmt.Sprintf(`
+source %q 2>/dev/null || true
+source %q
+error() { echo "ERROR: $*" >&2; }
+AI_TOOLS_AVAILABLE=("claude")
+SELECTED_AI_TOOL="claude"
+_update_version=""
+select_project_interactive %q || true
+`, filepath.Join(root, "lib/tui.sh"),
+		filepath.Join(root, "lib/menu-tui.sh"),
+		projectsFile)
+
+	_, _ = runBashSnippet(t, script, env)
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("args file not found: %v", err)
+	}
+	assertContains(t, string(data), "--panel-mode lazygit")
+}
+
 func TestMenu_validates_null_name_on_select_project(t *testing.T) {
 	dir := t.TempDir()
 	binDir := mockCommand(t, dir, "ghost-tab-tui", `echo '{"action":"select-project","name":null,"path":"/tmp/p1","ai_tool":"claude"}'`)

@@ -160,7 +160,7 @@ if [ -f "$_settings_file" ]; then
 fi
 
 # Read panel mode setting
-_panel_mode="lazygit"
+_panel_mode="compact"
 if [ -f "$_settings_file" ]; then
   _saved_panel_mode=$(grep '^panel_mode=' "$_settings_file" 2>/dev/null | cut -d= -f2)
   if [ -n "$_saved_panel_mode" ]; then

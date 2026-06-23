@@ -311,8 +311,8 @@ func NewMainMenu(projects []models.Project, aiTools []string, currentAI string, 
 		selectedItem:              0,
 		ghostDisplay:              ghostDisplay,
 		initialGhostDisplay:       ghostDisplay,
-		panelMode:                 "lazygit",
-		initialPanelMode:          "lazygit",
+		panelMode:                 "compact",
+		initialPanelMode:          "compact",
 		theme:                     ThemeForTool(currentAI),
 		zzz:                       NewZzzAnimation(),
 		expandedWorktrees:         make(map[int]bool),
@@ -685,18 +685,18 @@ func (m *MainMenuModel) SetPanelMode(mode string) {
 	m.initialPanelMode = mode
 }
 
-// CyclePanelMode cycles panel mode: lazygit -> compact -> lazygit.
+// CyclePanelMode cycles panel mode: compact -> lazygit -> compact.
 func (m *MainMenuModel) CyclePanelMode() {
-	if m.panelMode == "lazygit" {
-		m.panelMode = "compact"
-	} else {
+	if m.panelMode == "compact" {
 		m.panelMode = "lazygit"
+	} else {
+		m.panelMode = "compact"
 	}
 	m.panelModeChanged = m.panelMode != m.initialPanelMode
 	m.persistSetting("panel_mode", m.panelMode)
 }
 
-// CyclePanelModeReverse cycles panel mode in reverse: lazygit -> compact -> lazygit.
+// CyclePanelModeReverse cycles panel mode in reverse: compact -> lazygit -> compact.
 func (m *MainMenuModel) CyclePanelModeReverse() {
 	m.CyclePanelMode() // binary toggle — same either direction
 }

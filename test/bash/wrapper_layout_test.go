@@ -88,6 +88,17 @@ func recordWrapperNewSession(t *testing.T) string {
 	return string(data)
 }
 
+// TestWrapper_default_panel_is_compact verifies that, with no saved panel_mode
+// setting, the left pane runs the compact changeset ledger (the application
+// default) rather than lazygit. recordWrapperNewSession uses a fresh HOME with
+// no settings file, so the wrapper falls back to its built-in default.
+func TestWrapper_default_panel_is_compact(t *testing.T) {
+	got := recordWrapperNewSession(t)
+	if !strings.Contains(got, "compact_view") {
+		t.Errorf("default left pane should run compact_view; got new-session chain:\n%s", got)
+	}
+}
+
 // TestWrapper_selects_ai_pane_geometrically verifies the wrapper focuses panes
 // by direction (-L / -R) instead of fixed indices. tmux routes external
 // drag-drops (e.g. a screenshot) to the ACTIVE pane, so the AI pane must end up

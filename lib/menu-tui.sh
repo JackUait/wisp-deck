@@ -15,7 +15,7 @@ select_project_interactive() {
 
   # Read preferences from settings file
   local ghost_display="animated"
-  local panel_mode="lazygit"
+  local panel_mode="compact"
   local tab_title="full"
   local settings_file="${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab/settings"
   if [ -f "$settings_file" ]; then

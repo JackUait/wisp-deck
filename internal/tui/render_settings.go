@@ -113,7 +113,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 
 	// Panel item
 	var panelColor lipgloss.Color
-	if m.panelMode == "lazygit" {
+	if m.panelMode == "compact" {
 		panelColor = lipgloss.Color("114") // green (default)
 	} else {
 		panelColor = lipgloss.Color("220") // yellow (non-default)
