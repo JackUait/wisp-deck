@@ -187,6 +187,11 @@ func (m MultiSelectModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if i := msg.Y - 2; i >= 0 && i < len(m.tools) {
 		toolIdx = i
 	}
+	// Require a glyph under the pointer so the blank area past a tool's label
+	// doesn't register as that row.
+	if toolIdx >= 0 && !frameCellHasGlyph(strings.Split(m.View(), "\n"), msg.X, msg.Y) {
+		toolIdx = -1
+	}
 	onConfirm := msg.Y == m.multiSelectConfirmRow() &&
 		msg.X >= 2 && msg.X < 2+lipgloss.Width(multiSelectConfirmLabel)
 

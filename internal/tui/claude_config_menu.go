@@ -175,6 +175,11 @@ func (m ClaudeConfigMenuModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd
 		return m, nil
 	}
 	row := m.ccmRowAt(msg.Y)
+	// Require a glyph under the pointer so trailing padding / the gap before the
+	// right-aligned filename doesn't register as the row.
+	if row >= 0 && !frameCellHasGlyph(strings.Split(renderClaudeConfigMenu(m), "\n"), msg.X, msg.Y) {
+		row = -1
+	}
 	switch msg.Action {
 	case tea.MouseActionMotion:
 		// Transient highlight only: row is -1 when the pointer is off every row,

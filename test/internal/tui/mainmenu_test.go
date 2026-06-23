@@ -1177,9 +1177,11 @@ func TestMainMenu_MouseDoubleClickActivates(t *testing.T) {
 	_ = m.View() // compute the vertical centering offset
 
 	// First project's name line is box row 7. Clicking the already-selected
-	// item acts as a double-click activation. Account for centering.
+	// item acts as a double-click activation. Hit-testing now requires the pointer
+	// to be on a glyph, so target the project name (box col 6 of " ▌1  p1") relative
+	// to the box origin rather than a fixed absolute column in the padding.
 	mouseMsg := tea.MouseMsg{
-		X:      10,
+		X:      m.MenuOriginX() + 6,
 		Y:      m.CenterOffsetY() + 7,
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
@@ -2070,8 +2072,11 @@ func TestMainMenu_MouseClickWorksWithCentering(t *testing.T) {
 		t.Fatalf("expected positive centering offset with 80x40 and ghost=none, got %d", offset)
 	}
 
+	// Hit-testing now requires a glyph under the pointer, so target the second
+	// project's name (box col 8 of "    2  p2") relative to the box origin rather
+	// than a fixed absolute column out in the row padding.
 	mouseMsg := tea.MouseMsg{
-		X:      40,
+		X:      m.MenuOriginX() + 8,
 		Y:      offset + 9,
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,

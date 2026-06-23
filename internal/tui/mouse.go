@@ -121,16 +121,38 @@ func (m *MainMenuModel) switcherPrev(boxX int, region mouseRegion) bool {
 	return boxX < mid
 }
 
+// switcherControlStart is the box column where a switcher's control begins — the
+// caption ("AGENT "/"LOGIN "/"PLAN  ") that starts after the border + leading
+// space.
+const switcherControlStart = 2
+
+// switcherSpanEnd is the exclusive box column where a switcher's control ends.
+// Layout after the caption: ◂(col 8) space(9) value(10..10+w) then " ▸"(2 cols),
+// so the control occupies [switcherControlStart, 12+w). Hovering past it — the
+// gap and the right-aligned "Ghost Tab" title — is not the switcher.
+func (m *MainMenuModel) switcherSpanEnd(region mouseRegion) int {
+	return 12 + lipgloss.Width(m.switcherName(region))
+}
+
+// onSwitcherControl reports whether a box column falls on a switcher's actual
+// control span (caption + ◂ value ▸), so the empty remainder of the row never
+// registers as the switcher.
+func (m *MainMenuModel) onSwitcherControl(boxX int, region mouseRegion) bool {
+	return boxX >= switcherControlStart && boxX < m.switcherSpanEnd(region)
+}
+
 // HitTest maps a box-relative coordinate to the interactive element under it.
 func (m *MainMenuModel) HitTest(boxX, boxY int) hitTarget {
 	// Switcher rows (only clickable when there is actually something to switch).
-	if boxY == m.accountRowIndex() {
+	// The hit is bounded to the control span so the empty remainder of the row —
+	// and, on the title row, the right-aligned "Ghost Tab" — never registers.
+	if boxY == m.accountRowIndex() && m.onSwitcherControl(boxX, regionAccount) {
 		return hitTarget{region: regionAccount, prev: m.switcherPrev(boxX, regionAccount)}
 	}
-	if boxY == m.titleRowIndex() && len(m.aiTools) > 1 {
+	if boxY == m.titleRowIndex() && len(m.aiTools) > 1 && m.onSwitcherControl(boxX, regionAI) {
 		return hitTarget{region: regionAI, prev: m.switcherPrev(boxX, regionAI)}
 	}
-	if boxY == m.subscriptionRowIndex() && m.subscriptionFocusable() {
+	if boxY == m.subscriptionRowIndex() && m.subscriptionFocusable() && m.onSwitcherControl(boxX, regionSubscription) {
 		return hitTarget{region: regionSubscription, prev: m.switcherPrev(boxX, regionSubscription)}
 	}
 
@@ -200,7 +222,14 @@ func (m *MainMenuModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	target := m.HitTest(msg.X-m.menuOriginX, msg.Y-m.menuOriginY)
+	boxX, boxY := msg.X-m.menuOriginX, msg.Y-m.menuOriginY
+	target := m.HitTest(boxX, boxY)
+	// Body and settings rows span the full box width, so require the pointer to be
+	// on an actual glyph — not the trailing padding or the mid-row gap before a
+	// right-aligned worktree badge. (Switchers and tabs are already column-bounded.)
+	if (target.region == regionBody || target.region == regionSettings) && !m.boxCellHasGlyph(boxX, boxY) {
+		target = hitTarget{region: regionNone}
+	}
 
 	switch msg.Action {
 	case tea.MouseActionMotion:
@@ -232,6 +261,30 @@ func (m *MainMenuModel) applyHover(t hitTarget) {
 // isHovered reports whether the pointer is currently over the given region.
 func (m *MainMenuModel) isHovered(r mouseRegion) bool {
 	return m.hover.region == r
+}
+
+// frameCellHasGlyph reports whether box/screen-relative cell (x, y) holds a
+// visible (non-space) rune in the given rendered frame. This is how hit-testing
+// stays glyph-precise: trailing padding and inter-element gaps render as spaces,
+// so the pointer must actually be on an element's glyph to count as a hit.
+// ANSI styling (color/background washes) is stripped first; a background-washed
+// space is still a space, so a hovered row's empty remainder never holds it.
+func frameCellHasGlyph(frame []string, x, y int) bool {
+	if y < 0 || y >= len(frame) || x < 0 {
+		return false
+	}
+	plain := diffAnsiSeq.ReplaceAllString(frame[y], "")
+	rs := []rune(plain)
+	if x >= len(rs) {
+		return false
+	}
+	return rs[x] != ' '
+}
+
+// boxCellHasGlyph reports whether box-relative cell (boxX, boxY) holds a glyph in
+// the last rendered menu frame (menu box + any modal panel).
+func (m *MainMenuModel) boxCellHasGlyph(boxX, boxY int) bool {
+	return frameCellHasGlyph(m.menuLines, boxX, boxY)
 }
 
 // clickTarget activates the element under a left-click, mirroring its keyboard
@@ -365,7 +418,9 @@ func (m *MainMenuModel) handleAccountMenuMouse(msg tea.MouseMsg) (tea.Model, tea
 
 	boxX := msg.X - m.menuOriginX
 	cursor := -1
-	if boxX >= 0 && boxX < menuBoxWidth {
+	// Require an actual glyph under the pointer so the row's trailing padding and
+	// the gap before the right-aligned status don't register as the login.
+	if boxX >= 0 && boxX < menuBoxWidth && m.boxCellHasGlyph(boxX, msg.Y-m.menuOriginY) {
 		cursor = m.accountMenuRowToCursor(msg.Y - m.modalOriginY)
 	}
 
@@ -452,6 +507,12 @@ func (m *MainMenuModel) handleModelMapMouse(msg tea.MouseMsg) (tea.Model, tea.Cm
 	}
 
 	kind, index := m.modelMapTarget(msg.X-m.menuOriginX, msg.Y-m.modalOriginY)
+	// Slots and the API-key row span the full box width; require a glyph under the
+	// pointer so their trailing padding doesn't register. The Save/Cancel buttons
+	// are already column-bounded by modelMapButtonRanges.
+	if (kind == mmModel || kind == mmKey) && !m.boxCellHasGlyph(msg.X-m.menuOriginX, msg.Y-m.menuOriginY) {
+		kind = mmNone
+	}
 
 	switch msg.Action {
 	case tea.MouseActionMotion:

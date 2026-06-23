@@ -225,6 +225,11 @@ type MainMenuModel struct {
 	menuOriginY int
 	hoverTab    int
 	hover       hitTarget
+	// menuLines is the box-relative rendered frame (the menu box plus any appended
+	// modal panel), captured each View so hit-testing can require the pointer cell
+	// to actually hold a glyph — trailing padding and inter-element gaps are spaces
+	// and so never register as a hover/click.
+	menuLines []string
 	// modalOriginY is the absolute screen row of the first line of the modal
 	// panel (account menu / model map) appended below the menu box, or -1 when no
 	// modal is open. Lets the modal's rows be hit-tested like the menu's.
@@ -1313,6 +1318,11 @@ func (m *MainMenuModel) Wake() {
 
 // CenterOffsetY returns the vertical centering offset calculated in View().
 func (m *MainMenuModel) CenterOffsetY() int { return m.centerOffsetY }
+
+// MenuOriginX returns the absolute screen column of the menu box's left edge,
+// calculated in View(). Exposed so tests can target glyph columns precisely now
+// that hit-testing requires the pointer to be on an element, not its padding.
+func (m *MainMenuModel) MenuOriginX() int { return m.menuOriginX }
 
 // InputMode returns the current inline input mode ("", "add-project", "open-once").
 func (m *MainMenuModel) InputMode() string { return m.inputMode }
@@ -3251,6 +3261,11 @@ func (m *MainMenuModel) View() string {
 			appendModal(m.renderAccountMenuPanel())
 		}
 	}
+
+	// Capture the box-relative frame (menu + any appended modal) for glyph-precise
+	// hit-testing. Box-relative (boxX, boxY) indexes these lines directly, so the
+	// ghost padding / centering applied below doesn't matter here.
+	m.menuLines = strings.Split(menuBox, "\n")
 
 	layout := m.CalculateLayout(m.width, m.height)
 

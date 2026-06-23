@@ -228,7 +228,7 @@ func TestUpdate_hoverModelSlot_setsHoverNotCursor(t *testing.T) {
 	m.modelMapCursor = 0
 	m.width, m.height = 100, 60
 	_ = m.View()
-	msg := tea.MouseMsg{X: m.menuOriginX + 5, Y: m.modalOriginY + 6, Action: tea.MouseActionMotion}
+	msg := tea.MouseMsg{X: m.menuOriginX + 7, Y: m.modalOriginY + 6, Action: tea.MouseActionMotion}
 	upd, _ := m.Update(msg)
 	got := upd.(*MainMenuModel)
 	if got.modelMapSlotHover != 2 {
@@ -248,7 +248,7 @@ func TestUpdate_hoverModelSlot_clearsWhenPointerLeaves(t *testing.T) {
 	m.openModelMap()
 	m.width, m.height = 100, 60
 	_ = m.View()
-	upd, _ := m.Update(tea.MouseMsg{X: m.menuOriginX + 5, Y: m.modalOriginY + 6, Action: tea.MouseActionMotion})
+	upd, _ := m.Update(tea.MouseMsg{X: m.menuOriginX + 7, Y: m.modalOriginY + 6, Action: tea.MouseActionMotion})
 	mm := upd.(*MainMenuModel)
 	if mm.modelMapSlotHover != 2 {
 		t.Fatalf("precondition: modelMapSlotHover should be 2, got %d", mm.modelMapSlotHover)

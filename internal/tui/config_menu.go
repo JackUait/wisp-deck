@@ -170,6 +170,11 @@ func (m ConfigMenuModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	i := m.configMenuItemAt(msg.Y)
+	// Require an actual glyph under the pointer so trailing padding inside the box
+	// doesn't register as the row.
+	if i >= 0 && !frameCellHasGlyph(strings.Split(m.View(), "\n"), msg.X, msg.Y) {
+		i = -1
+	}
 	switch msg.Action {
 	case tea.MouseActionMotion:
 		m.hover = i // i is -1 when the pointer is off every row, clearing the highlight

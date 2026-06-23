@@ -57,9 +57,56 @@ func TestHitTest_aiRow_directionByX(t *testing.T) {
 	if left.region != regionAI || !left.prev {
 		t.Errorf("left click = {%v, prev=%v}, want {regionAI, prev=true}", left.region, left.prev)
 	}
-	right := m.HitTest(24, row) // past the value name, on ▸ side
+	right := m.HitTest(20, row) // on the value's right half / ▸ side
 	if right.region != regionAI || right.prev {
 		t.Errorf("right click = {%v, prev=%v}, want {regionAI, prev=false}", right.region, right.prev)
+	}
+}
+
+func TestHitTest_aiRow_titleAndGapAreNotSwitcher(t *testing.T) {
+	// The AGENT switcher shares its row with the right-aligned "Ghost Tab" title.
+	// Hovering the empty gap or the title must NOT register as the switcher — only
+	// the control span (caption + ◂ value ▸) counts.
+	m := NewMainMenu(nil, []string{"claude", "opencode"}, "claude", "none")
+	m.width = 100
+	m.height = 60
+	row := m.titleRowIndex()
+	end := m.switcherSpanEnd(regionAI)
+	for _, boxX := range []int{end, end + 5, menuContentWidth - 2} { // just past control, gap, title area
+		if got := m.HitTest(boxX, row); got.region == regionAI {
+			t.Errorf("HitTest(%d,%d) = regionAI, want regionNone (outside the control span ending at %d)", boxX, row, end)
+		}
+	}
+	// A column inside the control still registers.
+	if got := m.HitTest(4, row); got.region != regionAI {
+		t.Errorf("HitTest(4,%d) = %v, want regionAI (caption is part of the control)", row, got.region)
+	}
+}
+
+func TestUpdate_motionOverRowPadding_doesNotHover(t *testing.T) {
+	m := mouseTestModel(t, []models.Project{{Name: "alpha", Path: "/tmp/a"}}, []string{"claude"})
+	// Find the first project name row.
+	nameRow := -1
+	for boxY := 0; boxY < 40; boxY++ {
+		if m.MapRowToItem(boxY) == 0 {
+			nameRow = boxY
+			break
+		}
+	}
+	if nameRow < 0 {
+		t.Fatal("could not locate the alpha project row")
+	}
+	// Over the project name text → hovers the body row.
+	overText := tea.MouseMsg{X: m.menuOriginX + 7, Y: m.menuOriginY + nameRow, Action: tea.MouseActionMotion}
+	upd, _ := m.Update(overText)
+	if mm := upd.(*MainMenuModel); !mm.isHovered(regionBody) {
+		t.Fatalf("hovering the project text should set regionBody hover, got %v", mm.hover.region)
+	}
+	// Over the trailing padding (blank cells) → no hover.
+	overPad := tea.MouseMsg{X: m.menuOriginX + menuContentWidth - 3, Y: m.menuOriginY + nameRow, Action: tea.MouseActionMotion}
+	upd, _ = m.Update(overPad)
+	if mm := upd.(*MainMenuModel); mm.isHovered(regionBody) {
+		t.Errorf("hovering the row's trailing padding should NOT hover the body, got region %v index %d", mm.hover.region, mm.hover.index)
 	}
 }
 
@@ -106,9 +153,10 @@ func TestUpdate_clickAIChevron_cyclesTool(t *testing.T) {
 	if m.CurrentAITool() != "claude" {
 		t.Fatalf("precondition: current tool = %q, want claude", m.CurrentAITool())
 	}
-	// Click the right (▸) side of the AGENT row → next tool.
+	// Click the right (▸) side of the AGENT row → next tool. Column 20 is on the
+	// value's right half, inside the control span (the old col 30 is now past it).
 	msg := tea.MouseMsg{
-		X:      m.menuOriginX + 30,
+		X:      m.menuOriginX + 20,
 		Y:      m.menuOriginY + m.titleRowIndex(),
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
@@ -232,9 +280,10 @@ func TestUpdate_clickAccountRow_switchesAndCloses(t *testing.T) {
 	m.accountMenuOpen = true
 	_ = m.View() // populates menuOriginX / modalOriginY
 
-	// Click the "Work" row (panel row 5, cursor 1).
+	// Click the "Work" row (panel row 5, cursor 1) — on the label glyphs (the row's
+	// 4-space indent is now a non-hit, so target the text at col 7).
 	msg := tea.MouseMsg{
-		X:      m.menuOriginX + 5,
+		X:      m.menuOriginX + 7,
 		Y:      m.modalOriginY + 5,
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
@@ -259,7 +308,7 @@ func TestUpdate_hoverAccountRow_setsHoverNotCursor(t *testing.T) {
 	_ = m.View()
 
 	msg := tea.MouseMsg{
-		X:      m.menuOriginX + 5,
+		X:      m.menuOriginX + 7,  // on the "Personal" label glyphs, past the indent
 		Y:      m.modalOriginY + 6, // Personal row (cursor 2)
 		Action: tea.MouseActionMotion,
 	}
@@ -284,7 +333,7 @@ func TestUpdate_hoverAccountRow_clearsWhenPointerLeaves(t *testing.T) {
 	m.accountMenuOpen = true
 	_ = m.View()
 
-	upd, _ := m.Update(tea.MouseMsg{X: m.menuOriginX + 5, Y: m.modalOriginY + 6, Action: tea.MouseActionMotion})
+	upd, _ := m.Update(tea.MouseMsg{X: m.menuOriginX + 7, Y: m.modalOriginY + 6, Action: tea.MouseActionMotion})
 	mm := upd.(*MainMenuModel)
 	if mm.accountMenuHover != 2 {
 		t.Fatalf("precondition: accountMenuHover should be 2, got %d", mm.accountMenuHover)

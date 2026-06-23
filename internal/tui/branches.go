@@ -620,6 +620,11 @@ func (m BranchPickerModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 
 	idx := m.mouseToFilteredIndex(msg.X, msg.Y)
+	// Require a glyph under the pointer so the blank area past a branch name
+	// doesn't register as that row.
+	if idx >= 0 && !frameCellHasGlyph(strings.Split(m.View(), "\n"), msg.X, msg.Y) {
+		idx = -1
+	}
 	switch msg.Action {
 	case tea.MouseActionMotion:
 		// Transient highlight only: idx is -1 when the pointer is off every branch

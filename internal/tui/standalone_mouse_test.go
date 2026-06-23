@@ -81,6 +81,21 @@ func TestConfigMenu_hoverRendersDistinctly(t *testing.T) {
 	}
 }
 
+func TestConfigMenu_hoverIgnoresTrailingPadding(t *testing.T) {
+	m := NewConfigMenu(ConfigMenuOptions{})
+	m.width = 80
+	// Y=2 is the first item's title row; X=5 is on the text.
+	upd, _ := m.Update(tea.MouseMsg{X: 5, Y: 2, Action: tea.MouseActionMotion})
+	if got := upd.(ConfigMenuModel); got.hover != 0 {
+		t.Fatalf("hovering the item text should set hover 0, got %d", got.hover)
+	}
+	// Far right of the same row is blank padding inside the box — must not hover.
+	upd, _ = m.Update(tea.MouseMsg{X: 48, Y: 2, Action: tea.MouseActionMotion})
+	if got := upd.(ConfigMenuModel); got.hover != -1 {
+		t.Errorf("hovering trailing padding should leave hover -1, got %d", got.hover)
+	}
+}
+
 func TestConfigMenu_hoverClearsWhenPointerLeaves(t *testing.T) {
 	m := NewConfigMenu(ConfigMenuOptions{})
 	m.width = 80
