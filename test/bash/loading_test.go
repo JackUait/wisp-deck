@@ -161,7 +161,7 @@ func TestLoading_get_tool_palette_returns_claude_palette(t *testing.T) {
 func TestLoading_get_tool_palette_returns_opencode_palette(t *testing.T) {
 	out, code := runBashFunc(t, "lib/loading.sh", "get_tool_palette", []string{"opencode"}, nil)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, "240 242 244 246 248 250 252 254")
+	assertContains(t, out, "60 61 62 99 135 141 147 183")
 }
 
 func TestLoading_get_tool_palette_defaults_to_claude_for_unknown(t *testing.T) {
@@ -178,14 +178,14 @@ func TestLoading_get_tool_palette_defaults_to_claude_for_empty(t *testing.T) {
 
 func TestLoading_render_loading_frame_uses_tool_palette(t *testing.T) {
 	root := projectRoot(t)
-	// OpenCode palette starts with color 240
+	// OpenCode palette starts with color 60
 	script := fmt.Sprintf(
 		`source %q/lib/loading.sh && render_loading_frame opencode 0 90 24`,
 		root)
 	out, code := runBashSnippet(t, script, nil)
 	assertExitCode(t, code, 0)
-	// Should contain ANSI color code from the gray/silver palette
-	assertContains(t, out, "38;5;240m")
+	// Should contain ANSI color code from the purple palette
+	assertContains(t, out, "38;5;60m")
 }
 
 func TestLoading_render_loading_frame_shifts_colors_between_frames(t *testing.T) {
