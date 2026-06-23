@@ -121,6 +121,21 @@ var (
 	diffDimStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("240"))
 )
 
+// applyDiffChrome repaints the popup furniture (border, rule, active tab, icon,
+// title, modified badge) in the active theme's UI accent. The vars above keep
+// their claude-orange (208) defaults so rendering still works in tests that
+// never call ApplyTheme; ApplyTheme invokes this so OpenCode sessions go purple
+// while claude stays orange. The green/red add/delete colors are intentionally
+// left fixed — they carry meaning, not theme.
+func applyDiffChrome(accent lipgloss.Color) {
+	diffTitleStyle = diffTitleStyle.Foreground(accent)
+	diffStatusColors["modified"] = accent
+	diffRuleStyle = diffRuleStyle.Foreground(accent)
+	diffTabActiveStyle = diffTabActiveStyle.Background(accent)
+	diffTabIconStyle = diffTabIconStyle.Foreground(accent)
+	diffBoxStyle = diffBoxStyle.BorderForeground(accent)
+}
+
 // ParseBackdrop composites the serialized screen capture produced by
 // open_diff_popup into W×H rows of plain text. The format is a "W H" header
 // line, then one or more "PANE <left> <top>" blocks, each followed by that

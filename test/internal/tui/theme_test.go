@@ -21,8 +21,8 @@ func TestThemeForTool_Claude(t *testing.T) {
 func TestThemeForTool_OpenCode(t *testing.T) {
 	theme := tui.ThemeForTool("opencode")
 
-	if theme.Primary != lipgloss.Color("250") {
-		t.Errorf("Expected Primary to be '250', got %q", theme.Primary)
+	if theme.Primary != lipgloss.Color("141") {
+		t.Errorf("Expected Primary to be '141', got %q", theme.Primary)
 	}
 }
 
@@ -81,7 +81,7 @@ func TestAllThemes(t *testing.T) {
 func TestThemeTextColors(t *testing.T) {
 	expectedText := map[string]lipgloss.Color{
 		"claude":   lipgloss.Color("223"),
-		"opencode": lipgloss.Color("252"),
+		"opencode": lipgloss.Color("189"),
 	}
 
 	for tool, expected := range expectedText {
@@ -101,7 +101,7 @@ func TestThemeTextColors(t *testing.T) {
 func TestThemeBrightColors(t *testing.T) {
 	expectedBright := map[string]lipgloss.Color{
 		"claude":   lipgloss.Color("208"),
-		"opencode": lipgloss.Color("255"),
+		"opencode": lipgloss.Color("147"),
 	}
 
 	for tool, expected := range expectedBright {
@@ -131,7 +131,7 @@ func TestThemeBrightColor_UnknownFallback(t *testing.T) {
 func TestThemeDimColors(t *testing.T) {
 	expectedDim := map[string]lipgloss.Color{
 		"claude":   lipgloss.Color("166"),
-		"opencode": lipgloss.Color("244"),
+		"opencode": lipgloss.Color("99"),
 	}
 
 	for tool, expected := range expectedDim {
@@ -163,7 +163,7 @@ func TestAnsiFromThemeColor_AllTools(t *testing.T) {
 		expected string
 	}{
 		{"claude", lipgloss.Color("209"), "\033[38;5;209m"},
-		{"opencode", lipgloss.Color("250"), "\033[38;5;250m"},
+		{"opencode", lipgloss.Color("141"), "\033[38;5;141m"},
 	}
 
 	for _, tt := range tests {

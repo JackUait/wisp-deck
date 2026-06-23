@@ -33,18 +33,18 @@ func TestGhostForTool_sleeping_returns_correct_tool(t *testing.T) {
 			},
 		},
 		{
-			name: "opencode sleeping has blush marks",
+			name: "opencode sleeping has dim purple lower band",
 			tool: "opencode",
 			check: func(t *testing.T, lines []string) {
 				found := false
 				for _, line := range lines {
-					if strings.Contains(line, "\033[38;5;234m") {
+					if strings.Contains(line, "\033[38;5;61m") {
 						found = true
 						break
 					}
 				}
 				if !found {
-					t.Error("opencode sleeping ghost should contain SleepAccent (234) blush marks")
+					t.Error("opencode sleeping ghost should contain SleepAccent (61) dim purple band")
 				}
 			},
 		},
@@ -85,6 +85,20 @@ func TestGhostForTool_sleeping_body_has_color_variation(t *testing.T) {
 	// Feet should use SleepDarkFeet (94)
 	if !strings.Contains(feetLine, "\033[38;5;94m") {
 		t.Error("feet should use SleepDarkFeet color (94)")
+	}
+}
+
+func TestGhostForTool_opencode_awake_is_purple(t *testing.T) {
+	// The OpenCode ghost should wear the purple palette, not the old grayscale.
+	joined := strings.Join(GhostForTool("opencode", false), "\n")
+
+	if !strings.Contains(joined, "\033[38;5;141m") {
+		t.Error("opencode awake ghost should use brand purple (Primary 141)")
+	}
+	for _, gray := range []string{"\033[38;5;250m", "\033[38;5;255m", "\033[38;5;244m"} {
+		if strings.Contains(joined, gray) {
+			t.Errorf("opencode ghost should no longer use grayscale code %q", gray)
+		}
 	}
 }
 

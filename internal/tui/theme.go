@@ -17,6 +17,10 @@ type AIToolTheme struct {
 	DarkFeet      lipgloss.Color
 	EyeWhite      lipgloss.Color
 	EyePupil      lipgloss.Color
+	// UIAccent is the chrome accent for popup furniture (the diff pager's border,
+	// rule, active tab, icons, title). Kept separate from the ghost-shading colors
+	// so the window chrome can be tuned without touching the mascot.
+	UIAccent lipgloss.Color
 	SleepPrimary  lipgloss.Color
 	SleepAccent   lipgloss.Color
 	SleepBlush    lipgloss.Color
@@ -37,6 +41,7 @@ var themes = map[string]AIToolTheme{
 		DarkFeet:      lipgloss.Color("166"),
 		EyeWhite:      lipgloss.Color("255"),
 		EyePupil:      lipgloss.Color("232"),
+		UIAccent:      lipgloss.Color("208"), // orange — the popup chrome color
 		SleepPrimary:  lipgloss.Color("166"),
 		SleepAccent:   lipgloss.Color("178"),
 		SleepBlush:    lipgloss.Color("168"),
@@ -47,21 +52,22 @@ var themes = map[string]AIToolTheme{
 	},
 	"opencode": {
 		Name:          "opencode",
-		Primary:       lipgloss.Color("250"),
-		Dim:           lipgloss.Color("244"),
-		Bright:        lipgloss.Color("255"),
-		Accent:        lipgloss.Color("240"),
-		Cap:           lipgloss.Color("252"),
-		DarkFeet:      lipgloss.Color("240"),
-		EyeWhite:      lipgloss.Color("255"),
-		EyePupil:      lipgloss.Color("238"),
-		SleepPrimary:  lipgloss.Color("244"),
-		SleepAccent:   lipgloss.Color("234"),
-		SleepBlush:    lipgloss.Color("139"),
-		SleepDim:      lipgloss.Color("238"),
-		SleepDarkFeet: lipgloss.Color("232"),
-		SleepCap:      lipgloss.Color("242"),
-		Text:          lipgloss.Color("252"),
+		Primary:       lipgloss.Color("141"), // #af87ff brand purple — gauge fill, title, eye band
+		Dim:           lipgloss.Color("99"),  // #875fff — stats border, ghost mid-body
+		Bright:        lipgloss.Color("147"), // #afafff — ghost upper body
+		Accent:        lipgloss.Color("61"),  // #5f5faf — ghost lower band
+		Cap:           lipgloss.Color("183"), // #dfafff — pale crown rim
+		DarkFeet:      lipgloss.Color("60"),  // #5f5f87 — feet + smile
+		EyeWhite:      lipgloss.Color("147"),
+		EyePupil:      lipgloss.Color("235"), // near-black pupils
+		UIAccent:      lipgloss.Color("141"), // purple — the popup chrome color
+		SleepPrimary:  lipgloss.Color("103"), // #8787af — dim body
+		SleepAccent:   lipgloss.Color("61"),  // #5f5faf — dim lower band
+		SleepBlush:    lipgloss.Color("139"), // #af87af — mauve cheeks
+		SleepDim:      lipgloss.Color("60"),  // #5f5f87
+		SleepDarkFeet: lipgloss.Color("236"), // dim feet
+		SleepCap:      lipgloss.Color("146"), // #afafd7 — dim rim
+		Text:          lipgloss.Color("189"), // #d7d7ff
 	},
 }
 
@@ -94,4 +100,5 @@ func ApplyTheme(theme AIToolTheme) {
 	titleStyle = lipgloss.NewStyle().Foreground(theme.Primary).Bold(true)
 	selectedItemStyle = lipgloss.NewStyle().Foreground(theme.Primary)
 	questionStyle = lipgloss.NewStyle().Foreground(theme.Primary).Bold(true)
+	applyDiffChrome(theme.UIAccent)
 }
