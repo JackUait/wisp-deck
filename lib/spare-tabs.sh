@@ -41,12 +41,19 @@ set -g base-index 1
 set -g status-justify left
 set -g status-style "fg=colour250,bg=default"
 set -g window-status-style "bg=default"
-set -g status-left ""
-set -g status-right "#[range=user|new]#[fg=colour209,bg=colour236,bold] + #[nobold]#[norange]#[bg=default] "
-set -g window-status-separator " "
+# The whole tab list lives in status-left via #{W:...} so the + add button can
+# sit immediately after the last tab (status-right is pinned far-right, which is
+# why it isn't used). #{?window_active,...} picks the active vs inactive look;
+# commas inside #[...] within that conditional are escaped as #, so they aren't
+# read as argument separators. The auto window list is blanked out to avoid a
+# duplicate. status-left-length is raised so the list is never truncated.
+set -g status-left-length 1000
+set -g status-left "#{W:#[range=user|sel:#{window_id}]#{?window_active,#[fg=colour235#,bg=colour209#,bold] #{?#{==:#{window_index},1},$project,#{window_index}} #[nobold]#[norange]#[bg=default],#[default fg=colour245][#{?#{==:#{window_index},1},$project,#{window_index}}]#[norange]} }#[range=user|new]#[fg=colour209,bg=colour236,bold] + #[nobold]#[norange]"
+set -g status-right ""
+set -g window-status-separator ""
+set -g window-status-format ""
+set -g window-status-current-format ""
 set -g @gt_dir "$dir"
-set -g window-status-format "#[range=user|sel:#{window_id}]#[default fg=colour245][#{?#{==:#{window_index},1},$project,#{window_index}}]#[norange]"
-set -g window-status-current-format "#[range=user|sel:#{window_id}]#[fg=colour235,bg=colour209,bold] #{?#{==:#{window_index},1},$project,#{window_index}} #[nobold]#[norange]#[bg=default]"
 bind -n MouseDown1Status run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""
 bind -n MouseDown1StatusLeft run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""
 bind -n MouseDown1StatusRight run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""

@@ -67,13 +67,29 @@ func TestSpareTabs_config_core(t *testing.T) {
 	}
 }
 
-// The tab bar must sit flush against the pane's left edge — no leading
-// status-left padding before the first tab.
+// The tab bar must sit flush against the pane's left edge — status-left begins
+// directly with the window-list expansion, so the first tab is at column 0 with
+// no leading padding.
 func TestSpareTabs_config_flush_left(t *testing.T) {
 	out, code := runBashFunc(t, "lib/spare-tabs.sh", "spare_tabs_config",
 		[]string{"ghost-tab", "/proj/dir", "/abs/lib/spare-tabs.sh", "gtspare_x"}, nil)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, `set -g status-left ""`)
+	assertContains(t, out, `set -g status-left "#{W:`)
+}
+
+// The + button sits immediately after the last tab (not pinned to the far
+// right): status-right is empty and the add-range follows the #{W:...} window
+// list inside status-left.
+func TestSpareTabs_config_plus_follows_tabs(t *testing.T) {
+	out, code := runBashFunc(t, "lib/spare-tabs.sh", "spare_tabs_config",
+		[]string{"ghost-tab", "/proj/dir", "/abs/lib/spare-tabs.sh", "gtspare_x"}, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, `set -g status-right ""`)
+	sl := lineWithPrefix(out, "set -g status-left ", "")
+	if sl == "" {
+		t.Fatalf("could not find status-left line in:\n%s", out)
+	}
+	assertContains(t, sl, "}#[range=user|new]") // + right after the W: window list
 }
 
 // The tab-bar strip itself is transparent (bg=default), so the tabs and the +
@@ -103,36 +119,28 @@ func lineWithPrefix(out, prefix, forbidden string) string {
 	return ""
 }
 
-// Inactive tabs render as a plain bracketed label — no chip colour, no hexagon
-// brand mark, no close ✕ — while the current tab keeps its coloured chip. Click
-// selection (the sel range) must still work on inactive tabs.
+// Tabs and the + button live in status-left via the #{W:...} window-list
+// expansion. Inactive tabs are plain bracketed labels; the active tab keeps its
+// orange colour; neither carries a hexagon or close ✕ (close is keyboard-only
+// via prefix+w). Click-to-select (the sel range) is on every tab.
 func TestSpareTabs_config_inactive_tabs_are_plain(t *testing.T) {
 	out, code := runBashFunc(t, "lib/spare-tabs.sh", "spare_tabs_config",
 		[]string{"ghost-tab", "/proj/dir", "/abs/lib/spare-tabs.sh", "gtspare_x"}, nil)
 	assertExitCode(t, code, 0)
 
-	// The inactive format line (not the -current- one).
-	inactive := lineWithPrefix(out, "set -g window-status-format ", "set -g window-status-current-format ")
-	if inactive == "" {
-		t.Fatalf("could not find window-status-format line in:\n%s", out)
+	sl := lineWithPrefix(out, "set -g status-left ", "")
+	if sl == "" {
+		t.Fatalf("could not find status-left line in:\n%s", out)
 	}
-	assertContains(t, inactive, "[") // bracketed label
-	assertContains(t, inactive, "]")
-	assertContains(t, inactive, "range=user|sel:") // still clickable to select
-	for _, forbidden := range []string{"✕", "⬡", "colour209", "colour236", "range=user|close:"} {
-		assertNotContains(t, inactive, forbidden)
-	}
+	// Inactive tabs: a plain bracketed label (project name on tab 1, else index).
+	assertContains(t, sl, "[#{?#{==:#{window_index},1},ghost-tab,#{window_index}}]")
+	assertContains(t, sl, "colour209")             // active tab keeps its orange chip
+	assertContains(t, sl, "range=user|sel:")       // every tab is clickable
+	assertContains(t, sl, "#{?window_active,")     // active vs inactive branch
 
-	// The current/active tab keeps its colour but is otherwise stripped: just
-	// the name in the orange chip — no hexagon, no close ✕ (close is keyboard-
-	// only via prefix+w).
-	active := lineWithPrefix(out, "set -g window-status-current-format ", "")
-	if active == "" {
-		t.Fatalf("could not find window-status-current-format line in:\n%s", out)
-	}
-	assertContains(t, active, "colour209") // orange accent kept
+	// No decoration anywhere in the config.
 	for _, forbidden := range []string{"✕", "⬡", "range=user|close:"} {
-		assertNotContains(t, active, forbidden)
+		assertNotContains(t, out, forbidden)
 	}
 }
 
