@@ -32,6 +32,7 @@ func (m *MainMenuModel) openAccountMenu() {
 	}
 	m.accountMenuConfirm = false
 	m.accountMenuInputMode = false
+	m.accountMenuRenameIdx = -1
 	m.accountMenuErr = nil
 }
 
@@ -43,6 +44,24 @@ func (m *MainMenuModel) enterAccountAddInput() tea.Cmd {
 	ti.Focus()
 	m.accountMenuInput = ti
 	m.accountMenuInputMode = true
+	m.accountMenuRenameIdx = -1
+	m.accountMenuConfirm = false
+	m.accountMenuErr = nil
+	return textinput.Blink
+}
+
+// enterAccountRenameInput opens the inline label input prefilled with the managed
+// login's current label, ready to be edited in place.
+func (m *MainMenuModel) enterAccountRenameInput(idx int) tea.Cmd {
+	if idx < 0 || idx >= len(m.claudeAccounts) {
+		return nil
+	}
+	ti := textinput.New()
+	ti.SetValue(m.claudeAccounts[idx].Label)
+	ti.Focus()
+	m.accountMenuInput = ti
+	m.accountMenuInputMode = true
+	m.accountMenuRenameIdx = idx
 	m.accountMenuConfirm = false
 	m.accountMenuErr = nil
 	return textinput.Blink
@@ -100,6 +119,11 @@ func (m *MainMenuModel) updateAccountMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			case 'a':
 				return m, m.enterAccountAddInput()
+			case 'r':
+				// Only managed logins (1..len) have an editable label.
+				if m.accountMenuCursor >= 1 && m.accountMenuCursor <= len(m.claudeAccounts) {
+					return m, m.enterAccountRenameInput(m.accountMenuCursor - 1)
+				}
 			case 'd':
 				// Only managed logins (1..len) are removable; Default is implicit.
 				if m.accountMenuCursor >= 1 && m.accountMenuCursor <= len(m.claudeAccounts) {
@@ -112,15 +136,17 @@ func (m *MainMenuModel) updateAccountMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateAccountAddInput handles key events while typing a new login's label.
+// updateAccountAddInput handles key events while typing a login label (add or
+// rename).
 func (m *MainMenuModel) updateAccountAddInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc, tea.KeyCtrlC:
 		m.accountMenuInputMode = false
+		m.accountMenuRenameIdx = -1
 		m.accountMenuInput.Blur()
 		return m, nil
 	case tea.KeyEnter:
-		return m.submitAccountAddInput()
+		return m.submitAccountInput()
 	}
 	var cmd tea.Cmd
 	m.accountMenuInput, cmd = m.accountMenuInput.Update(msg)
@@ -128,15 +154,25 @@ func (m *MainMenuModel) updateAccountAddInput(msg tea.KeyMsg) (tea.Model, tea.Cm
 	return m, cmd
 }
 
-// submitAccountAddInput registers the new login in-process (config dir + registry
-// entry) and exits with the login-account action carrying its dir, so wrapper.sh
-// runs only the interactive browser `claude auth login` that can't live inside
-// the alt-screen TUI.
-func (m *MainMenuModel) submitAccountAddInput() (tea.Model, tea.Cmd) {
+// submitAccountInput commits the inline label field: a rename edits the label in
+// place (stays in the panel), an add registers the login and exits to run the
+// browser auth.
+func (m *MainMenuModel) submitAccountInput() (tea.Model, tea.Cmd) {
 	label := strings.TrimSpace(m.accountMenuInput.Value())
 	if label == "" {
 		return m, nil // wait for a non-empty label
 	}
+	if m.accountMenuRenameIdx >= 0 {
+		return m.submitAccountRename(label)
+	}
+	return m.submitAccountAdd(label)
+}
+
+// submitAccountAdd registers the new login in-process (config dir + registry
+// entry) and exits with the login-account action carrying its dir, so wrapper.sh
+// runs only the interactive browser `claude auth login` that can't live inside
+// the alt-screen TUI.
+func (m *MainMenuModel) submitAccountAdd(label string) (tea.Model, tea.Cmd) {
 	if m.claudeAccountsList == "" || m.claudeAccountsDir == "" {
 		m.accountMenuErr = errors.New("login storage is not configured")
 		m.accountMenuInputMode = false
@@ -153,6 +189,36 @@ func (m *MainMenuModel) submitAccountAddInput() (tea.Model, tea.Cmd) {
 	m.setActionResult("login-account")
 	m.result.AccountDir = dir
 	return m, tea.Quit
+}
+
+// submitAccountRename changes the highlighted login's label in place (the config
+// dir and its login are untouched) and stays in the panel.
+func (m *MainMenuModel) submitAccountRename(label string) (tea.Model, tea.Cmd) {
+	idx := m.accountMenuRenameIdx
+	if idx < 0 || idx >= len(m.claudeAccounts) {
+		m.accountMenuInputMode = false
+		m.accountMenuRenameIdx = -1
+		return m, nil
+	}
+	if m.claudeAccountsList == "" {
+		m.accountMenuErr = errors.New("login storage is not configured")
+		m.accountMenuInputMode = false
+		return m, nil
+	}
+	dir := m.claudeAccounts[idx].Dir
+	if err := claudeaccount.Rename(m.claudeAccountsList, dir, label); err != nil {
+		m.accountMenuErr = err
+		m.accountMenuInputMode = false
+		return m, nil
+	}
+	// Reload labels; the active dir is unchanged, so re-apply it to keep the
+	// selection in sync after the in-place edit.
+	activeDir := m.CurrentClaudeAccountDir()
+	m.SetClaudeAccounts(LoadClaudeAccountsList(m.claudeAccountsList))
+	m.SetActiveClaudeAccount(activeDir)
+	m.accountMenuInputMode = false
+	m.accountMenuRenameIdx = -1
+	return m, nil
 }
 
 // confirmRemoveAccount deletes the highlighted managed login (registry line +
@@ -268,7 +334,11 @@ func (m *MainMenuModel) renderAccountMenuPanel() string {
 			cursor := lipgloss.NewStyle().Reverse(true).Render(" ")
 			field = promptStyle.Render("❯ ") + lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(v) + cursor
 		}
-		lines = append(lines, pad("    "+primaryBoldStyle.Render("New login")+"   "+field))
+		tag := "New login"
+		if m.accountMenuRenameIdx >= 0 {
+			tag = "Rename"
+		}
+		lines = append(lines, pad("    "+primaryBoldStyle.Render(tag)+"   "+field))
 	} else {
 		// Add row.
 		addRow := m.accountMenuAddRow()
@@ -293,16 +363,31 @@ func (m *MainMenuModel) renderAccountMenuPanel() string {
 	lines = append(lines, separator)
 
 	sep := dimStyle.Render(" · ")
+	hints := func(parts ...string) string {
+		rendered := make([]string, len(parts))
+		for i, p := range parts {
+			rendered[i] = helpStyle.Render(p)
+		}
+		return strings.Join(rendered, sep)
+	}
 	var help string
 	switch {
 	case m.accountMenuInputMode:
-		help = helpStyle.Render("⏎ create login") + sep + helpStyle.Render("Esc cancel")
+		verb := "⏎ create login"
+		if m.accountMenuRenameIdx >= 0 {
+			verb = "⏎ rename"
+		}
+		help = hints(verb, "Esc cancel")
 	case m.accountMenuConfirm:
-		help = helpStyle.Render("y remove") + sep + helpStyle.Render("n cancel")
+		help = hints("y remove", "n cancel")
 	case m.accountMenuCursor == m.accountMenuAddRow():
-		help = helpStyle.Render("↑↓ move") + sep + helpStyle.Render("⏎ add login") + sep + helpStyle.Render("Esc close")
+		help = hints("↑↓ move", "⏎ add login", "Esc close")
+	case m.accountMenuCursor >= 1 && m.accountMenuCursor <= len(m.claudeAccounts):
+		// On a managed login: rename and remove are available.
+		help = hints("↑↓ move", "⏎ switch", "a add", "r rename", "d remove", "Esc close")
 	default:
-		help = helpStyle.Render("↑↓ move") + sep + helpStyle.Render("⏎ switch") + sep + helpStyle.Render("a add") + sep + helpStyle.Render("d remove") + sep + helpStyle.Render("Esc close")
+		// On Default: only switch/add (the implicit login can't be edited).
+		help = hints("↑↓ move", "⏎ switch", "a add", "Esc close")
 	}
 	lines = append(lines, pad(help))
 

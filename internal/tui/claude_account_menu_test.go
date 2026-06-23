@@ -187,6 +187,85 @@ func TestAccountMenu_inlineInputRenders(t *testing.T) {
 	}
 }
 
+// 'r' on a managed login opens the inline rename field, prefilled with its
+// current label.
+func TestAccountMenu_rKeyOpensRenameInput(t *testing.T) {
+	m := acctTestMenu("claude")
+	m.SetClaudeAccounts([]ClaudeAccount{{Label: "Work", Dir: "work"}})
+	m.openAccountMenu()
+	m.updateAccountMenu(tea.KeyMsg{Type: tea.KeyDown}) // -> Work
+	m.updateAccountMenu(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if !m.accountMenuInputMode {
+		t.Fatalf("'r' on a managed login should open the rename input")
+	}
+	if m.accountMenuInput.Value() != "Work" {
+		t.Errorf("rename field should be prefilled with the current label, got %q", m.accountMenuInput.Value())
+	}
+}
+
+// 'r' on Default is a no-op — the implicit login has no editable label.
+func TestAccountMenu_rKeyOnDefaultNoop(t *testing.T) {
+	m := acctTestMenu("claude")
+	m.SetClaudeAccounts([]ClaudeAccount{{Label: "Work", Dir: "work"}})
+	m.openAccountMenu() // cursor on Default (0)
+	m.updateAccountMenu(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if m.accountMenuInputMode {
+		t.Errorf("Default login must not be renamable")
+	}
+}
+
+// Editing the label and pressing Enter renames the login in-process and stays in
+// the panel (no browser login, no menu exit).
+func TestAccountMenu_renameSubmitUpdatesLabel(t *testing.T) {
+	dir := t.TempDir()
+	accountsDir := filepath.Join(dir, "claude-accounts")
+	listFile := filepath.Join(accountsDir, "claude-accounts.list")
+	if err := os.MkdirAll(filepath.Join(accountsDir, "work"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(listFile, []byte("Work:work\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := acctTestMenu("claude")
+	m.SetClaudeAccounts([]ClaudeAccount{{Label: "Work", Dir: "work"}})
+	m.SetClaudeAccountPaths(listFile, accountsDir)
+	m.openAccountMenu()
+	m.updateAccountMenu(tea.KeyMsg{Type: tea.KeyDown})                      // -> Work
+	m.updateAccountMenu(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}) // rename input
+	m.accountMenuInput.SetValue("Day Job")
+	m.updateAccountMenu(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.accountMenuInputMode {
+		t.Errorf("submitting the rename should leave input mode")
+	}
+	if !m.accountMenuOpen {
+		t.Errorf("rename should stay in the panel, not exit the menu")
+	}
+	if r := m.Result(); r != nil {
+		t.Errorf("rename is in-process; it must not set a result, got %+v", r)
+	}
+	if len(m.claudeAccounts) != 1 || m.claudeAccounts[0].Label != "Day Job" || m.claudeAccounts[0].Dir != "work" {
+		t.Errorf("in-memory list should show the new label on the same dir, got %+v", m.claudeAccounts)
+	}
+	if b, _ := os.ReadFile(listFile); !strings.Contains(string(b), "Day Job:work") {
+		t.Errorf("registry should persist the rename, got %q", string(b))
+	}
+}
+
+// The rename field is clearly labelled as a rename (not an add).
+func TestAccountMenu_renameInputRenders(t *testing.T) {
+	m := acctTestMenu("claude")
+	m.SetClaudeAccounts([]ClaudeAccount{{Label: "Work", Dir: "work"}})
+	m.openAccountMenu()
+	m.updateAccountMenu(tea.KeyMsg{Type: tea.KeyDown})
+	m.updateAccountMenu(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	out := stripAnsi(m.renderAccountMenuPanel())
+	if !strings.Contains(out, "Rename") {
+		t.Errorf("rename mode should render a rename field:\n%s", out)
+	}
+}
+
 // 'd' then 'y' removes the highlighted managed login: its registry line and
 // config dir are gone and the in-memory list shrinks.
 func TestAccountMenu_deleteRemovesLogin(t *testing.T) {

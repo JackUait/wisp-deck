@@ -128,6 +128,51 @@ func TestRemove_drops_line_dir_and_clears_active(t *testing.T) {
 	}
 }
 
+func TestRename_changes_label_keeps_dir_and_login(t *testing.T) {
+	dir := t.TempDir()
+	accountsDir := filepath.Join(dir, "claude-accounts")
+	list := filepath.Join(dir, "claude-accounts.list")
+
+	work, _ := Add(list, accountsDir, "Work")
+	personal, _ := Add(list, accountsDir, "Personal")
+
+	if err := Rename(list, work, "Day Job"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := Load(list)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 accounts, got %+v", got)
+	}
+	// The renamed entry keeps its dir but shows the new label.
+	if got[0].Dir != work || got[0].Label != "Day Job" {
+		t.Errorf("work entry: got %+v, want label 'Day Job' dir %q", got[0], work)
+	}
+	// The other entry is untouched.
+	if got[1].Dir != personal || got[1].Label != "Personal" {
+		t.Errorf("personal entry should be untouched, got %+v", got[1])
+	}
+	// The config dir (its login) is still there.
+	if _, err := os.Stat(filepath.Join(accountsDir, work)); err != nil {
+		t.Errorf("renamed account's config dir should be intact: %v", err)
+	}
+}
+
+func TestRename_unknown_dir_is_noop(t *testing.T) {
+	dir := t.TempDir()
+	accountsDir := filepath.Join(dir, "claude-accounts")
+	list := filepath.Join(dir, "claude-accounts.list")
+	work, _ := Add(list, accountsDir, "Work")
+
+	if err := Rename(list, "ghost", "Nope"); err != nil {
+		t.Fatal(err)
+	}
+	got := Load(list)
+	if len(got) != 1 || got[0].Dir != work || got[0].Label != "Work" {
+		t.Errorf("unknown dir should leave the list unchanged, got %+v", got)
+	}
+}
+
 func TestResolveDir_existing_vs_missing_vs_default(t *testing.T) {
 	dir := t.TempDir()
 	accountsDir := filepath.Join(dir, "claude-accounts")

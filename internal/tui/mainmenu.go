@@ -290,8 +290,9 @@ type MainMenuModel struct {
 	accountMenuOpen      bool
 	accountMenuCursor    int  // 0=Default, 1..len=managed logins, len+1=add row
 	accountMenuConfirm   bool // delete confirmation showing for the cursor login
-	accountMenuInputMode bool // inline label entry for a new login is showing
+	accountMenuInputMode bool // inline label entry (add or rename) is showing
 	accountMenuInput     textinput.Model
+	accountMenuRenameIdx int // -1 = adding a login; >=0 = renaming claudeAccounts[idx]
 	accountMenuErr       error
 
 	// Model mapping panel for non-Standard configs

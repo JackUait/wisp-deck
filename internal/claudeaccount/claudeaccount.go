@@ -7,7 +7,7 @@
 //   - <accountsDir>/<dir>/          the per-account CLAUDE_CONFIG_DIR (its login)
 //   - <listFile>                    label:dir per line (display label decoupled)
 //   - <pointerFile>                 active dir name, or absent/"default" = the
-//                                   standard ~/.claude (Keychain) login
+//     standard ~/.claude (Keychain) login
 //
 // Both the inline ACCOUNT switcher in the menu and the `ghost-tab-tui
 // claude-account` CLI call into this package, so the list format and mutation
@@ -136,6 +136,27 @@ func Add(listFile, accountsDir, label string) (string, error) {
 		return "", err
 	}
 	return dir, nil
+}
+
+// Rename changes the display label of the account whose dir matches, leaving the
+// config directory (and its login) untouched. It is a no-op if no line matches.
+// The dir name is the stable identifier; only the label changes.
+func Rename(listFile, dir, newLabel string) error {
+	data, err := os.ReadFile(listFile)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if j := strings.Index(trimmed, ":"); j >= 0 && trimmed[j+1:] == dir {
+			lines[i] = newLabel + ":" + dir
+		}
+	}
+	return os.WriteFile(listFile, []byte(strings.Join(lines, "\n")), 0644)
 }
 
 // Remove deletes an account: it drops the matching "label:dir" line from the
