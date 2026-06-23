@@ -92,6 +92,7 @@ type MainMenuResult struct {
 	TabTitle     string  `json:"tab_title,omitempty"`
 	SoundName    *string `json:"sound_name,omitempty"`
 	PanelMode    string  `json:"panel_mode,omitempty"`
+	AccountDir   string  `json:"account_dir,omitempty"` // new login's config-dir name (login-account)
 }
 
 // MenuTab identifies which top-level tab is active.
@@ -286,10 +287,12 @@ type MainMenuModel struct {
 
 	// Login-management panel, opened from the LOGIN row (mirrors the model-map
 	// panel that Plan opens). Lists Default + managed logins + an add row.
-	accountMenuOpen    bool
-	accountMenuCursor  int  // 0=Default, 1..len=managed logins, len+1=add row
-	accountMenuConfirm bool // delete confirmation showing for the cursor login
-	accountMenuErr     error
+	accountMenuOpen      bool
+	accountMenuCursor    int  // 0=Default, 1..len=managed logins, len+1=add row
+	accountMenuConfirm   bool // delete confirmation showing for the cursor login
+	accountMenuInputMode bool // inline label entry for a new login is showing
+	accountMenuInput     textinput.Model
+	accountMenuErr       error
 
 	// Model mapping panel for non-Standard configs
 	modelMapOpen     bool
@@ -2096,9 +2099,10 @@ func (m *MainMenuModel) handleRune(r rune) (tea.Model, tea.Cmd) {
 	case 'l', 'L':
 		// Add a native Claude login. Always available (the LOGIN switcher row is
 		// hidden until at least one managed account exists), so this is the entry
-		// point for the first account. wrapper.sh runs `claude auth login`.
-		m.setActionResult("add-account")
-		return m, tea.Quit
+		// point for the first account: open the login panel straight into the
+		// inline label input.
+		m.openAccountMenu()
+		return m, m.enterAccountAddInput()
 	case 'w', 'W':
 		m.ToggleWorktreesAtCursor()
 		return m, nil

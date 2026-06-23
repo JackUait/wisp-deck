@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -14,7 +16,9 @@ import (
 // that opens below the menu when Enter is pressed on the LOGIN row. It lists the
 // implicit Default login, every managed login, and a trailing "add" row. Rows
 // are addressed by accountMenuCursor: 0 = Default, 1..len = managed logins,
-// len+1 = the add row.
+// len+1 = the add row. Adding a login is fully inline — the label is typed in a
+// text input here, the account is registered in-process, and only the browser
+// `claude auth login` runs outside the alt-screen TUI (in wrapper.sh).
 
 // accountMenuAddRow returns the cursor index of the "Add new login…" row.
 func (m *MainMenuModel) accountMenuAddRow() int { return len(m.claudeAccounts) + 1 }
@@ -27,11 +31,28 @@ func (m *MainMenuModel) openAccountMenu() {
 		m.accountMenuCursor = 0
 	}
 	m.accountMenuConfirm = false
+	m.accountMenuInputMode = false
 	m.accountMenuErr = nil
+}
+
+// enterAccountAddInput opens the inline label text input for a new login.
+func (m *MainMenuModel) enterAccountAddInput() tea.Cmd {
+	ti := textinput.New()
+	ti.Placeholder = "Work, Personal…"
+	ti.Width = menuContentWidth - 12
+	ti.Focus()
+	m.accountMenuInput = ti
+	m.accountMenuInputMode = true
+	m.accountMenuConfirm = false
+	m.accountMenuErr = nil
+	return textinput.Blink
 }
 
 // updateAccountMenu handles key events while the login panel is open.
 func (m *MainMenuModel) updateAccountMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.accountMenuInputMode {
+		return m.updateAccountAddInput(msg)
+	}
 	if m.accountMenuConfirm {
 		switch msg.String() {
 		case "y", "Y":
@@ -59,7 +80,7 @@ func (m *MainMenuModel) updateAccountMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyEnter:
 		if m.accountMenuCursor == addRow {
-			return m.exitForAddAccount()
+			return m, m.enterAccountAddInput()
 		}
 		// Switch the active login to the highlighted row and close.
 		m.selectedAccount = m.accountMenuCursor
@@ -78,7 +99,7 @@ func (m *MainMenuModel) updateAccountMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.accountMenuCursor++
 				}
 			case 'a':
-				return m.exitForAddAccount()
+				return m, m.enterAccountAddInput()
 			case 'd':
 				// Only managed logins (1..len) are removable; Default is implicit.
 				if m.accountMenuCursor >= 1 && m.accountMenuCursor <= len(m.claudeAccounts) {
@@ -91,12 +112,46 @@ func (m *MainMenuModel) updateAccountMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// exitForAddAccount leaves the menu with the add-account action: browser OAuth
-// can't run inside the alt-screen TUI, so wrapper.sh runs `claude auth login`
-// before reopening the menu.
-func (m *MainMenuModel) exitForAddAccount() (tea.Model, tea.Cmd) {
+// updateAccountAddInput handles key events while typing a new login's label.
+func (m *MainMenuModel) updateAccountAddInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc, tea.KeyCtrlC:
+		m.accountMenuInputMode = false
+		m.accountMenuInput.Blur()
+		return m, nil
+	case tea.KeyEnter:
+		return m.submitAccountAddInput()
+	}
+	var cmd tea.Cmd
+	m.accountMenuInput, cmd = m.accountMenuInput.Update(msg)
+	m.accountMenuErr = nil
+	return m, cmd
+}
+
+// submitAccountAddInput registers the new login in-process (config dir + registry
+// entry) and exits with the login-account action carrying its dir, so wrapper.sh
+// runs only the interactive browser `claude auth login` that can't live inside
+// the alt-screen TUI.
+func (m *MainMenuModel) submitAccountAddInput() (tea.Model, tea.Cmd) {
+	label := strings.TrimSpace(m.accountMenuInput.Value())
+	if label == "" {
+		return m, nil // wait for a non-empty label
+	}
+	if m.claudeAccountsList == "" || m.claudeAccountsDir == "" {
+		m.accountMenuErr = errors.New("login storage is not configured")
+		m.accountMenuInputMode = false
+		return m, nil
+	}
+	dir, err := claudeaccount.Add(m.claudeAccountsList, m.claudeAccountsDir, label)
+	if err != nil {
+		m.accountMenuErr = err
+		m.accountMenuInputMode = false
+		return m, nil
+	}
+	m.accountMenuInputMode = false
 	m.accountMenuOpen = false
-	m.setActionResult("add-account")
+	m.setActionResult("login-account")
+	m.result.AccountDir = dir
 	return m, tea.Quit
 }
 
@@ -199,15 +254,22 @@ func (m *MainMenuModel) renderAccountMenuPanel() string {
 
 	lines = append(lines, emptyRow)
 
-	// Add row.
-	addRow := m.accountMenuAddRow()
-	var addContent string
-	if m.accountMenuCursor == addRow {
-		addContent = " " + primaryBoldStyle.Render("▌") + primaryBoldStyle.Render("+ Add new login…")
+	if m.accountMenuInputMode {
+		// Inline label entry for a new login.
+		lines = append(lines, pad(primaryBoldStyle.Render("Add a Claude login")))
+		lines = append(lines, pad(dimStyle.Render("Label (e.g. Work, Personal):")))
+		lines = append(lines, pad(m.accountMenuInput.View()))
 	} else {
-		addContent = "    " + helpStyle.Render("+ Add new login…")
+		// Add row.
+		addRow := m.accountMenuAddRow()
+		var addContent string
+		if m.accountMenuCursor == addRow {
+			addContent = " " + primaryBoldStyle.Render("▌") + primaryBoldStyle.Render("+ Add new login…")
+		} else {
+			addContent = "    " + helpStyle.Render("+ Add new login…")
+		}
+		lines = append(lines, row(addContent, ""))
 	}
-	lines = append(lines, row(addContent, ""))
 	lines = append(lines, emptyRow)
 
 	if m.accountMenuConfirm && m.accountMenuCursor >= 1 && m.accountMenuCursor <= len(m.claudeAccounts) {
@@ -223,9 +285,11 @@ func (m *MainMenuModel) renderAccountMenuPanel() string {
 	sep := dimStyle.Render(" · ")
 	var help string
 	switch {
+	case m.accountMenuInputMode:
+		help = helpStyle.Render("⏎ create login") + sep + helpStyle.Render("Esc cancel")
 	case m.accountMenuConfirm:
 		help = helpStyle.Render("y remove") + sep + helpStyle.Render("n cancel")
-	case m.accountMenuCursor == addRow:
+	case m.accountMenuCursor == m.accountMenuAddRow():
 		help = helpStyle.Render("↑↓ move") + sep + helpStyle.Render("⏎ add login") + sep + helpStyle.Render("Esc close")
 	default:
 		help = helpStyle.Render("↑↓ move") + sep + helpStyle.Render("⏎ switch") + sep + helpStyle.Render("a add") + sep + helpStyle.Render("d remove") + sep + helpStyle.Render("Esc close")

@@ -90,9 +90,8 @@ func TestAccountMenu_navAndSwitchPersists(t *testing.T) {
 	}
 }
 
-// Enter on the add row exits with the add-account action (browser OAuth runs in
-// wrapper.sh, not inside the alt-screen TUI).
-func TestAccountMenu_addRowExitsWithAddAccount(t *testing.T) {
+// Enter on the add row opens the inline label input (no TUI exit, no result).
+func TestAccountMenu_addRowOpensInlineInput(t *testing.T) {
 	m := acctTestMenu("claude")
 	m.SetClaudeAccounts([]ClaudeAccount{{Label: "Work", Dir: "work"}})
 	m.openAccountMenu()
@@ -100,21 +99,91 @@ func TestAccountMenu_addRowExitsWithAddAccount(t *testing.T) {
 	m.updateAccountMenu(tea.KeyMsg{Type: tea.KeyDown})
 	m.updateAccountMenu(tea.KeyMsg{Type: tea.KeyDown})
 	m.updateAccountMenu(tea.KeyMsg{Type: tea.KeyEnter})
-	r := m.Result()
-	if r == nil || r.Action != "add-account" {
-		t.Fatalf("Enter on add row should add-account, got %+v", r)
+	if !m.accountMenuInputMode {
+		t.Fatalf("Enter on add row should open the inline label input")
+	}
+	if !m.accountMenuOpen {
+		t.Errorf("the panel should stay open while entering a label")
+	}
+	if r := m.Result(); r != nil {
+		t.Errorf("opening the input must not set a result, got %+v", r)
 	}
 }
 
-// 'a' adds a login from anywhere in the panel.
-func TestAccountMenu_aKeyAddsAccount(t *testing.T) {
+// 'a' opens the inline label input from anywhere in the panel.
+func TestAccountMenu_aKeyOpensInlineInput(t *testing.T) {
 	m := acctTestMenu("claude")
 	m.SetClaudeAccounts([]ClaudeAccount{{Label: "Work", Dir: "work"}})
 	m.openAccountMenu()
 	m.updateAccountMenu(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if !m.accountMenuInputMode {
+		t.Fatalf("'a' should open the inline label input")
+	}
+}
+
+// Typing a label and pressing Enter registers the login in-process (dir + list
+// entry) and exits with the login-account action carrying the new dir, so
+// wrapper.sh only runs the browser `claude auth login`.
+func TestAccountMenu_inlineSubmitRegistersAndExitsForLogin(t *testing.T) {
+	dir := t.TempDir()
+	accountsDir := filepath.Join(dir, "claude-accounts")
+	listFile := filepath.Join(accountsDir, "claude-accounts.list")
+	ptr := filepath.Join(dir, "claude-account")
+
+	m := acctTestMenu("claude")
+	m.SetClaudeAccountPaths(listFile, accountsDir)
+	m.SetClaudeAccountFile(ptr)
+	m.openAccountMenu()
+	m.updateAccountMenu(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}}) // input mode
+	m.accountMenuInput.SetValue("Work")
+	m.updateAccountMenu(tea.KeyMsg{Type: tea.KeyEnter})
+
 	r := m.Result()
-	if r == nil || r.Action != "add-account" {
-		t.Fatalf("'a' should add-account, got %+v", r)
+	if r == nil || r.Action != "login-account" {
+		t.Fatalf("submit should exit with login-account, got %+v", r)
+	}
+	if r.AccountDir != "work" {
+		t.Errorf("result should carry the new dir 'work', got %q", r.AccountDir)
+	}
+	if _, err := os.Stat(filepath.Join(accountsDir, "work")); err != nil {
+		t.Errorf("the account config dir should have been created: %v", err)
+	}
+	if b, _ := os.ReadFile(listFile); !strings.Contains(string(b), "Work:work") {
+		t.Errorf("registry should list the new login, got %q", string(b))
+	}
+}
+
+// Esc in the label input cancels back to the list without registering anything.
+func TestAccountMenu_inlineInputEscCancels(t *testing.T) {
+	dir := t.TempDir()
+	accountsDir := filepath.Join(dir, "claude-accounts")
+	listFile := filepath.Join(accountsDir, "claude-accounts.list")
+	m := acctTestMenu("claude")
+	m.SetClaudeAccountPaths(listFile, accountsDir)
+	m.openAccountMenu()
+	m.updateAccountMenu(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m.accountMenuInput.SetValue("Work")
+	m.updateAccountMenu(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if m.accountMenuInputMode {
+		t.Errorf("Esc should leave input mode")
+	}
+	if !m.accountMenuOpen {
+		t.Errorf("Esc from the input should return to the login list, not close the panel")
+	}
+	if _, err := os.Stat(filepath.Join(accountsDir, "work")); !os.IsNotExist(err) {
+		t.Errorf("cancelling must not register an account")
+	}
+}
+
+// The label input renders inside the panel.
+func TestAccountMenu_inlineInputRenders(t *testing.T) {
+	m := acctTestMenu("claude")
+	m.openAccountMenu()
+	m.updateAccountMenu(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	out := stripAnsi(m.renderAccountMenuPanel())
+	if !strings.Contains(out, "Label") {
+		t.Errorf("input mode should render a label prompt:\n%s", out)
 	}
 }
 

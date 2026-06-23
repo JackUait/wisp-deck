@@ -62,14 +62,17 @@ func TestAccountRow_shownAtTopWhenAccountsExist(t *testing.T) {
 	}
 }
 
-// The 'L' key adds a native login regardless of whether the row is visible — it
-// is the entry point for the first account (when the row is still hidden).
-func TestAccount_LKeyTriggersAddAccount(t *testing.T) {
+// The 'L' key opens the login panel straight into the inline label input,
+// regardless of whether the row is visible — it is the entry point for the first
+// account (when the row is still hidden).
+func TestAccount_LKeyOpensInlineInput(t *testing.T) {
 	m := acctTestMenu("claude") // no managed accounts → row hidden
 	m.handleRune('L')
-	r := m.Result()
-	if r == nil || r.Action != "add-account" {
-		t.Fatalf("'L' should set action add-account, got %+v", r)
+	if !m.accountMenuOpen || !m.accountMenuInputMode {
+		t.Fatalf("'L' should open the login panel in label-input mode (open=%v input=%v)", m.accountMenuOpen, m.accountMenuInputMode)
+	}
+	if r := m.Result(); r != nil {
+		t.Fatalf("'L' should not set a result, got %+v", r)
 	}
 }
 

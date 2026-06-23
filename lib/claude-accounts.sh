@@ -68,48 +68,30 @@ resolve_claude_account_dir() {
   [ -d "$path" ] && printf '%s\n' "$path"
 }
 
-# add_claude_account [config_root] — interactive: prompt for a label, register
-# the account via the ghost-tab-tui CLI, run `claude auth login` under its
-# isolated CLAUDE_CONFIG_DIR (browser OAuth), then make it the active account.
-# Adding a native login needs an interactive terminal, so wrapper.sh runs this
-# between menu loops (after the menu exits with the "add-account" action).
-add_claude_account() {
+# login_claude_account <config_root> <dir> — run `claude auth login` under an
+# already-registered account's isolated CLAUDE_CONFIG_DIR (browser OAuth), then
+# make it the active account. The menu registers the account inline (label entry
+# + `ghost-tab-tui claude-account add`) and exits with the "login-account" action
+# carrying <dir>; wrapper.sh calls this between menu loops to perform the
+# interactive browser login that can't run inside the alt-screen TUI.
+login_claude_account() {
   local cfg_root="${1:-${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab}"
+  local dir="$2"
   local accounts_dir="$cfg_root/claude-accounts"
-  local list_file="$cfg_root/claude-accounts.list"
   local pointer_file="$cfg_root/claude-account"
 
-  printf '\nAdd a Claude login\n'
-  local label=""
-  printf 'Label (e.g. Work, Personal): '
-  IFS= read -r label || true
-  label="${label#"${label%%[![:space:]]*}"}" # ltrim
-  label="${label%"${label##*[![:space:]]}"}" # rtrim
-  if [ -z "$label" ]; then
-    printf 'Cancelled.\n'
-    return 1
-  fi
-
-  local dir
-  if ! dir="$(ghost-tab-tui claude-account add --list "$list_file" --accounts-dir "$accounts_dir" --label "$label")"; then
-    printf 'Failed to register account.\n' >&2
-    return 1
-  fi
-  dir="${dir//[[:space:]]/}"
   if [ -z "$dir" ]; then
-    printf 'Failed to register account.\n' >&2
     return 1
   fi
 
-  printf "Opening Claude login for '%s'…\n" "$label"
+  printf '\nOpening Claude login…\n'
   CLAUDE_CONFIG_DIR="$accounts_dir/$dir" claude auth login || \
     printf 'Login did not complete; you can retry by switching to this account later.\n' >&2
 
-  # Make the new account active so the next launch uses it.
+  # Make the account active so the next launch uses it.
   set_active_claude_account "$pointer_file" "$dir"
-  printf "Added login '%s'.\n" "$label"
   return 0
 }
 
-# Other mutations (remove) live in Go — the single source of truth — exposed as
-# `ghost-tab-tui claude-account <action>`. See internal/claudeaccount.
+# Account registration and removal live in Go — the single source of truth —
+# exposed as `ghost-tab-tui claude-account <action>`. See internal/claudeaccount.

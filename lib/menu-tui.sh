@@ -4,7 +4,7 @@
 
 # Interactive project selection using ghost-tab-tui main-menu
 # Returns 0 if an actionable item was selected, 1 if quit/cancelled
-# Sets: _selected_project_name, _selected_project_path, _selected_project_action, _selected_ai_tool
+# Sets: _selected_project_name, _selected_project_path, _selected_project_action, _selected_ai_tool, _selected_account_dir
 select_project_interactive() {
   local projects_file="$1"
 
@@ -103,6 +103,13 @@ select_project_interactive() {
   fi
 
   _selected_project_action="$action"
+
+  # New login's config-dir name (set when action == login-account); wrapper.sh
+  # runs `claude auth login` under it.
+  local account_dir
+  account_dir=$(echo "$result" | jq -r '.account_dir // ""' 2>/dev/null)
+  [[ "$account_dir" == "null" ]] && account_dir=""
+  _selected_account_dir="$account_dir"
 
   case "$action" in
     select-project|open-once)
