@@ -503,6 +503,42 @@ func TestOpenDiffPopup_quotes_path_with_spaces(t *testing.T) {
 	}
 }
 
+// The diff pager themes itself from --ai-tool. open_diff_popup must forward the
+// active tool (exported as GHOST_TAB_TOOL on the session) so OpenCode sessions
+// render the purple chrome instead of falling back to Claude's orange.
+func TestOpenDiffPopup_forwards_opencode_tool(t *testing.T) {
+	dir := t.TempDir()
+	binDir := mockCommand(t, dir, "tmux", `echo "$@"`)
+	env := buildEnv(t, []string{binDir}, "GHOST_TAB_TOOL=opencode")
+	root := projectRoot(t)
+	module := filepath.Join(root, "lib", "compact-view.sh")
+	script := "source " + module + " && open_diff_popup /proj lib/x.sh"
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("open_diff_popup: %v\n%s", err, out)
+	}
+	assertContains(t, string(out), "--ai-tool opencode")
+}
+
+func TestOpenDiffPopup_defaults_tool_to_claude(t *testing.T) {
+	dir := t.TempDir()
+	binDir := mockCommand(t, dir, "tmux", `echo "$@"`)
+	// No GHOST_TAB_TOOL in the environment — the pager should default to claude.
+	env := buildEnv(t, []string{binDir})
+	root := projectRoot(t)
+	module := filepath.Join(root, "lib", "compact-view.sh")
+	script := "source " + module + " && open_diff_popup /proj lib/x.sh"
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("open_diff_popup: %v\n%s", err, out)
+	}
+	assertContains(t, string(out), "--ai-tool claude")
+}
+
 // The diff popup runs FULL-SCREEN and BORDERLESS: the rounded orange box and its
 // click-to-close margin are drawn by the ghost-tab-tui diff-view pager (tmux
 // swallows clicks outside a smaller popup, so the pager must own the whole

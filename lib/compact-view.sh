@@ -239,9 +239,13 @@ split_content() {
 open_diff_popup() {
   local dir="$1" file="$2"
   command -v tmux &>/dev/null || return 0
-  local qd qf
+  local qd qf qtool
   qd=$(printf '%q' "$dir")
   qf=$(printf '%q' "$file")
+  # The pager themes its chrome (border, rule, tabs) from --ai-tool. Forward the
+  # session's active tool (exported as GHOST_TAB_TOOL) so OpenCode sessions get
+  # the purple chrome; default to claude (the pager's own default) otherwise.
+  qtool=$(printf '%q' "${GHOST_TAB_TOOL:-claude}")
 
   # Print every line only AFTER the first @@ hunk header (which the @@ rule then
   # marks); the header line itself is not printed. /@@/ matches even when the
@@ -275,7 +279,7 @@ open_diff_popup() {
   # outside a smaller popup). No -T title — the pager's header already shows the
   # path + added/deleted counts.
   tmux display-popup -E -B -w 100% -h 100% \
-    "git -C ${qd} --no-pager diff HEAD -U999999 --color=always -- ${qf} | ${strip} | ghost-tab-tui diff-view --title ${qf} ${backdrop_arg}"
+    "git -C ${qd} --no-pager diff HEAD -U999999 --color=always -- ${qf} | ${strip} | ghost-tab-tui diff-view --ai-tool ${qtool} --title ${qf} ${backdrop_arg}"
 
   [ -n "$backdrop" ] && rm -f "$backdrop"
 }
