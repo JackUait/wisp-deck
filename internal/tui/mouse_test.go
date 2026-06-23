@@ -297,6 +297,25 @@ func TestUpdate_hoverAccountRow_clearsWhenPointerLeaves(t *testing.T) {
 	}
 }
 
+func TestAccountMenu_hoverRendersDistinctly(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetClaudeAccounts([]ClaudeAccount{{Label: "Work", Dir: "work"}, {Label: "Personal", Dir: "personal"}})
+	m.width = 100
+	m.height = 60
+	m.accountMenuOpen = true
+	m.accountMenuCursor = 0
+	plain := m.View()
+	m.accountMenuHover = 2 // Personal, a non-cursor login row
+	hovered := m.View()
+	if plain == hovered {
+		t.Error("hovering a login should change the rendered account modal, but output was identical")
+	}
+}
+
 func TestBranchPicker_clickSelectsBranch(t *testing.T) {
 	m := NewBranchPicker([]string{"main", "dev", "feature"}, ThemeForTool("claude"), "/p")
 	m.width = 100
@@ -357,6 +376,22 @@ func TestBranchPicker_wheelMovesCursor(t *testing.T) {
 	got := upd.(BranchPickerModel)
 	if got.cursor != 1 {
 		t.Errorf("wheel down moved cursor to %d, want 1", got.cursor)
+	}
+}
+
+func TestBranchPicker_hoverRendersDistinctly(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	m := NewBranchPicker([]string{"main", "dev", "feature"}, ThemeForTool("claude"), "/p")
+	m.width = 100
+	m.height = 40
+	plain := m.View()
+	m.hover = 1 // a non-cursor branch (cursor defaults to 0)
+	hovered := m.View()
+	if plain == hovered {
+		t.Error("hovering a branch should change the rendered picker, but output was identical")
 	}
 }
 

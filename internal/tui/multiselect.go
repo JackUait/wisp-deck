@@ -168,9 +168,11 @@ func (m MultiSelectModel) multiSelectConfirmRow() int {
 	return 2 + len(m.tools) + 1
 }
 
-// handleMouse gives the multi-select pointer parity: hover moves the cursor (or
-// highlights the Confirm button), clicking a tool toggles its checkbox, clicking
-// Confirm finalizes, and the wheel scrolls.
+// handleMouse gives the multi-select pointer parity: hover highlights the tool
+// row under the pointer (a transient layer that clears the moment the pointer
+// leaves a row and never moves the keyboard cursor) or the Confirm button,
+// clicking a tool toggles its checkbox, clicking Confirm finalizes, and the
+// wheel scrolls the cursor.
 func (m MultiSelectModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	switch msg.Button {
 	case tea.MouseButtonWheelDown:

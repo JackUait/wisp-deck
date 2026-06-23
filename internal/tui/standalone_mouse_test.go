@@ -5,8 +5,20 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/jackuait/ghost-tab/internal/models"
+	"github.com/muesli/termenv"
 )
+
+// withTrueColor forces a real color profile for the duration of a test so
+// lipgloss keeps the ANSI styling that distinguishes hover/cursor/plain rows
+// (it strips color in a non-TTY test process otherwise), restoring it after.
+func withTrueColor(t *testing.T) {
+	t.Helper()
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+}
 
 // --- config menu (top-level "Ghost Tab Configuration") ---
 
@@ -54,6 +66,18 @@ func TestConfigMenu_hoverSetsHoverNotCursor(t *testing.T) {
 	}
 	if got.Cursor() != 0 {
 		t.Errorf("hover must not move the keyboard cursor; got %d, want 0", got.Cursor())
+	}
+}
+
+func TestConfigMenu_hoverRendersDistinctly(t *testing.T) {
+	withTrueColor(t)
+	m := NewConfigMenu(ConfigMenuOptions{})
+	m.width = 80
+	plain := m.View()
+	m.hover = 1 // a non-cursor row (cursor defaults to 0)
+	hovered := m.View()
+	if plain == hovered {
+		t.Error("hovering an item should change the rendered config menu, but output was identical")
 	}
 }
 
@@ -111,6 +135,18 @@ func TestMultiSelect_hoverSetsHoverNotCursor(t *testing.T) {
 	}
 }
 
+func TestMultiSelect_hoverRendersDistinctly(t *testing.T) {
+	withTrueColor(t)
+	tools := []models.AITool{{Name: "claude", Installed: true}, {Name: "opencode"}}
+	m := NewMultiSelect(tools)
+	plain := m.View()
+	m.hover = 1 // a non-cursor row (cursor defaults to 0)
+	hovered := m.View()
+	if plain == hovered {
+		t.Error("hovering a tool should change the rendered multi-select, but output was identical")
+	}
+}
+
 func TestMultiSelect_hoverClearsWhenPointerLeaves(t *testing.T) {
 	tools := []models.AITool{{Name: "claude", Installed: true}, {Name: "opencode"}}
 	m := NewMultiSelect(tools)
@@ -151,6 +187,18 @@ func TestClaudeConfigMenu_hoverSetsHoverNotCursor(t *testing.T) {
 	}
 	if got.cursor != 0 {
 		t.Errorf("hover must not move the keyboard cursor; got %d, want 0", got.cursor)
+	}
+}
+
+func TestClaudeConfigMenu_hoverRendersDistinctly(t *testing.T) {
+	withTrueColor(t)
+	configs := []ClaudeConfig{{Name: "Work", File: "work.json"}, {Name: "Personal", File: "personal.json"}}
+	m := NewClaudeConfigMenu(configs)
+	plain := m.View()
+	m.hover = 1 // a non-cursor row (cursor defaults to 0)
+	hovered := m.View()
+	if plain == hovered {
+		t.Error("hovering a config should change the rendered menu, but output was identical")
 	}
 }
 

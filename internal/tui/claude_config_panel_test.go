@@ -7,8 +7,10 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/jackuait/ghost-tab/internal/claudeconfig"
 	"github.com/jackuait/ghost-tab/internal/models"
+	"github.com/muesli/termenv"
 )
 
 func newPanelMenu(t *testing.T) (*MainMenuModel, string, string) {
@@ -256,6 +258,24 @@ func TestUpdate_hoverModelSlot_clearsWhenPointerLeaves(t *testing.T) {
 	got := upd.(*MainMenuModel)
 	if got.modelMapSlotHover != -1 {
 		t.Errorf("moving off the slots should clear modelMapSlotHover to -1, got %d", got.modelMapSlotHover)
+	}
+}
+
+func TestModelMap_hoverSlotRendersDistinctly(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	m, _, _ := newPanelMenu(t)
+	m.CycleClaudeConfig("next")
+	m.openModelMap()
+	m.modelMapCursor = 0
+	m.width, m.height = 100, 60
+	plain := m.View()
+	m.modelMapSlotHover = 2 // a non-cursor slot
+	hovered := m.View()
+	if plain == hovered {
+		t.Error("hovering a model slot should change the rendered panel, but output was identical")
 	}
 }
 
