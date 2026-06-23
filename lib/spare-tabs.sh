@@ -48,7 +48,7 @@ set -g window-status-style "bg=default"
 # read as argument separators. The auto window list is blanked out to avoid a
 # duplicate. status-left-length is raised so the list is never truncated.
 set -g status-left-length 1000
-set -g status-left "#{W:#[range=user|sel:#{window_id}]#{?window_active,#[fg=colour235#,bg=colour209#,bold] #{window_index} #[nobold]#[norange]#[bg=default],#[default fg=colour245][#{window_index}]#[norange]} }#[range=user|new]#[fg=colour209,bg=colour236,bold] + #[nobold]#[norange]"
+set -g status-left "#{W:#[range=user|sel:#{window_id}]#{?window_active,#[fg=colour235#,bg=colour209#,bold]  #{window_index}  #[nobold]#[norange]#[bg=default],#[default fg=colour245][ #{window_index} ]#[norange]} }#[range=user|new]#[fg=colour209,bg=colour236,bold]  +  #[nobold]#[norange]"
 set -g status-right ""
 set -g window-status-separator ""
 set -g window-status-format ""

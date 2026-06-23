@@ -134,8 +134,9 @@ func TestSpareTabs_config_inactive_tabs_are_plain(t *testing.T) {
 	if sl == "" {
 		t.Fatalf("could not find status-left line in:\n%s", out)
 	}
-	// Inactive tabs: a plain bracketed label showing the tab's number.
-	assertContains(t, sl, "[#{window_index}]")
+	// Inactive tabs: a plain bracketed label showing the tab's number, padded
+	// with a space inside the brackets so the tab reads bigger.
+	assertContains(t, sl, "[ #{window_index} ]")
 	assertContains(t, sl, "colour209")             // active tab keeps its orange chip
 	assertContains(t, sl, "range=user|sel:")       // every tab is clickable
 	assertContains(t, sl, "#{?window_active,")     // active vs inactive branch
@@ -144,6 +145,22 @@ func TestSpareTabs_config_inactive_tabs_are_plain(t *testing.T) {
 	for _, forbidden := range []string{"✕", "⬡", "range=user|close:"} {
 		assertNotContains(t, out, forbidden)
 	}
+}
+
+// The tabs (and the + button) are padded so they read as bigger, more clickable
+// targets: the active pill carries two spaces on each side of its number, and
+// the + button is padded to match.
+func TestSpareTabs_config_tabs_are_padded(t *testing.T) {
+	out, code := runBashFunc(t, "lib/spare-tabs.sh", "spare_tabs_config",
+		[]string{"ghost-tab", "/proj/dir", "/abs/lib/spare-tabs.sh", "gtspare_x"}, nil)
+	assertExitCode(t, code, 0)
+
+	sl := lineWithPrefix(out, "set -g status-left ", "")
+	if sl == "" {
+		t.Fatalf("could not find status-left line in:\n%s", out)
+	}
+	assertContains(t, sl, "  #{window_index}  ") // active pill: two-space padding
+	assertContains(t, sl, "  +  ")               // + button padded to match
 }
 
 // The launch command must escape the outer $TMUX guard (tmux refuses to nest
