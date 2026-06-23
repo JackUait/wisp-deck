@@ -67,6 +67,18 @@ check_ai_tool_state() {
   fi
 }
 
+# Echo the tmux set-titles value ("on"/"off") for the given tab title mode.
+# Usage: tmux_set_titles_for_mode <mode>
+#   model -> "on":  let the AI tool's own pane title flow through to the tab.
+#   else  -> "off": Ghost Tab's watcher owns the title, so stop tmux from
+#                   overwriting it.
+tmux_set_titles_for_mode() {
+  case "$1" in
+    model) echo "on" ;;
+    *) echo "off" ;;
+  esac
+}
+
 # Write the terminal tab title for the given state, honoring the title mode.
 # Usage: apply_tab_title <state> <mode> <project> <tool>
 #   state: "waiting" (idle, ● prefix) or "active"

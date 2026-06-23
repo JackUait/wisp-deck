@@ -587,10 +587,15 @@ func TestTabTitleWatcher_wrapper_disables_tmux_set_titles(t *testing.T) {
 	}
 	content := string(data)
 
-	// The tmux new-session command block must include set-titles off
-	// to prevent user's global set-titles on from overwriting Ghost Tab's tab title
-	if !strings.Contains(content, "set-option set-titles off") {
-		t.Error("wrapper.sh must contain 'set-option set-titles off' in tmux new-session command to prevent tmux from overwriting tab titles")
+	// The tmux new-session command must set the set-titles option from the
+	// computed mode value (off in full/project so the watcher's title isn't
+	// overwritten; on in model mode so the AI tool's own title flows through).
+	if !strings.Contains(content, "set-option set-titles") {
+		t.Error("wrapper.sh must set the tmux set-titles option in the new-session command")
+	}
+	// It must no longer hard-code 'off' — the value comes from the mode.
+	if strings.Contains(content, "set-option set-titles off") {
+		t.Error("wrapper.sh must not hard-code 'set-option set-titles off'; the value must be derived from the tab title mode")
 	}
 }
 
@@ -958,5 +963,58 @@ func TestTabTitleWatcher_loop_uses_apply_tab_title(t *testing.T) {
 	}
 	if !strings.Contains(content, "play_notification_sound") {
 		t.Error("watcher should still call play_notification_sound on the waiting transition")
+	}
+}
+
+// --- tmux_set_titles_for_mode: let the model's title flow through in model mode ---
+//
+// In "model" mode the AI tool sets the terminal title (via an OSC escape inside
+// its tmux pane) to describe its task. tmux only forwards a pane title to the
+// outer terminal tab when set-titles is "on", so model mode must enable it.
+// In full/project modes Ghost Tab's watcher owns the title, so set-titles is
+// "off" to stop tmux from overwriting it.
+
+func TestTabTitleWatcher_tmux_set_titles_for_mode_model_is_on(t *testing.T) {
+	snippet := tabTitleSnippet(t, `tmux_set_titles_for_mode "model"`)
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "on" {
+		t.Errorf("model mode must enable tmux set-titles, got %q", strings.TrimSpace(out))
+	}
+}
+
+func TestTabTitleWatcher_tmux_set_titles_for_mode_full_is_off(t *testing.T) {
+	snippet := tabTitleSnippet(t, `tmux_set_titles_for_mode "full"`)
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "off" {
+		t.Errorf("full mode must disable tmux set-titles, got %q", strings.TrimSpace(out))
+	}
+}
+
+func TestTabTitleWatcher_tmux_set_titles_for_mode_project_is_off(t *testing.T) {
+	snippet := tabTitleSnippet(t, `tmux_set_titles_for_mode "project"`)
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "off" {
+		t.Errorf("project mode must disable tmux set-titles, got %q", strings.TrimSpace(out))
+	}
+}
+
+// wrapper.sh must drive the tmux set-titles option from the saved mode (so model
+// mode turns it on) and point set-titles-string at the pane title so the AI
+// tool's own title is what reaches the terminal tab.
+func TestTabTitleWatcher_wrapper_forwards_pane_title_in_model_mode(t *testing.T) {
+	root := projectRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "wrapper.sh"))
+	if err != nil {
+		t.Fatalf("failed to read wrapper.sh: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "tmux_set_titles_for_mode") {
+		t.Error("wrapper.sh must derive the tmux set-titles option from the tab title mode via tmux_set_titles_for_mode")
+	}
+	if !strings.Contains(content, "set-titles-string") || !strings.Contains(content, "pane_title") {
+		t.Error("wrapper.sh must set set-titles-string to the pane title so the model's title reaches the tab")
 	}
 }
