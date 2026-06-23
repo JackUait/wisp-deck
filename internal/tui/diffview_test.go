@@ -362,6 +362,26 @@ func TestDiffView_click_buttons_switch_mode(t *testing.T) {
 	}
 }
 
+func TestDiffView_hover_highlights_tab_without_switching(t *testing.T) {
+	m := sizeDiff(NewDiffView("lib/x.sh", " ctx\n-del\n+add\n ctx2\n"), 200, 40)
+	if !isSideBySide(stripA(m.View())) {
+		t.Fatal("expected auto side-by-side at 200 wide")
+	}
+	// Hover the Inline button (x=15, y=4) while side-by-side is active.
+	updated, cmd := m.Update(tea.MouseMsg{X: 15, Y: 4, Action: tea.MouseActionMotion})
+	m = updated.(DiffViewModel)
+	if cmd != nil {
+		t.Error("hover should not emit a command")
+	}
+	if m.hoverMode != diffModeInline {
+		t.Errorf("hovering Inline should set hoverMode=%d, got %d", diffModeInline, m.hoverMode)
+	}
+	// Hover must not switch the active view.
+	if !isSideBySide(stripA(m.View())) {
+		t.Error("hover must not switch the view mode")
+	}
+}
+
 func TestDiffView_tab_key_toggles_view(t *testing.T) {
 	m := sizeDiff(NewDiffView("lib/x.sh", " ctx\n-del\n+add\n ctx2\n"), 200, 40)
 	if !isSideBySide(stripA(m.View())) {

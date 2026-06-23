@@ -31,6 +31,7 @@ type DiffViewModel struct {
 	viewport   viewport.Model
 	ready      bool
 	quitting   bool
+	hoverMode  int // view-switch tab under the pointer, or -1 (none)
 }
 
 // View modes and the clickable tab labels that switch between them. The labels
@@ -69,6 +70,9 @@ var (
 	// View-switch tab buttons: the active mode is an orange chip, the other dim.
 	diffTabActiveStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("208"))
 	diffTabInactiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	// Hovered (but inactive) tab: brightened + underlined so the pointer target
+	// reads as clickable without looking active.
+	diffTabHoverStyle = lipgloss.NewStyle().Bold(true).Underline(true).Foreground(lipgloss.Color("255"))
 
 	diffBarStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244")).
@@ -314,6 +318,13 @@ func (m DiffViewModel) tabRow() string {
 	} else {
 		inline = diffTabActiveStyle
 	}
+	// Highlight a hovered tab (unless it's already the active one).
+	if m.hoverMode == diffModeInline && m.mode != diffModeInline {
+		inline = diffTabHoverStyle
+	}
+	if m.hoverMode == diffModeSideBySide && m.mode != diffModeSideBySide {
+		sxs = diffTabHoverStyle
+	}
 	return strings.Repeat(" ", diffTabIndent) +
 		inline.Render(diffTabInlineText) + " " + sxs.Render(diffTabSxsText)
 }
@@ -500,6 +511,7 @@ func NewDiffView(title, content string) DiffViewModel {
 		deleted:    deleted,
 		status:     diffStatus(content),
 		singleView: isSingleSided(content),
+		hoverMode:  -1,
 	}
 }
 
@@ -583,18 +595,28 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
+		mh, mv, cw, _ := m.layout()
+		// The view-switch tabs live on content row 1 (screen row mv+2), their
+		// columns offset by the left border at mh+1. Single-sided files have no
+		// switcher. Track which tab the pointer is over so it can highlight.
+		onTabRow := !m.singleView && msg.Y == mv+2
+		hovered := -1
+		if onTabRow {
+			hovered = tabAt(msg.X - (mh + 1))
+		}
+
+		if msg.Action == tea.MouseActionMotion {
+			m.hoverMode = hovered
+			return m, nil
+		}
+
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			mh, mv, cw, _ := m.layout()
-			// A click on the view-switch tabs (content row 1 -> screen row mv+2,
-			// content cols offset by the left border at mh+1) switches the mode.
-			// Single-sided files have no switcher, so the click falls through.
-			if !m.singleView && msg.Y == mv+2 {
-				if mode := tabAt(msg.X - (mh + 1)); mode != -1 {
-					m.modeForced = true
-					m.mode = mode
-					m.viewport.SetContent(renderBodyMode(m.content, cw, m.mode))
-					return m, nil
-				}
+			// A click on a view-switch tab switches the mode.
+			if hovered != -1 {
+				m.modeForced = true
+				m.mode = hovered
+				m.viewport.SetContent(renderBodyMode(m.content, cw, m.mode))
+				return m, nil
 			}
 			// A click in the margin outside the floating box closes the popup;
 			// other inside clicks fall through to the viewport (wheel scrolling).

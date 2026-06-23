@@ -54,7 +54,8 @@ func runDiffView(cmd *cobra.Command, args []string) error {
 	}
 	defer cleanup()
 
-	opts := append(ttyOpts, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// All-motion so the view-switch tabs highlight on hover, not just on click.
+	opts := append(ttyOpts, tea.WithAltScreen(), tea.WithMouseAllMotion())
 	p := tea.NewProgram(model, opts...)
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("failed to run TUI: %w", err)
