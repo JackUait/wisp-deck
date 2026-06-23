@@ -822,6 +822,20 @@ func TestDiffView_tab_row_has_group_icons(t *testing.T) {
 	}
 }
 
+// A small gap separates each group's icon from its first button so the glyph
+// doesn't sit flush against the bracket.
+func TestDiffView_icon_has_gap_before_group(t *testing.T) {
+	m := sizeDiff(NewDiffView("f.go", collapsibleDiff()), 200, 40)
+	out := stripA(m.View())
+	gap := strings.Repeat(" ", diffTabIconGap)
+	if !strings.Contains(out, diffLayoutIcon+gap+diffTabInlineText) {
+		t.Errorf("layout icon should have a %d-space gap before %q, got:\n%s", diffTabIconGap, diffTabInlineText, out)
+	}
+	if !strings.Contains(out, diffCtxIcon+gap+diffTabChangesText) {
+		t.Errorf("context icon should have a %d-space gap before %q, got:\n%s", diffTabIconGap, diffTabChangesText, out)
+	}
+}
+
 func TestDiffView_View_shows_changes_and_full_buttons(t *testing.T) {
 	m := sizeDiff(NewDiffView("f.go", collapsibleDiff()), 200, 40)
 	out := stripA(m.View())

@@ -52,6 +52,7 @@ const (
 	// switcher, separated by a gap. Its labels have fixed widths so contextTabAt's
 	// hit-boxes stay stable.
 	diffCtxTabGap      = 4
+	diffTabIconGap     = 2 // spaces between a group's icon and its first button
 	diffTabChangesText = "[ Changes ]"
 	diffTabFullText    = "[ Full ]"
 )
@@ -486,7 +487,7 @@ func (m DiffViewModel) tabRow() string {
 		sxs = diffTabHoverStyle
 	}
 	row := strings.Repeat(" ", diffTabIndent) +
-		diffTabIconStyle.Render(diffLayoutIcon) + " " +
+		diffTabIconStyle.Render(diffLayoutIcon) + strings.Repeat(" ", diffTabIconGap) +
 		inline.Render(diffTabInlineText) + " " + sxs.Render(diffTabSxsText)
 	if !m.collapsible {
 		return row
@@ -506,19 +507,19 @@ func (m DiffViewModel) tabRow() string {
 		full = diffTabHoverStyle
 	}
 	return row + strings.Repeat(" ", diffCtxTabGap) +
-		diffTabIconStyle.Render(diffCtxIcon) + " " +
+		diffTabIconStyle.Render(diffCtxIcon) + strings.Repeat(" ", diffTabIconGap) +
 		changes.Render(diffTabChangesText) + " " + full.Render(diffTabFullText)
 }
 
 // diffTabLayout returns the content-column start of each clickable button,
 // derived from the same icon/label widths tabRow renders with so the hit-tests
-// can't drift from the drawing. Layout: indent, layout-icon + space, Inline,
-// space, Side-by-side, gap, context-icon + space, Changes, space, Full.
+// can't drift from the drawing. Layout: indent, layout-icon + icon-gap, Inline,
+// space, Side-by-side, gap, context-icon + icon-gap, Changes, space, Full.
 func diffTabLayout() (inlineStart, sxsStart, changesStart, fullStart int) {
-	inlineStart = diffTabIndent + lipgloss.Width(diffLayoutIcon) + 1
+	inlineStart = diffTabIndent + lipgloss.Width(diffLayoutIcon) + diffTabIconGap
 	sxsStart = inlineStart + len(diffTabInlineText) + 1
 	layoutEnd := sxsStart + len(diffTabSxsText)
-	changesStart = layoutEnd + diffCtxTabGap + lipgloss.Width(diffCtxIcon) + 1
+	changesStart = layoutEnd + diffCtxTabGap + lipgloss.Width(diffCtxIcon) + diffTabIconGap
 	fullStart = changesStart + len(diffTabChangesText) + 1
 	return inlineStart, sxsStart, changesStart, fullStart
 }
