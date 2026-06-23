@@ -1501,7 +1501,7 @@ func TestMainMenu_SettingsNavigationKeys(t *testing.T) {
 }
 
 func TestMainMenu_SettingsNavigationWraps(t *testing.T) {
-	const numItems = 6 // claude tool has 6 settings items (includes Panel and Claude Config rows)
+	const numItems = 7 // claude tool has 7 settings items (incl. Panel, Plan, Login rows)
 
 	jKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
 	kKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}}
@@ -5027,30 +5027,32 @@ func TestSettings_ProjectsRootItem_ShowsCurrentValue(t *testing.T) {
 	}
 }
 
-func TestSettings_NavWrapsWithFiveItems(t *testing.T) {
-	// claude tool shows 6 settings items (Ghost Display, Tab Title, Sound, Panel, Default projects dir, Claude Config)
+func TestSettings_NavWrapsWithSevenItems(t *testing.T) {
+	// claude tool shows 7 settings items (Ghost Display, Tab Title, Sound, Panel,
+	// Default projects dir, Plan, Login)
 	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
 	m.EnterSettings()
-	// j 6 times — wraps back to 0 (vim accelerator wraps within the list)
-	for i := 0; i < 6; i++ {
+	// j 7 times — wraps back to 0 (vim accelerator wraps within the list)
+	for i := 0; i < 7; i++ {
 		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	}
 	if m.SettingsSelected() != 0 {
-		t.Errorf("expected settingsSelected=0 after wrapping past 6 items, got %d", m.SettingsSelected())
+		t.Errorf("expected settingsSelected=0 after wrapping past 7 items, got %d", m.SettingsSelected())
 	}
 }
 
-func TestSettings_NavWrapsWithSixItems_NonClaude(t *testing.T) {
-	// The subscription row is shared across agents, so opencode also shows 6 settings
-	// items (Ghost Display, Tab Title, Sound, Panel, Default projects dir, Subscription).
+func TestSettings_NavWrapsWithSevenItems_NonClaude(t *testing.T) {
+	// The Plan + Login rows are shared across agents, so opencode also shows 7
+	// settings items (Ghost Display, Tab Title, Sound, Panel, Default projects
+	// dir, Plan, Login).
 	m := tui.NewMainMenu(nil, []string{"opencode"}, "opencode", "animated")
 	m.EnterSettings()
-	// j 6 times — wraps back to 0 (vim accelerator wraps within the list)
-	for i := 0; i < 6; i++ {
+	// j 7 times — wraps back to 0 (vim accelerator wraps within the list)
+	for i := 0; i < 7; i++ {
 		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	}
 	if m.SettingsSelected() != 0 {
-		t.Errorf("expected settingsSelected=0 after wrapping past 6 items, got %d", m.SettingsSelected())
+		t.Errorf("expected settingsSelected=0 after wrapping past 7 items, got %d", m.SettingsSelected())
 	}
 }
 

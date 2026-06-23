@@ -84,8 +84,8 @@ func TestSettings_shows_config_row_for_claude(t *testing.T) {
 	m, _ := newClaudeMenu(t)
 	m.OpenSettings()
 	view := m.renderSettingsForTest()
-	if !strings.Contains(view, "Subscription") {
-		t.Fatalf("settings should show Subscription row:\n%s", view)
+	if !strings.Contains(view, "Plan") {
+		t.Fatalf("settings should show Plan row:\n%s", view)
 	}
 	if !strings.Contains(view, "Standard Claude") {
 		t.Fatalf("should show current config name")
@@ -97,19 +97,19 @@ func TestSettings_shows_config_row_for_non_claude(t *testing.T) {
 	m.CycleAITool("next") // opencode
 	m.OpenSettings()
 	view := m.renderSettingsForTest()
-	if !strings.Contains(view, "Subscription") {
-		t.Fatalf("Subscription row must be shown for non-claude agents (subscriptions are shared):\n%s", view)
+	if !strings.Contains(view, "Plan") {
+		t.Fatalf("Plan row must be shown for non-claude agents (subscriptions are shared):\n%s", view)
 	}
 }
 
 func TestSettings_nav_count_includes_config_for_all_agents(t *testing.T) {
 	m, _ := newClaudeMenu(t)
-	if got := m.settingsItemCount(); got != 6 {
-		t.Fatalf("claude should have 6 settings items, got %d", got)
+	if got := m.settingsItemCount(); got != 7 {
+		t.Fatalf("claude should have 7 settings items (incl. Plan + Login), got %d", got)
 	}
 	m.CycleAITool("next")
-	if got := m.settingsItemCount(); got != 6 {
-		t.Fatalf("non-claude should also have 6 settings items (shared subscription), got %d", got)
+	if got := m.settingsItemCount(); got != 7 {
+		t.Fatalf("non-claude should also have 7 settings items (shared Plan + Login), got %d", got)
 	}
 }
 

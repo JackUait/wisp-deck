@@ -107,10 +107,10 @@ func TestRenderSettingsBox_panelRowColor_yellowForLazygit(t *testing.T) {
 
 func TestSettingsItemCount_includesPanelRow(t *testing.T) {
 	m := NewMainMenu(nil, []string{"opencode"}, "opencode", "animated")
-	// The subscription row is shared across agents, so opencode also has 6 items
-	// (ghost, tab title, sound, panel, projects dir, subscription).
-	if m.settingsItemCount() != 6 {
-		t.Errorf("settingsItemCount = %d, want 6", m.settingsItemCount())
+	// The Plan + Login rows are shared across agents, so opencode also has 7 items
+	// (ghost, tab title, sound, panel, projects dir, plan, login).
+	if m.settingsItemCount() != 7 {
+		t.Errorf("settingsItemCount = %d, want 7", m.settingsItemCount())
 	}
 }
 
@@ -118,9 +118,9 @@ func TestSettingsItemCount_withClaudeConfig_includesPanelRow(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "animated")
 	m.SetClaudeConfigs([]ClaudeConfig{{Name: "Pro", File: "pro.json"}})
 	m.SetActiveClaudeConfig("pro.json")
-	// With Claude config: 6 items
-	if m.settingsItemCount() != 6 {
-		t.Errorf("settingsItemCount = %d, want 6", m.settingsItemCount())
+	// With Claude config: 7 items (incl. Plan + Login)
+	if m.settingsItemCount() != 7 {
+		t.Errorf("settingsItemCount = %d, want 7", m.settingsItemCount())
 	}
 }
 

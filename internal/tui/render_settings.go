@@ -178,8 +178,21 @@ func (m *MainMenuModel) renderSettingsBox() string {
 			dimIndicator := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(" " + indicator)
 			state = state + dimIndicator
 		}
-		lines = append(lines, m.renderSettingsItem(5, "Subscription", state, cfgStyle, primaryBoldStyle, leftBorder, rightBorder))
+		lines = append(lines, m.renderSettingsItem(5, "Plan", state, cfgStyle, primaryBoldStyle, leftBorder, rightBorder))
 	}
+
+	// Login item: the active native Claude account (manage logins here — ←→
+	// switches, ⏎ adds one). Always shown as the account-management entry point,
+	// even when the top LOGIN switcher row is hidden (single login).
+	loginLabel := m.CurrentClaudeAccountLabel()
+	var loginColor lipgloss.Color
+	if m.CurrentClaudeAccountDir() != "" {
+		loginColor = lipgloss.Color("114") // green when a non-Default login is active
+	} else {
+		loginColor = lipgloss.Color("241") // gray for Default
+	}
+	loginStyle := lipgloss.NewStyle().Foreground(loginColor)
+	lines = append(lines, m.renderSettingsItem(6, "Login", "["+loginLabel+"]", loginStyle, primaryBoldStyle, leftBorder, rightBorder))
 
 	// Empty row
 	lines = append(lines, emptyRow)
@@ -198,6 +211,12 @@ func (m *MainMenuModel) renderSettingsBox() string {
 			cycleOrEdit = helpStyle.Render("←→ cycle") + sep + helpStyle.Render("⏎ map models")
 		} else {
 			cycleOrEdit = helpStyle.Render("←→ cycle")
+		}
+	case 6:
+		if m.accountFocusable() {
+			cycleOrEdit = helpStyle.Render("←→ switch") + sep + helpStyle.Render("⏎ add login")
+		} else {
+			cycleOrEdit = helpStyle.Render("⏎ add login")
 		}
 	default:
 		cycleOrEdit = helpStyle.Render("←→ cycle")

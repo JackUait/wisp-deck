@@ -1094,13 +1094,16 @@ func (m *MainMenuModel) CycleTab(direction string) {
 	}
 }
 
-// settingsItemCount returns the number of settings rows (6 when the Claude
-// config row is visible, otherwise 5).
+// settingsItemCount returns the number of settings rows: 5 base (Ghost, Tab,
+// Sound, Panel, Dir) + the Plan row when the Claude config control is visible +
+// the always-present Login row (the account-management entry point).
 func (m *MainMenuModel) settingsItemCount() int {
+	n := 5
 	if m.ClaudeConfigVisible() {
-		return 6
+		n++ // Plan
 	}
-	return 5
+	n++ // Login
+	return n
 }
 
 // LoadClaudeConfigsList parses a name:file list file into ClaudeConfig entries.
@@ -2151,6 +2154,11 @@ func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 		if m.selectedConfig > 0 {
 			m.openModelMap()
 		}
+	case 6:
+		// Add a native Claude login. Browser OAuth can't run inside the TUI, so
+		// exit with the add-account action and let wrapper.sh run `claude auth login`.
+		m.setActionResult("add-account")
+		return m, tea.Quit
 	}
 	return m, nil
 }
@@ -2168,6 +2176,8 @@ func (m *MainMenuModel) settingsValueRight() {
 		m.CyclePanelMode()
 	case 5:
 		m.CycleClaudeConfig("next")
+	case 6:
+		m.CycleAccount("next")
 	}
 }
 
@@ -2184,6 +2194,8 @@ func (m *MainMenuModel) settingsValueLeft() {
 		m.CyclePanelModeReverse()
 	case 5:
 		m.CycleClaudeConfig("prev")
+	case 6:
+		m.CycleAccount("prev")
 	}
 }
 
