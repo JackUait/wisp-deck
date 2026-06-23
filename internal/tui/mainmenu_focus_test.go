@@ -57,33 +57,12 @@ func TestFocus_upFromTabsGoesToAI(t *testing.T) {
 	}
 }
 
-// The LOGIN/account row sits above the AI switcher and is always reachable
-// (it hosts the add-login affordance), so Up from AI lands on FocusAccount,
-// which is the real top stop.
-func TestFocus_upFromAIGoesToAccount(t *testing.T) {
+func TestFocus_upFromAIStays(t *testing.T) {
 	m := focusTestMenu()
 	m.SetFocus(FocusAI)
 	m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	if m.Focus() != FocusAccount {
-		t.Errorf("focus after Up from AI = %v, want FocusAccount", m.Focus())
-	}
-}
-
-func TestFocus_upFromAccountStays(t *testing.T) {
-	m := focusTestMenu()
-	m.SetFocus(FocusAccount)
-	m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	if m.Focus() != FocusAccount {
-		t.Errorf("focus after Up from Account = %v, want FocusAccount (top stop)", m.Focus())
-	}
-}
-
-func TestFocus_downFromAccountGoesToAI(t *testing.T) {
-	m := focusTestMenu()
-	m.SetFocus(FocusAccount)
-	m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	if m.Focus() != FocusAI {
-		t.Errorf("focus after Down from Account = %v, want FocusAI", m.Focus())
+		t.Errorf("focus after Up from AI = %v, want FocusAI (top stop)", m.Focus())
 	}
 }
 

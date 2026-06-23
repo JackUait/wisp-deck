@@ -27,18 +27,11 @@ func TestMenuBox_AIToolRightAligned(t *testing.T) {
 	box := m.renderMenuBox()
 	lines := strings.Split(box, "\n")
 
-	// The LOGIN row now sits above the AGENT/title row, so locate the title row
-	// by content (the "Ghost Tab" title) rather than a fixed line index.
-	titleRow := ""
-	for _, l := range lines {
-		if strings.Contains(l, "Ghost Tab") {
-			titleRow = l
-			break
-		}
+	// Title row is the second line (index 1), after top border
+	if len(lines) < 2 {
+		t.Fatal("renderMenuBox produced fewer than 2 lines")
 	}
-	if titleRow == "" {
-		t.Fatalf("could not find the title row:\n%s", box)
-	}
+	titleRow := lines[1]
 
 	// The AGENT switcher sits on the left and "Ghost Tab" is right-aligned, with
 	// padding between the switcher cluster and the title.
@@ -100,17 +93,10 @@ func TestMenuBox_TitleRightAligned(t *testing.T) {
 	m := newTestMenu()
 	box := m.renderMenuBox()
 	lines := strings.Split(box, "\n")
-	// Locate the title row by content; the LOGIN row now precedes it.
-	raw := ""
-	for _, l := range lines {
-		if strings.Contains(stripAnsi(l), "Ghost Tab") {
-			raw = stripAnsi(l)
-			break
-		}
+	if len(lines) < 2 {
+		t.Fatal("renderMenuBox produced fewer than 2 lines")
 	}
-	if raw == "" {
-		t.Fatalf("could not find the title row:\n%s", box)
-	}
+	raw := stripAnsi(lines[1]) // title row
 	// "Ghost Tab" is right-aligned: only whitespace (the box's right padding)
 	// sits between the end of the title and the trailing border.
 	ghostIdx := strings.LastIndex(raw, "Ghost Tab")
@@ -919,19 +905,19 @@ func TestMenuBox_NoScrollClipWhenFits(t *testing.T) {
 }
 
 func TestAvailableMenuHeight_AboveGhostAnimationReserve(t *testing.T) {
-	// 30 projects ⇒ natural menuHeight = 74 (incl. the always-present LOGIN and
-	// PLAN rows). Above layout is chosen when height ≥ menuHeight+17 and width < 92.
+	// 30 projects ⇒ natural menuHeight = 73. Above layout is chosen when
+	// height ≥ menuHeight+17 and width < 92.
 	m := NewMainMenu(scrollTestProjects(30), []string{"claude"}, "claude", "animated")
 	m.width = 70
-	m.height = 91
+	m.height = 90
 
-	if got := m.availableMenuHeight(); got != 74 {
-		t.Errorf("animated above should reserve 17 rows (ghost 15 + gap 1 + bob 1), got avail=%d (want 74)", got)
+	if got := m.availableMenuHeight(); got != 73 {
+		t.Errorf("animated above should reserve 17 rows (ghost 15 + gap 1 + bob 1), got avail=%d (want 73)", got)
 	}
 
 	m.ghostDisplay = "static"
-	if got := m.availableMenuHeight(); got != 75 {
-		t.Errorf("static above should reserve 16 rows (ghost 15 + gap 1), got avail=%d (want 75)", got)
+	if got := m.availableMenuHeight(); got != 74 {
+		t.Errorf("static above should reserve 16 rows (ghost 15 + gap 1), got avail=%d (want 74)", got)
 	}
 
 	m.ghostDisplay = "none"

@@ -404,6 +404,60 @@ func TestIsSingleSided_pure_add_and_pure_delete(t *testing.T) {
 	}
 }
 
+// diffStatus classifies a diff as a whole-file addition, a deletion, or a
+// modification, from the same content signal isSingleSided uses.
+func TestDiffStatus_classifies_add_delete_modify(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"pure add", "+a\n+b\n", "added"},
+		{"pure delete", "-a\n-b\n", "deleted"},
+		{"modified (add+delete)", "-old\n+new\n", "modified"},
+		{"modified (appended)", " ctx\n+a\n", "modified"},
+		{"all lines changed", "-a\n+x\n", "modified"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := diffStatus(tc.content); got != tc.want {
+				t.Errorf("diffStatus(%q) = %q, want %q", tc.content, got, tc.want)
+			}
+		})
+	}
+}
+
+// The header advertises the file's git status: added, deleted, or modified.
+func TestDiffView_header_shows_status(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"added", "+a\n+b\n", "ADDED"},
+		{"deleted", "-a\n-b\n", "DELETED"},
+		{"modified", " ctx\n-old\n+new\n", "MODIFIED"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := sizeDiff(NewDiffView("f.go", tc.content), 120, 30)
+			out := stripA(m.View())
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("header should show %q status, got:\n%s", tc.want, out)
+			}
+		})
+	}
+}
+
+// A modified file's header must not mislabel it as added or deleted.
+func TestDiffView_modified_header_not_added_or_deleted(t *testing.T) {
+	m := sizeDiff(NewDiffView("f.go", " ctx\n-old\n+new\n"), 120, 30)
+	out := stripA(m.View())
+	if strings.Contains(out, "ADDED") || strings.Contains(out, "DELETED") {
+		t.Errorf("modified file must not show ADDED/DELETED, got:\n%s", out)
+	}
+}
+
 // A whole-file addition or deletion has nothing to show side-by-side, so the
 // pager locks to the single (inline) view and hides the view switcher — even at
 // a width that would otherwise auto-pick side-by-side.

@@ -256,18 +256,17 @@ func TestMainMenu_LayoutCalculation_MenuHeight(t *testing.T) {
 	m := tui.NewMainMenu(projects, testAITools(), "opencode", "animated")
 	layout := m.CalculateLayout(100, 40)
 
-	// MenuHeight = 14 (chrome, incl. the always-present LOGIN + subscription rows)
-	// + 3*2 (projects) = 20
-	expectedHeight := 14 + (3 * 2)
+	// MenuHeight = 13 (chrome, incl. subscription row) + 3*2 (projects) = 19
+	expectedHeight := 13 + (3 * 2)
 	if layout.MenuHeight != expectedHeight {
 		t.Errorf("MenuHeight with 3 projects: expected %d, got %d", expectedHeight, layout.MenuHeight)
 	}
 
 	// 0 projects: empty-state row adds 1 line.
-	// MenuHeight = 14 (chrome, incl. LOGIN + subscription rows) + 1 (empty-state) = 15
+	// MenuHeight = 13 (chrome, incl. subscription row) + 1 (empty-state row) = 14
 	m2 := tui.NewMainMenu(nil, testAITools(), "opencode", "animated")
 	layout2 := m2.CalculateLayout(100, 40)
-	expectedHeight2 := 14 + 1
+	expectedHeight2 := 13 + 1
 	if layout2.MenuHeight != expectedHeight2 {
 		t.Errorf("MenuHeight with 0 projects: expected %d, got %d", expectedHeight2, layout2.MenuHeight)
 	}
@@ -1014,24 +1013,24 @@ func TestMainMenu_MapRowToItem_Projects(t *testing.T) {
 		{Name: "p1", Path: "/p1"},
 		{Name: "p2", Path: "/p2"},
 	}
-	// The always-present LOGIN + subscription rows push projects to start at row 8.
+	// The subscription row is shared across agents, so projects start at row 7.
 	m := tui.NewMainMenu(projects, []string{"opencode"}, "opencode", "animated")
 	m.SetSize(80, 30)
 
-	// Layout: row 0 border, 1 LOGIN, 2 title, 3 subscription, 4 switcher gap,
-	// 5 tab bar, 6 separator, 7 empty, then first project at rows 8-9.
+	// Layout: row 0 border, 1 title, 2 subscription, 3 switcher gap, 4 tab bar,
+	// 5 separator, 6 empty, then first project at rows 7-8.
+	if m.MapRowToItem(7) != 0 {
+		t.Errorf("click at row 7 should map to item 0, got %d", m.MapRowToItem(7))
+	}
 	if m.MapRowToItem(8) != 0 {
-		t.Errorf("click at row 8 should map to item 0, got %d", m.MapRowToItem(8))
+		t.Errorf("click at row 8 should map to item 0 (path line), got %d", m.MapRowToItem(8))
 	}
-	if m.MapRowToItem(9) != 0 {
-		t.Errorf("click at row 9 should map to item 0 (path line), got %d", m.MapRowToItem(9))
+	// Second project at rows 9-10
+	if m.MapRowToItem(9) != 1 {
+		t.Errorf("click at row 9 should map to item 1, got %d", m.MapRowToItem(9))
 	}
-	// Second project at rows 10-11
 	if m.MapRowToItem(10) != 1 {
-		t.Errorf("click at row 10 should map to item 1, got %d", m.MapRowToItem(10))
-	}
-	if m.MapRowToItem(11) != 1 {
-		t.Errorf("click at row 11 should map to item 1 (path line), got %d", m.MapRowToItem(11))
+		t.Errorf("click at row 10 should map to item 1 (path line), got %d", m.MapRowToItem(10))
 	}
 }
 
@@ -1043,21 +1042,21 @@ func TestMainMenu_MapRowToItem_AddProjectRow(t *testing.T) {
 	m := tui.NewMainMenu(projects, []string{"opencode"}, "opencode", "animated")
 	m.SetSize(80, 30)
 
-	// Layout: 1 project at rows 8-9, blank spacer at row 10, add-project label at
-	// row 11, add-project hint subtitle at row 12. Both add-project rows map to the
+	// Layout: 1 project at rows 7-8, blank spacer at row 9, add-project label at
+	// row 10, add-project hint subtitle at row 11. Both add-project rows map to the
 	// same item. The old delete/open-once/plain-terminal action rows no longer exist.
+	if m.MapRowToItem(10) != 1 {
+		t.Errorf("click at add-project label row should map to item 1, got %d", m.MapRowToItem(10))
+	}
 	if m.MapRowToItem(11) != 1 {
-		t.Errorf("click at add-project label row should map to item 1, got %d", m.MapRowToItem(11))
+		t.Errorf("click at add-project hint row should map to item 1, got %d", m.MapRowToItem(11))
 	}
-	if m.MapRowToItem(12) != 1 {
-		t.Errorf("click at add-project hint row should map to item 1, got %d", m.MapRowToItem(12))
-	}
-	if m.MapRowToItem(11) != m.TotalItems()-1 {
-		t.Errorf("add-project row should be the final selectable item (%d), got %d", m.TotalItems()-1, m.MapRowToItem(11))
+	if m.MapRowToItem(10) != m.TotalItems()-1 {
+		t.Errorf("add-project row should be the final selectable item (%d), got %d", m.TotalItems()-1, m.MapRowToItem(10))
 	}
 	// Rows past the add-project row are not selectable items.
-	if m.MapRowToItem(13) != -1 {
-		t.Errorf("click below add-project row should return -1, got %d", m.MapRowToItem(13))
+	if m.MapRowToItem(12) != -1 {
+		t.Errorf("click below add-project row should return -1, got %d", m.MapRowToItem(12))
 	}
 }
 
@@ -1071,37 +1070,33 @@ func TestMainMenu_MapRowToItem_Invalid(t *testing.T) {
 	if m.MapRowToItem(0) != -1 {
 		t.Errorf("click on border should return -1, got %d", m.MapRowToItem(0))
 	}
-	// Row 1 is the LOGIN/account row
+	// Row 1 is title
 	if m.MapRowToItem(1) != -1 {
-		t.Errorf("click on LOGIN row should return -1, got %d", m.MapRowToItem(1))
+		t.Errorf("click on title should return -1, got %d", m.MapRowToItem(1))
 	}
-	// Row 2 is title
+	// Row 2 is the subscription row
 	if m.MapRowToItem(2) != -1 {
-		t.Errorf("click on title should return -1, got %d", m.MapRowToItem(2))
+		t.Errorf("click on subscription row should return -1, got %d", m.MapRowToItem(2))
 	}
-	// Row 3 is the subscription row
+	// Row 3 is the switcher gap
 	if m.MapRowToItem(3) != -1 {
-		t.Errorf("click on subscription row should return -1, got %d", m.MapRowToItem(3))
+		t.Errorf("click on switcher gap should return -1, got %d", m.MapRowToItem(3))
 	}
-	// Row 4 is the switcher gap
+	// Row 4 is the tab bar
 	if m.MapRowToItem(4) != -1 {
-		t.Errorf("click on switcher gap should return -1, got %d", m.MapRowToItem(4))
+		t.Errorf("click on tab bar should return -1, got %d", m.MapRowToItem(4))
 	}
-	// Row 5 is the tab bar
+	// Row 5 is separator
 	if m.MapRowToItem(5) != -1 {
-		t.Errorf("click on tab bar should return -1, got %d", m.MapRowToItem(5))
+		t.Errorf("click on separator should return -1, got %d", m.MapRowToItem(5))
 	}
-	// Row 6 is separator
+	// Row 6 is empty
 	if m.MapRowToItem(6) != -1 {
-		t.Errorf("click on separator should return -1, got %d", m.MapRowToItem(6))
+		t.Errorf("click on empty row should return -1, got %d", m.MapRowToItem(6))
 	}
-	// Row 7 is empty
-	if m.MapRowToItem(7) != -1 {
-		t.Errorf("click on empty row should return -1, got %d", m.MapRowToItem(7))
-	}
-	// Row 10 is the blank spacer before the add-project row
-	if m.MapRowToItem(10) != -1 {
-		t.Errorf("click on blank spacer should return -1, got %d", m.MapRowToItem(10))
+	// Row 9 is the blank spacer before the add-project row
+	if m.MapRowToItem(9) != -1 {
+		t.Errorf("click on blank spacer should return -1, got %d", m.MapRowToItem(9))
 	}
 	// Row way beyond menu should return -1
 	if m.MapRowToItem(100) != -1 {
@@ -1114,13 +1109,13 @@ func TestMainMenu_MapRowToItem_NoProjects(t *testing.T) {
 	m := tui.NewMainMenu(nil, []string{"opencode"}, "opencode", "animated")
 	m.SetSize(80, 30)
 
-	// No projects: row 0 border, 1 LOGIN, 2 title, 3 subscription, 4 switcher gap,
-	// 5 tab bar, 6 separator, 7 empty, 8 blank spacer, 9 add-project row (only item).
-	if m.MapRowToItem(9) != 0 {
-		t.Errorf("add-project row at row 9 should map to item 0, got %d", m.MapRowToItem(9))
+	// No projects: row 0 border, 1 title, 2 subscription, 3 switcher gap, 4 tab bar,
+	// 5 separator, 6 empty, 7 blank spacer, 8 add-project row (the only selectable item).
+	if m.MapRowToItem(8) != 0 {
+		t.Errorf("add-project row at row 8 should map to item 0, got %d", m.MapRowToItem(8))
 	}
-	if m.MapRowToItem(8) != -1 {
-		t.Errorf("blank spacer at row 8 should return -1, got %d", m.MapRowToItem(8))
+	if m.MapRowToItem(7) != -1 {
+		t.Errorf("blank spacer at row 7 should return -1, got %d", m.MapRowToItem(7))
 	}
 }
 
@@ -1131,14 +1126,14 @@ func TestMainMenu_MapRowToItem_WithUpdateVersion(t *testing.T) {
 	m.SetUpdateVersion("v1.2.3")
 	m.SetSize(80, 30)
 
-	// With the LOGIN + subscription rows and an update notification, the project
-	// shifts down: Row 0: border, 1: LOGIN, 2: title, 3: subscription, 4: switcher
-	// gap, 5: tab bar, 6: separator, 7: update notification, 8: empty, 9-10: project.
-	if m.MapRowToItem(9) != 0 {
-		t.Errorf("with update version, project should be at row 9, got %d", m.MapRowToItem(9))
+	// With the subscription row and an update notification, the project shifts down:
+	// Row 0: border, 1: title, 2: subscription, 3: switcher gap, 4: tab bar,
+	// 5: separator, 6: update notification, 7: empty, 8-9: project.
+	if m.MapRowToItem(8) != 0 {
+		t.Errorf("with update version, project should be at row 8, got %d", m.MapRowToItem(8))
 	}
-	if m.MapRowToItem(10) != 0 {
-		t.Errorf("with update version, project path at row 10 should map to 0, got %d", m.MapRowToItem(10))
+	if m.MapRowToItem(9) != 0 {
+		t.Errorf("with update version, project path at row 9 should map to 0, got %d", m.MapRowToItem(9))
 	}
 }
 
@@ -1152,12 +1147,11 @@ func TestMainMenu_MouseClickSelectsItem(t *testing.T) {
 	m.SetSize(80, 30)
 	_ = m.View() // compute the vertical centering offset
 
-	// Second project's name line is box row 10 (border, LOGIN, title, subscription,
-	// switcher gap, tab bar, separator, empty, p0-name, p0-path, p1-name). Account
-	// for centering.
+	// Second project's name line is box row 9 (border, title, subscription, switcher
+	// gap, tab bar, separator, empty, p0-name, p0-path, p1-name). Account for centering.
 	mouseMsg := tea.MouseMsg{
 		X:      10,
-		Y:      m.CenterOffsetY() + 10,
+		Y:      m.CenterOffsetY() + 9,
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
 	}
@@ -1182,11 +1176,11 @@ func TestMainMenu_MouseDoubleClickActivates(t *testing.T) {
 	m.SetSize(80, 30)
 	_ = m.View() // compute the vertical centering offset
 
-	// First project's name line is box row 8. Clicking the already-selected
+	// First project's name line is box row 7. Clicking the already-selected
 	// item acts as a double-click activation. Account for centering.
 	mouseMsg := tea.MouseMsg{
 		X:      10,
-		Y:      m.CenterOffsetY() + 8,
+		Y:      m.CenterOffsetY() + 7,
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
 	}
@@ -2068,9 +2062,9 @@ func TestMainMenu_MouseClickWorksWithCentering(t *testing.T) {
 	m.View()
 
 	// With ghost=none, 2 projects + the add-project row.
-	// Menu box rows: border, LOGIN, title, subscription, switcher gap, tab bar,
-	// separator, empty, p0-name, p0-path, p1-name, ... so the second project name
-	// is at box row 10. Absolute row = centering offset + 10.
+	// Menu box rows: border, title, subscription, switcher gap, tab bar, separator,
+	// empty, p0-name, p0-path, p1-name, ... so the second project name is at box row 9.
+	// Absolute row = centering offset + 9.
 	offset := m.CenterOffsetY()
 	if offset <= 0 {
 		t.Fatalf("expected positive centering offset with 80x40 and ghost=none, got %d", offset)
@@ -2078,7 +2072,7 @@ func TestMainMenu_MouseClickWorksWithCentering(t *testing.T) {
 
 	mouseMsg := tea.MouseMsg{
 		X:      40,
-		Y:      offset + 10,
+		Y:      offset + 9,
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
 	}
@@ -3870,43 +3864,42 @@ func TestMainMenu_MapRowToItemWithWorktrees(t *testing.T) {
 
 	// Row layout (0-indexed within menu box):
 	// 0: top border
-	// 1: LOGIN/account row
-	// 2: title
-	// 3: subscription row
-	// 4: switcher gap
-	// 5: tab bar
-	// 6: separator
-	// 7: empty
-	// 8-9: project 0 (name + path) -> item 0
-	// 10-11: worktree 0 (branch + path) -> item 1
-	// 12-13: worktree 1 (branch + path) -> item 2
-	// 14: add-worktree -> item 3
+	// 1: title
+	// 2: subscription row
+	// 3: switcher gap
+	// 4: tab bar
+	// 5: separator
+	// 6: empty
+	// 7-8: project 0 (name + path) -> item 0
+	// 9-10: worktree 0 (branch + path) -> item 1
+	// 11-12: worktree 1 (branch + path) -> item 2
+	// 13-14: project 1 (name + path) -> item 3
 
 	// Project 0
+	if m.MapRowToItem(7) != 0 {
+		t.Errorf("row 7: expected item 0, got %d", m.MapRowToItem(7))
+	}
 	if m.MapRowToItem(8) != 0 {
 		t.Errorf("row 8: expected item 0, got %d", m.MapRowToItem(8))
 	}
-	if m.MapRowToItem(9) != 0 {
-		t.Errorf("row 9: expected item 0, got %d", m.MapRowToItem(9))
-	}
 
 	// Worktree entries (2 rows each: branch + path)
-	if m.MapRowToItem(10) != 1 {
-		t.Errorf("row 10: expected item 1 (wt0), got %d", m.MapRowToItem(10))
+	if m.MapRowToItem(9) != 1 {
+		t.Errorf("row 9: expected item 1 (wt0), got %d", m.MapRowToItem(9))
 	}
-	if m.MapRowToItem(11) != 1 {
-		t.Errorf("row 11: expected item 1 (wt0 path row), got %d", m.MapRowToItem(11))
+	if m.MapRowToItem(10) != 1 {
+		t.Errorf("row 10: expected item 1 (wt0 path row), got %d", m.MapRowToItem(10))
+	}
+	if m.MapRowToItem(11) != 2 {
+		t.Errorf("row 11: expected item 2 (wt1), got %d", m.MapRowToItem(11))
 	}
 	if m.MapRowToItem(12) != 2 {
-		t.Errorf("row 12: expected item 2 (wt1), got %d", m.MapRowToItem(12))
-	}
-	if m.MapRowToItem(13) != 2 {
-		t.Errorf("row 13: expected item 2 (wt1 path row), got %d", m.MapRowToItem(13))
+		t.Errorf("row 12: expected item 2 (wt1 path row), got %d", m.MapRowToItem(12))
 	}
 
-	// Add-worktree row (item 3) at row 14.
-	if m.MapRowToItem(14) != 3 {
-		t.Errorf("row 14: expected item 3 (add-worktree), got %d", m.MapRowToItem(14))
+	// Add-worktree row (item 3); project 1 is item 4 at row 14.
+	if m.MapRowToItem(13) != 3 {
+		t.Errorf("row 13: expected item 3 (add-worktree), got %d", m.MapRowToItem(13))
 	}
 }
 
@@ -3918,9 +3911,8 @@ func TestMainMenu_CalculateLayoutWithWorktrees(t *testing.T) {
 
 	layout1 := m.CalculateLayout(100, 40)
 
-	// Collapsed: 14 (chrome, incl. LOGIN + subscription rows + add-project hint)
-	// + 3*2 (projects) = 20
-	expectedCollapsed := 14 + (3 * 2)
+	// Collapsed: 13 (chrome, incl. subscription row + add-project hint) + 3*2 (projects) = 19
+	expectedCollapsed := 13 + (3 * 2)
 	if layout1.MenuHeight != expectedCollapsed {
 		t.Errorf("collapsed height: got %d, want %d", layout1.MenuHeight, expectedCollapsed)
 	}
@@ -3929,8 +3921,8 @@ func TestMainMenu_CalculateLayoutWithWorktrees(t *testing.T) {
 	m.ToggleWorktrees(0)
 	layout2 := m.CalculateLayout(100, 40)
 
-	// Expanded: 14 (chrome) + 3*2 (projects) + 2*2 (worktrees) + 1 (add-worktree) = 25
-	expectedExpanded := 14 + (3 * 2) + (2 * 2) + 1
+	// Expanded: 13 (chrome) + 3*2 (projects) + 2*2 (worktrees) + 1 (add-worktree) = 24
+	expectedExpanded := 13 + (3 * 2) + (2 * 2) + 1
 	if layout2.MenuHeight != expectedExpanded {
 		t.Errorf("expanded height: got %d, want %d", layout2.MenuHeight, expectedExpanded)
 	}
@@ -4093,12 +4085,12 @@ func TestMainMenu_MapRowToItemWithAddWorktree(t *testing.T) {
 	m.SetSize(100, 40)
 
 	m.ToggleWorktrees(0)
-	// Layout: P0(rows 8-9), WT0(rows 10-11), WT1(rows 12-13), +Add(row 14), P1(rows 15-16)
-	if got := m.MapRowToItem(14); got != 3 {
-		t.Errorf("+Add row 14: got flat %d, want 3", got)
+	// Layout: P0(rows 7-8), WT0(rows 9-10), WT1(rows 11-12), +Add(row 13), P1(rows 14-15)
+	if got := m.MapRowToItem(13); got != 3 {
+		t.Errorf("+Add row 13: got flat %d, want 3", got)
 	}
-	if got := m.MapRowToItem(15); got != 4 {
-		t.Errorf("P1 row 15: got flat %d, want 4", got)
+	if got := m.MapRowToItem(14); got != 4 {
+		t.Errorf("P1 row 14: got flat %d, want 4", got)
 	}
 }
 
@@ -4111,9 +4103,9 @@ func TestMainMenu_CalculateLayoutWithAddWorktree(t *testing.T) {
 	m.ToggleWorktrees(2)
 
 	layout := m.CalculateLayout(100, 60)
-	// 14 (chrome, incl. LOGIN + subscription rows + add-project hint) + 3*2 (projects) + 3*2 (worktrees) + 2*1 (add-worktree) = 28
-	if layout.MenuHeight != 28 {
-		t.Errorf("menu height: got %d, want 28", layout.MenuHeight)
+	// 13 (chrome, incl. subscription row + add-project hint) + 3*2 (projects) + 3*2 (worktrees) + 2*1 (add-worktree) = 27
+	if layout.MenuHeight != 27 {
+		t.Errorf("menu height: got %d, want 27", layout.MenuHeight)
 	}
 }
 

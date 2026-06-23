@@ -19,6 +19,7 @@ import (
 type DiffViewModel struct {
 	title    string
 	content  string
+	status   string // "added" | "deleted" | "modified", derived from the diff
 	added    int
 	deleted  int
 	width      int // full popup (window) size; the box floats centered within it
@@ -53,6 +54,15 @@ var (
 
 	diffAddStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // green
 	diffDelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("1")) // red
+
+	// File-status badge: a filled chip whose color matches the kind of change —
+	// green for added, red for deleted, orange for modified.
+	diffStatusBadgeStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Padding(0, 1)
+	diffStatusColors     = map[string]lipgloss.Color{
+		"added":    lipgloss.Color("2"),
+		"deleted":  lipgloss.Color("1"),
+		"modified": lipgloss.Color("208"),
+	}
 
 	diffRuleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("208"))
 
@@ -463,10 +473,24 @@ func isSingleSided(content string) bool {
 	return (added > 0 && deleted == 0) || (deleted > 0 && added == 0)
 }
 
+// diffStatus classifies the file's git status from its diff body: a one-sided,
+// context-free diff is a whole-file addition ("added") or deletion ("deleted"),
+// and anything else is a "modified" file.
+func diffStatus(content string) string {
+	if !isSingleSided(content) {
+		return "modified"
+	}
+	if added, _ := countDiffLines(content); added > 0 {
+		return "added"
+	}
+	return "deleted"
+}
+
 // NewDiffView builds the pager for the given title (the file path, shown in the
 // header) and content (the colored diff body). The added/deleted line counts
-// shown in the header are derived from the content. A whole-file add/delete is
-// shown in a single (inline) view with no view switcher.
+// and the file status shown in the header are derived from the content. A
+// whole-file add/delete is shown in a single (inline) view with no view
+// switcher.
 func NewDiffView(title, content string) DiffViewModel {
 	added, deleted := countDiffLines(content)
 	return DiffViewModel{
@@ -474,6 +498,7 @@ func NewDiffView(title, content string) DiffViewModel {
 		content:    content,
 		added:      added,
 		deleted:    deleted,
+		status:     diffStatus(content),
 		singleView: isSingleSided(content),
 	}
 }
@@ -621,6 +646,16 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// statusBadge renders the file-status chip (e.g. " ADDED ") in the color that
+// matches the kind of change; an unknown status falls back to the modified tint.
+func (m DiffViewModel) statusBadge() string {
+	color, ok := diffStatusColors[m.status]
+	if !ok {
+		color = diffStatusColors["modified"]
+	}
+	return diffStatusBadgeStyle.Background(color).Render(strings.ToUpper(m.status))
+}
+
 func (m DiffViewModel) View() string {
 	if m.quitting {
 		return ""
@@ -630,8 +665,10 @@ func (m DiffViewModel) View() string {
 	}
 
 	mh, mv, cw, ch := m.layout()
-	// Top line: ONLY the file path and the added/deleted line counts.
-	title := diffTitleStyle.Render(m.title) +
+	// Top line: a status badge (added/deleted/modified), the file path, and the
+	// added/deleted line counts.
+	title := m.statusBadge() +
+		diffTitleStyle.Render(m.title) +
 		diffAddStyle.Render("+"+itoa(m.added)) + " " +
 		diffDelStyle.Render("−"+itoa(m.deleted))
 	rule := diffRuleStyle.Render(strings.Repeat("─", maxInt(cw, 0)))
