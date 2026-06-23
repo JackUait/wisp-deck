@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A bracketed paste whose content is an ephemeral screencaptureui temp screenshot
@@ -141,8 +141,8 @@ func TestRewriteScreenshotPath_fileurl_ephemeral_copies_to_stable(t *testing.T) 
 	}
 }
 
-// Claude can't attach video files (proven: a plain-path .mov stays literal text), so
-// a dropped video must be turned into image frames. isVideoPath gates that.
+// Claude/OpenCode can't attach a video as an image; instead the agent is handed a
+// plain path to the stored file and splits frames itself. isVideoPath gates that.
 func TestIsVideoPath(t *testing.T) {
 	cases := map[string]bool{
 		"/x/clip.mov": true, "/x/clip.MOV": true, "/x/a.mp4": true,
@@ -156,96 +156,139 @@ func TestIsVideoPath(t *testing.T) {
 	}
 }
 
-// Claude attaches multiple images only as SEPARATE bracketed pastes (proven via a
-// live TUI: newline-joined paths in one paste do NOT attach; N separate pastes give
-// [Image #1..N]). framesToPayload joins frames with "201~ 200~" so Filter.Process's
-// single 200~/201~ wrap splits them into one paste per frame.
-func TestFramesToPayload_splits_into_separate_pastes(t *testing.T) {
-	got := string(framesToPayload([]string{"/s/a.png", "/s/b.png", "/s/c.png"}))
-	want := "/s/a.png" + pasteEnd + pasteStart + "/s/b.png" + pasteEnd + pasteStart + "/s/c.png"
-	if got != want {
-		t.Errorf("framesToPayload = %q, want %q", got, want)
-	}
-}
-
-// End-to-end through Filter: a Rewrite that returns framesToPayload must emerge from
-// Process as N independent bracketed pastes (the shape Claude attaches as N images).
-func TestFilter_video_payload_emerges_as_separate_pastes(t *testing.T) {
-	f := &Filter{Rewrite: func([]byte) []byte {
-		return framesToPayload([]string{"/s/a.png", "/s/b.png"})
-	}}
-	got := string(f.Process([]byte(pasteStart + "/whatever/clip.mov" + pasteEnd)))
-	want := pasteStart + "/s/a.png" + pasteEnd + pasteStart + "/s/b.png" + pasteEnd
-	if got != want {
-		t.Errorf("got %q want %q", got, want)
-	}
-}
-
-// A dropped video (delivered as a file:// URL, like a Finder drag) is decoded,
-// frames are extracted with ffmpeg into the stable space-free dir, and the paste is
-// rewritten to those frame paths as separate pastes. Requires ffmpeg.
-func TestRewriteScreenshotPath_video_extracts_frames(t *testing.T) {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("ffmpeg not installed")
-	}
+// A dropped video (delivered as a file:// URL, like a Finder drag) must be copied into
+// the stable, space-free store and the paste rewritten to that plain path — no frame
+// extraction. The original may be ephemeral or later moved, so the copy is what keeps
+// the video available; the path handed over must be a clean, non-corrupted link (not a
+// file:// URL, not space-escaped).
+func TestRewriteScreenshotPath_video_stashes_and_returns_plain_path(t *testing.T) {
 	root := t.TempDir()
 	stash := filepath.Join(root, "stash")
 	t.Setenv("GT_SCREENSHOT_STASH_DIR", stash)
-	t.Setenv("GT_VIDEO_MAX_FRAMES", "3")
 
-	src := filepath.Join(root, "Screen Recording test.mov")
-	gen := exec.Command("ffmpeg", "-loglevel", "error", "-y",
-		"-f", "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=10",
-		"-pix_fmt", "yuv420p", src)
-	if out, err := gen.CombinedOutput(); err != nil {
-		t.Fatalf("could not generate test video: %v\n%s", err, out)
+	src := filepath.Join(root, "Screen Recording 2026-06-23 at 1.02.03 PM.mov")
+	if err := os.WriteFile(src, []byte("MOVDATA"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
 	urlStr := (&url.URL{Scheme: "file", Path: src}).String()
 	out := string(RewriteScreenshotPath([]byte(urlStr)))
 
-	if strings.HasPrefix(out, "file://") || strings.Contains(out, ".mov") {
-		t.Fatalf("video URL must be replaced with frame images, got %q", out)
+	if strings.HasPrefix(out, "file://") {
+		t.Fatalf("video file:// URL must be decoded to a plain path, got %q", out)
 	}
-	frames := strings.Split(out, pasteEnd+pasteStart)
-	if len(frames) < 2 {
-		t.Fatalf("expected multiple frames, got %d: %q", len(frames), out)
+	if !strings.HasPrefix(out, stash) {
+		t.Fatalf("video should be stored under stash %q, got %q", stash, out)
 	}
-	if len(frames) > 3 {
-		t.Errorf("GT_VIDEO_MAX_FRAMES=3 must cap frame count, got %d", len(frames))
+	if strings.Contains(out, " ") {
+		t.Errorf("stored video path should be space-free (clean link): %q", out)
 	}
-	for _, fr := range frames {
-		if !strings.HasPrefix(fr, stash) {
-			t.Errorf("frame %q should live under stash %q", fr, stash)
-		}
-		if strings.Contains(fr, " ") {
-			t.Errorf("frame path should be space-free: %q", fr)
-		}
-		if !strings.HasSuffix(strings.ToLower(fr), ".png") {
-			t.Errorf("frame should be a png: %q", fr)
-		}
-		if _, err := os.Stat(fr); err != nil {
-			t.Errorf("frame file missing: %v", err)
-		}
+	if !strings.HasSuffix(strings.ToLower(out), ".mov") {
+		t.Errorf("stored video must keep its extension: %q", out)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("stored video unreadable: %v", err)
+	}
+	if string(data) != "MOVDATA" {
+		t.Errorf("stored video content = %q, want MOVDATA", data)
 	}
 }
 
-// A file with a video extension that ffmpeg can't decode (here: empty) must pass
-// through unchanged — never worse than handing the drop straight to Claude.
-func TestRewriteScreenshotPath_unreadable_video_passthrough(t *testing.T) {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("ffmpeg not installed")
+// A plain-path video drop (floating-thumbnail / escaped spaces) is stored just the
+// same as the file:// case.
+func TestRewriteScreenshotPath_video_plain_path_stashes(t *testing.T) {
+	root := t.TempDir()
+	stash := filepath.Join(root, "stash")
+	t.Setenv("GT_SCREENSHOT_STASH_DIR", stash)
+
+	src := filepath.Join(root, "clip.mp4")
+	if err := os.WriteFile(src, []byte("MP4DATA"), 0o644); err != nil {
+		t.Fatal(err)
 	}
+
+	out := string(RewriteScreenshotPath([]byte(src)))
+	if !strings.HasPrefix(out, stash) {
+		t.Fatalf("plain video path should be stored under stash %q, got %q", stash, out)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil || string(data) != "MP4DATA" {
+		t.Fatalf("stored video content = %q (err %v), want MP4DATA", data, err)
+	}
+}
+
+// A video path whose file does not exist must pass through unchanged — never worse
+// than handing the drop straight to the agent.
+func TestRewriteScreenshotPath_video_missing_passthrough(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GT_SCREENSHOT_STASH_DIR", filepath.Join(dir, "stash"))
-	src := filepath.Join(dir, "broken.mov")
+	in := filepath.Join(dir, "gone.mov")
+	out := string(RewriteScreenshotPath([]byte(in)))
+	if out != in {
+		t.Errorf("missing video must pass through unchanged: got %q want %q", out, in)
+	}
+}
+
+// A zero-byte video file carries nothing to store, so it passes through unchanged
+// rather than producing a useless empty copy.
+func TestRewriteScreenshotPath_empty_video_passthrough(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GT_SCREENSHOT_STASH_DIR", filepath.Join(dir, "stash"))
+	src := filepath.Join(dir, "empty.mov")
 	if err := os.WriteFile(src, []byte{}, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	in := src
-	out := string(RewriteScreenshotPath([]byte(in)))
-	if out != in {
-		t.Errorf("undecodable video must pass through unchanged: got %q want %q", out, in)
+	out := string(RewriteScreenshotPath([]byte(src)))
+	if out != src {
+		t.Errorf("empty video must pass through unchanged: got %q want %q", out, src)
+	}
+}
+
+// Stored videos are guaranteed available for the retention window (10h by default) and
+// no longer: storing a new video sweeps away earlier stored videos whose modtime is
+// past the window, while recent ones survive. Other stash files (screenshots) are left
+// untouched.
+func TestStashVideo_sweeps_expired_videos(t *testing.T) {
+	root := t.TempDir()
+	stash := filepath.Join(root, "stash")
+	if err := os.MkdirAll(stash, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GT_SCREENSHOT_STASH_DIR", stash)
+	t.Setenv("GT_VIDEO_RETENTION_HOURS", "10")
+
+	old := filepath.Join(stash, "gt-vid-1.mov")
+	recent := filepath.Join(stash, "gt-vid-2.mov")
+	shot := filepath.Join(stash, "gt-shot-3.png")
+	for _, p := range []string{old, recent, shot} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	staleTime := time.Now().Add(-11 * time.Hour)
+	if err := os.Chtimes(old, staleTime, staleTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(shot, staleTime, staleTime); err != nil {
+		t.Fatal(err)
+	}
+
+	src := filepath.Join(root, "new.mov")
+	if err := os.WriteFile(src, []byte("NEW"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stashVideo(src); err != nil {
+		t.Fatalf("stashVideo: %v", err)
+	}
+
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Errorf("expired stored video should be swept, but it survives")
+	}
+	if _, err := os.Stat(recent); err != nil {
+		t.Errorf("recent stored video must survive: %v", err)
+	}
+	if _, err := os.Stat(shot); err != nil {
+		t.Errorf("non-video stash file (screenshot) must not be swept: %v", err)
 	}
 }
 

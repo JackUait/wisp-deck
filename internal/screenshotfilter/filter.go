@@ -13,13 +13,11 @@ package screenshotfilter
 
 import (
 	"bytes"
-	"context"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -109,17 +107,18 @@ func partialSuffix(b, needle []byte) int {
 //
 // In both cases an ephemeral screencaptureui temp file is copied to a stable
 // location (macOS deletes it moments after the drop); a persistent file is handed
-// over as its plain path. A dropped video (which Claude cannot attach at all) is
-// turned into image frames via ffmpeg. Anything we can't resolve to a real local
-// image or video — a normal non-media paste, or a temp path whose file is already
-// gone — is returned unchanged, so the filter is never worse than passing the drop
-// straight through.
+// over as its plain path. A dropped video (which Claude/OpenCode cannot attach as an
+// image) is copied into the stable store so it stays available for the retention
+// window, and the paste is rewritten to that clean plain path for the agent to read.
+// Anything we can't resolve to a real local image or video — a normal non-media
+// paste, or a temp path whose file is already gone — is returned unchanged, so the
+// filter is never worse than passing the drop straight through.
 func RewriteScreenshotPath(content []byte) []byte {
 	path, ok := fileURLToPath(string(content))
 	if !ok {
 		path = unescape(string(content))
 	}
-	if payload := videoFramesPayload(path); payload != nil {
+	if payload := resolveLocalVideo(path); payload != nil {
 		return payload
 	}
 	return resolveLocalImage(path, content)
@@ -192,85 +191,91 @@ func isVideoPath(path string) bool {
 	return false
 }
 
-// videoFramesPayload returns a rewrite payload of extracted image frames when `path`
-// is an existing video file (which Claude cannot attach directly), or nil when it is
-// not a video or frames can't be produced — in which case the caller falls back to
-// normal image handling / passthrough.
-func videoFramesPayload(path string) []byte {
+// resolveLocalVideo handles a dropped video. Claude/OpenCode can't attach a video as
+// an image, but the agent can read the file (and split frames itself) when handed a
+// clean path. So the video is copied into the stable store — guaranteeing it stays
+// available for the retention window even if the original is ephemeral or later moved
+// — and that space-free path is returned. Returns nil when `path` is not an existing,
+// non-empty video file, so the caller falls back to image handling / passthrough.
+func resolveLocalVideo(path string) []byte {
 	if !isVideoPath(path) {
 		return nil
 	}
-	if info, err := os.Stat(path); err != nil || info.IsDir() {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() || info.Size() == 0 {
 		return nil
 	}
-	frames, err := extractVideoFrames(path)
-	if err != nil || len(frames) == 0 {
+	stable, err := stashVideo(path)
+	if err != nil {
 		return nil
 	}
-	return framesToPayload(frames)
+	return []byte(stable)
 }
 
-// framesToPayload renders frame paths as back-to-back bracketed pastes. Filter.Process
-// wraps a rewrite result in a single 200~/201~ pair, so joining frames with
-// "201~ 200~" splits the wrapped output into one paste per frame — Claude attaches
-// multiple images only as separate pastes (proven against a live TUI).
-func framesToPayload(frames []string) []byte {
-	return []byte(strings.Join(frames, pasteEnd+pasteStart))
-}
+// videoRetentionHours is how long a stored video is guaranteed to remain available.
+// The dropped path is handed to the agent as text and may not be processed until later
+// in a long session, so the copy must outlive the original. Overridable via
+// GT_VIDEO_RETENTION_HOURS.
+const videoRetentionHours = 10
 
-// maxVideoFrames caps how many evenly-spaced frames are pulled from a dropped video
-// (each becomes one attached image, so this bounds context cost). Overridable via
-// GT_VIDEO_MAX_FRAMES.
-const maxVideoFrames = 8
-
-func videoFrameCap() int {
-	if v := os.Getenv("GT_VIDEO_MAX_FRAMES"); v != "" {
+func videoRetention() time.Duration {
+	if v := os.Getenv("GT_VIDEO_RETENTION_HOURS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			return n
+			return time.Duration(n) * time.Hour
 		}
 	}
-	return maxVideoFrames
+	return videoRetentionHours * time.Hour
 }
 
-// extractVideoFrames pulls up to videoFrameCap() evenly-spaced frames from src into
-// the stable dir via ffmpeg and returns their (space-free) paths in order. Frames are
-// spread across the whole clip by deriving an fps of frames/duration from ffprobe.
-func extractVideoFrames(src string) ([]string, error) {
+// stashVideo copies src into the stable dir under a space-free name (so the rewritten
+// path needs no shell escaping) and returns that path. It first sweeps stored videos
+// past the retention window, bounding disk use while keeping recent drops available.
+func stashVideo(src string) (string, error) {
 	dir := StableDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
+		return "", err
 	}
-	n := videoFrameCap()
-	prefix := fmt.Sprintf("gt-frame-%d-", time.Now().UnixNano())
-	pattern := filepath.Join(dir, prefix+"%03d.png")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "ffmpeg", "-nostdin", "-loglevel", "error", "-y",
-		"-i", src, "-vf", "fps="+frameRate(src, n), "-frames:v", strconv.Itoa(n), pattern)
-	if err := cmd.Run(); err != nil {
-		return nil, err
+	sweepExpiredVideos(dir)
+	dest := filepath.Join(dir, fmt.Sprintf("gt-vid-%d%s",
+		time.Now().UnixNano(), strings.ToLower(filepath.Ext(src))))
+	if err := copyFile(src, dest); err != nil {
+		return "", err
 	}
-
-	frames, err := filepath.Glob(filepath.Join(dir, prefix+"*.png"))
-	if err != nil || len(frames) == 0 {
-		return nil, fmt.Errorf("no frames extracted from %s", src)
-	}
-	sort.Strings(frames)
-	return frames, nil
+	return dest, nil
 }
 
-// frameRate returns the ffmpeg fps that yields ~n frames across the clip's full
-// duration (n/duration). Falls back to "1" when the duration can't be probed.
-func frameRate(src string, n int) string {
-	out, err := exec.Command("ffprobe", "-v", "error", "-show_entries",
-		"format=duration", "-of", "default=nw=1:nk=1", src).Output()
-	if err == nil {
-		if d, perr := strconv.ParseFloat(strings.TrimSpace(string(out)), 64); perr == nil && d > 0 {
-			return strconv.FormatFloat(float64(n)/d, 'f', 6, 64)
+// sweepExpiredVideos removes stored videos (gt-vid-*) whose modtime is past the
+// retention window. Only video copies are touched — screenshot stashes are left alone.
+func sweepExpiredVideos(dir string) {
+	cutoff := time.Now().Add(-videoRetention())
+	matches, err := filepath.Glob(filepath.Join(dir, "gt-vid-*"))
+	if err != nil {
+		return
+	}
+	for _, m := range matches {
+		if info, err := os.Stat(m); err == nil && !info.IsDir() && info.ModTime().Before(cutoff) {
+			os.Remove(m)
 		}
 	}
-	return "1"
+}
+
+// copyFile streams src to dest (videos can be large, so it avoids reading the whole
+// file into memory).
+func copyFile(src, dest string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // StableDir is where ephemeral screenshots are copied. Matches the bash side's
