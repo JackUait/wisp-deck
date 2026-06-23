@@ -155,10 +155,18 @@ func TestTabTitleWatcher_claude_pane_working_detects_indicators(t *testing.T) {
 	}{
 		{"token counter", "· Deliberating… (8m 34s · ↓ 34.1k tokens)", "0"},
 		{"gerund timer", "✶ Cascading… (5m 19s · thinking more)", "0"},
+		{"gerund timer seconds only", "✽ Ebbing… (0s · ↓ 12 tokens)", "0"},
+		{"upload counter (no down arrow)", "✶ Hatching… (4m 20s · ↑ 7.6k tokens)", "0"},
 		{"esc to interrupt", "Working (esc to interrupt)", "0"},
 		{"idle response prose", "⏺ Here are the results, all done.", "1"},
 		{"empty prompt", "❯ ", "1"},
 		{"statusline", "  ghost-tab | 10.0% | Opus 4.8 (1M context) [high]", "1"},
+		// Regression: idle prose must not match. The ellipsis-then-paren and
+		// bare down-arrow patterns appear naturally in idle summaries; matching
+		// them would silence the sound forever (worst-case false negative).
+		{"idle ellipsis paren count", "⏺ Updated files… (12 insertions, 4 deletions). All tests pass.", "1"},
+		{"idle down-arrow non-token", "Jump to bottom (ctrl+End) ↓ 5 results below", "1"},
+		{"idle ellipsis paren viable", "⏺ Options considered… (2 viable).", "1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

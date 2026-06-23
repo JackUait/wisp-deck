@@ -19,15 +19,21 @@ marker_age() {
 # Return success (0) if the captured Claude pane content shows Claude is
 # actively working rather than waiting for the user. Claude's TUI renders a
 # spinner status line while generating — a gerund with an elapsed timer
-# ("Clauding… (7m 56s …"), a live token counter ("↓ 28.1k tokens"), or an
-# "esc to interrupt" hint. None of these are present once Claude is idle.
-# The match is gerund-agnostic and fails safe: if a future Claude Code build
-# changes the spinner, detection simply stops suppressing (degrades to the
-# old over-notify behavior) rather than going silent.
+# ("Clauding… (7m 56s …"), a live token counter ("↓ 28.1k tokens" or
+# "↑ 7.6k tokens" during upload), or an "esc to interrupt" hint. None of
+# these are present once Claude is idle.
+#
+# The patterns are anchored to the spinner's real shape — a token count
+# ending in "tokens", or the parenthesized elapsed-time format right after
+# the gerund's ellipsis — so idle prose like "Updated files… (12 insertions)"
+# or "↓ 5 results below" is NOT mistaken for working (which would silence the
+# sound forever). The match is gerund-agnostic and fails safe: a future
+# spinner change degrades to over-notify, never to silence.
 # Usage: claude_pane_working <content>
 claude_pane_working() {
   local content="$1"
-  printf '%s\n' "$content" | grep -qE '↓ [0-9]|esc to interrupt|… \([0-9]'
+  printf '%s\n' "$content" \
+    | grep -qE '[↓↑] [0-9]+(\.[0-9]+)?k? tokens|esc to interrupt|… \([0-9]+m [0-9]+s|… \([0-9]+s'
 }
 
 # Check if the AI tool is waiting for user input.
