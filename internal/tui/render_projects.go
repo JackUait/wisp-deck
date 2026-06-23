@@ -553,7 +553,7 @@ func (m *MainMenuModel) renderHelpRow() string {
 func (m *MainMenuModel) focusHint() string {
 	switch m.focus {
 	case FocusAccount:
-		return "←→ switch login · ↵ add login · ↓ agent"
+		return "←→ switch login · ↵ manage · ↓ agent"
 	case FocusAI:
 		return "←→ switch agent · ↓ sections"
 	case FocusSubscription:

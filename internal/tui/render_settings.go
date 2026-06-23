@@ -214,9 +214,9 @@ func (m *MainMenuModel) renderSettingsBox() string {
 		}
 	case 6:
 		if m.accountFocusable() {
-			cycleOrEdit = helpStyle.Render("←→ switch") + sep + helpStyle.Render("⏎ add login")
+			cycleOrEdit = helpStyle.Render("←→ switch") + sep + helpStyle.Render("⏎ manage")
 		} else {
-			cycleOrEdit = helpStyle.Render("⏎ add login")
+			cycleOrEdit = helpStyle.Render("⏎ manage")
 		}
 	default:
 		cycleOrEdit = helpStyle.Render("←→ cycle")

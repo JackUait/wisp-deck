@@ -284,6 +284,13 @@ type MainMenuModel struct {
 	claudeAccountsList string          // label:dir list file path (for mutations)
 	claudeAccountsDir  string          // directory holding the per-account config dirs
 
+	// Login-management panel, opened from the LOGIN row (mirrors the model-map
+	// panel that Plan opens). Lists Default + managed logins + an add row.
+	accountMenuOpen    bool
+	accountMenuCursor  int  // 0=Default, 1..len=managed logins, len+1=add row
+	accountMenuConfirm bool // delete confirmation showing for the cursor login
+	accountMenuErr     error
+
 	// Model mapping panel for non-Standard configs
 	modelMapOpen     bool
 	modelMapCursor   int      // 0-3: which Anthropic slot (opus, sonnet, haiku, fable)
@@ -1746,6 +1753,9 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.modelMapOpen {
 			return m.updateModelMap(msg)
 		}
+		if m.accountMenuOpen {
+			return m.updateAccountMenu(msg)
+		}
 		if m.settingsInputMode {
 			return m.updateSettingsInput(msg)
 		}
@@ -1965,12 +1975,10 @@ func (m *MainMenuModel) focusRight() tea.Cmd {
 func (m *MainMenuModel) focusEnter() (tea.Model, tea.Cmd) {
 	switch m.focus {
 	case FocusAccount:
-		// Enter on the LOGIN row launches the add-login flow: adding a native
-		// account requires interactive browser OAuth, which can't run inside the
-		// alt-screen TUI, so we exit with the "add-account" action and let
-		// wrapper.sh run `claude auth login` before reopening the menu.
-		m.setActionResult("add-account")
-		return m, tea.Quit
+		// Enter on the LOGIN row opens the login-management panel (switch / add /
+		// remove), mirroring how the PLAN row opens its model-map panel.
+		m.openAccountMenu()
+		return m, nil
 	case FocusAI:
 		return m, nil
 	case FocusSubscription:
@@ -2155,10 +2163,9 @@ func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 			m.openModelMap()
 		}
 	case 6:
-		// Add a native Claude login. Browser OAuth can't run inside the TUI, so
-		// exit with the add-account action and let wrapper.sh run `claude auth login`.
-		m.setActionResult("add-account")
-		return m, tea.Quit
+		// Open the login-management panel (switch / add / remove logins).
+		m.openAccountMenu()
+		return m, nil
 	}
 	return m, nil
 }
@@ -3153,15 +3160,20 @@ func (m *MainMenuModel) View() string {
 	case m.inputMode != "":
 		menuBox = m.renderInputBox()
 	case m.activeTab == TabSettings:
+		menuBox = m.renderSettingsBox()
 		if m.modelMapOpen {
-			menuBox = m.renderSettingsBox() + "\n" + m.renderModelMapPanel()
-		} else {
-			menuBox = m.renderSettingsBox()
+			menuBox += "\n" + m.renderModelMapPanel()
+		}
+		if m.accountMenuOpen {
+			menuBox += "\n" + m.renderAccountMenuPanel()
 		}
 	case m.activeTab == TabStats:
 		menuBox = m.renderStatsBox()
 	default:
 		menuBox = m.renderMenuBox()
+		if m.accountMenuOpen {
+			menuBox += "\n" + m.renderAccountMenuPanel()
+		}
 	}
 
 	layout := m.CalculateLayout(m.width, m.height)
