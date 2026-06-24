@@ -87,11 +87,11 @@ func (m *MainMenuModel) renderTitleRow(leftBorder, rightBorder string) string {
 	agentLabel := m.settingsCaption(iconAgent, m.focus == FocusAI || m.isHovered(regionAI))
 	var aiPart string
 	if len(m.aiTools) > 1 {
-		aiPart = agentLabel + chevronStyle.Render("◀ ") + nameStyle.Render(aiDisplay) + chevronStyle.Render(" ▶")
+		aiPart = agentLabel + chevronStyle.Render("◄ ") + nameStyle.Render(aiDisplay) + chevronStyle.Render(" ►")
 	} else {
 		aiPart = agentLabel + nameStyle.Render(aiDisplay)
 	}
-	// Switcher on the left, "Ghost Tab" right-aligned: "AGENT ◀ Claude Code ▶" left, "Ghost Tab" right
+	// Switcher on the left, "Ghost Tab" right-aligned: "AGENT ◄ Claude Code ►" left, "Ghost Tab" right
 	aiPadding := menuContentWidth - lipgloss.Width(title) - lipgloss.Width(aiPart) - 1 // -1 for leading space
 	if aiPadding < 1 {
 		aiPadding = 1
@@ -145,7 +145,7 @@ func (m *MainMenuModel) renderAccountRow(leftBorder, rightBorder string) string 
 	if m.focus == FocusAccount || m.isHovered(regionAccount) {
 		chevronStyle = lipgloss.NewStyle().Foreground(m.theme.Accent)
 	}
-	content := acctLabel + chevronStyle.Render("◀ ") + nameStyle.Render(label) + chevronStyle.Render(" ▶")
+	content := acctLabel + chevronStyle.Render("◄ ") + nameStyle.Render(label) + chevronStyle.Render(" ►")
 
 	pad := menuContentWidth - lipgloss.Width(content) - 1 // -1 for leading space
 	if pad < 1 {
@@ -182,7 +182,7 @@ func (m *MainMenuModel) renderSubscriptionRow(leftBorder, rightBorder string) st
 		if m.focus == FocusSubscription || m.isHovered(regionSubscription) {
 			chevronStyle = lipgloss.NewStyle().Foreground(m.theme.Accent)
 		}
-		content = planLabel + chevronStyle.Render("◀ ") + nameStyle.Render(name) + chevronStyle.Render(" ▶")
+		content = planLabel + chevronStyle.Render("◄ ") + nameStyle.Render(name) + chevronStyle.Render(" ►")
 	} else {
 		content = planLabel + nameStyle.Render(name)
 	}

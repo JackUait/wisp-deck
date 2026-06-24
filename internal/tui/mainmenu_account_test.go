@@ -57,7 +57,7 @@ func TestAccountRow_shownAtTopWhenAccountsExist(t *testing.T) {
 		t.Errorf("LOGIN row must be above AGENT row (login=%d agent=%d)", loginIdx, agentIdx)
 	}
 	row := stripAnsi(m.renderAccountRow("│", "│"))
-	if !strings.Contains(row, "Default") || !strings.Contains(row, "◀") || !strings.Contains(row, "▶") {
+	if !strings.Contains(row, "Default") || !strings.Contains(row, "◄") || !strings.Contains(row, "►") {
 		t.Errorf("expected Default with chevrons: %q", row)
 	}
 }
