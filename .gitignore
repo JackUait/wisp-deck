@@ -7,7 +7,7 @@ docs/plans/
 bin/wisp-deck-tui
 *.test
 *.out
-wisp-deck-tui
+/wisp-deck-tui
 .worktrees/
 .env
 
