@@ -3336,7 +3336,7 @@ func (m *MainMenuModel) View() string {
 
 	switch ghostPosition {
 	case "side":
-		ghostLines := GhostForTool(m.CurrentAITool(), m.ghostSleeping)
+		ghostLines := GhostForTheme(m.CurrentAITool(), m.ghostSleeping, m.theme)
 		ghostStr := RenderGhost(ghostLines)
 		if m.ghostSleeping && m.zzz != nil {
 			zzzColor := AnsiFromThemeColor(m.theme.SleepAccent)
@@ -3370,7 +3370,7 @@ func (m *MainMenuModel) View() string {
 		content = lipgloss.JoinHorizontal(lipgloss.Center, menuBox, spacer, ghostStr)
 
 	case "above":
-		ghostLines := GhostForTool(m.CurrentAITool(), m.ghostSleeping)
+		ghostLines := GhostForTheme(m.CurrentAITool(), m.ghostSleeping, m.theme)
 		ghostStr := RenderGhost(ghostLines)
 		if m.ghostSleeping && m.zzz != nil {
 			zzzColor := AnsiFromThemeColor(m.theme.SleepAccent)

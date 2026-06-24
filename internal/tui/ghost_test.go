@@ -142,6 +142,45 @@ func TestGhostForTool_sleeping_line_count(t *testing.T) {
 	}
 }
 
+func TestGhostForTheme_uses_passed_theme_colors(t *testing.T) {
+	// The claude ghost shape painted with the green preset should use the
+	// green Primary (78) for its body and NOT the claude orange Primary (209).
+	joined := strings.Join(GhostForTheme("claude", false, presetThemes["green"]), "\n")
+
+	if !strings.Contains(joined, "\033[38;5;78m") {
+		t.Error("green-themed claude ghost should use green Primary (78)")
+	}
+	if strings.Contains(joined, "\033[38;5;209m") {
+		t.Error("green-themed claude ghost should NOT use claude orange Primary (209)")
+	}
+}
+
+func TestGhostForTheme_keeps_tool_shape(t *testing.T) {
+	// Painting the opencode shape with the claude palette must still produce the
+	// opencode shape (15 awake lines), proving shape comes from tool, color from theme.
+	lines := GhostForTheme("opencode", false, themes["claude"])
+	if len(lines) != 15 {
+		t.Fatalf("expected 15 lines for awake opencode shape, got %d", len(lines))
+	}
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "\033[38;5;209m") {
+		t.Error("opencode shape painted with claude palette should use claude Primary (209)")
+	}
+}
+
+func TestGhostForTool_delegates_to_per_tool_theme(t *testing.T) {
+	// GhostForTool must still match GhostForTheme with the tool's own palette.
+	for _, tool := range []string{"claude", "opencode"} {
+		for _, sleeping := range []bool{false, true} {
+			got := strings.Join(GhostForTool(tool, sleeping), "\n")
+			want := strings.Join(GhostForTheme(tool, sleeping, ThemeForTool(tool)), "\n")
+			if got != want {
+				t.Errorf("GhostForTool(%q,%v) should equal GhostForTheme with per-tool palette", tool, sleeping)
+			}
+		}
+	}
+}
+
 func TestRenderGhost_sleeping(t *testing.T) {
 	lines := GhostForTool("claude", true)
 	result := RenderGhost(lines)

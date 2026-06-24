@@ -74,6 +74,22 @@ func TestLogoModel_View_uncentered_when_dimensions_unknown(t *testing.T) {
 	}
 }
 
+func TestLogoModel_View_uses_active_theme(t *testing.T) {
+	// The logo splash should follow the active (resolved) theme, so a green
+	// preset turns even the claude ghost shape green.
+	restoreClaudeTheme(t)
+	ApplyTheme(presetThemes["green"])
+
+	m := NewLogo("claude")
+	got := m.View()
+	if !strings.Contains(got, "\033[38;5;78m") {
+		t.Error("logo should use green Primary (78) when the green theme is active")
+	}
+	if strings.Contains(got, "\033[38;5;209m") {
+		t.Error("logo should NOT use claude orange Primary (209) when green theme is active")
+	}
+}
+
 func TestLogoModel_View_centers_when_dimensions_known(t *testing.T) {
 	m := NewLogo("")
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})

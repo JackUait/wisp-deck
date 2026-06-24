@@ -70,7 +70,7 @@ func (m LogoModel) View() string {
 		return ""
 	}
 
-	lines := GhostForTool(m.tool, false)
+	lines := GhostForTheme(m.tool, false, currentTheme)
 	if m.width > 0 && m.height > 0 {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, RenderGhost(lines))
 	}

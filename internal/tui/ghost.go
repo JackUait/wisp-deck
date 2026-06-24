@@ -126,10 +126,11 @@ func ghostOpencodeSleeping(theme AIToolTheme) []string {
 	}
 }
 
-// GhostForTool returns the ghost ASCII art lines for the given tool.
-// Unknown tools fall back to the claude ghost.
-func GhostForTool(tool string, sleeping bool) []string {
-	theme := ThemeForTool(tool)
+// GhostForTheme returns the ghost ASCII art lines for the given tool, painted
+// with the supplied palette. The tool selects the mascot SHAPE (claude vs
+// opencode); the theme supplies the COLORS — so a user-selected preset recolors
+// either mascot. Unknown tools fall back to the claude shape.
+func GhostForTheme(tool string, sleeping bool, theme AIToolTheme) []string {
 	switch tool {
 	case "opencode":
 		if sleeping {
@@ -143,6 +144,13 @@ func GhostForTool(tool string, sleeping bool) []string {
 		}
 		return ghostClaude(theme)
 	}
+}
+
+// GhostForTool returns the ghost ASCII art lines for the given tool using that
+// tool's own default palette (the "auto" theme). For a user-selected preset,
+// use GhostForTheme with the resolved theme instead.
+func GhostForTool(tool string, sleeping bool) []string {
+	return GhostForTheme(tool, sleeping, ThemeForTool(tool))
 }
 
 // RenderGhost joins ghost lines with newlines into a single string.
