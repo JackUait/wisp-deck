@@ -10,3 +10,7 @@ bin/ghost-tab-tui
 ghost-tab-tui
 .worktrees/
 .env
+
+# Throwaway test/automation artifacts
+.playwright-cli/
+zz_throwaway_e2e/
