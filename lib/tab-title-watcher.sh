@@ -224,7 +224,8 @@ model_tab_title() {
 
 # Write the terminal tab title for the given state, honoring the title mode.
 # Usage: apply_tab_title <state> <mode> <project> <tool>
-#   state: "waiting" (idle, ● prefix) or "active"
+#   state: "waiting" (idle) or "active" — both render the plain title; the
+#          waiting cue is Ghostty's native bell icon, not a text dot
 #   mode:  "full" (project · tool), "project" (project only), or
 #          "model" (leave the AI tool's own title alone — it set the title itself)
 apply_tab_title() {

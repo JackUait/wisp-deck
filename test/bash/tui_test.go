@@ -158,17 +158,20 @@ func TestTui_set_tab_title_omits_tool_name_when_empty(t *testing.T) {
 
 // --- set_tab_title_waiting ---
 
-func TestTui_set_tab_title_waiting_includes_bullet_prefix_with_project_and_tool(t *testing.T) {
+// The waiting title must NOT prepend a dot — Ghostty's native bell icon is the
+// only waiting indicator, so the waiting title matches the plain active title.
+func TestTui_set_tab_title_waiting_has_no_dot_with_project_and_tool(t *testing.T) {
 	root := projectRoot(t)
 	modulePath := filepath.Join(root, "lib/tui.sh")
 	script := fmt.Sprintf(`source %q && set_tab_title_waiting "ghost-tab" "claude"`, modulePath)
 
 	out, code := runBashSnippet(t, script, nil)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, "● ghost-tab · claude")
+	assertContains(t, out, "ghost-tab · claude")
+	assertNotContains(t, out, "●")
 }
 
-func TestTui_set_tab_title_waiting_outputs_OSC_escape_with_bullet_prefix(t *testing.T) {
+func TestTui_set_tab_title_waiting_outputs_plain_OSC_escape(t *testing.T) {
 	root := projectRoot(t)
 	modulePath := filepath.Join(root, "lib/tui.sh")
 	script := fmt.Sprintf(`source %q && set_tab_title_waiting "myproject" "opencode"`, modulePath)
@@ -176,7 +179,7 @@ func TestTui_set_tab_title_waiting_outputs_OSC_escape_with_bullet_prefix(t *test
 	out, code := runBashSnippet(t, script, nil)
 	assertExitCode(t, code, 0)
 
-	expected := "\033]0;● myproject · opencode\007"
+	expected := "\033]0;myproject · opencode\007"
 	if out != expected {
 		t.Errorf("set_tab_title_waiting output = %q, want %q", out, expected)
 	}
@@ -190,7 +193,7 @@ func TestTui_set_tab_title_waiting_omits_tool_when_empty(t *testing.T) {
 	out, code := runBashSnippet(t, script, nil)
 	assertExitCode(t, code, 0)
 
-	expected := "\033]0;● myproject\007"
+	expected := "\033]0;myproject\007"
 	if out != expected {
 		t.Errorf("set_tab_title_waiting output = %q, want %q", out, expected)
 	}

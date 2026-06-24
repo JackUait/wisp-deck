@@ -918,11 +918,12 @@ func TestTabTitleWatcher_apply_tab_title_full_active_includes_tool(t *testing.T)
 	assertNotContains(t, out, "●") // no waiting dot when active
 }
 
-func TestTabTitleWatcher_apply_tab_title_full_waiting_prepends_dot(t *testing.T) {
+func TestTabTitleWatcher_apply_tab_title_full_waiting_has_no_dot(t *testing.T) {
 	snippet := tabTitleSnippet(t, `apply_tab_title "waiting" "full" "myproj" "claude"`)
 	out, code := runBashSnippet(t, snippet, nil)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, "● myproj · claude")
+	assertContains(t, out, "myproj · claude")
+	assertNotContains(t, out, "●") // bell icon is the only waiting indicator, no dot
 }
 
 func TestTabTitleWatcher_apply_tab_title_project_active_omits_tool(t *testing.T) {
