@@ -118,6 +118,11 @@ elif [ -z "$1" ]; then
 
   while true; do
     if select_project_interactive "$PROJECTS_FILE"; then
+      # The menu just closed: push any settings change (theme, panel mode) to
+      # every OTHER already-running session so a toggle reaches all open windows,
+      # not just newly-launched ones. This window's own session does not exist
+      # yet, so it is untouched here.
+      apply_settings_to_all_sessions "$TMUX_CMD" "${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab/settings" 2>/dev/null || true
       # Update AI tool if user cycled it in the menu (for all actions)
       if [[ -n "${_selected_ai_tool:-}" ]]; then
         SELECTED_AI_TOOL="$_selected_ai_tool"
@@ -143,7 +148,9 @@ elif [ -z "$1" ]; then
           ;;
       esac
     else
-      # User quit (ESC/Ctrl-C)
+      # User quit (ESC/Ctrl-C) — still propagate any settings change they made
+      # before quitting to the other running sessions.
+      apply_settings_to_all_sessions "$TMUX_CMD" "${XDG_CONFIG_HOME:-$HOME/.config}/ghost-tab/settings" 2>/dev/null || true
       exit 0
     fi
   done
@@ -343,6 +350,7 @@ _spare_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/spare-tabs.sh\" && spare_
   set-option exit-unattached on \; \
   set-option pane-border-style "fg=colour238" \; \
   set-option pane-active-border-style "fg=colour${_gt_accent}" \; \
+  set-option @gt_panel_mode "$_panel_mode" \; \
   bind-key i run-shell "$_screenshot_bind" \; \
   bind-key t run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label new-window -c \"$PROJECT_DIR\"" \; \
   bind-key w run-shell "$_spare_close_bind" \; \
