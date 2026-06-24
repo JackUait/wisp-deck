@@ -1,6 +1,6 @@
 {
   "name": "wisp-deck",
-  "version": "2.14.0",
+  "version": "2.15.0",
   "description": "Terminal + tmux wrapper for AI coding tools (Claude Code, OpenCode)",
   "bin": {
     "wisp-deck": "bin/npx-wisp-deck.js"
