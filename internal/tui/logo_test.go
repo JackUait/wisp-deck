@@ -78,7 +78,7 @@ func TestLogoModel_View_uses_active_theme(t *testing.T) {
 	// The logo splash should follow the active (resolved) theme, so a green
 	// preset turns even the claude ghost shape green.
 	restoreClaudeTheme(t)
-	ApplyTheme(presetThemes["green"])
+	ApplyTheme(ResolveTheme("claude", "green"))
 
 	m := NewLogo("claude")
 	got := m.View()

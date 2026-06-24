@@ -9,13 +9,13 @@ const r = "\033[0m"
 
 // ghostClaude returns the awake Claude ghost ASCII art (15 lines, 28 visible chars wide).
 func ghostClaude(theme AIToolTheme) []string {
-	O := AnsiFromThemeColor(theme.Primary)   // orange
-	D := AnsiFromThemeColor(theme.Bright)    // deeper orange
-	B := AnsiFromThemeColor(theme.DarkFeet)  // dark orange
-	L := AnsiFromThemeColor(theme.Cap)       // peach
-	W := AnsiFromThemeColor(theme.EyeWhite)  // white
-	K := AnsiFromThemeColor(theme.EyePupil)  // black
-	Y := AnsiFromThemeColor(theme.Accent)    // gold
+	O := AnsiFromThemeColor(theme.Primary)  // orange
+	D := AnsiFromThemeColor(theme.Bright)   // deeper orange
+	B := AnsiFromThemeColor(theme.DarkFeet) // dark orange
+	L := AnsiFromThemeColor(theme.Cap)      // peach
+	W := AnsiFromThemeColor(theme.EyeWhite) // white
+	K := AnsiFromThemeColor(theme.EyePupil) // black
+	Y := AnsiFromThemeColor(theme.Accent)   // gold
 
 	return []string{
 		r + "       " + L + "\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584" + r + "       ",

@@ -145,7 +145,7 @@ func TestGhostForTool_sleeping_line_count(t *testing.T) {
 func TestGhostForTheme_uses_passed_theme_colors(t *testing.T) {
 	// The claude ghost shape painted with the green preset should use the
 	// green Primary (78) for its body and NOT the claude orange Primary (209).
-	joined := strings.Join(GhostForTheme("claude", false, presetThemes["green"]), "\n")
+	joined := strings.Join(GhostForTheme("claude", false, ResolveTheme("claude", "green")), "\n")
 
 	if !strings.Contains(joined, "\033[38;5;78m") {
 		t.Error("green-themed claude ghost should use green Primary (78)")
