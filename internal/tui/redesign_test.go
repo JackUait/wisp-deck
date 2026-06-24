@@ -266,6 +266,69 @@ func TestRenderSubscriptionRow_chevronAlignsWithAgentRow(t *testing.T) {
 	}
 }
 
+// captionColored reports the foreground sequence + glyph that settingsCaption
+// emits, so the highlight tests can assert the icon's color directly.
+func captionColored(color, glyph string) string { return "\x1b[38;5;" + color + "m" + glyph }
+
+// Idle, the caption glyph is neutral gray; when the user targets the switcher
+// (keyboard focus or hover) it brightens to the accent, matching the chevrons —
+// so the icon itself reads as the live ←/→ target.
+func TestRenderTitleRow_iconHighlightsOnFocus(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	m := NewMainMenu(nil, []string{"claude", "opencode"}, "claude", "none")
+	_, _, _, lb, rb := m.boxBorders()
+	accent := captionColored(string(m.theme.Accent), iconAgent)
+	gray := captionColored("245", iconAgent)
+
+	if row := m.renderTitleRow(lb, rb); !strings.Contains(row, gray) || strings.Contains(row, accent) {
+		t.Errorf("idle AGENT icon should be neutral gray, not accent: %q", row)
+	}
+	m.SetFocus(FocusAI)
+	if row := m.renderTitleRow(lb, rb); !strings.Contains(row, accent) {
+		t.Errorf("focused AGENT icon should brighten to accent %s: %q", string(m.theme.Accent), row)
+	}
+}
+
+func TestRenderAccountRow_iconHighlightsOnFocus(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	m := acctTestMenu("claude")
+	m.SetClaudeAccounts([]ClaudeAccount{{Label: "Work", Dir: "work"}})
+	accent := captionColored(string(m.theme.Accent), iconLogin)
+	gray := captionColored("245", iconLogin)
+
+	if row := m.renderAccountRow("│", "│"); !strings.Contains(row, gray) || strings.Contains(row, accent) {
+		t.Errorf("idle LOGIN icon should be neutral gray, not accent: %q", row)
+	}
+	m.SetFocus(FocusAccount)
+	if row := m.renderAccountRow("│", "│"); !strings.Contains(row, accent) {
+		t.Errorf("focused LOGIN icon should brighten to accent %s: %q", string(m.theme.Accent), row)
+	}
+}
+
+func TestRenderSubscriptionRow_iconHighlightsOnFocus(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	m := subFocusMenu(t, "claude", true)
+	accent := captionColored(string(m.theme.Accent), iconPlan)
+	gray := captionColored("245", iconPlan)
+
+	if row := m.renderSubscriptionRow("│", "│"); !strings.Contains(row, gray) || strings.Contains(row, accent) {
+		t.Errorf("idle PLAN icon should be neutral gray, not accent: %q", row)
+	}
+	m.SetFocus(FocusSubscription)
+	if row := m.renderSubscriptionRow("│", "│"); !strings.Contains(row, accent) {
+		t.Errorf("focused PLAN icon should brighten to accent %s: %q", string(m.theme.Accent), row)
+	}
+}
+
 // The footer hint spells out the rare shortcuts instead of cryptic "O once".
 func TestFocusHint_projectsBodyExpandsAbbreviations(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none") // focus body, projects tab
