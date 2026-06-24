@@ -707,7 +707,7 @@ func TestMainMenu_ViewShowsAIToolWithArrows(t *testing.T) {
 	m := tui.NewMainMenu(projects, tools, "claude", "animated")
 	m.SetSize(80, 30)
 	view := m.View()
-	if !strings.Contains(view, "\u25c2") || !strings.Contains(view, "\u25b8") {
+	if !strings.Contains(view, "\u25c0") || !strings.Contains(view, "\u25b6") {
 		t.Error("view should show AI tool cycling arrows when multiple tools")
 	}
 	if !strings.Contains(view, "Claude Code") {
@@ -719,7 +719,7 @@ func TestMainMenu_ViewNoArrowsSingleTool(t *testing.T) {
 	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 	view := m.View()
-	if strings.Contains(view, "\u25c2") || strings.Contains(view, "\u25b8") {
+	if strings.Contains(view, "\u25c0") || strings.Contains(view, "\u25b6") {
 		t.Error("should not show cycling arrows with single tool")
 	}
 }

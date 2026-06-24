@@ -97,7 +97,7 @@ func tabHitRanges() [][2]int {
 }
 
 // switcherName returns the value label rendered in a switcher row, used to find
-// the midpoint that separates the ◂ (prev) side from the ▸ (next) side.
+// the midpoint that separates the ◀ (prev) side from the ▶ (next) side.
 func (m *MainMenuModel) switcherName(region mouseRegion) string {
 	switch region {
 	case regionAI:
@@ -111,10 +111,10 @@ func (m *MainMenuModel) switcherName(region mouseRegion) string {
 }
 
 // switcherPrev reports whether a box-relative X on a switcher row falls on the
-// "previous" (left/◂) side. Every switcher caption is padded to width 6
+// "previous" (left/◀) side. Every switcher caption is padded to width 6
 // ("AGENT ", "LOGIN ", "PLAN  "), so the value name starts at column 10
-// (col 0 border, col 1 space, cols 2..7 caption, col 8 ◂, col 9 space). The
-// value's own midpoint cleanly divides the ◂ side from the ▸ side.
+// (col 0 border, col 1 space, cols 2..7 caption, col 8 ◀, col 9 space). The
+// value's own midpoint cleanly divides the ◀ side from the ▶ side.
 func (m *MainMenuModel) switcherPrev(boxX int, region mouseRegion) bool {
 	const nameStartCol = 10
 	mid := nameStartCol + lipgloss.Width(m.switcherName(region))/2
@@ -127,7 +127,7 @@ func (m *MainMenuModel) switcherPrev(boxX int, region mouseRegion) bool {
 const switcherControlStart = 2
 
 // switcherSpanEnd is the exclusive box column where a switcher's control ends.
-// Layout after the caption: ◂(col 8) space(9) value(10..10+w) then " ▸"(2 cols),
+// Layout after the caption: ◀(col 8) space(9) value(10..10+w) then " ▶"(2 cols),
 // so the control occupies [switcherControlStart, 12+w). Hovering past it — the
 // gap and the right-aligned "Ghost Tab" title — is not the switcher.
 func (m *MainMenuModel) switcherSpanEnd(region mouseRegion) int {
@@ -135,7 +135,7 @@ func (m *MainMenuModel) switcherSpanEnd(region mouseRegion) int {
 }
 
 // onSwitcherControl reports whether a box column falls on a switcher's actual
-// control span (caption + ◂ value ▸), so the empty remainder of the row never
+// control span (caption + ◀ value ▶), so the empty remainder of the row never
 // registers as the switcher.
 func (m *MainMenuModel) onSwitcherControl(boxX int, region mouseRegion) bool {
 	return boxX >= switcherControlStart && boxX < m.switcherSpanEnd(region)

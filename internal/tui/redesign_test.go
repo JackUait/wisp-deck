@@ -255,10 +255,10 @@ func TestRenderSubscriptionRow_chevronAlignsWithAgentRow(t *testing.T) {
 	m := subFocusMenu(t, "claude", true)
 	agentRow := stripAnsi(m.renderTitleRow("│", "│"))
 	planRow := stripAnsi(m.renderSubscriptionRow("│", "│"))
-	agentChevron := strings.Index(agentRow, "◂")
-	planChevron := strings.Index(planRow, "◂")
+	agentChevron := strings.Index(agentRow, "◀")
+	planChevron := strings.Index(planRow, "◀")
 	if agentChevron < 0 || planChevron < 0 {
-		t.Fatalf("both rows should carry a ◂ chevron: agent=%q plan=%q", agentRow, planRow)
+		t.Fatalf("both rows should carry a ◀ chevron: agent=%q plan=%q", agentRow, planRow)
 	}
 	if agentChevron != planChevron {
 		t.Errorf("PLAN chevron should align with AGENT chevron: agent col %d (%q), plan col %d (%q)",

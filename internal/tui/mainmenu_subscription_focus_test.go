@@ -170,7 +170,7 @@ func TestSubFocus_rightOnSubscriptionDoesNotCycleAI(t *testing.T) {
 func TestSubscriptionRow_showsChevronsWhenFocusable(t *testing.T) {
 	m := subFocusMenu(t, "claude", true)
 	row := stripAnsi(m.renderSubscriptionRow("│", "│"))
-	if !strings.Contains(row, "◂") || !strings.Contains(row, "▸") {
+	if !strings.Contains(row, "◀") || !strings.Contains(row, "▶") {
 		t.Errorf("subscription row missing cycle chevrons when focusable:\n%s", row)
 	}
 }
@@ -178,7 +178,7 @@ func TestSubscriptionRow_showsChevronsWhenFocusable(t *testing.T) {
 func TestSubscriptionRow_noChevronsWhenNoConfigs(t *testing.T) {
 	m := subFocusMenu(t, "claude", false)
 	row := stripAnsi(m.renderSubscriptionRow("│", "│"))
-	if strings.Contains(row, "◂") || strings.Contains(row, "▸") {
+	if strings.Contains(row, "◀") || strings.Contains(row, "▶") {
 		t.Errorf("subscription row should not show chevrons with no custom configs:\n%s", row)
 	}
 }

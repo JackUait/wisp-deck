@@ -55,11 +55,11 @@ func TestMenuBox_AIToolRightAligned(t *testing.T) {
 	}
 	// There should be significant whitespace padding between the switcher's last
 	// chevron and the right-aligned title.
-	lastArrow := strings.LastIndex(raw, "▸")
+	lastArrow := strings.LastIndex(raw, "▶")
 	if lastArrow < 0 || lastArrow > ghostIdx {
 		t.Fatalf("could not find switcher chevron left of Ghost Tab in %q", raw)
 	}
-	gap := raw[lastArrow+len("▸") : ghostIdx]
+	gap := raw[lastArrow+len("▶") : ghostIdx]
 	if len(strings.TrimSpace(gap)) != 0 {
 		t.Errorf("expected only whitespace between the switcher and Ghost Tab, got %q", gap)
 	}
