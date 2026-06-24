@@ -54,17 +54,52 @@ func TestMenuBox_AIToolRightAligned(t *testing.T) {
 		t.Errorf("expected AGENT switcher left of Ghost Tab, got agent=%d ghost=%d in %q", agentIdx, ghostIdx, raw)
 	}
 	// There should be significant whitespace padding between the switcher's last
-	// chevron and the right-aligned title.
+	// chevron and the right-aligned title. The title now leads with the ghost icon,
+	// so the gap runs up to that icon (not the "Ghost Tab" wordmark).
+	titleStart := strings.Index(raw, iconGhost)
+	if titleStart < 0 {
+		titleStart = ghostIdx
+	}
 	lastArrow := strings.LastIndex(raw, iconChevronRight)
-	if lastArrow < 0 || lastArrow > ghostIdx {
+	if lastArrow < 0 || lastArrow > titleStart {
 		t.Fatalf("could not find switcher chevron left of Ghost Tab in %q", raw)
 	}
-	gap := raw[lastArrow+len(iconChevronRight) : ghostIdx]
+	gap := raw[lastArrow+len(iconChevronRight) : titleStart]
 	if len(strings.TrimSpace(gap)) != 0 {
 		t.Errorf("expected only whitespace between the switcher and Ghost Tab, got %q", gap)
 	}
 	if len(gap) < 5 {
 		t.Errorf("expected at least 5 chars padding for right-alignment, got %d: %q", len(gap), gap)
+	}
+}
+
+func TestMenuBox_TitleHasGhostIcon(t *testing.T) {
+	m := newTestMenu()
+	box := m.renderMenuBox()
+	lines := strings.Split(box, "\n")
+	if len(lines) < 2 {
+		t.Fatal("renderMenuBox produced fewer than 2 lines")
+	}
+	raw := stripAnsi(lines[1]) // title row
+
+	ghostIdx := strings.Index(raw, "Ghost Tab")
+	iconIdx := strings.Index(raw, iconGhost)
+	if iconIdx < 0 {
+		t.Fatalf("expected ghost icon in title row, got: %q", raw)
+	}
+	if ghostIdx < 0 || iconIdx > ghostIdx {
+		t.Fatalf("expected ghost icon left of 'Ghost Tab', got icon=%d ghost=%d in %q", iconIdx, ghostIdx, raw)
+	}
+	// The icon captions the wordmark directly: only a single space separates them.
+	between := raw[iconIdx+len(iconGhost) : ghostIdx]
+	if between != " " {
+		t.Errorf("expected exactly one space between ghost icon and 'Ghost Tab', got %q", between)
+	}
+	// The title (icon + wordmark) is still right-aligned against the border.
+	borderChar := strings.LastIndex(raw, "│")
+	trailing := raw[ghostIdx+len("Ghost Tab") : borderChar]
+	if len(strings.TrimSpace(trailing)) != 0 || len(trailing) < 1 {
+		t.Errorf("expected only whitespace between 'Ghost Tab' and border, got: %q", trailing)
 	}
 }
 

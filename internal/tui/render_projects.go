@@ -17,6 +17,7 @@ const (
 	iconLogin = "\U000F0004" // nf-md-account — which Claude login is active
 	iconAgent = "\U000F06A9" // nf-md-robot   — the AI agent (Claude Code / OpenCode)
 	iconPlan  = "\U000F0148" // nf-md-crown   — the Claude subscription tier
+	iconGhost = "\U000F04EE" // nf-md-ghost   — captions the "Ghost Tab" wordmark
 
 	// Switcher prev/next buttons. Material Design chevrons from the same nerd-font
 	// family as the caption icons above; both are one-cell glyphs so the
@@ -78,7 +79,7 @@ func (m *MainMenuModel) renderTitleRow(leftBorder, rightBorder string) string {
 	primaryStyle := lipgloss.NewStyle().Foreground(m.theme.Primary)
 	primaryBoldStyle := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
 
-	title := primaryBoldStyle.Render("Ghost Tab")
+	title := primaryBoldStyle.Render(iconGhost + " Ghost Tab")
 	aiDisplay := AIToolDisplayName(m.CurrentAITool())
 	// Idle chevrons are neutral gray so they don't read as another accent. When
 	// the AI switcher holds focus, the chevrons and name brighten so it reads as
