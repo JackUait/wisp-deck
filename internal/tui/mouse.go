@@ -110,28 +110,32 @@ func (m *MainMenuModel) switcherName(region mouseRegion) string {
 	return ""
 }
 
+// switcherControlStart is the box column where a switcher's control begins — the
+// caption (icon + label) that starts after the border + leading space.
+const switcherControlStart = 2
+
+// switcherNameStartCol is the box column where a switcher's value name begins:
+// switcherControlStart + the caption width + the left chevron and its trailing
+// space ("‹ ", 2 cols). The caption is the same width on every row, so this is
+// derived from the actual caption rather than a hard-coded column — keeping the
+// click map in lockstep with the rendering when captions change.
+func switcherNameStartCol() int {
+	return switcherControlStart + lipgloss.Width(captionText(iconAgent, "Agent")) + 2
+}
+
 // switcherPrev reports whether a box-relative X on a switcher row falls on the
-// "previous" (left/‹) side. Every switcher caption is padded to width 6
-// ("AGENT ", "LOGIN ", "PLAN  "), so the value name starts at column 10
-// (col 0 border, col 1 space, cols 2..7 caption, col 8 ‹, col 9 space). The
-// value's own midpoint cleanly divides the ‹ side from the › side.
+// "previous" (left/‹) side. The value's own midpoint cleanly divides the ‹ side
+// from the › side.
 func (m *MainMenuModel) switcherPrev(boxX int, region mouseRegion) bool {
-	const nameStartCol = 10
-	mid := nameStartCol + lipgloss.Width(m.switcherName(region))/2
+	mid := switcherNameStartCol() + lipgloss.Width(m.switcherName(region))/2
 	return boxX < mid
 }
 
-// switcherControlStart is the box column where a switcher's control begins — the
-// caption ("AGENT "/"LOGIN "/"PLAN  ") that starts after the border + leading
-// space.
-const switcherControlStart = 2
-
 // switcherSpanEnd is the exclusive box column where a switcher's control ends.
-// Layout after the caption: ‹(col 8) space(9) value(10..10+w) then " ›"(2 cols),
-// so the control occupies [switcherControlStart, 12+w). Hovering past it — the
-// gap and the right-aligned "Ghost Tab" title — is not the switcher.
+// Layout after the name start: value(w) then " ›" (2 cols). Hovering past it —
+// the gap and the right-aligned "Ghost Tab" title — is not the switcher.
 func (m *MainMenuModel) switcherSpanEnd(region mouseRegion) int {
-	return 12 + lipgloss.Width(m.switcherName(region))
+	return switcherNameStartCol() + lipgloss.Width(m.switcherName(region)) + 2
 }
 
 // onSwitcherControl reports whether a box column falls on a switcher's actual

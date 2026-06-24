@@ -25,17 +25,29 @@ const (
 	iconChevronRight = "\U000F0142" // nf-md-chevron_right
 )
 
-// settingsCaption renders a header-row caption glyph. Idle it is neutral gray;
-// when the row is targeted (keyboard focus or hover) it brightens to the accent
-// so the icon reads as the live ←/→ target, matching the chevrons beside it. The
-// two trailing spaces separate the icon from the chevron cluster and, being
-// identical across rows, keep the LOGIN/AGENT/PLAN chevrons aligned.
-func (m *MainMenuModel) settingsCaption(glyph string, focused bool) string {
+// captionLabelWidth pads every switcher label to the widest one ("Login"/"Agent")
+// so the icons, labels, and chevrons line up vertically across the LOGIN/AGENT/PLAN
+// rows.
+const captionLabelWidth = 5
+
+// captionText is the raw (unstyled) switcher caption: the row's nerd-font icon, a
+// space, the label padded to captionLabelWidth, and a trailing space that
+// separates it from the chevron cluster. Its width is identical across rows, so
+// the mouse HitTest derives the value-name column from it (see mouse.go).
+func captionText(glyph, label string) string {
+	return fmt.Sprintf("%s %-*s ", glyph, captionLabelWidth, label)
+}
+
+// settingsCaption renders a header-row caption (icon + label, e.g. "🤖 Agent").
+// Idle it is neutral gray; when the row is targeted (keyboard focus or hover) it
+// brightens to the accent so the caption reads as the live ‹/› target, matching
+// the chevrons beside it. The padded label keeps the chevrons aligned across rows.
+func (m *MainMenuModel) settingsCaption(glyph, label string, focused bool) string {
 	color := lipgloss.Color("245")
 	if focused {
 		color = m.theme.Accent
 	}
-	return lipgloss.NewStyle().Foreground(color).Render(glyph + "  ")
+	return lipgloss.NewStyle().Foreground(color).Render(captionText(glyph, label))
 }
 
 // actionBarFor returns the contextual action label text for a selected row type.
@@ -90,7 +102,7 @@ func (m *MainMenuModel) renderTitleRow(leftBorder, rightBorder string) string {
 		nameStyle = lipgloss.NewStyle().Foreground(m.theme.Bright).Bold(true)
 	}
 	// The robot glyph captions the control so it reads as "this switches the agent".
-	agentLabel := m.settingsCaption(iconAgent, m.focus == FocusAI || m.isHovered(regionAI))
+	agentLabel := m.settingsCaption(iconAgent, "Agent", m.focus == FocusAI || m.isHovered(regionAI))
 	var aiPart string
 	if len(m.aiTools) > 1 {
 		aiPart = agentLabel + chevronStyle.Render(iconChevronLeft+" ") + nameStyle.Render(aiDisplay) + chevronStyle.Render(" "+iconChevronRight)
@@ -144,7 +156,7 @@ func (m *MainMenuModel) renderAccountRow(leftBorder, rightBorder string) string 
 		nameStyle = lipgloss.NewStyle().Foreground(m.theme.Bright).Bold(true)
 	}
 
-	acctLabel := m.settingsCaption(iconLogin, m.focus == FocusAccount || m.isHovered(regionAccount))
+	acctLabel := m.settingsCaption(iconLogin, "Login", m.focus == FocusAccount || m.isHovered(regionAccount))
 	// The row only renders when a managed account exists, so there is always a
 	// choice to switch between (Default + the account) — the chevrons always show.
 	chevronStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
@@ -179,7 +191,7 @@ func (m *MainMenuModel) renderSubscriptionRow(leftBorder, rightBorder string) st
 
 	// The crown glyph captions the subscription, mirroring the AGENT/LOGIN icons
 	// above it so the three switcher chevrons line up vertically.
-	planLabel := m.settingsCaption(iconPlan, m.focus == FocusSubscription || m.isHovered(regionSubscription))
+	planLabel := m.settingsCaption(iconPlan, "Plan", m.focus == FocusSubscription || m.isHovered(regionSubscription))
 	// Show cycle chevrons only when there is something to switch to. Idle chevrons
 	// are neutral gray; they brighten only when this row holds focus.
 	var content string

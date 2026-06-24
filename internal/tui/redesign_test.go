@@ -266,6 +266,29 @@ func TestRenderSubscriptionRow_chevronAlignsWithAgentRow(t *testing.T) {
 	}
 }
 
+// Each switcher caption carries a text label after its icon (Login/Agent/Plan)
+// so the row reads "<icon> <Label> ‹ value ›".
+func TestSwitcherCaptions_haveTextLabels(t *testing.T) {
+	m := subFocusMenu(t, "claude", true)
+	m.SetClaudeAccounts([]ClaudeAccount{{Label: "Work", Dir: "work"}})
+	cases := []struct{ name, row, label, icon string }{
+		{"agent", stripAnsi(m.renderTitleRow("│", "│")), "Agent", iconAgent},
+		{"login", stripAnsi(m.renderAccountRow("│", "│")), "Login", iconLogin},
+		{"plan", stripAnsi(m.renderSubscriptionRow("│", "│")), "Plan", iconPlan},
+	}
+	for _, c := range cases {
+		iconIdx := strings.Index(c.row, c.icon)
+		labelIdx := strings.Index(c.row, c.label)
+		if labelIdx < 0 {
+			t.Errorf("%s row missing %q label: %q", c.name, c.label, c.row)
+			continue
+		}
+		if iconIdx < 0 || iconIdx >= labelIdx {
+			t.Errorf("%s row: %q label should sit just after the icon: %q", c.name, c.label, c.row)
+		}
+	}
+}
+
 // captionColored reports the foreground sequence + glyph that settingsCaption
 // emits, so the highlight tests can assert the icon's color directly.
 func captionColored(color, glyph string) string { return "\x1b[38;5;" + color + "m" + glyph }
