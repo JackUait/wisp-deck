@@ -267,9 +267,10 @@ export WISP_DECK_PLAN
 # the installed TUI binary supports the subcommand, so an older binary safely
 # falls back to launching Claude directly.
 WISP_DECK_CLAUDE_FILTER=""
-if [ "$SELECTED_AI_TOOL" = "claude" ] && command -v wisp-deck-tui &>/dev/null \
-  && wisp-deck-tui screenshot-filter -- true >/dev/null 2>&1; then
-  WISP_DECK_CLAUDE_FILTER="wisp-deck-tui screenshot-filter -- "
+if [ "$SELECTED_AI_TOOL" = "claude" ]; then
+  # Capability is cached per binary, so only the first launch after an
+  # install/update pays the ~40ms probe. See gt_claude_filter_prefix.
+  WISP_DECK_CLAUDE_FILTER="$(gt_claude_filter_prefix "$SHARE_DIR")"
 fi
 export WISP_DECK_CLAUDE_FILTER
 
