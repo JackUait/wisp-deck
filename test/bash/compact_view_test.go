@@ -1398,3 +1398,112 @@ func TestCompactView_sizes_to_own_pane_not_active_pane(t *testing.T) {
 			paneW, ruleRows, cap)
 	}
 }
+
+// ── Discard a file from the preview ─────────────────────────────────────────
+
+// should_discard reports (via exit code) whether the diff-view pager left the
+// "discard" marker, telling compact_view to revert the file after the popup.
+func TestShouldDiscard_true_for_discard_marker(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "decision", "discard")
+	_, code := runBashFunc(t, "lib/compact-view.sh", "should_discard",
+		[]string{filepath.Join(dir, "decision")}, nil)
+	if code != 0 {
+		t.Errorf("should_discard exit = %d, want 0 for the 'discard' marker", code)
+	}
+}
+
+func TestShouldDiscard_false_for_empty_decision(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "decision", "")
+	_, code := runBashFunc(t, "lib/compact-view.sh", "should_discard",
+		[]string{filepath.Join(dir, "decision")}, nil)
+	if code == 0 {
+		t.Error("should_discard should be non-zero for an empty decision file")
+	}
+}
+
+func TestShouldDiscard_false_for_missing_file(t *testing.T) {
+	dir := t.TempDir()
+	_, code := runBashFunc(t, "lib/compact-view.sh", "should_discard",
+		[]string{filepath.Join(dir, "absent")}, nil)
+	if code == 0 {
+		t.Error("should_discard should be non-zero when the decision file is absent")
+	}
+}
+
+// discardGitRepo sets up a one-commit repo and returns a git runner.
+func discardGitRepo(t *testing.T, dir string) func(args ...string) {
+	t.Helper()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	return git
+}
+
+// discard_worktree_file reverts a modified tracked file back to the index
+// (git restore -- <file>): the working-tree edit is gone.
+func TestDiscardWorktreeFile_reverts_modified_tracked_file(t *testing.T) {
+	dir := t.TempDir()
+	git := discardGitRepo(t, dir)
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "a.txt", "committed\n")
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "a.txt", "committed\nDIRTY\n") // working-tree edit
+
+	_, code := runBashFunc(t, "lib/compact-view.sh", "discard_worktree_file",
+		[]string{dir, "a.txt"}, nil)
+	if code != 0 {
+		t.Fatalf("discard_worktree_file exit = %d, want 0", code)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "a.txt"))
+	if err != nil {
+		t.Fatalf("read a.txt: %v", err)
+	}
+	if string(got) != "committed\n" {
+		t.Errorf("file not reverted: got %q, want %q", string(got), "committed\n")
+	}
+}
+
+// A staged change is left in the index; only the further working-tree edit on
+// top of it is discarded (git restore restores the worktree FROM the index).
+func TestDiscardWorktreeFile_keeps_staged_change(t *testing.T) {
+	dir := t.TempDir()
+	git := discardGitRepo(t, dir)
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "a.txt", "base\n")
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "a.txt", "staged\n")
+	git("add", "a.txt") // index now holds "staged\n"
+	writeTempFile(t, dir, "a.txt", "staged-and-dirty\n")
+
+	_, code := runBashFunc(t, "lib/compact-view.sh", "discard_worktree_file",
+		[]string{dir, "a.txt"}, nil)
+	if code != 0 {
+		t.Fatalf("discard_worktree_file exit = %d, want 0", code)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "a.txt"))
+	if string(got) != "staged\n" {
+		t.Errorf("worktree should restore from the index: got %q, want %q", string(got), "staged\n")
+	}
+	// The staged change is still present in the index.
+	c := exec.Command("git", "-C", dir, "show", ":a.txt")
+	staged, err := c.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git show :a.txt: %v\n%s", err, staged)
+	}
+	if string(staged) != "staged\n" {
+		t.Errorf("staged copy should be intact: got %q, want %q", string(staged), "staged\n")
+	}
+}

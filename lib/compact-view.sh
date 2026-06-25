@@ -239,6 +239,25 @@ split_content() {
   return 0
 }
 
+# should_discard reports (via exit status) whether the diff-view pager left the
+# "discard" marker in its decision file — i.e. the user confirmed discarding the
+# file. Exit 0 means discard; non-zero (missing/empty/other content) means no.
+# Usage: should_discard <decision_file>
+should_discard() {
+  local file="$1"
+  [ -f "$file" ] || return 1
+  [ "$(cat "$file" 2>/dev/null)" = "discard" ]
+}
+
+# discard_worktree_file discards a tracked file's working-tree changes, restoring
+# the worktree from the index (git's own "discard changes in working directory").
+# A staged copy, if any, is left intact. Returns git's exit status.
+# Usage: discard_worktree_file <project_dir> <file>
+discard_worktree_file() {
+  local dir="$1" file="$2"
+  git -C "$dir" restore -- "$file"
+}
+
 # open_diff_popup floats a whole-window tmux popup showing the clicked path's
 # diff versus HEAD. The whole file is fed to the pager (-U999999, full context),
 # but the pager DEFAULTS to a changes-only view — just the changed lines plus a
@@ -298,15 +317,29 @@ open_diff_popup() {
     backdrop_arg="--backdrop-file $(printf '%q' "$backdrop")"
   fi
 
+  # The pager's [ Discard ] button writes "discard" to this file when the user
+  # confirms; we read it after the popup closes and run the git restore here (git
+  # mutations stay in the bash layer). A failed mktemp just disables discard.
+  local decision decision_arg=""
+  decision=$(mktemp "${TMPDIR:-/tmp}/gtdiscard.XXXXXX" 2>/dev/null) || decision=""
+  [ -n "$decision" ] && decision_arg="--discard-file $(printf '%q' "$decision")"
+
   # Full-screen (-w/-h 100%) and borderless (-B) so the pager owns the whole
   # window: it draws its own rounded orange box, shows the dimmed snapshot in the
   # margin, and closes when a click lands in that margin (tmux ignores clicks
   # outside a smaller popup). No -T title — the pager's header already shows the
   # path + added/deleted counts.
   tmux display-popup -E -B -w 100% -h 100% \
-    "git -C ${qd} --no-pager diff HEAD -U999999 --color=never -- ${qf} | ${strip} | wisp-deck-tui diff-view --ai-tool ${qtool} --title ${qf} ${backdrop_arg}"
+    "git -C ${qd} --no-pager diff HEAD -U999999 --color=never -- ${qf} | ${strip} | wisp-deck-tui diff-view --ai-tool ${qtool} --title ${qf} ${backdrop_arg} ${decision_arg}"
+
+  # The user confirmed a discard in the pager: revert the file's working-tree
+  # changes now that the popup has closed.
+  if [ -n "$decision" ] && should_discard "$decision"; then
+    discard_worktree_file "$dir" "$file"
+  fi
 
   [ -n "$backdrop" ] && rm -f "$backdrop"
+  [ -n "$decision" ] && rm -f "$decision"
 }
 
 # enter_ui_mode prepares the live pane's terminal for the ledger UI: the

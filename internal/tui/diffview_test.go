@@ -994,3 +994,166 @@ func TestRenderSideBySide_tints_change_cells(t *testing.T) {
 		t.Errorf("an added cell should carry the green bg tint, got:\n%s", out)
 	}
 }
+
+// ── Discard button ──────────────────────────────────────────────────────────
+// The preview offers a [ Discard ] button (in its title row) that, after a
+// confirm step, signals the caller to discard the file's working-tree changes.
+
+// armDiscard clicks the [ Discard ] button, returning the armed model.
+func armDiscard(t *testing.T, m DiffViewModel) DiffViewModel {
+	t.Helper()
+	x, y, ok := cellOf(stripA(m.View()), "Discard")
+	if !ok {
+		t.Fatalf("no [ Discard ] button in view:\n%s", stripA(m.View()))
+	}
+	m2, _ := clickDiff(m, x, y)
+	return m2
+}
+
+func TestDiffView_DiscardRequested_false_initially(t *testing.T) {
+	m := sizeDiff(NewDiffView("f", sampleDiff(5)), 80, 24)
+	if m.DiscardRequested() {
+		t.Error("a fresh diff view should not have discard requested")
+	}
+}
+
+func TestDiffView_View_shows_discard_button(t *testing.T) {
+	m := sizeDiff(NewDiffView("lib/x.sh", "+a\n-b\n ctx\n"), 80, 24)
+	if !strings.Contains(stripA(m.View()), "Discard") {
+		t.Errorf("view should show a Discard button, got:\n%s", stripA(m.View()))
+	}
+}
+
+// A single-sided file (whole-file add/delete) hides the view-switch tabs but
+// must still offer the Discard button.
+func TestDiffView_View_shows_discard_button_single_sided(t *testing.T) {
+	m := sizeDiff(NewDiffView("new.txt", "+a\n+b\n+c\n"), 80, 24)
+	if !m.singleView {
+		t.Fatal("test setup: expected a single-sided (pure add) diff")
+	}
+	if !strings.Contains(stripA(m.View()), "Discard") {
+		t.Errorf("single-sided view should still show a Discard button, got:\n%s", stripA(m.View()))
+	}
+}
+
+// Clicking Discard does NOT discard immediately — it arms a Yes/No confirm step.
+func TestDiffView_click_discard_arms_confirm(t *testing.T) {
+	m := sizeDiff(NewDiffView("f", sampleDiff(5)), 80, 24)
+	m = armDiscard(t, m)
+	if m.quitting {
+		t.Error("clicking Discard should not quit (it must confirm first)")
+	}
+	if m.DiscardRequested() {
+		t.Error("clicking Discard should not request discard before confirmation")
+	}
+	out := stripA(m.View())
+	if !strings.Contains(out, "Yes") || !strings.Contains(out, "No") {
+		t.Errorf("armed view should show Yes/No confirm buttons, got:\n%s", out)
+	}
+}
+
+// Pressing 'd' also arms the confirm step.
+func TestDiffView_d_arms_confirm(t *testing.T) {
+	m := sizeDiff(NewDiffView("f", sampleDiff(5)), 80, 24)
+	m, _ = runeDiff(m, 'd')
+	out := stripA(m.View())
+	if !strings.Contains(out, "Yes") || !strings.Contains(out, "No") {
+		t.Errorf("'d' should arm the Yes/No confirm, got:\n%s", out)
+	}
+}
+
+// Confirming with 'y' requests the discard and quits.
+func TestDiffView_armed_y_confirms_discard(t *testing.T) {
+	m := sizeDiff(NewDiffView("f", sampleDiff(5)), 80, 24)
+	m = armDiscard(t, m)
+	m, cmd := runeDiff(m, 'y')
+	if !m.DiscardRequested() {
+		t.Error("confirming with 'y' should request discard")
+	}
+	if !m.quitting || !quits(cmd) {
+		t.Error("confirming with 'y' should quit")
+	}
+}
+
+// Confirming by clicking [ Yes ] requests the discard and quits.
+func TestDiffView_armed_click_yes_confirms_discard(t *testing.T) {
+	m := sizeDiff(NewDiffView("f", sampleDiff(5)), 80, 24)
+	m = armDiscard(t, m)
+	x, y, ok := cellOf(stripA(m.View()), "Yes")
+	if !ok {
+		t.Fatalf("armed view has no Yes button:\n%s", stripA(m.View()))
+	}
+	m, cmd := clickDiff(m, x, y)
+	if !m.DiscardRequested() {
+		t.Error("clicking Yes should request discard")
+	}
+	if !m.quitting || !quits(cmd) {
+		t.Error("clicking Yes should quit")
+	}
+}
+
+// Cancelling with 'n' returns to the normal view without requesting a discard.
+func TestDiffView_armed_n_cancels(t *testing.T) {
+	m := sizeDiff(NewDiffView("f", sampleDiff(5)), 80, 24)
+	m = armDiscard(t, m)
+	m, cmd := runeDiff(m, 'n')
+	if m.DiscardRequested() {
+		t.Error("cancelling with 'n' must not request discard")
+	}
+	if m.quitting || quits(cmd) {
+		t.Error("cancelling with 'n' should not quit")
+	}
+	out := stripA(m.View())
+	if !strings.Contains(out, "Discard") {
+		t.Errorf("after cancel, the Discard button should be back, got:\n%s", out)
+	}
+}
+
+// While armed, Esc cancels the confirm rather than closing the popup.
+func TestDiffView_armed_escape_cancels_not_closes(t *testing.T) {
+	m := sizeDiff(NewDiffView("f", sampleDiff(5)), 80, 24)
+	m = armDiscard(t, m)
+	m2, cmd := keyDiff(m, tea.KeyEscape)
+	if m2.quitting || quits(cmd) {
+		t.Error("Esc while armed should cancel the confirm, not close the popup")
+	}
+	if m2.DiscardRequested() {
+		t.Error("Esc while armed must not request discard")
+	}
+	if !strings.Contains(stripA(m2.View()), "Discard") {
+		t.Errorf("Esc while armed should return to the Discard button, got:\n%s", stripA(m2.View()))
+	}
+}
+
+// A long file path must not push the discard button onto a wrapped second row:
+// the title is truncated so the button stays on the title row and clickable.
+func TestDiffView_discard_clickable_with_long_title(t *testing.T) {
+	long := "internal/tui/some/really/deeply/nested/path/to/a/file/that/is/very/long.go"
+	m := sizeDiff(NewDiffView(long, sampleDiff(5)), 80, 24)
+	m = armDiscard(t, m)
+	if !strings.Contains(stripA(m.View()), "Yes") {
+		t.Errorf("discard button must stay clickable with a long title, view:\n%s", stripA(m.View()))
+	}
+}
+
+func TestTruncatePath_keeps_tail_behind_ellipsis(t *testing.T) {
+	cases := []struct {
+		name  string
+		path  string
+		width int
+		want  string
+	}{
+		{"fits unchanged", "lib/x.sh", 20, "lib/x.sh"},
+		{"exact fit", "abcd", 4, "abcd"},
+		{"truncates to tail", "abcdefgh", 4, "…fgh"},
+		{"width one is single ellipsis", "abcdef", 1, "…"},
+		{"zero width is single ellipsis", "abcdef", 0, "…"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := truncatePath(c.path, c.width); got != c.want {
+				t.Errorf("truncatePath(%q, %d) = %q, want %q", c.path, c.width, got, c.want)
+			}
+		})
+	}
+}

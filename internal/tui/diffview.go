@@ -37,7 +37,17 @@ type DiffViewModel struct {
 	quitting    bool
 	hoverMode   int // layout-switch tab under the pointer, or -1 (none)
 	hoverCtx    int // context-switch tab under the pointer, or -1 (none)
+	// Discard: the title row carries a [ Discard ] button. Clicking it (or 'd')
+	// arms a Yes/No confirm step rather than discarding outright, since the op is
+	// irreversible. Confirming sets discardRequested and quits; the caller reads
+	// DiscardRequested() and runs the git restore.
+	discardArmed     bool
+	discardRequested bool
 }
+
+// DiscardRequested reports whether the user confirmed discarding the file's
+// working-tree changes. The caller acts on it after the program exits.
+func (m DiffViewModel) DiscardRequested() bool { return m.discardRequested }
 
 // View modes and the clickable tab labels that switch between them. The labels
 // have fixed visible widths so the click hit-boxes (tabAt) stay stable.
@@ -73,6 +83,16 @@ const (
 	ctxTabFull
 )
 
+// Discard control labels. The bracketed labels carry no lipgloss padding, so a
+// label's visible width equals its rune length and the click hit-boxes
+// (discardButtonSpan / discardConfirmSpans) line up exactly with the render.
+const (
+	diffDiscardLabel = "[ Discard ]"
+	diffDiscardYes   = "[ Yes ]"
+	diffDiscardNo    = "[ No ]"
+	diffDiscardGap   = 1 // columns between the Yes and No confirm chips
+)
+
 // diffContextLines is how many unchanged lines the changes-only view keeps
 // around each change (git's own default), the rest collapsed into a marker.
 const diffContextLines = 3
@@ -105,6 +125,12 @@ var (
 	diffTabHoverStyle = lipgloss.NewStyle().Bold(true).Underline(true).Foreground(lipgloss.Color("255"))
 	// Group-label icon: a dim accent glyph to the left of each switcher group.
 	diffTabIconStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("208"))
+
+	// Discard button: a red chip — destructive, so it reads as a warning. The
+	// armed-confirm Yes chip is red (the destructive choice); No is dim.
+	diffDiscardStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("1"))
+	diffDiscardYesStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("1"))
+	diffDiscardNoStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
 	diffBarStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244")).
@@ -933,6 +959,29 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			// The discard control lives on the title row (content row 0 -> screen
+			// row mv+1). When armed it shows Yes/No; otherwise the Discard button.
+			if msg.Y == mv+1 {
+				cx := msg.X - (mh + 1)
+				if m.discardArmed {
+					ys, ye, ns, ne := discardConfirmSpans(cw)
+					if cx >= ys && cx < ye {
+						m.discardRequested = true
+						m.quitting = true
+						return m, tea.Quit
+					}
+					if cx >= ns && cx < ne {
+						m.discardArmed = false
+						return m, nil
+					}
+				} else {
+					ds, de := discardButtonSpan(cw)
+					if cx >= ds && cx < de {
+						m.discardArmed = true
+						return m, nil
+					}
+				}
+			}
 			// A click on a layout-switch tab switches the inline/side-by-side mode.
 			if hovered != -1 {
 				m.modeForced = true
@@ -955,6 +1004,36 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		// While armed, the keyboard drives the confirm: Enter/y confirm, n cancels,
+		// Esc cancels (Ctrl-C still hard-quits). All other keys are swallowed so the
+		// confirm can't be scrolled or toggled out from under the user.
+		if m.discardArmed {
+			switch msg.Type {
+			case tea.KeyCtrlC:
+				m.quitting = true
+				return m, tea.Quit
+			case tea.KeyEscape:
+				m.discardArmed = false
+				return m, nil
+			case tea.KeyEnter:
+				m.discardRequested = true
+				m.quitting = true
+				return m, tea.Quit
+			case tea.KeyRunes:
+				if len(msg.Runes) == 1 {
+					switch msg.Runes[0] {
+					case 'y', 'Y':
+						m.discardRequested = true
+						m.quitting = true
+						return m, tea.Quit
+					case 'n', 'N':
+						m.discardArmed = false
+						return m, nil
+					}
+				}
+			}
+			return m, nil
+		}
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEscape:
 			m.quitting = true
@@ -980,6 +1059,10 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case 'q', 'Q':
 					m.quitting = true
 					return m, tea.Quit
+				case 'd', 'D':
+					// Arm the discard confirm (Yes/No). Nothing is discarded yet.
+					m.discardArmed = true
+					return m, nil
 				case 'f', 'F':
 					// Toggle changes-only <-> full file. A non-collapsible diff (a
 					// whole-file add/delete, or a file with no far context) has only the
@@ -1007,6 +1090,61 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// truncatePath shortens a file path to at most width display columns, keeping
+// the tail (the basename is the most useful part) behind a leading ellipsis. A
+// width below 1 yields a single ellipsis; a path that already fits is returned
+// unchanged.
+func truncatePath(p string, width int) string {
+	rs := []rune(p)
+	if len(rs) <= width {
+		return p
+	}
+	if width <= 1 {
+		return "…"
+	}
+	return "…" + string(rs[len(rs)-(width-1):])
+}
+
+// discardButtonSpan returns the [start, end) content columns the [ Discard ]
+// button occupies, right-anchored to the content width cw. The button is the
+// last bw columns of the row, so the hit-box is independent of the title length.
+func discardButtonSpan(cw int) (start, end int) {
+	bw := lipgloss.Width(diffDiscardLabel)
+	return cw - bw, cw
+}
+
+// discardConfirmSpans returns the [start, end) content columns of the armed Yes
+// and No confirm chips, right-anchored adjacent (Yes then a gap then No) so the
+// rightmost chip ends at cw. Hit-boxes track the render exactly.
+func discardConfirmSpans(cw int) (yesStart, yesEnd, noStart, noEnd int) {
+	yw := lipgloss.Width(diffDiscardYes)
+	nw := lipgloss.Width(diffDiscardNo)
+	noEnd = cw
+	noStart = noEnd - nw
+	yesEnd = noStart - diffDiscardGap
+	yesStart = yesEnd - yw
+	return yesStart, yesEnd, noStart, noEnd
+}
+
+// discardControl renders the right-anchored discard region of the title row:
+// the [ Discard ] button normally, or the [ Yes ] [ No ] confirm chips when
+// armed. <avail> is the content width left of this region (it pads the controls
+// flush to the right edge); a negative pad means the title already fills the row.
+func (m DiffViewModel) discardControl(avail int) string {
+	var ctrl string
+	if m.discardArmed {
+		ctrl = diffDiscardYesStyle.Render(diffDiscardYes) +
+			strings.Repeat(" ", diffDiscardGap) + diffDiscardNoStyle.Render(diffDiscardNo)
+	} else {
+		ctrl = diffDiscardStyle.Render(diffDiscardLabel)
+	}
+	pad := avail
+	if pad < 1 {
+		pad = 1
+	}
+	return strings.Repeat(" ", pad) + ctrl
+}
+
 // statusBadge renders the file-status chip (e.g. " ADDED ") in the color that
 // matches the kind of change; an unknown status falls back to the modified tint.
 func (m DiffViewModel) statusBadge() string {
@@ -1026,28 +1164,49 @@ func (m DiffViewModel) View() string {
 	}
 
 	mh, mv, cw, ch := m.layout()
-	// Top line: a status badge (added/deleted/modified), the file path, and the
-	// added/deleted line counts.
-	title := m.statusBadge() +
-		diffTitleStyle.Render(m.title) +
-		diffAddStyle.Render("+"+itoa(m.added)) + " " +
-		diffDelStyle.Render("−"+itoa(m.deleted))
+	// Top line: a status badge (added/deleted/modified), the file path, the
+	// added/deleted line counts, and — right-anchored — the discard control. The
+	// path is truncated (leading ellipsis, keeping the basename) so the row never
+	// wraps: a wrapped title row would push the discard button onto a second
+	// visual line, out of reach of its title-row click hit-box.
+	badge := m.statusBadge()
+	counts := diffAddStyle.Render("+"+itoa(m.added)) + " " + diffDelStyle.Render("−"+itoa(m.deleted))
+	ctrlW := lipgloss.Width(diffDiscardLabel)
+	if m.discardArmed {
+		ctrlW = lipgloss.Width(diffDiscardYes) + diffDiscardGap + lipgloss.Width(diffDiscardNo)
+	}
+	// diffTitleStyle adds 1 column of padding each side (+2). Reserve a 1-column
+	// gap before the right-anchored control too.
+	pathBudget := cw - lipgloss.Width(badge) - lipgloss.Width(counts) - ctrlW - 2 - 1
+	titleLeft := badge + diffTitleStyle.Render(truncatePath(m.title, pathBudget)) + counts
+	title := titleLeft + m.discardControl(cw-lipgloss.Width(titleLeft)-ctrlW)
 	rule := diffRuleStyle.Render(strings.Repeat("─", maxInt(cw, 0)))
 
 	pct := int(m.viewport.ScrollPercent() * 100)
-	hints := "↑↓/jk scroll · space/b page · g/G top·end"
-	if !m.singleView { // modified file: the layout switcher is available
-		hints += " · tab view"
-	}
-	if m.collapsible { // far context to collapse: the changes/full switcher is available
-		if m.compact {
-			hints += " · f full"
-		} else {
-			hints += " · f changes"
+	// The bar carries Padding(0,1); the box wraps inner lines wider than cw, and a
+	// wrapped bar would grow the box by a row and shift every row's screen
+	// position (breaking the title/tab-row click math). Clip it to one line.
+	barW := maxInt(cw-2, 0)
+	var bar string
+	if m.discardArmed {
+		// Armed: the bar becomes the confirm prompt. Yes/No are clickable in the
+		// title row; y/n/Esc drive it from the keyboard.
+		bar = diffBarStyle.Render(fitColumn("Discard this file's changes? · y confirm · n/Esc cancel", barW))
+	} else {
+		hints := "↑↓/jk scroll · space/b page · g/G top·end"
+		if !m.singleView { // modified file: the layout switcher is available
+			hints += " · tab view"
 		}
+		if m.collapsible { // far context to collapse: the changes/full switcher is available
+			if m.compact {
+				hints += " · f full"
+			} else {
+				hints += " · f changes"
+			}
+		}
+		hints += " · click-out/q/Esc close"
+		bar = diffBarStyle.Render(fitColumn(hints+"    "+padPercent(pct), barW))
 	}
-	hints += " · click-out/q/Esc close"
-	bar := diffBarStyle.Render(hints + "    " + padPercent(pct))
 
 	// A single-sided file (whole-file add/delete) shows no view switcher row. The
 	// others put a blank row between the title and the controls so the header
