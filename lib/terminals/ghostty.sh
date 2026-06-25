@@ -64,6 +64,22 @@ terminal_cleanup_config() {
   fi
 }
 
+# Suppress the macOS login(1) "Last login: ... on ttysNNN" banner.
+# Ghostty launches the wrapper through `login -flp`, which prints that banner
+# before bash even runs. It lingers on screen through the login-shell profile
+# load until the wrapper's loading splash clears it, so a fresh tab/window
+# flashes a bare shell prompt before the Wisp Deck splash appears. `login`
+# skips the banner entirely when ~/.hushlogin exists, so the window goes
+# straight to the splash. Creates the file only when absent — an existing
+# hushlogin (the user's own) is left untouched.
+# Args: [home_dir]  — defaults to $HOME (override for tests).
+ensure_hushlogin() {
+  local home="${1:-$HOME}"
+  local hushfile="$home/.hushlogin"
+  [ -e "$hushfile" ] && return 0
+  : > "$hushfile"
+}
+
 # Open a new Ghostty window running the wrapper in restore mode.
 # Args: wrapper_path project_path ai_tool
 terminal_launch_restore() {

@@ -145,6 +145,14 @@ else
   terminal_setup_config "$TERMINAL_CONFIG" "$WRAPPER_PATH"
 fi
 
+# Suppress the macOS "Last login" banner so a new tab opens straight into the
+# Wisp Deck splash instead of briefly flashing a bare login shell. Ghostty
+# launches the wrapper via `login`, which prints the banner unless ~/.hushlogin
+# exists. Created only when absent — an existing hushlogin is left untouched.
+if ensure_hushlogin; then
+  success "Quieted the macOS login banner (~/.hushlogin)"
+fi
+
 # Migrate from old config location
 OLD_PROJECTS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/vibecode-editor"
 NEW_PROJECTS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"

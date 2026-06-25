@@ -260,6 +260,40 @@ terminal_install </dev/null || true
 	assertContains(t, out, "wisp-deck")
 }
 
+func TestGhosttyAdapter_ensure_hushlogin_creates_when_absent(t *testing.T) {
+	// Ghostty launches the wrapper through `login -flp`, which prints the macOS
+	// "Last login: ... on ttysNNN" banner before bash runs. That banner lingers
+	// through the login-shell profile load until the wrapper's splash clears it,
+	// so a new tab flashes a bare shell first. `login` skips the banner when
+	// ~/.hushlogin exists, so the window goes straight to the splash.
+	home := t.TempDir()
+	snippet := ghosttyAdapterSnippet(t, fmt.Sprintf(`ensure_hushlogin %q`, home))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	if _, err := os.Stat(filepath.Join(home, ".hushlogin")); err != nil {
+		t.Errorf("expected ~/.hushlogin to be created, stat failed: %v", err)
+	}
+}
+
+func TestGhosttyAdapter_ensure_hushlogin_preserves_existing(t *testing.T) {
+	// Never clobber a hushlogin the user already maintains.
+	home := t.TempDir()
+	hushfile := writeTempFile(t, home, ".hushlogin", "user content\n")
+
+	snippet := ghosttyAdapterSnippet(t, fmt.Sprintf(`ensure_hushlogin %q`, home))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(hushfile)
+	if err != nil {
+		t.Fatalf("failed to read hushlogin: %v", err)
+	}
+	if string(data) != "user content\n" {
+		t.Errorf("existing hushlogin clobbered, got %q", string(data))
+	}
+}
+
 func TestGhosttyAdapter_launch_restore(t *testing.T) {
 	dir := t.TempDir()
 	rec := filepath.Join(dir, "rec")
