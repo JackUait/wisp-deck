@@ -199,12 +199,33 @@ ensure_nerd_font() {
   return 0
 }
 
-# Ensure OpenCode is available via npx, removing any brew-installed version first.
+# Ensure OpenCode is available, preferring a directly-installed binary.
+#
+# A real `opencode` binary launches ~3x faster than `npx opencode-ai@latest`,
+# which revalidates against the npm registry on every launch and reinstalls the
+# whole package (~46s) on every version bump. So install it globally via npm when
+# possible; fall back to npx (the wrapper uses --prefer-offline) only when a
+# global install is unavailable or fails. Any brew-installed copy is removed
+# first so npm is the single source of truth.
 ensure_opencode() {
   # Remove brew-installed opencode if present
   if brew list opencode &>/dev/null; then
     info "Removing brew-installed OpenCode..."
     brew uninstall opencode &>/dev/null || true
+  fi
+
+  if command -v opencode &>/dev/null; then
+    success "OpenCode already installed"
+    return 0
+  fi
+
+  if command -v npm &>/dev/null; then
+    info "Installing OpenCode..."
+    if npm install -g opencode-ai &>/dev/null; then
+      success "OpenCode installed"
+      return 0
+    fi
+    warn "Global OpenCode install failed — falling back to npx (slower launches)"
   fi
 
   if command -v npx &>/dev/null; then

@@ -449,25 +449,63 @@ func TestEnsureNerdFont_gracefully_warns_when_brew_fails(t *testing.T) {
 // ensure_opencode tests
 // ============================================================
 
-func TestEnsureOpencode_ready_when_npx_available_and_not_from_brew(t *testing.T) {
+// A directly-installed `opencode` binary launches ~3x faster than
+// `npx opencode-ai@latest` (no per-launch registry check or reinstall), so the
+// installer installs it globally via npm when possible and only falls back to
+// npx when that is unavailable.
+
+func TestEnsureOpencode_installs_globally_via_npm_when_absent(t *testing.T) {
 	dir := t.TempDir()
-	// Mock npx on PATH
-	binDir := mockCommand(t, dir, "npx", `echo "npx"`)
-	// Mock brew list opencode to fail (not installed via brew)
+	npmLog := filepath.Join(dir, "npm_calls")
+	// opencode is NOT mocked → not yet installed. npm is available.
+	binDir := mockCommand(t, dir, "npm", fmt.Sprintf(`echo "$@" >> %q; exit 0`, npmLog))
 	mockCommand(t, dir, "brew", `exit 1`)
+	symlinkUsrBinTools(t, binDir, "grep", "sed", "tr")
 	snippet := installSnippet(t, `ensure_opencode`)
-	env := buildEnv(t, []string{binDir})
+	env := buildEnv(t, nil, "PATH="+binDir+":/bin")
+	out, code := runBashSnippet(t, snippet, env)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "OpenCode installed")
+	npmCalls, _ := os.ReadFile(npmLog)
+	assertContains(t, string(npmCalls), "install -g opencode-ai")
+}
+
+func TestEnsureOpencode_skips_install_when_already_present(t *testing.T) {
+	dir := t.TempDir()
+	npmLog := filepath.Join(dir, "npm_calls")
+	binDir := mockCommand(t, dir, "opencode", `echo opencode`)
+	mockCommand(t, dir, "npm", fmt.Sprintf(`echo "$@" >> %q; exit 0`, npmLog))
+	mockCommand(t, dir, "brew", `exit 1`)
+	symlinkUsrBinTools(t, binDir, "grep", "sed", "tr")
+	snippet := installSnippet(t, `ensure_opencode`)
+	env := buildEnv(t, nil, "PATH="+binDir+":/bin")
+	out, code := runBashSnippet(t, snippet, env)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "OpenCode already installed")
+	if _, err := os.Stat(npmLog); err == nil {
+		t.Errorf("npm must not run when opencode is already installed")
+	}
+}
+
+func TestEnsureOpencode_falls_back_to_npx_when_npm_install_fails(t *testing.T) {
+	dir := t.TempDir()
+	// npm present but its install fails; npx is available as the fallback.
+	binDir := mockCommand(t, dir, "npm", `exit 1`)
+	mockCommand(t, dir, "npx", `echo npx`)
+	mockCommand(t, dir, "brew", `exit 1`)
+	symlinkUsrBinTools(t, binDir, "grep", "sed", "tr")
+	snippet := installSnippet(t, `ensure_opencode`)
+	env := buildEnv(t, nil, "PATH="+binDir+":/bin")
 	out, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "OpenCode ready")
 }
 
-func TestEnsureOpencode_warns_when_npx_not_available(t *testing.T) {
+func TestEnsureOpencode_warns_when_no_node(t *testing.T) {
 	dir := t.TempDir()
-	// No npx on PATH — use restricted PATH
+	// Neither npm nor npx on PATH — use restricted PATH.
 	binDir := filepath.Join(dir, "bin")
 	os.MkdirAll(binDir, 0755)
-	// Mock brew list to fail (not from brew)
 	mockCommand(t, dir, "brew", `exit 1`)
 	symlinkUsrBinTools(t, binDir, "grep", "sed", "tr")
 	snippet := installSnippet(t, `ensure_opencode`)
@@ -480,6 +518,7 @@ func TestEnsureOpencode_warns_when_npx_not_available(t *testing.T) {
 func TestEnsureOpencode_removes_brew_opencode(t *testing.T) {
 	dir := t.TempDir()
 	brewLog := filepath.Join(dir, "brew_calls")
+	npmLog := filepath.Join(dir, "npm_calls")
 	// Mock brew: "list opencode" succeeds (installed via brew), log uninstall
 	binDir := mockCommand(t, dir, "brew", fmt.Sprintf(`
 echo "$@" >> %q
@@ -487,8 +526,8 @@ if [ "$1" = "list" ] && [ "$2" = "opencode" ]; then exit 0; fi
 if [ "$1" = "uninstall" ]; then exit 0; fi
 exit 1
 `, brewLog))
-	// Mock npx available
-	mockCommand(t, dir, "npx", `echo "npx"`)
+	// npm available so the (post-removal) global install path runs.
+	mockCommand(t, dir, "npm", fmt.Sprintf(`echo "$@" >> %q; exit 0`, npmLog))
 	symlinkUsrBinTools(t, binDir, "grep", "sed", "tr")
 	snippet := installSnippet(t, `ensure_opencode`)
 	env := buildEnv(t, nil, "PATH="+binDir+":/bin")
@@ -497,5 +536,5 @@ exit 1
 	brewCalls, _ := os.ReadFile(brewLog)
 	assertContains(t, string(brewCalls), "uninstall opencode")
 	assertContains(t, out, "Removing brew-installed OpenCode")
-	assertContains(t, out, "OpenCode ready")
+	assertContains(t, out, "OpenCode installed")
 }
