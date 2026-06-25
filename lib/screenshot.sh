@@ -10,6 +10,51 @@
 # lets a tmux binding inject the latest screenshot straight into the AI pane,
 # bypassing drop routing entirely.
 
+# _gt_bin_signature <path> — print a stable per-binary signature (path + mtime +
+# size) used to invalidate the cached capability probe when the binary changes.
+# stat flags differ between BSD (macOS) and GNU; try BSD first.
+_gt_bin_signature() {
+  local f="$1" meta
+  meta="$(stat -f '%m-%z' "$f" 2>/dev/null || stat -c '%Y-%s' "$f" 2>/dev/null)"
+  printf '%s@%s' "$f" "$meta"
+}
+
+# gt_claude_filter_prefix <cache_dir> — print the screenshot-filter launch prefix
+# ("wisp-deck-tui screenshot-filter -- ") when the installed TUI binary supports
+# the subcommand, else print nothing. Probing spawns the Go binary (~40ms) and
+# runs synchronously on every Claude launch before the AI tool can start. A
+# binary's capabilities are fixed, so the result is cached keyed by the binary's
+# path+mtime+size: only the first launch after an install/update pays the probe.
+# Always returns 0 so a failed probe never aborts the launch.
+gt_claude_filter_prefix() {
+  local cache_dir="$1" bin
+  bin="$(command -v wisp-deck-tui 2>/dev/null)" || return 0
+  [ -n "$bin" ] || return 0
+
+  local sig cache_file cached
+  sig="$(_gt_bin_signature "$bin")"
+  cache_file="$cache_dir/screenshot-filter-capable"
+
+  if [ -f "$cache_file" ]; then
+    IFS= read -r cached < "$cache_file" 2>/dev/null || cached=""
+    case "$cached" in
+      "${sig}|1") printf 'wisp-deck-tui screenshot-filter -- '; return 0 ;;
+      "${sig}|0") return 0 ;;
+    esac
+  fi
+
+  # Cache miss (first run, or the binary changed): probe once and record the
+  # verdict so later launches skip the spawn.
+  mkdir -p "$cache_dir"
+  if wisp-deck-tui screenshot-filter -- true >/dev/null 2>&1; then
+    printf '%s|1\n' "$sig" > "$cache_file"
+    printf 'wisp-deck-tui screenshot-filter -- '
+  else
+    printf '%s|0\n' "$sig" > "$cache_file"
+  fi
+  return 0
+}
+
 # gt_screenshot_dir — print the directory macOS saves screenshots to.
 # Honors `com.apple.screencapture location`; falls back to ~/Desktop.
 gt_screenshot_dir() {

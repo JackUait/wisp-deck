@@ -39,6 +39,16 @@ setup_sound_notification() {
 set_claude_notif_channel() {
   local config_dir="$1"
   local settings_path="${2:-$HOME/.claude/settings.json}"
+  # Fast path: when the channel is already terminal_bell (set by this or another
+  # live session), the python below immediately sys.exit(0) without writing — but
+  # still pays a ~40ms cold start on every Claude launch, ahead of the AI tool
+  # starting. Detect the already-silenced state with a cheap grep and skip the
+  # spawn (and the mkdir). Mirrors the python's `if current == "terminal_bell":
+  # sys.exit(0)`, so the saved prev value is left untouched exactly as before.
+  if [ -f "$settings_path" ] \
+    && grep -qE '"preferredNotifChannel"[[:space:]]*:[[:space:]]*"terminal_bell"' "$settings_path"; then
+    return 0
+  fi
   mkdir -p "$config_dir"
   python3 - "$settings_path" "$config_dir/prev-notif-channel" << 'PYEOF'
 import json, os, sys

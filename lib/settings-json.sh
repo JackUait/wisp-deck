@@ -30,6 +30,22 @@ CSEOF
 # Outputs "added", "upgraded", or "exists".
 add_waiting_indicator_hooks() {
   local path="$1"
+  # Fast path: a python3 cold start (~40ms) runs synchronously on every Claude
+  # launch before the AI tool can start. When the file already carries all three
+  # distinguishing markers of the current format — the PostToolUse "-cooldown"
+  # hook, the AskUserQuestion "-ask" sidecar, and the catch-all negative-lookahead
+  # matcher — the python below would only print "exists" and write nothing. These
+  # three substrings are exactly the upgrade targets, so their joint presence is a
+  # conservative subset of python's "exists" condition: no older format has all of
+  # them. Skip the spawn (and the mkdir/dirname subshells) entirely in that common
+  # case. Runs before mkdir because the check only reads an existing file.
+  if [ -f "$path" ] \
+    && grep -q -- '-cooldown' "$path" \
+    && grep -q -- '-ask' "$path" \
+    && grep -qF '(?!AskUserQuestion$)' "$path"; then
+    echo "exists"
+    return 0
+  fi
   mkdir -p "$(dirname "$path")"
   python3 - "$path" << 'PYEOF'
 import json, sys, os
