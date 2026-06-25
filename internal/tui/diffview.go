@@ -10,12 +10,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// DiffViewModel is a scrollable pager for a (pre-colored) git diff, shown inside
-// the click-to-open popup. Unlike less, it closes on a single Esc press because
+// DiffViewModel is a scrollable pager for a structural (uncolored) git diff,
+// which it syntax-highlights itself (see highlightDiff), shown inside the
+// click-to-open popup. Unlike less, it closes on a single Esc press because
 // Bubbletea's input parser emits a distinct KeyEscape for a lone Esc and parses
 // arrow-key escape sequences separately. q and ctrl+c also quit. The viewport
 // bubble handles scrolling (↑↓/j/k, space/b page, u/d half-page, mouse wheel);
-// g/G jump to the top/bottom. ANSI color in the content is preserved.
+// g/G jump to the top/bottom.
 type DiffViewModel struct {
 	title       string
 	content     string
@@ -734,9 +735,10 @@ func sbsCellStr(c sbsCell, gw, textW int, bgSeq string) string {
 }
 
 // countDiffLines tallies the added (+) and deleted (-) lines of the diff body.
-// The body is pre-colored (git --color=always) and the +++/--- file markers are
-// stripped upstream, so after dropping the ANSI escapes a leading +/- is an
-// authoritative add/delete marker; context lines (leading space) are ignored.
+// The body is the structural (uncolored) diff with the +++/--- file markers
+// stripped upstream, so a leading +/- is an authoritative add/delete marker;
+// context lines (leading space) are ignored. ANSI escapes are still dropped
+// first so the count is correct even when called on a syntax-highlighted body.
 func countDiffLines(content string) (added, deleted int) {
 	for _, line := range strings.Split(content, "\n") {
 		s := diffAnsiSeq.ReplaceAllString(line, "")
@@ -796,10 +798,11 @@ func diffStatus(content string) string {
 }
 
 // NewDiffView builds the pager for the given title (the file path, shown in the
-// header) and content (the colored diff body). The added/deleted line counts
-// and the file status shown in the header are derived from the content. A
-// whole-file add/delete is shown in a single (inline) view with no view
-// switcher.
+// header) and content (the structural, uncolored diff body, which is
+// syntax-highlighted once here for display while m.content keeps the raw body).
+// The added/deleted line counts and the file status shown in the header are
+// derived from the raw content. A whole-file add/delete is shown in a single
+// (inline) view with no view switcher.
 func NewDiffView(title, content string) DiffViewModel {
 	added, deleted := countDiffLines(content)
 	single := isSingleSided(content)
