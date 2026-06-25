@@ -304,7 +304,7 @@ open_diff_popup() {
   # outside a smaller popup). No -T title — the pager's header already shows the
   # path + added/deleted counts.
   tmux display-popup -E -B -w 100% -h 100% \
-    "git -C ${qd} --no-pager diff HEAD -U999999 --color=always -- ${qf} | ${strip} | wisp-deck-tui diff-view --ai-tool ${qtool} --title ${qf} ${backdrop_arg}"
+    "git -C ${qd} --no-pager diff HEAD -U999999 --color=never -- ${qf} | ${strip} | wisp-deck-tui diff-view --ai-tool ${qtool} --title ${qf} ${backdrop_arg}"
 
   [ -n "$backdrop" ] && rm -f "$backdrop"
 }

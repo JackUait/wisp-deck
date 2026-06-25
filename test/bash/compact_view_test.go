@@ -567,7 +567,7 @@ func TestOpenDiffPopup_builds_whole_file_diff_popup(t *testing.T) {
 	assertContains(t, got, "display-popup")
 	assertContains(t, got, "diff HEAD -U999999")
 	assertContains(t, got, "lib/x.sh")
-	assertContains(t, got, "color=always")
+	assertContains(t, got, "color=never")
 }
 
 func TestOpenDiffPopup_quotes_path_with_spaces(t *testing.T) {
