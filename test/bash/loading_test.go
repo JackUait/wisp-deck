@@ -330,6 +330,26 @@ func TestLoading_show_loading_screen_no_rerender_when_size_unchanged(t *testing.
 	}
 }
 
+// The loader hides the cursor while animating and hands off straight to the
+// Bubbletea menu (alt screen), which keeps the cursor hidden and restores it
+// on exit. If stop_loading_screen re-showed the cursor, it would blink at the
+// bottom-right over the still-visible splash during the menu binary's startup
+// gap. So a planned stop must NOT emit the show-cursor sequence \033[?25h.
+func TestLoading_stop_loading_screen_keeps_cursor_hidden(t *testing.T) {
+	root := projectRoot(t)
+	script := fmt.Sprintf(`
+		source %q/lib/loading.sh
+		show_loading_screen claude
+		stop_loading_screen
+	`, root)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	// No show-cursor escape anywhere: it stays hidden for the menu handoff.
+	assertNotContains(t, out, "\033[?25h")
+	// The hide-cursor escape must still be present (loader hid it up front).
+	assertContains(t, out, "\033[?25l")
+}
+
 func TestLoading_show_loading_screen_renders_first_frame_before_background_loop(t *testing.T) {
 	root := projectRoot(t)
 	// Call show then immediately stop — no sleep in between.

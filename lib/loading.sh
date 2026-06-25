@@ -151,7 +151,12 @@ show_loading_screen() {
 
   # Start animation in background
   (
-    trap 'printf "\033[?25h\033[0m"; exit 0' TERM INT HUP
+    # Restore the cursor only when the loader is *aborted* (Ctrl-C / window
+    # close) so the user lands in a usable shell. A planned stop sends SIGTERM
+    # (see stop_loading_screen) and is deliberately left untrapped: the cursor
+    # stays hidden so it never blinks over the splash while the menu's alt
+    # screen takes over — the menu owns the cursor from then on.
+    trap 'printf "\033[?25h\033[0m"; exit 0' INT HUP
 
     # Brief delay so terminal reports its final size after window opens
     sleep 0.1
@@ -203,12 +208,16 @@ show_loading_screen() {
   _LOADING_SCREEN_PID=$!
 }
 
-# Stop loading screen animation and restore terminal.
+# Stop loading screen animation for the handoff to the menu.
+# Sends SIGTERM (untrapped in the animation loop) so the cursor stays hidden:
+# the menu runs on the alt screen and owns the cursor from here, restoring it
+# on exit. Leaving it hidden avoids a cursor blinking over the splash during
+# the menu binary's startup gap. Only colours are reset.
 stop_loading_screen() {
   if [ -n "${_LOADING_SCREEN_PID:-}" ]; then
     kill "$_LOADING_SCREEN_PID" 2>/dev/null
     wait "$_LOADING_SCREEN_PID" 2>/dev/null
     _LOADING_SCREEN_PID=""
   fi
-  printf '\033[?25h\033[0m'
+  printf '\033[0m'
 }
