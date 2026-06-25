@@ -63,11 +63,7 @@ unset _gt_libs _gt_lib
 TMUX_CMD="$(command -v tmux)"
 LAZYGIT_CMD="$(command -v lazygit)"
 CLAUDE_CMD="$(command -v claude)"
-if command -v npx &>/dev/null; then
-  OPENCODE_CMD="npx opencode-ai@latest"
-else
-  OPENCODE_CMD=""
-fi
+OPENCODE_CMD="$(resolve_opencode_cmd)"
 
 # AI tool preference
 AI_TOOL_PREF_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/ai-tool"
