@@ -3,11 +3,49 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// Regression: `claude` is a Bun-compiled binary that crashes on startup with
+// "EINVAL: invalid argument, kqueue" (then "process.stdout.isTTY undefined")
+// whenever its stdout is a freshly-opened /dev/tty fd — which is exactly what
+// tea.ExecProcess hands a child via the program's WithOutput tty. The new login
+// then dies before it can read the pasted OAuth code, surfacing as "login didn't
+// finish". newClaudeLoginCmd must pin the child to the inherited controlling
+// terminal (os.Stdin / fd 0, the rw pane tty), which Bun accepts. Leaving the
+// streams nil reintroduces the crash, so the nil-ness is the thing under test.
+func TestNewClaudeLoginCmd_pinsStdioToInheritedTerminal(t *testing.T) {
+	c := newClaudeLoginCmd("/usr/local/bin/claude", "/tmp/cfg/work")
+
+	wantArgs := []string{"/usr/local/bin/claude", "auth", "login"}
+	if !reflect.DeepEqual(c.Args, wantArgs) {
+		t.Errorf("Args = %v, want %v", c.Args, wantArgs)
+	}
+
+	foundEnv := false
+	for _, e := range c.Env {
+		if e == "CLAUDE_CONFIG_DIR=/tmp/cfg/work" {
+			foundEnv = true
+		}
+	}
+	if !foundEnv {
+		t.Errorf("CLAUDE_CONFIG_DIR=/tmp/cfg/work not found in env %v", c.Env)
+	}
+
+	if c.Stdin != os.Stdin {
+		t.Errorf("Stdin = %v, want os.Stdin (inherited controlling terminal)", c.Stdin)
+	}
+	if c.Stdout != os.Stdin {
+		t.Errorf("Stdout = %v, want os.Stdin (fd 0 is the rw pane tty; a fresh /dev/tty crashes Bun)", c.Stdout)
+	}
+	if c.Stderr != os.Stdin {
+		t.Errorf("Stderr = %v, want os.Stdin", c.Stderr)
+	}
+}
 
 // Enter on the focused LOGIN row opens the inline login-management panel (the
 // view mirroring Plan's model-map panel), rather than bouncing straight out to

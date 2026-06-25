@@ -211,6 +211,28 @@ func (m *MainMenuModel) submitAccountAdd(label string) (tea.Model, tea.Cmd) {
 	return m, m.beginAccountLogin(dir)
 }
 
+// newClaudeLoginCmd builds the `claude auth login` command for an account's
+// isolated CLAUDE_CONFIG_DIR, with its stdio pinned to the inherited controlling
+// terminal (os.Stdin / fd 0).
+//
+// This pinning is the fix for a hard crash: `claude` is a Bun-compiled binary
+// that dies on startup with "EINVAL: invalid argument, kqueue" (then
+// "process.stdout.isTTY undefined") when its stdout is a freshly-opened /dev/tty
+// fd. tea.ExecProcess, left to its defaults, hands the child the program's
+// WithOutput tty — which util.TUITeaOptions opens fresh via open("/dev/tty") —
+// so the login would crash before it could read the pasted OAuth code, showing
+// up as "login didn't finish". fd 0 is the read/write pane tty inherited at
+// launch, which Bun accepts; menu-tui.sh captures only stdout (fd 1), leaving
+// fd 0 free, so reusing it for the child's write streams is safe here.
+func newClaudeLoginCmd(bin, configDir string) *exec.Cmd {
+	c := exec.Command(bin, "auth", "login")
+	c.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+configDir)
+	c.Stdin = os.Stdin
+	c.Stdout = os.Stdin
+	c.Stderr = os.Stdin
+	return c
+}
+
 // beginAccountLogin returns a command that runs `claude auth login` under the new
 // account's isolated CLAUDE_CONFIG_DIR. tea.ExecProcess releases the alt-screen
 // for the interactive OAuth and restores the TUI afterward. If `claude` isn't on
@@ -220,8 +242,7 @@ func (m *MainMenuModel) beginAccountLogin(dir string) tea.Cmd {
 	if err != nil {
 		return func() tea.Msg { return accountLoginDoneMsg{dir: dir, err: err} }
 	}
-	c := exec.Command(bin, "auth", "login")
-	c.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+filepath.Join(m.claudeAccountsDir, dir))
+	c := newClaudeLoginCmd(bin, filepath.Join(m.claudeAccountsDir, dir))
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		return accountLoginDoneMsg{dir: dir, err: err}
 	})
