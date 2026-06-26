@@ -15,6 +15,13 @@ func writeFixture(t *testing.T, dir, name, content string) string {
 	return p
 }
 
+func mkdirAll(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTotal_sumsAllColumns(t *testing.T) {
 	m := MonthlyUsage{Input: 1, Output: 2, CacheWrite: 3, CacheRead: 4}
 	if got := m.Total(); got != 10 {

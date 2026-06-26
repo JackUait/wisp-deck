@@ -1777,9 +1777,10 @@ func (m *MainMenuModel) ensureStatsLoad() tea.Cmd {
 	}
 	m.statsLoading = true
 	home, _ := os.UserHomeDir()
-	claudeDir, opencodeDir, cachePath := usage.DefaultPaths(home)
+	_, opencodeDir, cachePath := usage.DefaultPaths(home)
+	claudeDirs := usage.ClaudeAccountProjectDirs(home)
 	return func() tea.Msg {
-		months, err := usage.Aggregate(claudeDir, opencodeDir, cachePath)
+		months, err := usage.AggregateAll(claudeDirs, opencodeDir, cachePath)
 		if err != nil {
 			return statsErrMsg{err: err}
 		}

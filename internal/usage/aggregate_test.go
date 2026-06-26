@@ -264,6 +264,115 @@ func TestAggregate_mergesOpenCodeWithClaude(t *testing.T) {
 	}
 }
 
+func TestAggregateAll_mergesMultipleClaudeDirs(t *testing.T) {
+	// Two independent Claude transcript roots (e.g. the Default ~/.claude and an
+	// extra native account) must both be counted into the same month.
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	writeFixture(t, dirA, "a.jsonl",
+		`{"type":"assistant","timestamp":"2026-05-01T10:00:00Z","message":{"id":"a","model":"claude-opus-4-8","usage":{"input_tokens":10,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`+"\n")
+	writeFixture(t, dirB, "b.jsonl",
+		`{"type":"assistant","timestamp":"2026-05-02T10:00:00Z","message":{"id":"b","model":"claude-opus-4-8","usage":{"input_tokens":5,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`+"\n")
+
+	out, err := AggregateAll([]string{dirA, dirB}, "", filepath.Join(t.TempDir(), "cache.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].Month != "2026-05" {
+		t.Fatalf("out = %+v, want one 2026-05 row", out)
+	}
+	if out[0].Input != 15 {
+		t.Errorf("May Input = %d, want 15 (10 from dirA + 5 from dirB)", out[0].Input)
+	}
+}
+
+func TestAggregateAll_sealingIgnoresOtherRootsFiles(t *testing.T) {
+	// With a shared cache across roots, files in one root must NOT be sealed away
+	// just because the walk of another root didn't see them.
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	writeFixture(t, dirA, "a.jsonl",
+		`{"type":"assistant","timestamp":"2026-05-01T10:00:00Z","message":{"id":"a","model":"claude-opus-4-8","usage":{"input_tokens":10,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`+"\n")
+	writeFixture(t, dirB, "b.jsonl",
+		`{"type":"assistant","timestamp":"2026-05-02T10:00:00Z","message":{"id":"b","model":"claude-opus-4-8","usage":{"input_tokens":5,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`+"\n")
+
+	if _, err := AggregateAll([]string{dirA, dirB}, "", cachePath); err != nil {
+		t.Fatal(err)
+	}
+	// Second pass over both roots; nothing deleted, so totals must be unchanged
+	// and no path may be sealed.
+	out, err := AggregateAll([]string{dirA, dirB}, "", cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].Input != 15 {
+		t.Fatalf("out = %+v, want 2026-05 input 15 on reaggregate", out)
+	}
+	c := LoadCache(cachePath)
+	if len(c.Sealed) != 0 {
+		t.Errorf("Sealed = %+v, want none (no files vanished)", c.Sealed)
+	}
+}
+
+func TestClaudeAccountProjectDirs_includesDefaultAndAccounts(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
+	mkdirAll(t, filepath.Join(home, ".claude", "projects"))
+	accounts := filepath.Join(home, ".config", "wisp-deck", "claude-accounts")
+	mkdirAll(t, filepath.Join(accounts, "personal", "projects"))
+	mkdirAll(t, filepath.Join(accounts, "work", "projects"))
+	// An account dir without a projects/ subdir must be skipped.
+	mkdirAll(t, filepath.Join(accounts, "empty"))
+
+	got := ClaudeAccountProjectDirs(home)
+	want := map[string]bool{
+		filepath.Join(home, ".claude", "projects"):      true,
+		filepath.Join(accounts, "personal", "projects"): true,
+		filepath.Join(accounts, "work", "projects"):     true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d dirs %+v, want %d", len(got), got, len(want))
+	}
+	for _, d := range got {
+		if !want[d] {
+			t.Errorf("unexpected dir %q", d)
+		}
+	}
+	if got[0] != filepath.Join(home, ".claude", "projects") {
+		t.Errorf("first dir = %q, want the Default ~/.claude/projects", got[0])
+	}
+}
+
+func TestClaudeAccountProjectDirs_defaultOnlyWhenNoAccounts(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
+	got := ClaudeAccountProjectDirs(home)
+	if len(got) != 1 || got[0] != filepath.Join(home, ".claude", "projects") {
+		t.Errorf("got %+v, want only the Default ~/.claude/projects", got)
+	}
+}
+
+func TestClaudeAccountProjectDirs_honorsXDGConfigHome(t *testing.T) {
+	home := t.TempDir()
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	accounts := filepath.Join(xdg, "wisp-deck", "claude-accounts")
+	mkdirAll(t, filepath.Join(accounts, "personal", "projects"))
+
+	got := ClaudeAccountProjectDirs(home)
+	want := filepath.Join(accounts, "personal", "projects")
+	found := false
+	for _, d := range got {
+		if d == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("got %+v, want it to include %q from XDG_CONFIG_HOME", got, want)
+	}
+}
+
 func TestDefaultPaths_opencodeMessageDir(t *testing.T) {
 	t.Setenv("OPENCODE_DATA_DIR", "")
 	_, ocDir, _ := DefaultPaths("/home/u")

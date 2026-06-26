@@ -52,7 +52,7 @@ type StatsModel struct {
 	offset      int
 	width       int
 	height      int
-	claudeDir   string
+	claudeDirs  []string
 	opencodeDir string
 	cachePath   string
 }
@@ -315,17 +315,18 @@ type statsErrMsg struct{ err error }
 // NewStatsModel builds a model that loads usage asynchronously on Init.
 func NewStatsModel() StatsModel {
 	home, _ := os.UserHomeDir()
-	claudeDir, opencodeDir, cachePath := usage.DefaultPaths(home)
-	return StatsModel{loading: true, claudeDir: claudeDir, opencodeDir: opencodeDir, cachePath: cachePath}
+	_, opencodeDir, cachePath := usage.DefaultPaths(home)
+	claudeDirs := usage.ClaudeAccountProjectDirs(home)
+	return StatsModel{loading: true, claudeDirs: claudeDirs, opencodeDir: opencodeDir, cachePath: cachePath}
 }
 
 func (m StatsModel) Init() tea.Cmd {
 	if !m.loading {
 		return nil
 	}
-	claudeDir, opencodeDir, cachePath := m.claudeDir, m.opencodeDir, m.cachePath
+	claudeDirs, opencodeDir, cachePath := m.claudeDirs, m.opencodeDir, m.cachePath
 	return func() tea.Msg {
-		months, err := usage.Aggregate(claudeDir, opencodeDir, cachePath)
+		months, err := usage.AggregateAll(claudeDirs, opencodeDir, cachePath)
 		if err != nil {
 			return statsErrMsg{err: err}
 		}

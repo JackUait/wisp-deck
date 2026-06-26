@@ -74,16 +74,26 @@ func cloneArchive(src map[string]map[string]*ModelUsage) map[string]map[string]*
 // ParseOpenCodeMessage (OpenCode) both satisfy it so the cache treats them alike.
 type parseFunc func(path string) (map[string]*MonthlyUsage, FileMeta, error)
 
-// Aggregate walks claudeDir for *.jsonl transcripts and opencodeDir for *.json
-// OpenCode message files, merging both into per-month token usage sorted
-// newest-first. Same-named models from either tool fold into a single row. It
-// reuses cachePath entries for files whose size and mtime are unchanged and
-// re-parses changed files. When a previously-cached file vanishes from disk, its
-// totals are sealed into a durable per-month Archive so the history survives the
-// tool's transcript pruning; sealed paths are never re-counted. A missing/empty
-// opencodeDir (e.g. OpenCode not installed) is simply skipped. Best-effort saves
-// the updated cache.
+// Aggregate is AggregateAll for a single Claude transcript root. Most callers
+// that track usage across multiple native accounts should use AggregateAll with
+// ClaudeAccountProjectDirs instead.
 func Aggregate(claudeDir, opencodeDir, cachePath string) ([]MonthlyUsage, error) {
+	return AggregateAll([]string{claudeDir}, opencodeDir, cachePath)
+}
+
+// AggregateAll walks each dir in claudeDirs for *.jsonl transcripts and
+// opencodeDir for *.json OpenCode message files, merging all of them into
+// per-month token usage sorted newest-first. Multiple Claude roots let usage be
+// counted across every native account (the Default ~/.claude plus each extra
+// account's config dir); transcript paths are absolute and disjoint across roots,
+// so they share one cache without colliding. Same-named models from any source
+// fold into a single row. It reuses cachePath entries for files whose size and
+// mtime are unchanged and re-parses changed files. When a previously-cached file
+// vanishes from ALL walked roots, its totals are sealed into a durable per-month
+// Archive so the history survives the tool's transcript pruning; sealed paths are
+// never re-counted. A missing/empty opencodeDir (e.g. OpenCode not installed) is
+// simply skipped. Best-effort saves the updated cache.
+func AggregateAll(claudeDirs []string, opencodeDir, cachePath string) ([]MonthlyUsage, error) {
 	cache := LoadCache(cachePath)
 	next := &Cache{
 		Version: cacheVersion,
@@ -133,8 +143,10 @@ func Aggregate(claudeDir, opencodeDir, cachePath string) ([]MonthlyUsage, error)
 		})
 	}
 
-	if err := walk(claudeDir, ".jsonl", ParseFile); err != nil {
-		return nil, err
+	for _, claudeDir := range claudeDirs {
+		if err := walk(claudeDir, ".jsonl", ParseFile); err != nil {
+			return nil, err
+		}
 	}
 	if err := walk(opencodeDir, ".json", ParseOpenCodeMessage); err != nil {
 		return nil, err
@@ -187,4 +199,34 @@ func DefaultPaths(home string) (claudeDir, opencodeDir, cachePath string) {
 	return filepath.Join(home, ".claude", "projects"),
 		filepath.Join(dataDir, "storage", "message"),
 		filepath.Join(home, ".config", "wisp-deck", "usage-cache.json")
+}
+
+// ClaudeAccountProjectDirs returns every Claude transcript root whose usage must
+// be counted: the Default login's ~/.claude/projects first, followed by the
+// projects/ dir of each additional native account registered under the wisp-deck
+// accounts dir (${XDG_CONFIG_HOME:-~/.config}/wisp-deck/claude-accounts/<dir>).
+// Each native account is isolated by its own CLAUDE_CONFIG_DIR (see
+// internal/claudeaccount), so its transcripts live outside ~/.claude and would
+// otherwise be invisible to the stats screen. Account dirs lacking a projects/
+// subdir, and the accounts dir being absent entirely, are tolerated.
+func ClaudeAccountProjectDirs(home string) []string {
+	dirs := []string{filepath.Join(home, ".claude", "projects")}
+
+	configHome := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
+	if configHome == "" {
+		configHome = filepath.Join(home, ".config")
+	}
+	accountsDir := filepath.Join(configHome, "wisp-deck", "claude-accounts")
+
+	entries, err := os.ReadDir(accountsDir)
+	if err != nil {
+		return dirs // accounts dir absent/unreadable: Default only
+	}
+	for _, e := range entries {
+		projects := filepath.Join(accountsDir, e.Name(), "projects")
+		if info, err := os.Stat(projects); err == nil && info.IsDir() {
+			dirs = append(dirs, projects)
+		}
+	}
+	return dirs
 }
