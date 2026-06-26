@@ -1318,35 +1318,73 @@ func (m *MainMenuModel) CycleGhostDisplayReverse() {
 
 // persistSetting writes a key=value pair to the settings file.
 // Creates the file if it doesn't exist, updates the key if it does.
+//
+// The write is atomic (temp file + rename). The wrapper's loading splash reads
+// this same file from a SEPARATE process the instant a new tab opens; a plain
+// truncate-then-write leaves a window where that reader sees an empty/partial
+// file and the loader falls back to the tool's default palette — which looks
+// like the theme "not changing" on the first tab after a change. An atomic
+// rename guarantees every reader sees either the complete old or complete new
+// file, never a torn one.
 func (m *MainMenuModel) persistSetting(key, value string) {
 	if m.settingsFile == "" {
 		return
 	}
 	_ = os.MkdirAll(filepath.Dir(m.settingsFile), 0755)
 	entry := key + "=" + value
+	var out string
 	data, err := os.ReadFile(m.settingsFile)
 	if err != nil {
-		_ = os.WriteFile(m.settingsFile, []byte(entry+"\n"), 0644)
+		out = entry + "\n"
+	} else {
+		lines := strings.Split(string(data), "\n")
+		found := false
+		for i, line := range lines {
+			if strings.HasPrefix(line, key+"=") {
+				lines[i] = entry
+				found = true
+				break
+			}
+		}
+		if !found {
+			// Insert before any trailing empty line
+			if len(lines) > 0 && lines[len(lines)-1] == "" {
+				lines = append(lines[:len(lines)-1], entry, "")
+			} else {
+				lines = append(lines, entry)
+			}
+		}
+		out = strings.Join(lines, "\n")
+	}
+	writeFileAtomic(m.settingsFile, []byte(out), 0644)
+}
+
+// writeFileAtomic writes data to path via a temp file in the same directory then
+// renames it into place, so a concurrent reader never observes a partial write.
+// Falls back to a direct write if the temp file can't be created.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		_ = os.WriteFile(path, data, perm)
 		return
 	}
-	lines := strings.Split(string(data), "\n")
-	found := false
-	for i, line := range lines {
-		if strings.HasPrefix(line, key+"=") {
-			lines[i] = entry
-			found = true
-			break
-		}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		_ = os.WriteFile(path, data, perm)
+		return
 	}
-	if !found {
-		// Insert before any trailing empty line
-		if len(lines) > 0 && lines[len(lines)-1] == "" {
-			lines = append(lines[:len(lines)-1], entry, "")
-		} else {
-			lines = append(lines, entry)
-		}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		_ = os.WriteFile(path, data, perm)
+		return
 	}
-	_ = os.WriteFile(m.settingsFile, []byte(strings.Join(lines, "\n")), 0644)
+	_ = os.Chmod(tmpName, perm)
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		_ = os.WriteFile(path, data, perm)
+	}
 }
 
 // SetSleepTimer sets the sleep inactivity timer to the given number of seconds.
