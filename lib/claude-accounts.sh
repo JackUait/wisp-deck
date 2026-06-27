@@ -68,6 +68,20 @@ resolve_claude_account_dir() {
   [ -d "$path" ] && printf '%s\n' "$path"
 }
 
+# apply_plain_terminal_claude_account <accounts_dir> <pointer_file> — exports
+# CLAUDE_CONFIG_DIR for the active account so `claude` launched in a plain Ghostty
+# shell (the "plain terminal" menu action) loads the login the user currently has
+# selected, not the Keychain default. The plain shell is exec'd before wrapper.sh
+# does its normal per-tool account resolution, so this re-applies it here. Default
+# (or a missing account dir) leaves CLAUDE_CONFIG_DIR unset, so Claude falls back
+# to the standard ~/.claude Keychain login.
+apply_plain_terminal_claude_account() {
+  local accounts_dir="$1" pointer_file="$2" dir
+  dir="$(resolve_claude_account_dir "$accounts_dir" "$pointer_file")"
+  [ -z "$dir" ] && return 0
+  export CLAUDE_CONFIG_DIR="$dir"
+}
+
 # Account registration, rename, and removal all live in the Go TUI (the single
 # source of truth). Adding a login only registers its isolated CLAUDE_CONFIG_DIR;
 # no `claude auth login` is run there — the account starts empty and Claude logs

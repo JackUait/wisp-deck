@@ -132,6 +132,11 @@ elif [ -z "$1" ]; then
           break
           ;;
         plain-terminal)
+          # A plain Ghostty shell should still run `claude` under the login the
+          # user has selected in the menu (the current Claude Code user), not the
+          # Keychain default. Export the active account's isolated CLAUDE_CONFIG_DIR
+          # before exec'ing the shell; Default leaves it unset (Keychain login).
+          apply_plain_terminal_claude_account "$SHARE_DIR/claude-accounts" "$SHARE_DIR/claude-account"
           exec "$SHELL"
           ;;
         add-worktree)
