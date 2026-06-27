@@ -182,13 +182,20 @@ header_rows_for() {
 # the body viewport starts at screen row header_rows+1 and view-row = row -
 # header_rows; with overflow the scroll offset is added. header_rows defaults to
 # 2 for callers that predate wrap-aware headers.
+# The result is BOTH printed (for $()-capturing callers and tests) AND stored in
+# the global BODY_LINE, so the per-motion hover hot path can read it WITHOUT a $()
+# subshell fork — that fork cost ~8ms under load and was a chief reason the
+# selection bar crawled behind the cursor. Hot-path callers redirect stdout to
+# /dev/null (a fork-free redirect) and read $BODY_LINE; see set_hover_from_row.
 # Usage: body_line_for_click <row> <scroll> <avail> <total> [header_rows]
 body_line_for_click() {
   local row="$1" scroll="$2" avail="$3" total="$4" header_rows="${5:-2}"
   local vr=$((row - header_rows))       # 1-based row within the body viewport
+  BODY_LINE=0
   { [ "$vr" -lt 1 ] || [ "$vr" -gt "$avail" ]; } && { printf 0; return; }
   local line=$((scroll + vr))
   { [ "$line" -lt 1 ] || [ "$line" -gt "$total" ]; } && { printf 0; return; }
+  BODY_LINE="$line"
   printf '%d' "$line"
 }
 
@@ -474,8 +481,13 @@ compact_view() {
   # next motion frame — a visible blink while scrolling. Reads the loop-scope
   # scroll/avail/body_total/header_rows/body_map via dynamic scope.
   set_hover_from_row() {
+    # Fork-free: body_line_for_click stores its result in $BODY_LINE; the
+    # >/dev/null swallows its (redundant) printf without spawning a subshell. A
+    # $() here cost ~8ms PER motion event under load — the hover hot path runs
+    # once per buffered report, so that fork is what made the highlight crawl.
     local b
-    b=$(body_line_for_click "$1" "$scroll" "$avail" "$body_total" "$header_rows")
+    body_line_for_click "$1" "$scroll" "$avail" "$body_total" "$header_rows" >/dev/null
+    b="$BODY_LINE"
     nth_line "$body_map" "$b"
     if [ "$b" != 0 ] && [ -n "$NTH_LINE" ]; then hover_line="$b"; else hover_line=0; fi
   }
@@ -518,7 +530,7 @@ compact_view() {
   local w h content header body body_total avail mbtn draw_body frame
   local header_rows=2
   local staged unstaged body_map
-  local mterm mrest mrow bl cpath prev_hover
+  local mterm mrest mrow bl cpath prev_hover prev_scroll hover_keep
   # Frame-erase helpers, built ONCE: $nl is a literal newline (the match), $rowend
   # is "erase-to-end-of-line + newline" (the replacement). The flicker-free redraw
   # swaps every newline in the composed frame for $rowend so each row scrubs the
@@ -533,6 +545,117 @@ compact_view() {
   # SGR background for the hovered file row (a subtle selection bar).
   local hover_style='48;5;238'
   local interval="${COMPACT_VIEW_INTERVAL:-2}"
+
+  # handle_key processes the ONE input token already in $KEY — a scroll/jump key,
+  # an arrow/page CSI, or a full SGR mouse report — mutating scroll / hover_line
+  # (and, on a click, opening the diff popup and setting need_build). It does NOT
+  # repaint: the caller drains a whole burst of buffered reports through it, then
+  # repaints once for the settled state (see the coalescing loop below). Runs in
+  # the loop's scope (dynamic scoping) so it reads/writes scroll, avail,
+  # body_total, header_rows, body_map, hover_line, need_build, etc. directly.
+  handle_key() {
+    case "$KEY" in
+      k) scroll=$((scroll - 1)) ;;
+      j) scroll=$((scroll + 1)) ;;
+      b) scroll=$((scroll - avail)) ;;
+      ' ') scroll=$((scroll + avail)) ;;
+      g) scroll=0 ;;
+      G) scroll=$body_total ;;
+      $'\e')
+        # CSI sequence: arrows, page keys, or an SGR mouse report. A terminal
+        # sends the whole sequence atomically, so its bytes are already buffered
+        # and these reads return instantly — the timeout only bounds the wait when
+        # a byte is momentarily late. It is generous (0.5s, not the old 0.02s) so
+        # heavy CPU load can't starve a read mid-report and corrupt the parse: a
+        # truncated mouse report drops the row and blanks the hover (the selection
+        # bar then blinks off mid-scroll). Once we've seen "\033[<" a full report
+        # is guaranteed in-stream, so reading its body patiently is always correct.
+        # The cost is nil in normal use (a lone, unbound ESC just waits 0.5s for a
+        # follow-up that never comes — and nothing here is bound to a bare ESC).
+        read_key 0.5 || true
+        if [ "$KEY" = "[" ]; then
+          read_key 0.5 || true
+          case "$KEY" in
+            A) scroll=$((scroll - 1)) ;;
+            B) scroll=$((scroll + 1)) ;;
+            H) scroll=0 ;;
+            F) scroll=$body_total ;;
+            5) scroll=$((scroll - avail)); read_key 0.5 || true ;;  # PgUp + ~
+            6) scroll=$((scroll + avail)); read_key 0.5 || true ;;  # PgDn + ~
+            '<')
+              # SGR mouse "<btn;col;rowM": wheel up=64, down=65, left button=0.
+              # The terminator is M on press, m on release — capture it so a
+              # left-click opens a file only on press (not again on release).
+              mbtn=""; mterm=""
+              while read_key 0.5; do
+                case "$KEY" in
+                  M) mterm=M; break ;;
+                  m) mterm=m; break ;;
+                  *) mbtn="$mbtn$KEY" ;;
+                esac
+              done
+              # Only act on a WELL-FORMED report: a complete "btn;col;row" (three
+              # numeric fields) closed by a terminator. Under heavy CPU load a
+              # report can arrive truncated or misaligned — its button field still
+              # matches a wheel/motion below, but the row field is garbage, which
+              # would drive a bogus row into set_hover_from_row and BLANK the
+              # selection bar (a blink) or mis-scroll. A malformed report is
+              # discarded and the hover is restored to its pre-event value, so a
+              # dropped report leaves the highlight exactly where it was.
+              local mouse_re='^[0-9]+;[0-9]+;[0-9]+$'
+              if [ -z "$mterm" ] || ! [[ "$mbtn" =~ $mouse_re ]]; then
+                hover_line="$hover_keep"
+              else
+              # Cursor row from "btn;col;row" — every position-bearing report
+              # (wheel and motion alike) carries it, so extract it once.
+              mrest="${mbtn#*;}"; mrow="${mrest#*;}"
+              case "${mbtn%%;*}" in
+                64|65)
+                  # Wheel up=64 / down=65. Adjust and clamp the scroll, then
+                  # re-derive the hover from THIS report's cursor row so the
+                  # selection bar stays on the file under the cursor across the
+                  # scroll (clamping first keeps the highlight aligned with the
+                  # row that will actually be on screen).
+                  if [ "${mbtn%%;*}" = 64 ]; then
+                    scroll=$((scroll - 3))
+                  else
+                    scroll=$((scroll + 3))
+                  fi
+                  scroll=$(clamp_scroll "$scroll" "$body_total" "$avail")
+                  set_hover_from_row "$mrow"
+                  ;;
+                32|33|34|35)
+                  # Mouse motion (hover/drag, SGR adds 32 to the button code):
+                  # highlight the file row under the cursor. The coalescing loop
+                  # repaints only if the SETTLED hover differs from what's on
+                  # screen, so same-row motion is a no-op without a per-event check.
+                  set_hover_from_row "$mrow"
+                  ;;
+                0)
+                  # Left-click: map the report's row (the 3rd ";"-field of
+                  # "btn;col;row") to a body line, then to a path, and float the
+                  # whole-file diff over the window.
+                  if [ "$mterm" = M ]; then
+                    bl=$(body_line_for_click "$mrow" "$scroll" "$avail" "$body_total" "$header_rows")
+                    if [ "$bl" != 0 ]; then
+                      nth_line "$body_map" "$bl"; cpath="$NTH_LINE"
+                      if [ -n "$cpath" ]; then
+                        open_diff_popup "$project_dir" "$cpath"
+                        enter_ui_mode "$interactive"   # re-assert alt-screen + mouse
+                        need_build=1                   # redraw after the popup closes
+                      fi
+                    fi
+                  fi
+                  ;;
+              esac
+              fi
+              ;;
+          esac
+        fi
+        ;;
+    esac
+  }
+
   while true; do
     [ "$_quit" = 1 ] && break   # Ctrl-C / TERM -> leave the loop, then clean up
     # Capture pane width/height — but ONLY on a build tick, never per keystroke.
@@ -746,7 +869,7 @@ compact_view() {
       need_draw=0
     fi
 
-    # Idle: just refresh on a timer. Interactive: refresh OR react to a key.
+    # Idle: just refresh on a timer. Interactive: refresh OR react to input.
     if [ "$interactive" != 1 ]; then
       sleep "$interval"
       need_build=1
@@ -754,95 +877,40 @@ compact_view() {
       continue
     fi
 
+    # Block for the next event, or fall through to a refresh on the interval.
     if ! read_key "$interval"; then
       need_build=1   # timed out -> refresh the ledger
       need_draw=1
       continue
     fi
-    need_build=0     # a key arrived -> re-slice cached content, stay snappy
-    prev_hover="$hover_line"
-    hover_line=0     # most keys clear the hover; mouse motion (below) re-sets it
-    need_draw=1
-    case "$KEY" in
-      k) scroll=$((scroll - 1)) ;;
-      j) scroll=$((scroll + 1)) ;;
-      b) scroll=$((scroll - avail)) ;;
-      ' ') scroll=$((scroll + avail)) ;;
-      g) scroll=0 ;;
-      G) scroll=$body_total ;;
-      $'\e')
-        # CSI sequence: arrows, page keys, or an SGR mouse-wheel report.
-        read_key 0.02 || true
-        if [ "$KEY" = "[" ]; then
-          read_key 0.02 || true
-          case "$KEY" in
-            A) scroll=$((scroll - 1)) ;;
-            B) scroll=$((scroll + 1)) ;;
-            H) scroll=0 ;;
-            F) scroll=$body_total ;;
-            5) scroll=$((scroll - avail)); read_key 0.02 || true ;;  # PgUp + ~
-            6) scroll=$((scroll + avail)); read_key 0.02 || true ;;  # PgDn + ~
-            '<')
-              # SGR mouse "<btn;col;rowM": wheel up=64, down=65, left button=0.
-              # The terminator is M on press, m on release — capture it so a
-              # left-click opens a file only on press (not again on release).
-              mbtn=""; mterm=""
-              while read_key 0.05; do
-                case "$KEY" in
-                  M) mterm=M; break ;;
-                  m) mterm=m; break ;;
-                  *) mbtn="$mbtn$KEY" ;;
-                esac
-              done
-              # Cursor row from "btn;col;row" — every position-bearing report
-              # (wheel and motion alike) carries it, so extract it once.
-              mrest="${mbtn#*;}"; mrow="${mrest#*;}"
-              case "${mbtn%%;*}" in
-                64|65)
-                  # Wheel up=64 / down=65. Adjust and clamp the scroll, then
-                  # re-derive the hover from THIS report's cursor row so the
-                  # selection bar stays on the file under the cursor across the
-                  # scroll (clamping first keeps the highlight aligned with the
-                  # row that will actually be on screen). Without re-deriving, the
-                  # bar blanked on every wheel frame and the list blinked.
-                  if [ "${mbtn%%;*}" = 64 ]; then
-                    scroll=$((scroll - 3))
-                  else
-                    scroll=$((scroll + 3))
-                  fi
-                  scroll=$(clamp_scroll "$scroll" "$body_total" "$avail")
-                  set_hover_from_row "$mrow"
-                  ;;
-                32|33|34|35)
-                  # Mouse motion (hover/drag, SGR adds 32 to the button code):
-                  # highlight the file row under the cursor. Only real file rows
-                  # highlight; if the hovered row didn't change, skip the redraw
-                  # so the screen doesn't flicker on every motion event.
-                  set_hover_from_row "$mrow"
-                  [ "$hover_line" = "$prev_hover" ] && need_draw=0
-                  ;;
-                0)
-                  # Left-click: map the report's row (the 3rd ";"-field of
-                  # "btn;col;row") to a body line, then to a path, and float the
-                  # whole-file diff over the window.
-                  if [ "$mterm" = M ]; then
-                    bl=$(body_line_for_click "$mrow" "$scroll" "$avail" "$body_total" "$header_rows")
-                    if [ "$bl" != 0 ]; then
-                      nth_line "$body_map" "$bl"; cpath="$NTH_LINE"
-                      if [ -n "$cpath" ]; then
-                        open_diff_popup "$project_dir" "$cpath"
-                        enter_ui_mode "$interactive"   # re-assert alt-screen + mouse
-                        need_build=1                   # redraw after the popup closes
-                      fi
-                    fi
-                  fi
-                  ;;
-              esac
-              ;;
-          esac
-        fi
-        ;;
-    esac
+
+    # COALESCE the input flood. Under any-motion tracking (?1003h) the terminal
+    # emits one report per cursor cell, so a single fast mouse move buffers a
+    # BURST of motion reports. Handle the report we just read, then drain every
+    # report still queued in the tty — buffered reports arrive with no gap, so the
+    # 6ms timeout only fires once the flood has settled — WITHOUT repainting
+    # between them. Only the final cursor position is visible, so we repaint once,
+    # after. Without this the loop repainted the whole pane per report and the
+    # highlight crawled a long backlog behind the cursor (it walked; now it flies).
+    prev_hover="$hover_line"   # what's on screen now, for the post-drain compare
+    prev_scroll="$scroll"
+    need_build=0
+    while true; do
+      hover_keep="$hover_line" # restored if this event is a malformed mouse report
+      hover_line=0             # most keys clear the hover; mouse motion re-sets it
+      handle_key
+      [ "$need_build" = 1 ] && break   # popup opened / rebuild -> stop draining
+      read_key 0.006 || break          # no more buffered input -> flood settled
+    done
+
+    # Repaint once — and only when the settled state actually differs from what is
+    # already on screen (a flood that ends where it began draws nothing), or a
+    # rebuild is pending after a popup.
+    if [ "$need_build" = 1 ] || [ "$hover_line" != "$prev_hover" ] || [ "$scroll" != "$prev_scroll" ]; then
+      need_draw=1
+    else
+      need_draw=0
+    fi
   done
 
   # Restore the terminal: leave the alternate screen, re-enable echo/cursor.

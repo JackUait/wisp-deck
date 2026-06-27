@@ -333,7 +333,17 @@ func TestCompactView_hover_highlight_does_not_blink_on_scroll(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(600 * time.Millisecond) // first frame
+	// Wait for the first frame to actually render before resetting (poll, don't
+	// race a fixed sleep) so the reset can't clear a not-yet-drawn frame and leave
+	// the scroll burst with nothing to show.
+	contains := func(sub string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return strings.Contains(out.String(), sub)
+	}
+	for i := 0; i < 40 && !contains("staged"); i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
 	mu.Lock()
 	out.Reset() // capture only the scroll frames
 	mu.Unlock()
@@ -347,7 +357,21 @@ func TestCompactView_hover_highlight_does_not_blink_on_scroll(t *testing.T) {
 		_, _ = ptmx.Write([]byte("\x1b[<65;12;5M")) // wheel down
 		time.Sleep(25 * time.Millisecond)
 	}
-	time.Sleep(300 * time.Millisecond)
+	// Wait for the WHOLE burst to settle (output goes quiet) before quitting.
+	// Ctrl-C must NOT land mid-burst: SIGINT interrupts an in-flight mouse-report
+	// read, which truncates that report and blanks its hover — a test-only
+	// artifact, not a real blink. Quiescence-poll instead of a fixed sleep so heavy
+	// CPU load (which slows event processing) can't race Ctrl-C into the burst.
+	outLen := func() int { mu.Lock(); defer mu.Unlock(); return out.Len() }
+	prev, stable := -1, 0
+	for i := 0; i < 40 && stable < 3; i++ {
+		time.Sleep(50 * time.Millisecond)
+		if n := outLen(); n == prev {
+			stable++
+		} else {
+			prev, stable = n, 0
+		}
+	}
 	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
 	time.Sleep(300 * time.Millisecond)
 
@@ -378,6 +402,130 @@ func TestCompactView_hover_highlight_does_not_blink_on_scroll(t *testing.T) {
 	if blinks > 0 {
 		t.Errorf("hover highlight blinked off on %d scroll frame(s); it must stay on the "+
 			"file under the cursor while scrolling", blinks)
+	}
+}
+
+// Regression: the hover highlight must FLY, not crawl. Under any-motion mouse
+// tracking (\033[?1003h) the terminal emits one report per cursor cell, so a
+// single fast mouse move buffers a BURST of motion reports. The loop used to
+// process one report per iteration and repaint the whole pane for EVERY one, so
+// a fast move queued dozens of full redraws and the selection bar drained the
+// backlog long after the cursor had stopped — visible lag. The fix coalesces:
+// it drains every already-buffered report and repaints ONCE for the settled
+// position. This writes a burst of 30 distinct-row motion reports in a single
+// write (so they all sit in the tty buffer at once) and asserts the loop emits
+// only a handful of frames — not ~one per report — while still landing the
+// highlight on the LAST report's row.
+func TestCompactView_coalesces_motion_flood_into_few_redraws(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not available")
+	}
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	writeTempFile(t, dir, "seed.txt", "x\n")
+	git("add", "seed.txt")
+	git("commit", "-q", "-m", "init")
+	for i := 0; i < 60; i++ {
+		writeTempFile(t, dir, fmt.Sprintf("f%02d.txt", i), "x\n")
+	}
+	git("add", ".")
+
+	cmd := exec.Command(zsh, "-c", "source "+module+" && compact_view "+dir)
+	env := []string{}
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "TMUX=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	// Long interval so no timed rebuild interleaves and inflates the frame count.
+	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=5", "TERM=xterm")
+
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 12, Cols: 60})
+	if err != nil {
+		t.Fatalf("start pty: %v", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	var mu sync.Mutex
+	var out bytes.Buffer
+	go func() {
+		b := make([]byte, 4096)
+		for {
+			n, err := ptmx.Read(b)
+			if n > 0 {
+				mu.Lock()
+				out.Write(b[:n])
+				mu.Unlock()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	// Wait for the first frame to actually render (poll, don't race a fixed
+	// sleep), then reset so we count only the frames the burst causes.
+	contains := func(sub string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return strings.Contains(out.String(), sub)
+	}
+	for i := 0; i < 40 && !contains("staged"); i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
+	mu.Lock()
+	out.Reset()
+	mu.Unlock()
+
+	// One write = 30 motion reports over consecutive (changing) rows, so every
+	// report WOULD move the highlight (no same-row skip) and the buggy build
+	// repaints once per report. Rows 4..9 all sit over file rows.
+	var burst bytes.Buffer
+	for i := 0; i < 30; i++ {
+		fmt.Fprintf(&burst, "\x1b[<35;12;%dM", []int{4, 5, 6, 7, 8, 9}[i%6])
+	}
+	_, _ = ptmx.Write(burst.Bytes())
+
+	// Poll for the settled highlight to render — generous so heavy CPU load can't
+	// race the assertion (the repaint may lag behind the input under contention).
+	for i := 0; i < 40 && !contains("48;5;238"); i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
+	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	got := out.String()
+	mu.Unlock()
+
+	// The CORE contract: a 30-report flood collapses into a HANDFUL of repaints,
+	// not ~one per report. Coalescing yields 1-2 here; the buggy build yielded 30.
+	// The threshold sits well below 30 but above the coalesced count so scheduling
+	// jitter (which can split the flood into a couple of batches) never trips it.
+	frames := strings.Count(got, "\x1b[H")
+	if frames < 1 || frames > 12 {
+		t.Errorf("a 30-report buffered motion flood produced %d redraw frames; the loop "+
+			"should coalesce them into a handful (the buggy build repainted per report, ~30, "+
+			"and the highlight crawled a backlog behind the cursor).", frames)
+	}
+	// And the flood must have been PROCESSED to a settled highlight, not ignored.
+	if !strings.Contains(got, "48;5;238") {
+		t.Errorf("after the motion flood the hover highlight (48;5;238) never rendered; "+
+			"the coalesced repaint dropped the settled cursor position.")
 	}
 }
 
@@ -461,9 +609,21 @@ func TestCompactView_header_stays_pinned_when_scrolled(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(700 * time.Millisecond) // first frame
-	_, _ = ptmx.Write([]byte("G"))     // jump to bottom
-	time.Sleep(400 * time.Millisecond)
+	// Poll for the first frame, then jump to the bottom and poll until it lands —
+	// fixed sleeps race the startup git-build under load (the jump may not have
+	// repainted yet when sampled).
+	contains := func(sub string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return strings.Contains(out.String(), sub)
+	}
+	for i := 0; i < 60 && !contains("f00.txt"); i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
+	_, _ = ptmx.Write([]byte("G")) // jump to bottom
+	for i := 0; i < 60 && !contains("f59.txt"); i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
 	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C to exit cleanly
 	time.Sleep(300 * time.Millisecond)
 

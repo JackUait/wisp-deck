@@ -500,6 +500,22 @@ func TestBodyLineForClick_omitted_header_rows_defaults_to_two(t *testing.T) {
 	}
 }
 
+// body_line_for_click also stores its result in the global BODY_LINE so the hover
+// hot path can read it without a $() subshell fork (that fork cost ~8ms/event
+// under load and made the selection bar crawl). Assert the global matches the
+// printed value for both a hit and a miss.
+func TestBodyLineForClick_sets_body_line_global(t *testing.T) {
+	mod := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+	hit := "source " + mod + "; body_line_for_click 4 0 10 5 2 >/dev/null; echo \"BL=$BODY_LINE\""
+	out, code := runBashSnippet(t, hit, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "BL=2")
+
+	miss := "source " + mod + "; body_line_for_click 1 0 10 5 2 >/dev/null; echo \"BL=$BODY_LINE\""
+	out, _ = runBashSnippet(t, miss, nil)
+	assertContains(t, out, "BL=0")
+}
+
 // header_rows_for converts the heading's visible column width and the pane width
 // into the number of SCREEN rows the pinned header occupies: ceil(vis/w) wrapped
 // heading rows plus the one-row separator. It is the single source of truth for
