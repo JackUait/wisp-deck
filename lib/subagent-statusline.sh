@@ -9,8 +9,11 @@
 # per row it wants to override, of the form {"id":"<task id>","content":"<body>"}.
 #
 # render_subagent_rows turns each task into such an override line, so the row for
-# whichever subagent the user is on shows that subagent's own info (name, status,
-# description, token count). Reads stdin, writes the override lines to stdout.
+# whichever subagent the user is on shows that subagent's own distinguishing
+# info: its name (only when set), description, and a compact token count. The
+# status word and the internal type are deliberately omitted — they read the
+# same on every active row and crowd out the description. Reads stdin, writes the
+# override lines to stdout.
 render_subagent_rows() {
   # Without jq the tasks array can't be parsed safely; stay silent so Claude
   # keeps its default `name · description · token count` rendering.
@@ -32,36 +35,28 @@ render_subagent_rows() {
       elif $n >= 1000 then (((($n / 100) | floor) / 10) | tostring) + "k"
       else ($n | tostring) end;
 
-    # ANSI color code chosen from the subagent status word.
-    def status_color($s):
-      if $s == null or $s == "" then "90"
-      elif ($s | test("complete|success|done|finish"; "i")) then "32"
-      elif ($s | test("fail|error|cancel|abort"; "i")) then "31"
-      elif ($s | test("run|progress|active|pending|queue|wait"; "i")) then "33"
-      else "36" end;
-
     (.columns // 80) as $cols
     | .tasks[]?
-    | (.name // .type // "agent") as $name
-    | (.status // "") as $status
+    # Only the real name labels the row — no type fallback, so unnamed local
+    # agents render description-first instead of a repeated "local_agent".
+    | (.name // "") as $name
     | (.description // "") as $desc
     | fmt_tokens(.tokenCount) as $tok
-    # Width spent by everything except the description, so the description can be
-    # truncated to keep the whole row inside $cols (avoids ugly wrapping).
-    | ( ($name | length)
-        + (if $status != "" then 1 + ($status | length) else 0 end)
-        + 1 + ($tok | length) + 4 ) as $fixed
-    | ($cols - $fixed - 3) as $budget
+    # Width spent by the name and token segments (each joined by " · "), so the
+    # description can be truncated to keep the row inside $cols (no wrapping).
+    | ( (if $name != "" then ($name | length) + 3 else 0 end)
+        + 3 + ($tok | length) + 4 ) as $fixed
+    | ($cols - $fixed) as $budget
     | ( if $desc == "" then ""
         elif ($desc | length) <= $budget then $desc
         elif $budget <= 1 then ""
         else ($desc[0:($budget - 1)] + "…") end ) as $desc2
+    # Join the present segments with a dim middot, name → description → tokens.
     | { id: .id,
-        content: (
-          paint("1;36"; $name)
-          + (if $status != "" then " " + paint(status_color($status); $status) else "" end)
-          + (if $desc2 != "" then " " + paint("90"; "· " + $desc2) else "" end)
-          + " " + paint("35"; $tok + " tok")
-        ) }
+        content: ([
+            (if $name != "" then paint("1;36"; $name) else empty end),
+            (if $desc2 != "" then $desc2 else empty end),
+            paint("35"; $tok + " tok")
+          ] | join(" " + paint("90"; "·") + " ")) }
   ' 2>/dev/null || true
 }

@@ -3,7 +3,7 @@
 #
 # Reads the subagent panel JSON on stdin and emits one {"id","content"} override
 # line per visible subagent, so the row for whichever subagent the user switches
-# to shows that subagent's own info (name, status, description, token count).
+# to shows that subagent's own info (name when set, description, token count).
 #
 # The renderer lives in subagent-statusline.sh / subagent-statusline-helpers.sh;
 # source it from the repo checkout first, then the installed copy in ~/.claude.

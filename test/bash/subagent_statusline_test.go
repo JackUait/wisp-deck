@@ -68,12 +68,17 @@ func TestSubagentStatusline_emits_one_override_line_per_task(t *testing.T) {
 	if rows[0].ID != "t1" || rows[1].ID != "t2" {
 		t.Fatalf("row ids = %q,%q, want t1,t2", rows[0].ID, rows[1].ID)
 	}
-	// Each row body carries that subagent's own info.
+	// Each row carries the subagent's distinguishing info — name, description and
+	// token count — but NOT the status word, which is identical across active
+	// rows and just adds noise.
 	if !strings.Contains(rows[0].Content, "explorer") {
 		t.Errorf("row t1 content missing name: %q", rows[0].Content)
 	}
-	if !strings.Contains(rows[0].Content, "running") {
-		t.Errorf("row t1 content missing status: %q", rows[0].Content)
+	if !strings.Contains(rows[0].Content, "scan the repo") {
+		t.Errorf("row t1 content missing description: %q", rows[0].Content)
+	}
+	if strings.Contains(rows[0].Content, "running") {
+		t.Errorf("row t1 content should not include the status word: %q", rows[0].Content)
 	}
 	if !strings.Contains(rows[0].Content, "1.5k") {
 		t.Errorf("row t1 content missing formatted tokens 1.5k: %q", rows[0].Content)
@@ -81,8 +86,37 @@ func TestSubagentStatusline_emits_one_override_line_per_task(t *testing.T) {
 	if !strings.Contains(rows[1].Content, "builder") {
 		t.Errorf("row t2 content missing name: %q", rows[1].Content)
 	}
+	if strings.Contains(rows[1].Content, "completed") {
+		t.Errorf("row t2 content should not include the status word: %q", rows[1].Content)
+	}
 	if !strings.Contains(rows[1].Content, "300 tok") {
 		t.Errorf("row t2 content missing small token count: %q", rows[1].Content)
+	}
+}
+
+func TestSubagentStatusline_omits_status_and_type_label_for_unnamed_agent(t *testing.T) {
+	// Real Claude payloads send name:null for unnamed local agents. The row must
+	// then show description + token count only — never the status word ("running")
+	// nor the internal type ("local_agent"), both of which read identically across
+	// rows and crowd out the description that actually distinguishes them.
+	in := `{"columns":120,"tasks":[{"id":"t","name":null,"type":"local_agent","status":"running","description":"W2 move and duplicate fixes","tokenCount":184800}]}`
+	out, code := renderRows(t, in)
+	assertExitCode(t, code, 0)
+	rows := parseSubagentRows(t, out)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if strings.Contains(rows[0].Content, "local_agent") {
+		t.Errorf("type label should be dropped for unnamed agents: %q", rows[0].Content)
+	}
+	if strings.Contains(rows[0].Content, "running") {
+		t.Errorf("status word should be dropped: %q", rows[0].Content)
+	}
+	if !strings.Contains(rows[0].Content, "W2 move and duplicate fixes") {
+		t.Errorf("description should be shown: %q", rows[0].Content)
+	}
+	if !strings.Contains(rows[0].Content, "184.8k tok") {
+		t.Errorf("token count should be shown: %q", rows[0].Content)
 	}
 }
 
