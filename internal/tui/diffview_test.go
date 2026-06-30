@@ -995,6 +995,77 @@ func TestRenderSideBySide_tints_change_cells(t *testing.T) {
 	}
 }
 
+// wrapColumns splits ANSI-colored text into rows of at most width display
+// columns each, instead of dropping the overflow — this is what numberLines
+// and renderSideBySide use so a long diff line wraps onto a continuation row
+// rather than getting silently cut off mid-string.
+func TestWrapColumns_splits_at_width_and_preserves_color(t *testing.T) {
+	s := "\x1b[38;2;255;0;0m" + strings.Repeat("a", 10) + "\x1b[39m"
+	rows := wrapColumns(s, 4)
+	if len(rows) != 3 { // 10 chars at 4 per row = 4, 4, 2
+		t.Fatalf("got %d rows, want 3: %q", len(rows), rows)
+	}
+	for i, r := range rows {
+		if w := lipgloss.Width(stripA(r)); w > 4 {
+			t.Errorf("row %d display width = %d, exceeds 4: %q", i, w, r)
+		}
+		if i > 0 && !strings.Contains(r, "38;2;255;0;0") {
+			t.Errorf("continuation row %d should re-open the active color, got %q", i, r)
+		}
+	}
+	var rebuilt strings.Builder
+	for _, r := range rows {
+		rebuilt.WriteString(stripA(r))
+	}
+	if want := strings.Repeat("a", 10); rebuilt.String() != want {
+		t.Errorf("rebuilt text = %q, want %q (wrap must not drop characters)", rebuilt.String(), want)
+	}
+}
+
+func TestWrapColumns_short_string_yields_one_row(t *testing.T) {
+	if rows := wrapColumns("abc", 10); len(rows) != 1 || rows[0] != "abc" {
+		t.Errorf("got %v, want [\"abc\"]", rows)
+	}
+}
+
+func TestWrapColumns_empty_string_yields_one_empty_row(t *testing.T) {
+	if rows := wrapColumns("", 10); len(rows) != 1 || rows[0] != "" {
+		t.Errorf("got %v, want one empty row", rows)
+	}
+}
+
+// Regression test for the bug shown in the bug report: a long changed line in
+// the inline diff view got hard-truncated at the column edge — the rest of
+// the line vanished instead of appearing on a wrapped continuation row.
+func TestNumberLines_long_changed_line_wraps_instead_of_truncating(t *testing.T) {
+	long := strings.Repeat("q", 50)
+	content := "+" + long + "\n"
+	out := stripA(numberLines(content, 30))
+	rows := strings.Split(out, "\n")
+	if len(rows) < 2 {
+		t.Fatalf("a line longer than the column should wrap onto more than one row, got %d row(s):\n%q", len(rows), out)
+	}
+	if got := strings.Count(out, "q"); got != len(long) {
+		t.Errorf("wrapping must not drop characters: got %d q's, want %d in:\n%q", got, len(long), out)
+	}
+}
+
+// Same regression, side-by-side mode: a long removed line's cell must wrap
+// rather than truncate, and every row must stay aligned to the box width.
+func TestRenderSideBySide_long_changed_line_wraps_instead_of_truncating(t *testing.T) {
+	long := strings.Repeat("q", 60)
+	content := "-" + long + "\n"
+	out := stripA(renderSideBySide(content, 80))
+	assertRowsAligned(t, out, 80)
+	rows := strings.Split(out, "\n")
+	if len(rows) < 2 {
+		t.Fatalf("a cell longer than the column should wrap onto more than one row, got %d row(s):\n%q", len(rows), out)
+	}
+	if got := strings.Count(out, "q"); got != len(long) {
+		t.Errorf("wrapping must not drop characters: got %d q's, want %d in:\n%q", got, len(long), out)
+	}
+}
+
 // ── Discard button ──────────────────────────────────────────────────────────
 // The preview offers a [ Discard ] button (in its title row) that, after a
 // confirm step, signals the caller to discard the file's working-tree changes.

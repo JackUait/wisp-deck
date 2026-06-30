@@ -356,6 +356,8 @@ func numberLines(content string, width int) string {
 	if w < 1 {
 		w = 1
 	}
+	blankGutter := diffGutterStyle.Render(strings.Repeat(" ", w) + " │ ")
+
 	var b strings.Builder
 	n := 0
 	for i, ln := range lines {
@@ -364,7 +366,7 @@ func numberLines(content string, width int) string {
 		}
 		if cnt, ok := isGapLine(ln); ok {
 			n += cnt
-			b.WriteString(diffGutterStyle.Render(strings.Repeat(" ", w) + " │ "))
+			b.WriteString(blankGutter)
 			b.WriteString(diffGapRowStyle.Render("⋯ " + itoa(cnt) + " unchanged lines"))
 			continue
 		}
@@ -372,23 +374,31 @@ func numberLines(content string, width int) string {
 			continue
 		}
 		kind, _ := classifyDiffLine(ln)
-		var num string
+		var gutter string
 		if kind == diffDel {
-			num = strings.Repeat(" ", w)
+			gutter = blankGutter
 		} else {
 			n++
-			num = fmt.Sprintf("%*d", w, n)
+			gutter = diffGutterStyle.Render(fmt.Sprintf("%*d", w, n) + " │ ")
 		}
-		gutter := diffGutterStyle.Render(num + " │ ")
-		b.WriteString(gutter)
 		codeW := width - lipgloss.Width(gutter)
-		switch kind {
-		case diffAdd:
-			b.WriteString(tintColumn(ln, codeW, diffAddBgSeq))
-		case diffDel:
-			b.WriteString(tintColumn(ln, codeW, diffDelBgSeq))
-		default:
-			b.WriteString(ln)
+		// A line wider than codeW wraps onto continuation rows (blank gutter)
+		// rather than getting cut off; most lines are one row.
+		for j, row := range wrapColumns(ln, codeW) {
+			if j > 0 {
+				b.WriteByte('\n')
+				b.WriteString(blankGutter)
+			} else {
+				b.WriteString(gutter)
+			}
+			switch kind {
+			case diffAdd:
+				b.WriteString(tintColumn(row, codeW, diffAddBgSeq))
+			case diffDel:
+				b.WriteString(tintColumn(row, codeW, diffDelBgSeq))
+			default:
+				b.WriteString(row)
+			}
 		}
 	}
 	return b.String()
@@ -605,6 +615,76 @@ func fitColumn(s string, width int) string {
 	return b.String()
 }
 
+// ansiIsReset reports whether seq (a full "\x1b[...m" escape) clears the
+// active foreground color rather than setting one: an empty, "0", or "39"
+// parameter. Those are the only codes this package ever emits or expects in a
+// diff body — highlightSource closes every color it opens with "39m" (see
+// highlight.go), and "0m"/empty are the general ANSI reset forms used in test
+// fixtures — so this covers every "color ended here" case wrapColumns needs
+// to track.
+func ansiIsReset(seq string) bool {
+	inner := strings.TrimSuffix(strings.TrimPrefix(seq, "\x1b["), "m")
+	return inner == "" || inner == "0" || inner == "39"
+}
+
+// wrapColumns splits a possibly ANSI-colored string into rows of at most
+// width display columns each (greedy width-based wrap, no word-boundary
+// smarts — a diff/code line wraps mid-token same as an editor would). This is
+// the single place where a long diff line's overflow goes: every renderer
+// that lays out a fixed-width column wraps through here instead of cutting
+// the line short, so the rest of a long line shows up on a continuation row
+// rather than vanishing past the edge. The active foreground color escape (if
+// any) is tracked and re-opened at the start of each continuation row so a
+// mid-token wrap doesn't lose syntax highlighting. Returns one (possibly
+// empty) row for input that already fits, including the empty string.
+func wrapColumns(s string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+	rs := []rune(s)
+	var rows []string
+	var b strings.Builder
+	vis := 0
+	active := ""
+	flush := func() {
+		rows = append(rows, b.String())
+		b.Reset()
+		vis = 0
+	}
+	for i := 0; i < len(rs); {
+		if rs[i] == '\x1b' {
+			j := i
+			for j < len(rs) && rs[j] != 'm' {
+				j++
+			}
+			if j < len(rs) {
+				j++
+			}
+			seq := string(rs[i:j])
+			if ansiIsReset(seq) {
+				active = ""
+			} else {
+				active = seq
+			}
+			b.WriteString(seq)
+			i = j
+			continue
+		}
+		rw := runewidth.RuneWidth(rs[i])
+		if vis > 0 && vis+rw > width { // wrap before a rune that would overflow this row
+			flush()
+			if active != "" {
+				b.WriteString(active)
+			}
+		}
+		b.WriteRune(rs[i])
+		vis += rw
+		i++
+	}
+	rows = append(rows, b.String())
+	return rows
+}
+
 // pickByWidth chooses the view that fits: side-by-side when each column would
 // get at least diffMinColWidth columns, otherwise inline.
 func pickByWidth(cw int) int {
@@ -753,8 +833,34 @@ func renderSideBySide(content string, cw int) string {
 	}
 
 	var rows []string
+	// emit lays out one logical old/new pair as one or more screen rows: a
+	// cell whose text is wider than textW wraps onto continuation rows
+	// (blank gutter) instead of getting cut off. The two sides wrap
+	// independently, so the shorter side is padded with blank rows to keep
+	// both columns — and the " │ " divider between them — aligned.
 	emit := func(l, r sbsCell, lbg, rbg string) {
-		rows = append(rows, sbsCellStr(l, gw, textW, lbg)+diffGutterStyle.Render(" │ ")+sbsCellStr(r, gw, textW, rbg))
+		lRows := wrapColumns(l.text, textW)
+		rRows := wrapColumns(r.text, textW)
+		n := maxInt(len(lRows), len(rRows))
+		for i := 0; i < n; i++ {
+			var lc, rc sbsCell
+			lBg, rBg := "", ""
+			if i < len(lRows) {
+				no := 0
+				if i == 0 {
+					no = l.no
+				}
+				lc, lBg = sbsCell{no, lRows[i]}, lbg
+			}
+			if i < len(rRows) {
+				no := 0
+				if i == 0 {
+					no = r.no
+				}
+				rc, rBg = sbsCell{no, rRows[i]}, rbg
+			}
+			rows = append(rows, sbsCellStr(lc, gw, textW, lBg)+diffGutterStyle.Render(" │ ")+sbsCellStr(rc, gw, textW, rBg))
+		}
 	}
 	var dels, adds []sbsCell
 	flush := func() {
