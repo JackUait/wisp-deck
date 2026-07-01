@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 	"sync"
@@ -166,39 +167,61 @@ func (m *Manager) HasAvailable(now time.Time) bool {
 	return false
 }
 
-// pickBest returns the index of the available account with the lowest
-// utilization (ties broken by index), or -1 if none are available.
-func (m *Manager) pickBest(now time.Time) int {
+// pickBest returns the index of the best available account, skipping any in
+// exclude, or -1 if none are available. Selection order mirrors teamclaude's
+// _pickBestAvailable: an account with no known weekly reset sorts first (so its
+// quota gets discovered), then the account whose weekly window resets soonest —
+// that quota is closest to refreshing, so spending it first preserves accounts
+// whose windows reset later. Ties break by index.
+func (m *Manager) pickBest(exclude map[int]bool, now time.Time) int {
 	best := -1
-	bestUtil := 2.0
+	var bestReset int64
 	for i := range m.accounts {
-		if !m.isAvailable(i, now) {
+		if exclude[i] || !m.isAvailable(i, now) {
 			continue
 		}
-		if u := m.util(i); u < bestUtil {
-			bestUtil = u
+		// Unknown weekly reset sorts first (math.MinInt64 sentinel).
+		reset := int64(math.MinInt64)
+		if r := m.accounts[i].q.u7dReset; !r.IsZero() {
+			reset = r.Unix()
+		}
+		if best < 0 || reset < bestReset {
+			bestReset = reset
 			best = i
 		}
 	}
 	return best
 }
 
-// Rotate selects the best account. If the current account is still available it
-// stays put; otherwise it switches to the least-utilized available account.
-// Returns the selected index and whether it changed.
-func (m *Manager) Rotate(now time.Time) (int, bool) {
+// GetActiveAccount selects the account to serve a request, excluding any indices
+// already tried this request. Mirrors teamclaude's getActiveAccount(tried): the
+// current account is kept while it is available and not excluded; otherwise the
+// best available account is chosen. Returns (index, true) or (-1, false) when
+// every account is exhausted.
+func (m *Manager) GetActiveAccount(exclude map[int]bool, now time.Time) (int, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.isAvailable(m.current, now) {
-		return m.current, false
+	if !exclude[m.current] && m.isAvailable(m.current, now) {
+		return m.current, true
 	}
-	best := m.pickBest(now)
+	best := m.pickBest(exclude, now)
 	if best < 0 {
-		return m.current, false
+		return -1, false
 	}
-	switched := best != m.current
 	m.current = best
-	return best, switched
+	return best, true
+}
+
+// Rotate selects the best account. If the current account is still available it
+// stays put; otherwise it switches to the best available account (see pickBest).
+// Returns the selected index and whether it changed.
+func (m *Manager) Rotate(now time.Time) (int, bool) {
+	prev := m.ActiveIndex()
+	idx, ok := m.GetActiveAccount(nil, now)
+	if !ok {
+		return prev, false
+	}
+	return idx, idx != prev
 }
 
 // SelectBest picks the best account up front (e.g. at startup), preferring the
@@ -207,7 +230,7 @@ func (m *Manager) Rotate(now time.Time) (int, bool) {
 func (m *Manager) SelectBest(now time.Time) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if best := m.pickBest(now); best >= 0 {
+	if best := m.pickBest(nil, now); best >= 0 {
 		m.current = best
 	}
 	return m.current

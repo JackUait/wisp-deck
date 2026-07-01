@@ -6,11 +6,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newTestServer(t *testing.T, mgr *Manager, upstream string) *Server {
 	t.Helper()
-	return NewServer(mgr, "proxy-key", upstream)
+	// No-op sleep so retry-after waits don't slow the tests.
+	return NewServer(mgr, "proxy-key", upstream, WithSleep(func(time.Duration) {}))
 }
 
 func doRequest(t *testing.T, srv *Server, key, body string) *httptest.ResponseRecorder {
@@ -70,6 +72,63 @@ func TestServer_rejectsBadProxyKey(t *testing.T) {
 	}
 }
 
+func TestServer_retriesSameAccountOnTransient429(t *testing.T) {
+	// teamclaude pattern: a transient 429 waits retry-after and retries the SAME
+	// account rather than immediately switching.
+	var calls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("retry-after", "1")
+			w.WriteHeader(429)
+			return
+		}
+		w.WriteHeader(200)
+		io.WriteString(w, "ok-after-wait")
+	}))
+	defer upstream.Close()
+
+	mgr := NewManager([]Account{{Label: "A", AccessToken: "tok-A"}, {Label: "B", AccessToken: "tok-B"}}, 0.98)
+	srv := newTestServer(t, mgr, upstream.URL)
+
+	rec := doRequest(t, srv, "proxy-key", `{}`)
+	if rec.Code != 200 || rec.Body.String() != "ok-after-wait" {
+		t.Fatalf("got (%d, %q), want (200, ok-after-wait)", rec.Code, rec.Body.String())
+	}
+	if mgr.ActiveIndex() != 0 {
+		t.Errorf("active = %d, want 0 (stayed on A after transient 429)", mgr.ActiveIndex())
+	}
+}
+
+func TestServer_stripsAcceptEncodingAndDoesNotFollowRedirects(t *testing.T) {
+	var sawAcceptEncoding string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawAcceptEncoding = r.Header.Get("Accept-Encoding")
+		w.Header().Set("Location", "https://example.com/elsewhere")
+		w.WriteHeader(302)
+	}))
+	defer upstream.Close()
+
+	mgr := NewManager([]Account{{AccessToken: "tok-A"}, {AccessToken: "tok-B"}}, 0.98)
+	srv := newTestServer(t, mgr, upstream.URL)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{}"))
+	req.Header.Set("x-api-key", "proxy-key")
+	req.Header.Set("Accept-Encoding", "gzip, br")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	// The client's explicit "gzip, br" must not be forwarded; the transport may
+	// substitute its own single "gzip" for transparent decompression (as undici
+	// does in teamclaude), but never the client's value.
+	if sawAcceptEncoding == "gzip, br" {
+		t.Errorf("client accept-encoding should be stripped, got forwarded %q", sawAcceptEncoding)
+	}
+	if rec.Code != 302 {
+		t.Errorf("redirect should pass through unfollowed, got %d", rec.Code)
+	}
+}
+
 func TestServer_switchesAccountOn429(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Account A is rate-limited; account B succeeds.
@@ -113,5 +172,12 @@ func TestServer_passesThrough429WhenAllExhausted(t *testing.T) {
 	rec := doRequest(t, srv, "proxy-key", `{}`)
 	if rec.Code != 429 {
 		t.Errorf("status = %d, want 429 passthrough", rec.Code)
+	}
+	// teamclaude returns a structured rate_limit_error body when all exhausted.
+	if !strings.Contains(rec.Body.String(), "rate_limit_error") {
+		t.Errorf("body = %q, want a rate_limit_error payload", rec.Body.String())
+	}
+	if rec.Header().Get("retry-after") == "" {
+		t.Error("exhausted response should carry a retry-after header")
 	}
 }

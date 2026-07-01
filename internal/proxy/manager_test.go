@@ -36,24 +36,38 @@ func TestUpdateQuota_parsesUnifiedHeaders(t *testing.T) {
 	}
 }
 
-func TestRotate_switchesAwayFromNearQuotaAccount(t *testing.T) {
+func TestRotate_prefersSoonestWeeklyReset(t *testing.T) {
+	// Mirrors teamclaude's _pickBestAvailable: among available accounts, spend
+	// the one whose weekly window resets soonest first (it's closest to
+	// refreshing), preserving accounts whose windows reset later.
 	m := NewManager(testAccounts(3), 0.98)
 	now := time.Now()
-	// Active account (0) is over threshold; account 1 is busiest of the rest,
-	// account 2 is idlest — rotation should land on 2.
-	m.UpdateQuota(0, hdr("anthropic-ratelimit-unified-5h-utilization", "0.99"))
-	m.UpdateQuota(1, hdr("anthropic-ratelimit-unified-5h-utilization", "0.80"))
-	m.UpdateQuota(2, hdr("anthropic-ratelimit-unified-5h-utilization", "0.10"))
+	soon := now.Add(1 * time.Hour).Unix()
+	later := now.Add(10 * time.Hour).Unix()
+	m.UpdateQuota(0, hdr("anthropic-ratelimit-unified-5h-utilization", "0.99")) // active exhausted
+	m.UpdateQuota(1, hdr("anthropic-ratelimit-unified-7d-utilization", "0.50",
+		"anthropic-ratelimit-unified-7d-reset", itoa(later)))
+	m.UpdateQuota(2, hdr("anthropic-ratelimit-unified-7d-utilization", "0.50",
+		"anthropic-ratelimit-unified-7d-reset", itoa(soon)))
 
 	idx, switched := m.Rotate(now)
-	if !switched {
-		t.Fatal("expected a switch")
+	if !switched || idx != 2 {
+		t.Errorf("got (idx=%d switched=%v), want (2, true) — soonest weekly reset", idx, switched)
 	}
-	if idx != 2 {
-		t.Errorf("rotated to %d, want 2 (least utilized)", idx)
-	}
-	if m.ActiveIndex() != 2 {
-		t.Errorf("ActiveIndex = %d, want 2", m.ActiveIndex())
+}
+
+func TestRotate_prefersUnknownWeeklyToDiscoverIt(t *testing.T) {
+	// An account whose weekly quota is not yet known is picked before ones with
+	// a known (later) reset, so its quota gets discovered.
+	m := NewManager(testAccounts(3), 0.98)
+	now := time.Now()
+	m.UpdateQuota(0, hdr("anthropic-ratelimit-unified-5h-utilization", "0.99")) // active exhausted
+	m.UpdateQuota(1, hdr("anthropic-ratelimit-unified-7d-utilization", "0.50",
+		"anthropic-ratelimit-unified-7d-reset", itoa(now.Add(1*time.Hour).Unix())))
+	// account 2: no weekly reset known → should be preferred to discover it.
+	idx, switched := m.Rotate(now)
+	if !switched || idx != 2 {
+		t.Errorf("got (idx=%d switched=%v), want (2, true) — unknown weekly first", idx, switched)
 	}
 }
 
@@ -90,6 +104,36 @@ func TestRotate_throttleExpires(t *testing.T) {
 	idx, switched := m.Rotate(later)
 	if !switched || idx != 1 {
 		t.Errorf("got (idx=%d switched=%v), want (1, true) after throttle expiry", idx, switched)
+	}
+}
+
+func TestGetActiveAccount_keepsHealthyCurrent(t *testing.T) {
+	m := NewManager(testAccounts(2), 0.98)
+	m.UpdateQuota(0, hdr("anthropic-ratelimit-unified-5h-utilization", "0.10"))
+	idx, ok := m.GetActiveAccount(nil, time.Now())
+	if !ok || idx != 0 {
+		t.Errorf("got (idx=%d ok=%v), want (0, true)", idx, ok)
+	}
+}
+
+func TestGetActiveAccount_excludesTried(t *testing.T) {
+	m := NewManager(testAccounts(3), 0.98)
+	now := time.Now()
+	m.UpdateQuota(0, hdr("anthropic-ratelimit-unified-5h-utilization", "0.99")) // current exhausted
+	// Exclude account 2 (already tried this request) → must pick 1.
+	idx, ok := m.GetActiveAccount(map[int]bool{2: true}, now)
+	if !ok || idx != 1 {
+		t.Errorf("got (idx=%d ok=%v), want (1, true)", idx, ok)
+	}
+}
+
+func TestGetActiveAccount_noneAvailable(t *testing.T) {
+	m := NewManager(testAccounts(2), 0.98)
+	now := time.Now()
+	m.UpdateQuota(0, hdr("anthropic-ratelimit-unified-5h-utilization", "0.99"))
+	m.MarkThrottled(1, now.Add(time.Hour))
+	if _, ok := m.GetActiveAccount(nil, now); ok {
+		t.Error("expected ok=false when every account is exhausted")
 	}
 }
 

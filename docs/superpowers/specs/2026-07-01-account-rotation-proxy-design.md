@@ -95,17 +95,28 @@ Components (each independently testable):
 - When off (or <2 accounts), behavior is exactly as today (manual account
   selection via `CLAUDE_CONFIG_DIR`).
 
-## Rotation policy (v1, trimmed from teamclaude)
+## Rotation policy (v1, matching teamclaude's patterns)
 
 - Utilization = max of `unified5h`, `unified7d` from response headers (0–1).
-- Switch when the active account's utilization ≥ `threshold` (default 0.98) or it
-  returns a persistent `429`.
-- Target = available account (not throttled, under threshold) with the lowest
-  utilization; ties broken by index. Falls back to soonest-reset when all are
-  over.
-- On `429`: wait `retry-after` once on the same account; on repeat, mark it
-  throttled until reset and re-dispatch on the next account. If every account is
-  exhausted, pass the upstream `429` through to the client.
+- An account is *available* when it is not errored, not throttled, and under the
+  `threshold` (default 0.98; a `unified-status: rejected` header also counts as
+  over).
+- `GetActiveAccount(tried)` keeps the current account while it is available and
+  not already tried this request; otherwise it selects the best available
+  account. Selection order mirrors teamclaude's `_pickBestAvailable`: an account
+  with **no known weekly reset sorts first** (so its quota gets discovered), then
+  the account whose **weekly window resets soonest** (that quota is closest to
+  refreshing, so spending it first preserves later-resetting accounts). Ties
+  break by index.
+- On `429`: parse `retry-after`, clamp to `[1, 300]s` (default 60). While retries
+  remain (`retryCount < poolSize`), **wait and retry the same account** (a
+  transient limit). Once retries are exhausted, mark the account throttled until
+  its reset and re-dispatch, which picks another account. When every account is
+  exhausted, return a structured `rate_limit_error` (429) with a `retry-after`.
+- Header hygiene mirrors teamclaude: strip `accept-encoding` from the forwarded
+  request and `content-encoding`/`content-length` from the relayed response
+  (the transport may auto-decompress), and do not follow upstream redirects
+  (`redirect: manual`).
 
 ## Error handling
 
