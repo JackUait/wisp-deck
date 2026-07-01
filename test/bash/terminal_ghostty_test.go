@@ -294,13 +294,15 @@ func TestGhosttyAdapter_ensure_hushlogin_preserves_existing(t *testing.T) {
 	}
 }
 
-func TestGhosttyAdapter_launch_restore(t *testing.T) {
+func TestGhosttyAdapter_launch_window_carries_no_args(t *testing.T) {
+	// A restored window must be a plain Ghostty instance. Baking a command
+	// into --args makes it the instance-wide default command, so every new
+	// tab in that window would re-run it and duplicate the project.
 	dir := t.TempDir()
 	rec := filepath.Join(dir, "rec")
 	binDir := mockCommand(t, dir, "open", `echo "$@" > `+fmt.Sprintf("%q", rec))
 	env := buildEnv(t, []string{binDir})
-	snippet := ghosttyAdapterSnippet(t,
-		`terminal_launch_restore "/w/wrapper.sh" "/p/app" "claude"`)
+	snippet := ghosttyAdapterSnippet(t, `terminal_launch_window`)
 	_, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
 	data, err := os.ReadFile(rec)
@@ -308,7 +310,7 @@ func TestGhosttyAdapter_launch_restore(t *testing.T) {
 		t.Fatalf("open not invoked: %v", err)
 	}
 	got := strings.TrimSpace(string(data))
-	want := "-na Ghostty --args -e /bin/bash -l /w/wrapper.sh --restore /p/app claude"
+	want := "-na Ghostty"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

@@ -85,26 +85,37 @@ PROJECTS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/projects"
 # Boot id (stable per uptime) for once-per-boot restore.
 WISP_DECK_BOOT_ID="$(current_boot_id)"
 
-# Restore mode: wrapper.sh --restore <project_path> <ai_tool>
+# Set when this window restores a prior-boot session from the restore queue;
+# makes the AI tool resume its conversation (WISP_DECK_RESUME).
 RESTORE_MODE=0
-_restore_parsed="$(parse_restore_flag "$@")"
-if [ -n "$_restore_parsed" ]; then
-  RESTORE_MODE=1
-  RESTORE_PATH="${_restore_parsed%%|*}"
-  RESTORE_TOOL="${_restore_parsed##*|}"
-fi
 
 # Select working directory
-if [ "$RESTORE_MODE" -eq 1 ]; then
-  cd "$RESTORE_PATH" || exit 1
-  PROJECT_NAME="$(basename "$RESTORE_PATH")"
-  SELECTED_AI_TOOL="$RESTORE_TOOL"
-elif [ -n "$1" ] && [ -d "$1" ]; then
+if [ -n "$1" ] && [ -d "$1" ]; then
   cd "$1" || exit 1
   shift
-elif [ -z "$1" ]; then
-  # First interactive launch after a reboot: reopen previous tabs.
-  maybe_restore_session "$SHARE_DIR" "$WISP_DECK_BOOT_ID" "$0"
+else
+  # Interactive launch. (Stale args from pre-fix Ghostty instances that still
+  # carry "--restore <path> <tool>" land here too — they must never force a
+  # project open, that was the duplicated-tabs bug.)
+  # The first interactive launch of a new boot builds the restore queue; every
+  # interactive launch consumes one pending entry, so prior-boot sessions come
+  # back as ordered tabs of this window instead of separate windows.
+  maybe_restore_session "$SHARE_DIR" "$WISP_DECK_BOOT_ID"
+  _queue_entry="$(restore_queue_pop "$SHARE_DIR" "$WISP_DECK_BOOT_ID")"
+  # Skip entries whose project directory no longer exists.
+  while [ -n "$_queue_entry" ] && [ ! -d "${_queue_entry%%|*}" ]; do
+    _queue_entry="$(restore_queue_pop "$SHARE_DIR" "$WISP_DECK_BOOT_ID")"
+  done
+  if [ -n "$_queue_entry" ]; then
+    # Open the next tab immediately so the chain completes quickly while this
+    # window continues its own setup.
+    restore_advance "$SHARE_DIR"
+    RESTORE_MODE=1
+    cd "${_queue_entry%%|*}" || exit 1
+    PROJECT_NAME="$(basename "${_queue_entry%%|*}")"
+    SELECTED_AI_TOOL="${_queue_entry##*|}"
+    type stop_loading_screen &>/dev/null && stop_loading_screen
+  else
 
   # Use TUI for project selection
   printf '\033]0;󰊠  Wisp Deck\007'
@@ -155,6 +166,7 @@ elif [ -z "$1" ]; then
       exit 0
     fi
   done
+  fi
 fi
 
 PROJECT_DIR="$(pwd)"

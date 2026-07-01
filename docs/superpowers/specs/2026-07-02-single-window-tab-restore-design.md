@@ -11,6 +11,24 @@ had those projects as **tabs of a single window**, and the restore order is
 whatever `tmux list-sessions` prints (alphabetical), not the order the tabs
 had before the reboot.
 
+## Root cause of duplicated tabs
+
+Observed live: a Ghostty process running with launch args
+`-e /bin/bash -l …/wrapper.sh --restore /Users/jackuait/Packages/blok claude`.
+`open -na Ghostty --args -e …` makes that `-e` command the **default command
+of the entire Ghostty instance**, not just its first window. Every new tab
+(Cmd+T) opened inside such a restored window re-runs
+`wrapper.sh --restore <same path>` and opens the same project again (two
+`dev-blok-*` tmux sessions existed, the second created a minute after the
+restore). Those duplicates then land in the snapshot, so the next reboot
+restores the project twice — the repetition compounds across reboots.
+
+Fix: no Ghostty instance may ever carry `--restore` in its launch args. The
+`--restore` flag is removed entirely; restore state lives in a queue file
+that each entry can be popped from exactly once. The once-per-boot gate also
+becomes atomic (claim file) so simultaneous wrapper starts at login cannot
+each rebuild the queue.
+
 ## Constraints discovered
 
 - Ghostty (macOS) has **no CLI/IPC** to open a tab in an existing window.
@@ -49,9 +67,11 @@ Queue-driven tab chain, all inside the window the user opens after reboot:
    wrapper, pops the next entry, and repeats — tabs open left-to-right in
    snapshot order.
 5. **Fallback** — if `osascript` fails (Accessibility permission not
-   granted), `restore_advance` drains the queue through the legacy
-   `launch_restore_window` (separate windows, old behavior) and deletes the
-   queue. Restore never silently loses sessions.
+   granted), `restore_advance` spawns one **plain** Ghostty window per
+   remaining queue entry (`open -na Ghostty`, no args). Each window runs the
+   configured wrapper command, pops one queue entry, and restores it.
+   Separate windows (old behavior), but no `--restore` args are ever baked
+   into an instance, so no duplication.
 
 ### Queue hygiene
 
@@ -67,20 +87,24 @@ Queue-driven tab chain, all inside the window the user opens after reboot:
 | Function | Change |
 |---|---|
 | `write_session_snapshot` | sort sessions by `session_created` |
-| `maybe_restore_session` | writes `restore-queue` + marker; spawns nothing |
+| `maybe_restore_session <dir> <boot>` | writes `restore-queue` + marker under an atomic claim; spawns nothing |
 | `restore_queue_pop <dir> <boot>` | new — atomic pop, echoes `path\|tool` |
-| `restore_advance <dir> <wrapper>` | new — Cmd+T trigger or windows fallback |
+| `restore_advance <dir>` | new — Cmd+T trigger, or plain-window-per-entry fallback |
 | `restore_trigger_tab` | new — osascript wrapper (mockable) |
-| `launch_restore_window` | unchanged (fallback path) |
+| `launch_restore_window` / `parse_restore_flag` | **deleted** (duplication vector) |
+| `terminal_launch_restore` (ghostty.sh) | replaced by `terminal_launch_window` — `open -na Ghostty`, no args |
 
 ### wrapper.sh
 
-The `[ -z "$1" ]` interactive branch calls `maybe_restore_session`, then
-loops `restore_queue_pop` (skipping dead paths). On a hit it sets
-`RESTORE_MODE=1`, `RESTORE_PATH`, `RESTORE_TOOL`, calls `restore_advance`,
-and proceeds exactly like `--restore` mode. On a miss it falls through to
-the project picker as before. The first restored project takes over the
-window the user opened, so no stray picker tab is left behind.
+The `--restore` flag and `RESTORE_MODE` argument parsing are removed. The
+interactive branch (no directory argument) calls `maybe_restore_session`,
+then loops `restore_queue_pop` (skipping dead paths). On a hit it calls
+`restore_advance`, stops the loading splash, cds into the project, sets the
+tool, and marks the session as a resume (`WISP_DECK_RESUME=1`, previously
+the `--restore` semantics). On a miss it falls through to the project
+picker as before. Stale windows still launching with `--restore` args (from
+pre-fix Ghostty instances) no longer match a directory argument and fall
+into the interactive branch — pop or picker, never a forced duplicate.
 
 ## Testing
 

@@ -7,6 +7,25 @@ import (
 	"testing"
 )
 
+// seedRestoreQueue plants a current-boot restore-queue entry (matching the
+// mocked sysctl boot id 12345) so wrapper.sh, launched with no arguments,
+// restores projDir/tool directly instead of opening the interactive picker.
+func seedRestoreQueue(t *testing.T, home, projDir, tool string) {
+	t.Helper()
+	confDir := filepath.Join(home, ".config", "wisp-deck")
+	if err := os.MkdirAll(confDir, 0755); err != nil {
+		t.Fatalf("mkdir conf: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(confDir, "restore-queue"),
+		[]byte("12345|"+projDir+"|"+tool+"\n"), 0644); err != nil {
+		t.Fatalf("write queue: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(confDir, "last-restore-boot"),
+		[]byte("12345\n"), 0644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+}
+
 // TestWrapper_terminal_pane_is_45_percent verifies the left column's vertical
 // split gives the bottom terminal pane 45% of the height. The whole
 // "new-session ... \; split-window ..." chain is one tmux invocation, so the
@@ -24,6 +43,7 @@ func TestWrapper_terminal_pane_is_45_percent(t *testing.T) {
 		"claude":        "#!/bin/bash\nexit 0\n",
 		"lazygit":       "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
+		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
 	}
 	for name, body := range mocks {
 		p := filepath.Join(binDir, name)
@@ -37,8 +57,9 @@ func TestWrapper_terminal_pane_is_45_percent(t *testing.T) {
 		t.Fatalf("mkdir proj: %v", err)
 	}
 
+	seedRestoreQueue(t, home, projDir, "claude")
 	env := buildEnv(t, nil, "HOME="+home, "GT_REC="+recPath)
-	_, code := runBashScript(t, "wrapper.sh", []string{"--restore", projDir, "claude"}, env)
+	_, code := runBashScript(t, "wrapper.sh", nil, env)
 	assertExitCode(t, code, 0)
 
 	data, err := os.ReadFile(recPath)
@@ -67,6 +88,7 @@ func recordWrapperNewSession(t *testing.T) string {
 		"claude":        "#!/bin/bash\nexit 0\n",
 		"lazygit":       "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
+		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
 	}
 	for name, body := range mocks {
 		p := filepath.Join(binDir, name)
@@ -78,8 +100,9 @@ func recordWrapperNewSession(t *testing.T) string {
 	if err := os.MkdirAll(projDir, 0755); err != nil {
 		t.Fatalf("mkdir proj: %v", err)
 	}
+	seedRestoreQueue(t, home, projDir, "claude")
 	env := buildEnv(t, nil, "HOME="+home, "GT_REC="+recPath)
-	_, code := runBashScript(t, "wrapper.sh", []string{"--restore", projDir, "claude"}, env)
+	_, code := runBashScript(t, "wrapper.sh", nil, env)
 	assertExitCode(t, code, 0)
 	data, err := os.ReadFile(recPath)
 	if err != nil {
@@ -103,6 +126,7 @@ func recordWrapperNewSessionForTool(t *testing.T, tool string) string {
 		"tmux":          "#!/bin/bash\nif [ \"$1\" = \"new-session\" ]; then printf '%s\\n' \"$*\" > \"$GT_REC\"; exit 0; fi\nexit 0\n",
 		"lazygit":       "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
+		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
 		tool:            "#!/bin/bash\nexit 0\n",
 	}
 	for name, body := range mocks {
@@ -115,8 +139,9 @@ func recordWrapperNewSessionForTool(t *testing.T, tool string) string {
 	if err := os.MkdirAll(projDir, 0755); err != nil {
 		t.Fatalf("mkdir proj: %v", err)
 	}
+	seedRestoreQueue(t, home, projDir, tool)
 	env := buildEnv(t, nil, "HOME="+home, "GT_REC="+recPath)
-	_, code := runBashScript(t, "wrapper.sh", []string{"--restore", projDir, tool}, env)
+	_, code := runBashScript(t, "wrapper.sh", nil, env)
 	assertExitCode(t, code, 0)
 	data, err := os.ReadFile(recPath)
 	if err != nil {

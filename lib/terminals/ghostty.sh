@@ -80,9 +80,11 @@ ensure_hushlogin() {
   : > "$hushfile"
 }
 
-# Open a new Ghostty window running the wrapper in restore mode.
-# Args: wrapper_path project_path ai_tool
-terminal_launch_restore() {
-  local wrapper="$1" path="$2" tool="$3"
-  open -na Ghostty --args -e /bin/bash -l "$wrapper" --restore "$path" "$tool"
+# Open a plain Ghostty window. Deliberately no --args: a command baked into
+# the launch args becomes that instance's default command, so every new tab
+# opened in the window would re-run it — this was the root cause of restored
+# projects duplicating. The window runs the configured wrapper command, which
+# pops the restore queue itself.
+terminal_launch_window() {
+  open -na Ghostty
 }
