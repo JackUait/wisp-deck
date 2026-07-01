@@ -2,12 +2,13 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -109,16 +110,24 @@ func (s *Server) EnableMITM(dir string) (string, error) {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Forward-proxy CONNECT (HTTPS_PROXY mode) — transparent MITM for the
 	// upstream host, local answer for the test host, blind tunnel otherwise.
+	// Authenticate BEFORE hijacking/tunneling so the proxy is not an open
+	// forward proxy. In HTTPS_PROXY mode the client cannot send x-api-key, so it
+	// presents the key via Proxy-Authorization (wrapper embeds it in the proxy
+	// URL). Loopback is NOT treated as a trust boundary (multi-user hosts).
 	if r.Method == http.MethodConnect {
+		if !s.proxyAuthorized(r) {
+			w.Header().Set("Proxy-Authenticate", `Basic realm="wisp-deck"`)
+			s.writeError(w, http.StatusProxyAuthRequired, "authentication_error", "Proxy authentication required")
+			return
+		}
 		s.handleConnect(w, r)
 		return
 	}
 
-	// Authenticate the local client. Claude Code sends the proxy key as x-api-key
-	// (and/or Authorization: Bearer <key>); either is accepted. Loopback clients
-	// are trusted without the key (teamclaude's isLocal skip), which also covers
-	// requests arriving over the MITM tunnel.
-	if !s.authorized(r) && !isLoopback(r.RemoteAddr) {
+	// Direct (ANTHROPIC_BASE_URL) requests carry the key as x-api-key or
+	// Authorization: Bearer <key>. Requests arriving over an already-
+	// authenticated MITM tunnel bypass this path (they call proxyRequest directly).
+	if !s.authorized(r) {
 		s.writeError(w, http.StatusUnauthorized, "authentication_error", "Invalid proxy API key")
 		return
 	}
@@ -228,17 +237,42 @@ func (s *Server) writeError(w http.ResponseWriter, status int, errType, message 
 	})
 }
 
+// authorized reports whether a direct (non-CONNECT) request presents the proxy
+// key as x-api-key or Authorization: Bearer <key>. Constant-time comparison
+// avoids leaking the key via timing.
 func (s *Server) authorized(r *http.Request) bool {
 	if s.proxyKey == "" {
 		return true
 	}
-	if r.Header.Get("x-api-key") == s.proxyKey {
+	if keyEqual(r.Header.Get("x-api-key"), s.proxyKey) {
 		return true
 	}
-	if auth := r.Header.Get("Authorization"); auth == "Bearer "+s.proxyKey {
+	return keyEqual(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), s.proxyKey)
+}
+
+// proxyAuthorized reports whether a CONNECT request presents the proxy key via
+// Proxy-Authorization: Basic base64("<user>:<key>"). This is how the client
+// authenticates in HTTPS_PROXY mode, where it cannot send x-api-key.
+func (s *Server) proxyAuthorized(r *http.Request) bool {
+	if s.proxyKey == "" {
 		return true
 	}
-	return false
+	const prefix = "Basic "
+	h := r.Header.Get("Proxy-Authorization")
+	if !strings.HasPrefix(h, prefix) {
+		return false
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(h[len(prefix):]))
+	if err != nil {
+		return false
+	}
+	_, pass, ok := strings.Cut(string(raw), ":")
+	return ok && keyEqual(pass, s.proxyKey)
+}
+
+// keyEqual compares two secrets in constant time.
+func keyEqual(got, want string) bool {
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
 // ensureFreshToken refreshes an account's OAuth token if it is near expiry,
@@ -366,17 +400,6 @@ func hostOf(base string) (string, error) {
 		return "", err
 	}
 	return u.Hostname(), nil
-}
-
-// isLoopback reports whether a RemoteAddr is a loopback client (trusted without
-// the proxy key, mirroring teamclaude's isLocal check).
-func isLoopback(remoteAddr string) bool {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		host = remoteAddr
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 // clampRetryAfter parses a Retry-After header (seconds) and bounds it to

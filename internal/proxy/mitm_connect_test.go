@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"io"
 	"net"
 	"net/http"
@@ -24,7 +25,12 @@ func dialMITM(t *testing.T, proxyAddr, caPath, host string) *tls.Conn {
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
-	if _, err := raw.Write([]byte("CONNECT " + host + ":443 HTTP/1.1\r\nHost: " + host + ":443\r\n\r\n")); err != nil {
+	// Authenticate the CONNECT the way claude does under HTTPS_PROXY with
+	// embedded credentials: Proxy-Authorization: Basic base64("wisp-deck:key").
+	auth := base64.StdEncoding.EncodeToString([]byte("wisp-deck:proxy-key"))
+	connect := "CONNECT " + host + ":443 HTTP/1.1\r\nHost: " + host + ":443\r\n" +
+		"Proxy-Authorization: Basic " + auth + "\r\n\r\n"
+	if _, err := raw.Write([]byte(connect)); err != nil {
 		t.Fatalf("write CONNECT: %v", err)
 	}
 	br := bufio.NewReader(raw)

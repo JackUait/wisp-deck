@@ -17,7 +17,9 @@ func TestBuildAILaunchCmd_mitm_uses_https_proxy_and_ca(t *testing.T) {
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
 		[]string{"claude", "claude", "opencode", "/proj"}, env)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, `HTTPS_PROXY="http://127.0.0.1:54321"`)
+	// The key is embedded in the proxy URL so claude sends Proxy-Authorization on
+	// CONNECT (loopback is not trusted; the proxy authenticates the tunnel).
+	assertContains(t, out, `HTTPS_PROXY="http://wisp-deck:wd-abc@127.0.0.1:54321"`)
 	assertContains(t, out, `NODE_EXTRA_CA_CERTS="/cfg/ca.pem"`)
 	assertNotContains(t, out, "ANTHROPIC_BASE_URL")
 	assertContains(t, out, "claude /proj")

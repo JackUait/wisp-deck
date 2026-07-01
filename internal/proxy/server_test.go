@@ -72,6 +72,43 @@ func TestServer_rejectsBadProxyKey(t *testing.T) {
 	}
 }
 
+func TestServer_loopbackDoesNotBypassAuth(t *testing.T) {
+	// A loopback RemoteAddr must NOT bypass the key check — loopback is not a
+	// trust boundary on a multi-user host.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("upstream should not be reached without a valid key")
+	}))
+	defer upstream.Close()
+	mgr := NewManager([]Account{{AccessToken: "tok-A"}}, 0.98)
+	srv := newTestServer(t, mgr, upstream.URL)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{}"))
+	req.RemoteAddr = "127.0.0.1:5000" // loopback, but NO key
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 (loopback must still require the key)", rec.Code)
+	}
+}
+
+func TestServer_connectRequiresProxyAuth(t *testing.T) {
+	// CONNECT must be authenticated (via Proxy-Authorization) before any tunnel
+	// or hijack — otherwise the proxy is an open forward proxy.
+	mgr := NewManager([]Account{{AccessToken: "tok-A"}, {AccessToken: "tok-B"}}, 0.98)
+	srv := NewServer(mgr, "proxy-key", "https://api.anthropic.com", WithSleep(func(time.Duration) {}))
+	if _, err := srv.EnableMITM(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodConnect, "//api.anthropic.com:443", nil)
+	req.Host = "api.anthropic.com:443"
+	req.RemoteAddr = "127.0.0.1:5000" // loopback must not help
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusProxyAuthRequired {
+		t.Errorf("status = %d, want 407 for unauthenticated CONNECT", rec.Code)
+	}
+}
+
 func TestServer_retriesSameAccountOnTransient429(t *testing.T) {
 	// teamclaude pattern: a transient 429 waits retry-after and retries the SAME
 	// account rather than immediately switching.

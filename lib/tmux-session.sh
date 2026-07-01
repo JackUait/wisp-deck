@@ -46,7 +46,10 @@ build_ai_launch_cmd() {
   #   - base-URL (--mitm=false, no CA): ANTHROPIC_BASE_URL + ANTHROPIC_API_KEY.
   if [ -n "${WISP_DECK_PROXY_PORT:-}" ] && [ -n "${WISP_DECK_PROXY_KEY:-}" ]; then
     if [ -n "${WISP_DECK_PROXY_CA:-}" ]; then
-      local _proxy_url="http://127.0.0.1:${WISP_DECK_PROXY_PORT}"
+      # Embed the key in the proxy URL so claude sends Proxy-Authorization on
+      # CONNECT — the proxy authenticates the tunnel rather than trusting
+      # loopback (which is not a trust boundary on multi-user hosts).
+      local _proxy_url="http://wisp-deck:${WISP_DECK_PROXY_KEY}@127.0.0.1:${WISP_DECK_PROXY_PORT}"
       claude_account="${claude_account}HTTPS_PROXY=\"${_proxy_url}\" HTTP_PROXY=\"${_proxy_url}\" https_proxy=\"${_proxy_url}\" http_proxy=\"${_proxy_url}\" NO_PROXY=\"\" no_proxy=\"\" NODE_EXTRA_CA_CERTS=\"${WISP_DECK_PROXY_CA}\" "
     else
       claude_account="${claude_account}ANTHROPIC_BASE_URL=\"http://127.0.0.1:${WISP_DECK_PROXY_PORT}\" ANTHROPIC_API_KEY=\"${WISP_DECK_PROXY_KEY}\" "
