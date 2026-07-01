@@ -84,7 +84,7 @@ func TestSettings_shows_config_row_for_claude(t *testing.T) {
 	m, _ := newClaudeMenu(t)
 	m.OpenSettings()
 	view := m.renderSettingsForTest()
-	if !strings.Contains(view, "Plan") {
+	if !strings.Contains(view, "Subscription") {
 		t.Fatalf("settings should show Plan row:\n%s", view)
 	}
 	if !strings.Contains(view, "Standard Claude") {
@@ -97,7 +97,7 @@ func TestSettings_shows_config_row_for_non_claude(t *testing.T) {
 	m.CycleAITool("next") // opencode
 	m.OpenSettings()
 	view := m.renderSettingsForTest()
-	if !strings.Contains(view, "Plan") {
+	if !strings.Contains(view, "Subscription") {
 		t.Fatalf("Plan row must be shown for non-claude agents (subscriptions are shared):\n%s", view)
 	}
 }

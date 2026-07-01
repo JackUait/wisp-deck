@@ -34,17 +34,14 @@ func subTestMenu(tool string) *MainMenuModel {
 	return m
 }
 
-// The settings row labelled "Config" → "Subscription" is now simply "Plan",
-// matching the top-row PLAN switcher.
+// The Claude plan/config settings row is labelled "Subscription" (clearer than
+// the older "Config"/"Plan" names).
 func TestSettings_PlanLabel(t *testing.T) {
 	m := subTestMenu("claude")
 	m.SetActiveTab(TabSettings)
 	out := stripAnsi(m.renderSettingsBox())
-	if !strings.Contains(out, "Plan") {
-		t.Errorf("settings box missing 'Plan' row:\n%s", out)
-	}
-	if strings.Contains(out, "Subscription") {
-		t.Errorf("settings box still shows old 'Subscription' label:\n%s", out)
+	if !strings.Contains(out, "Subscription") {
+		t.Errorf("settings box missing 'Subscription' row:\n%s", out)
 	}
 	if strings.Contains(out, "Config") {
 		t.Errorf("settings box still shows old 'Config' label:\n%s", out)

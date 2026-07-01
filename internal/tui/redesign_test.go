@@ -208,9 +208,9 @@ func TestSettingsRow_mutedWhenNavFocused(t *testing.T) {
 	m.SetFocus(FocusTabs) // navigation focused
 	box := m.renderSettingsBox()
 
-	line := findLineContaining(box, "Ghost Display")
+	line := findLineContaining(box, "Mascot")
 	if line == "" {
-		t.Fatalf("could not find Ghost Display row in:\n%s", box)
+		t.Fatalf("could not find Mascot row in:\n%s", box)
 	}
 	if strings.Contains(line, "48;5;236") {
 		t.Errorf("selected settings row must not show the wash when nav is focused: %q", line)
@@ -227,9 +227,9 @@ func TestSettingsRow_keepsWashWhenBodyFocused(t *testing.T) {
 	m.SetActiveTab(TabSettings) // focus stays on the body
 	box := m.renderSettingsBox()
 
-	line := findLineContaining(box, "Ghost Display")
+	line := findLineContaining(box, "Mascot")
 	if line == "" {
-		t.Fatalf("could not find Ghost Display row in:\n%s", box)
+		t.Fatalf("could not find Mascot row in:\n%s", box)
 	}
 	if !strings.Contains(line, "48;5;236") {
 		t.Errorf("selected settings row should show the wash when body is focused: %q", line)

@@ -44,7 +44,7 @@ func TestRenderSettingsBox_preservesSettingsRows(t *testing.T) {
 	m.SetActiveTab(TabSettings)
 	out := m.renderSettingsBox()
 	// Core settings items must still appear
-	for _, label := range []string{"Ghost Display", "Tab Title", "Sound"} {
+	for _, label := range []string{"Mascot", "Tab title", "Idle sound"} {
 		if !strings.Contains(out, label) {
 			t.Errorf("settings box missing row %q:\n%s", label, out)
 		}

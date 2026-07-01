@@ -1332,8 +1332,8 @@ func TestMainMenu_SettingsViewShowsPanel(t *testing.T) {
 	if !strings.Contains(view, "Settings") {
 		t.Error("settings view should show 'Settings' title")
 	}
-	if !strings.Contains(view, "Ghost Display") {
-		t.Error("settings view should show 'Ghost Display' option")
+	if !strings.Contains(view, "Mascot") {
+		t.Error("settings view should show 'Mascot' option")
 	}
 	if !strings.Contains(view, "Animated") {
 		t.Error("settings view should show current state 'Animated'")
@@ -2165,8 +2165,8 @@ func TestMainMenu_SettingsViewShowsTabTitle(t *testing.T) {
 	m.EnterSettings()
 	view := m.View()
 
-	if !strings.Contains(view, "Tab Title") {
-		t.Error("settings view should show 'Tab Title' option")
+	if !strings.Contains(view, "Tab title") {
+		t.Error("settings view should show 'Tab title' option")
 	}
 	if !strings.Contains(view, "Project") {
 		t.Error("settings view should show current state label")
@@ -3416,7 +3416,7 @@ func TestMainMenu_SettingsViewShowsSoundName(t *testing.T) {
 	if !strings.Contains(view, "Glass") {
 		t.Error("settings view should show sound name 'Glass'")
 	}
-	if !strings.Contains(view, "Sound") {
+	if !strings.Contains(view, "Idle sound") {
 		t.Error("settings view should show 'Sound' label")
 	}
 }
@@ -5006,7 +5006,7 @@ func TestSettings_ProjectsRootItem_AppearsInSettingsBox(t *testing.T) {
 	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
 	m.EnterSettings()
 	view := stripAnsi(m.View())
-	if !strings.Contains(view, "Default projects dir") {
+	if !strings.Contains(view, "Projects folder") {
 		t.Error("expected 'Default projects dir' in settings view")
 	}
 }
@@ -5038,7 +5038,7 @@ func TestSettings_ProjectsRootItem_ShowsCurrentValue(t *testing.T) {
 }
 
 func TestSettings_NavWrapsWithNineItems(t *testing.T) {
-	// claude tool shows 9 settings items (Ghost Display, Tab Title, Sound, Panel,
+	// claude tool shows 9 settings items (Mascot, Tab title, Sound, Panel,
 	// Theme, Default projects dir, Plan, Login)
 	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
 	m.EnterSettings()
@@ -5053,7 +5053,7 @@ func TestSettings_NavWrapsWithNineItems(t *testing.T) {
 
 func TestSettings_NavWrapsWithNineItems_NonClaude(t *testing.T) {
 	// The Plan + Login rows are shared across agents, so opencode also shows 9
-	// settings items (Ghost Display, Tab Title, Sound, Panel, Theme, Default
+	// settings items (Mascot, Tab title, Sound, Panel, Theme, Default
 	// projects dir, Plan, Login).
 	m := tui.NewMainMenu(nil, []string{"opencode"}, "opencode", "animated")
 	m.EnterSettings()

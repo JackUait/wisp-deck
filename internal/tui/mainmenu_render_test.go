@@ -263,15 +263,15 @@ func TestSettingsBox_StateRightAligned(t *testing.T) {
 	raw := stripAnsi(box)
 	lines := strings.Split(raw, "\n")
 
-	// Find lines containing "Ghost Display" and "Tab Title"
+	// Find lines containing "Mascot" and "Tab title"
 	for _, line := range lines {
-		if strings.Contains(line, "Ghost Display") && strings.Contains(line, "[Animated]") {
+		if strings.Contains(line, "Mascot") && strings.Contains(line, "[Animated]") {
 			// State text should be right-aligned: ends near the right border
 			// The line should end with the state text followed by the border character
 			trimmed := strings.TrimRight(line, " ")
 			idx := strings.Index(trimmed, "[Animated]")
 			if idx < 0 {
-				t.Fatal("could not find [Animated] in Ghost Display line")
+				t.Fatal("could not find [Animated] in Mascot line")
 			}
 			afterState := trimmed[idx+len("[Animated]"):]
 			// After state text, only a small gap + border char should remain
@@ -280,7 +280,7 @@ func TestSettingsBox_StateRightAligned(t *testing.T) {
 				t.Errorf("expected only border after [Animated], got %q", afterState)
 			}
 			// Between label and state there should be significant padding
-			labelEnd := strings.Index(line, "Ghost Display") + len("Ghost Display")
+			labelEnd := strings.Index(line, "Mascot") + len("Mascot")
 			gap := line[labelEnd:idx]
 			if len(strings.TrimSpace(gap)) != 0 {
 				t.Errorf("expected only whitespace between label and state, got %q", gap)
@@ -357,7 +357,7 @@ func TestSettingsBox_SoundDisabled(t *testing.T) {
 	m.SetSoundName("")
 	m.EnterSettings()
 	box := m.renderSettingsBox()
-	if !strings.Contains(box, "Sound") {
+	if !strings.Contains(box, "Idle sound") {
 		t.Error("settings box missing 'Sound' label")
 	}
 	if !strings.Contains(box, "Off") {
@@ -370,7 +370,7 @@ func TestSettingsBox_SoundName(t *testing.T) {
 	m.SetSoundName("Glass")
 	m.EnterSettings()
 	box := m.renderSettingsBox()
-	if !strings.Contains(box, "Sound") {
+	if !strings.Contains(box, "Idle sound") {
 		t.Error("settings box missing 'Sound' label")
 	}
 	if !strings.Contains(box, "Glass") {

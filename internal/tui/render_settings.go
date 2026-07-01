@@ -98,7 +98,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	lines = append(lines, emptyRow)
 
 	// Ghost Display item
-	ghostLabel := "Ghost Display"
+	ghostLabel := "Mascot"
 	ghostState := "[" + ghostDisplayLabel(m.ghostDisplay) + "]"
 	lines = append(lines, m.renderSettingsItem(0, ghostLabel, ghostState, stateStyle, primaryBoldStyle, leftBorder, rightBorder))
 
@@ -113,7 +113,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 		tabTitleColor = lipgloss.Color("220") // yellow (project only)
 	}
 	tabTitleStyle := lipgloss.NewStyle().Foreground(tabTitleColor)
-	tabLabel := "Tab Title"
+	tabLabel := "Tab title"
 	tabState := "[" + tabTitleLabel(m.tabTitle) + "]"
 	lines = append(lines, m.renderSettingsItem(1, tabLabel, tabState, tabTitleStyle, primaryBoldStyle, leftBorder, rightBorder))
 
@@ -125,7 +125,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 		soundColor = lipgloss.Color("241") // gray
 	}
 	soundStyle := lipgloss.NewStyle().Foreground(soundColor)
-	soundLabel := "Sound"
+	soundLabel := "Idle sound"
 	soundState := "[Off]"
 	if m.soundName != "" {
 		soundState = "[" + m.soundName + "]"
@@ -140,7 +140,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 		panelColor = lipgloss.Color("220") // yellow (non-default)
 	}
 	panelStyle := lipgloss.NewStyle().Foreground(panelColor)
-	panelLabel := "Panel"
+	panelLabel := "Side panel"
 	panelState := "[" + panelModeLabel(m.panelMode) + "]"
 	lines = append(lines, m.renderSettingsItem(3, panelLabel, panelState, panelStyle, primaryBoldStyle, leftBorder, rightBorder))
 
@@ -182,7 +182,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 			lines = append(lines, errRow)
 		}
 	} else {
-		lines = append(lines, m.renderSettingsItem(5, "Default projects dir", rootState, rootStyle, primaryBoldStyle, leftBorder, rightBorder))
+		lines = append(lines, m.renderSettingsItem(5, "Projects folder", rootState, rootStyle, primaryBoldStyle, leftBorder, rightBorder))
 	}
 
 	// Claude Config item (only for the claude tool)
@@ -202,7 +202,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 			dimIndicator := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(" " + indicator)
 			state = state + dimIndicator
 		}
-		lines = append(lines, m.renderSettingsItem(6, "Plan", state, cfgStyle, primaryBoldStyle, leftBorder, rightBorder))
+		lines = append(lines, m.renderSettingsItem(6, "Subscription", state, cfgStyle, primaryBoldStyle, leftBorder, rightBorder))
 	}
 
 	// Login item: the active native Claude account (manage logins here — ←→
@@ -216,7 +216,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 		loginColor = lipgloss.Color("241") // gray for Default
 	}
 	loginStyle := lipgloss.NewStyle().Foreground(loginColor)
-	lines = append(lines, m.renderSettingsItem(m.loginRowIndex(), "Login", "["+loginLabel+"]", loginStyle, primaryBoldStyle, leftBorder, rightBorder))
+	lines = append(lines, m.renderSettingsItem(m.loginRowIndex(), "Account", "["+loginLabel+"]", loginStyle, primaryBoldStyle, leftBorder, rightBorder))
 
 	// Auto-switch accounts item: toggles the automatic account-rotation proxy
 	// (distinct from the Login row above, which switches the active login by hand).

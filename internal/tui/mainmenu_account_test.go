@@ -171,13 +171,13 @@ func TestAccount_cyclePersistsPointer(t *testing.T) {
 	}
 }
 
-// The Settings tab shows a "Login" row (the account-management entry point),
+// The Settings tab shows a "Account" row (the account-management entry point),
 // always present even with only the Default login.
 func TestSettingsLoginRow_shown(t *testing.T) {
 	m := acctTestMenu("claude")
 	m.SetActiveTab(TabSettings)
 	out := stripAnsi(m.renderSettingsBox())
-	if !strings.Contains(out, "Login") {
+	if !strings.Contains(out, "Account") {
 		t.Errorf("settings box missing 'Login' row:\n%s", out)
 	}
 	if !strings.Contains(out, "Default") {

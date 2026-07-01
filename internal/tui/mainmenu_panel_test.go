@@ -56,7 +56,7 @@ func TestRenderSettingsBox_hasPanelRow(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	m.SetActiveTab(TabSettings)
 	out := m.renderSettingsBox()
-	if !strings.Contains(out, "Panel") {
+	if !strings.Contains(out, "Side panel") {
 		t.Errorf("settings box missing Panel row:\n%s", out)
 	}
 }
