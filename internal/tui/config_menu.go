@@ -28,6 +28,9 @@ func (i ConfigMenuItem) FilterValue() string { return i.ItemTitle }
 // ConfigMenuOptions holds options for creating a ConfigMenuModel.
 type ConfigMenuOptions struct {
 	Version string
+	// AutoSwitch is the current account-rotation setting ("on"/"off"); anything
+	// other than "on" displays as Off.
+	AutoSwitch string
 }
 
 // ConfigMenuModel is a custom-rendered Bubbletea model for the config menu.
@@ -44,17 +47,32 @@ type ConfigMenuModel struct {
 func GetConfigMenuItems() []ConfigMenuItem {
 	return []ConfigMenuItem{
 		{ItemTitle: "Manage Claude configs", ItemDesc: "Add, rename, or delete Claude settings profiles", Action: "manage-claude-configs"},
+		{ItemTitle: "Auto-switch Claude accounts", ItemDesc: "Rotate between accounts as quota runs out (needs 2+ accounts)", Action: "toggle-auto-switch"},
 		{ItemTitle: "Reinstall / Update", ItemDesc: "Re-run the installer", Action: "reinstall"},
 	}
+}
+
+// onOffStatus renders a setting value as "On"/"Off" for display.
+func onOffStatus(v string) string {
+	if v == "on" {
+		return "On"
+	}
+	return "Off"
 }
 
 // NewConfigMenu creates a new ConfigMenuModel with the given options.
 func NewConfigMenu(opts ConfigMenuOptions) ConfigMenuModel {
 	items := GetConfigMenuItems()
 
-	// Set status for Reinstall / Update item
-	if opts.Version != "" {
-		items[1].Status = "v" + opts.Version
+	for i := range items {
+		switch items[i].Action {
+		case "toggle-auto-switch":
+			items[i].Status = onOffStatus(opts.AutoSwitch)
+		case "reinstall":
+			if opts.Version != "" {
+				items[i].Status = "v" + opts.Version
+			}
+		}
 	}
 
 	return ConfigMenuModel{

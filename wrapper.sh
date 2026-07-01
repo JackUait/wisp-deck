@@ -46,7 +46,7 @@ if [ ! -d "$_WRAPPER_DIR/lib" ]; then
   exit 1
 fi
 
-_gt_libs=(theme ai-tools projects process input tui menu-tui project-actions tmux-session settings-json notification-setup tab-title-watcher terminals/ghostty session-restore claude-configs claude-accounts claude-shared-settings compact-view screenshot spare-tabs)
+_gt_libs=(theme ai-tools projects process input tui menu-tui project-actions tmux-session settings-json notification-setup tab-title-watcher terminals/ghostty session-restore claude-configs claude-accounts claude-shared-settings auto-switch compact-view screenshot spare-tabs)
 for _gt_lib in "${_gt_libs[@]}"; do
   if [ ! -f "$_WRAPPER_DIR/lib/${_gt_lib}.sh" ]; then
     printf '\033[31mError:\033[0m Missing library %s/lib/%s.sh\n' "$_WRAPPER_DIR" "$_gt_lib" >&2
@@ -209,6 +209,8 @@ WATCHER_PID=$!
 cleanup() {
   stop_tab_title_watcher "$WISP_DECK_MARKER_FILE"
   [ -n "${HEARTBEAT_PID:-}" ] && kill_tree "$HEARTBEAT_PID" TERM 2>/dev/null || true
+  # Stop the account-rotation proxy (session-tied lifecycle) if one was started.
+  [ -n "${PROXY_PID:-}" ] && kill_tree "$PROXY_PID" TERM 2>/dev/null || true
   # Remove waiting indicator hooks if no other Wisp Deck sessions are running
   if [ "$SELECTED_AI_TOOL" = "claude" ]; then
     # Clean up orphaned markers and cooldown files from dead sessions (e.g., after SIGKILL)
@@ -231,6 +233,7 @@ cleanup() {
   fi
   cleanup_tmux_session "$SESSION_NAME" "$WATCHER_PID" "$TMUX_CMD"
   rm -f "$SHARE_DIR/spare-${SESSION_NAME}.conf"
+  rm -f "$SHARE_DIR/proxy-${SESSION_NAME}.log"
   rm -rf "$SHARE_DIR/spare-zdotdir-${SESSION_NAME}"
 }
 trap cleanup EXIT HUP TERM INT
@@ -262,7 +265,48 @@ if [ "$SELECTED_AI_TOOL" = "claude" ]; then
     sync_claude_shared_settings "$HOME/.claude" "$WISP_DECK_CLAUDE_ACCOUNT_DIR"
   fi
 fi
-export WISP_DECK_CLAUDE_ACCOUNT_DIR
+# Account-rotation proxy: when the auto-switch setting is on and there are at
+# least two accounts to rotate between, start Wisp Deck's local rotation proxy
+# and route claude through it (ANTHROPIC_BASE_URL/API_KEY, set in
+# build_ai_launch_cmd). The proxy injects the currently-active pooled account's
+# OAuth token and switches accounts as quota is exhausted; claude keeps a single
+# config dir, so the conversation continues seamlessly across switches. The proxy
+# is a child of this wrapper and is torn down by cleanup() on window close.
+PROXY_PID=""
+WISP_DECK_PROXY_PORT=""
+WISP_DECK_PROXY_KEY=""
+if [ "$SELECTED_AI_TOOL" = "claude" ] \
+   && is_auto_switch_enabled "$_gt_cfg_root/auto-switch-accounts" \
+   && auto_switch_eligible "$_gt_cfg_root/claude-accounts.list" \
+   && command -v wisp-deck-tui >/dev/null 2>&1; then
+  _proxy_log="$SHARE_DIR/proxy-${SESSION_NAME}.log"
+  : > "$_proxy_log"
+  wisp-deck-tui proxy \
+    --accounts-dir "$_gt_cfg_root/claude-accounts" \
+    --list "$_gt_cfg_root/claude-accounts.list" \
+    >> "$_proxy_log" 2>&1 &
+  PROXY_PID=$!
+  # Wait briefly for the proxy to announce its port + key (first line of output).
+  _proxy_line=""
+  for _ in $(seq 1 30); do
+    _proxy_line="$(sed -n '1p' "$_proxy_log" 2>/dev/null)"
+    [ -n "$_proxy_line" ] && break
+    kill -0 "$PROXY_PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  WISP_DECK_PROXY_PORT="$(proxy_startup_port "$_proxy_line")"
+  WISP_DECK_PROXY_KEY="$(proxy_startup_key "$_proxy_line")"
+  if [ -n "$WISP_DECK_PROXY_PORT" ] && [ -n "$WISP_DECK_PROXY_KEY" ]; then
+    # Rotation is upstream in the proxy, so claude uses its standard (Default)
+    # config dir rather than any single account's isolated dir.
+    WISP_DECK_CLAUDE_ACCOUNT_DIR=""
+  else
+    warn "Account-rotation proxy failed to start; launching with the selected account."
+    [ -n "$PROXY_PID" ] && kill_tree "$PROXY_PID" TERM 2>/dev/null || true
+    PROXY_PID=""
+  fi
+fi
+export WISP_DECK_CLAUDE_ACCOUNT_DIR WISP_DECK_PROXY_PORT WISP_DECK_PROXY_KEY
 
 # Resolve the active subscription/plan display name for the compact-view ledger.
 # Subscriptions are shared across agents, so this is resolved for every tool.

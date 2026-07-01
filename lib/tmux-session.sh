@@ -35,6 +35,15 @@ build_ai_launch_cmd() {
     claude_account="CLAUDE_CONFIG_DIR=\"${WISP_DECK_CLAUDE_ACCOUNT_DIR}\" "
   fi
 
+  # Claude-only: when the account-rotation proxy is active, wrapper.sh exports the
+  # local proxy port + key. Prefix ANTHROPIC_BASE_URL/ANTHROPIC_API_KEY so claude
+  # authenticates to the proxy, which injects the currently-active pooled
+  # account's token and switches accounts as quota is exhausted. Claude keeps its
+  # own single config dir, so the conversation is continuous across switches.
+  if [ -n "${WISP_DECK_PROXY_PORT:-}" ] && [ -n "${WISP_DECK_PROXY_KEY:-}" ]; then
+    claude_account="${claude_account}ANTHROPIC_BASE_URL=\"http://127.0.0.1:${WISP_DECK_PROXY_PORT}\" ANTHROPIC_API_KEY=\"${WISP_DECK_PROXY_KEY}\" "
+  fi
+
   # Claude-only: a launch prefix that runs Claude behind the screenshot-drag
   # filter. wrapper.sh sets WISP_DECK_CLAUDE_FILTER (to e.g.
   # "wisp-deck-tui screenshot-filter -- ") only after confirming the TUI binary

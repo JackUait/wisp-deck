@@ -5,12 +5,15 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/spf13/cobra"
 	"github.com/jackuait/wisp-deck/internal/tui"
 	"github.com/jackuait/wisp-deck/internal/util"
+	"github.com/spf13/cobra"
 )
 
-var configVersion string
+var (
+	configVersion    string
+	configAutoSwitch string
+)
 
 var configMenuCmd = &cobra.Command{
 	Use:   "config-menu",
@@ -21,6 +24,7 @@ var configMenuCmd = &cobra.Command{
 
 func init() {
 	configMenuCmd.Flags().StringVar(&configVersion, "version", "", "Current version string")
+	configMenuCmd.Flags().StringVar(&configAutoSwitch, "auto-switch", "off", "Current auto-switch setting (on/off)")
 	rootCmd.AddCommand(configMenuCmd)
 }
 
@@ -28,7 +32,8 @@ func runConfigMenu(cmd *cobra.Command, args []string) error {
 	tui.ApplyTheme(effectiveTheme(aiToolFlag))
 
 	model := tui.NewConfigMenu(tui.ConfigMenuOptions{
-		Version: configVersion,
+		Version:    configVersion,
+		AutoSwitch: configAutoSwitch,
 	})
 
 	ttyOpts, cleanup, err := util.TUITeaOptions()

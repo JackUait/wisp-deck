@@ -8,6 +8,8 @@ _config_tui_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ "$(type -t header 2>/dev/null)" = "function" ] || source "$_config_tui_dir/tui.sh"
 # shellcheck source=lib/claude-configs.sh
 [ "$(type -t load_claude_configs 2>/dev/null)" = "function" ] || source "$_config_tui_dir/claude-configs.sh"
+# shellcheck source=lib/auto-switch.sh
+[ "$(type -t get_auto_switch 2>/dev/null)" = "function" ] || source "$_config_tui_dir/auto-switch.sh"
 
 # Interactive Claude config management loop.
 manage_claude_configs_interactive() {
@@ -64,9 +66,15 @@ config_menu_interactive() {
     version="$(tr -d '[:space:]' < "$version_file")"
   fi
 
+  local cfg_root="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
+  local auto_switch_flag="$cfg_root/auto-switch-accounts"
+
   while true; do
+    local auto_switch
+    auto_switch="$(get_auto_switch "$auto_switch_flag")"
+
     local result
-    if ! result=$(wisp-deck-tui config-menu --version "$version" 2>/dev/null); then
+    if ! result=$(wisp-deck-tui config-menu --version "$version" --auto-switch "$auto_switch" 2>/dev/null); then
       return 1
     fi
 
@@ -90,6 +98,18 @@ config_menu_interactive() {
         ;;
       manage-claude-configs)
         manage_claude_configs_interactive
+        ;;
+      toggle-auto-switch)
+        # Flip the account-rotation setting; the loop re-renders the new state.
+        if [ "$auto_switch" = "on" ]; then
+          set_auto_switch "$auto_switch_flag" "off"
+        else
+          set_auto_switch "$auto_switch_flag" "on"
+          if ! auto_switch_eligible "$cfg_root/claude-accounts.list"; then
+            warn "Add a second Claude account for rotation to take effect."
+            read -rsn1 -p "Press any key to continue..." </dev/tty
+          fi
+        fi
         ;;
       quit|"")
         return 0
