@@ -913,6 +913,35 @@ echo "SHOULD_NOT_REACH"
 	assertNotContains(t, out, "SHOULD_NOT_REACH")
 }
 
+// TestWispDeck_does_not_source_deleted_project_actions_tui guards against the
+// regression where bin/wisp-deck kept `source lib/project-actions-tui.sh` after
+// that file was deleted (commit 985e8e3). With `set -e`, sourcing the missing
+// file aborts the installer with "No such file or directory", breaking
+// `npx wisp-deck`.
+func TestWispDeck_does_not_source_deleted_project_actions_tui(t *testing.T) {
+	root := projectRoot(t)
+
+	// The file must not exist in the repo/distribution.
+	if _, err := os.Stat(filepath.Join(root, "lib/project-actions-tui.sh")); !os.IsNotExist(err) {
+		t.Errorf("lib/project-actions-tui.sh should not exist — it was deleted")
+	}
+
+	// bin/wisp-deck must not try to source it.
+	data, err := os.ReadFile(filepath.Join(root, "bin", "wisp-deck"))
+	if err != nil {
+		t.Fatalf("failed to read bin/wisp-deck: %v", err)
+	}
+	if strings.Contains(string(data), "project-actions-tui") {
+		t.Errorf("bin/wisp-deck still sources project-actions-tui.sh — the file was deleted, so sourcing it breaks the installer")
+	}
+	// add_project_interactive lived in the deleted file; calling it would fail
+	// at runtime with "command not found". Project adding now happens at runtime
+	// via the main-menu TUI.
+	if strings.Contains(string(data), "add_project_interactive") {
+		t.Errorf("bin/wisp-deck still calls add_project_interactive — that function was defined in the deleted project-actions-tui.sh")
+	}
+}
+
 // ============================================================
 // Settings menu removal regression tests
 // ============================================================

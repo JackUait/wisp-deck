@@ -20,7 +20,6 @@ source "$SHARE_DIR/lib/settings-json.sh"
 source "$SHARE_DIR/lib/ai-select-tui.sh"
 source "$SHARE_DIR/lib/statusline-setup.sh"
 source "$SHARE_DIR/lib/project-actions.sh"
-source "$SHARE_DIR/lib/project-actions-tui.sh"
 source "$SHARE_DIR/lib/update.sh"
 
 # ---------- Argument parsing ----------
@@ -194,28 +193,10 @@ PROJECTS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
 PROJECTS_FILE="$PROJECTS_DIR/projects"
 mkdir -p "$PROJECTS_DIR"
 
-echo ""
-read -rn1 -p "$(echo -e "${_BLUE}Add a project? (y/n):${_NC} ")" add_project </dev/tty
-echo ""
-
-while [[ "$add_project" =~ ^[yY]$ ]]; do
-  if add_project_interactive; then
-    # shellcheck disable=SC2154  # _add_project_name and _add_project_path are set by add_project_interactive
-    add_project_to_file "$_add_project_name" "$_add_project_path" "$PROJECTS_FILE"
-    success "Added project: $_add_project_name"
-  else
-    info "Cancelled"
-  fi
-
-  echo ""
-  read -rn1 -p "$(echo -e "${_BLUE}Add another? (y/n):${_NC} ")" add_project </dev/tty
-  echo ""
-done
-
 if [ -f "$PROJECTS_FILE" ] && [ -s "$PROJECTS_FILE" ]; then
   success "Projects saved to $PROJECTS_FILE"
 else
-  info "No projects added. Add them later to $PROJECTS_FILE"
+  info "No projects yet. Add them from the main menu after launch, or edit $PROJECTS_FILE"
 fi
 
 # ---------- Claude Code Status Line ----------
