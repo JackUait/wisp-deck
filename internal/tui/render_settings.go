@@ -216,8 +216,19 @@ func (m *MainMenuModel) renderSettingsBox() string {
 		loginColor = lipgloss.Color("241") // gray for Default
 	}
 	loginStyle := lipgloss.NewStyle().Foreground(loginColor)
-	// Login is always the last row; its index shifts with the optional Plan row.
-	lines = append(lines, m.renderSettingsItem(m.settingsItemCount()-1, "Login", "["+loginLabel+"]", loginStyle, primaryBoldStyle, leftBorder, rightBorder))
+	lines = append(lines, m.renderSettingsItem(m.loginRowIndex(), "Login", "["+loginLabel+"]", loginStyle, primaryBoldStyle, leftBorder, rightBorder))
+
+	// Account switching item: toggles the automatic account-rotation proxy.
+	var autoColor lipgloss.Color
+	autoState := "[Off]"
+	if m.AutoSwitchEnabled() {
+		autoColor = lipgloss.Color("114") // green when on
+		autoState = "[On]"
+	} else {
+		autoColor = lipgloss.Color("241") // gray when off
+	}
+	autoStyle := lipgloss.NewStyle().Foreground(autoColor)
+	lines = append(lines, m.renderSettingsItem(m.autoSwitchRowIndex(), "Account switching", autoState, autoStyle, primaryBoldStyle, leftBorder, rightBorder))
 
 	// Empty row
 	lines = append(lines, emptyRow)

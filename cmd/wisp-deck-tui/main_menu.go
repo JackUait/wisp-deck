@@ -40,6 +40,7 @@ var (
 	mainMenuClaudeAccountsList     string
 	mainMenuClaudeAccountsDir      string
 	mainMenuClaudeDefaultLabelFile string
+	mainMenuAutoSwitchFile         string
 )
 
 func init() {
@@ -63,6 +64,7 @@ func init() {
 	mainMenuCmd.Flags().StringVar(&mainMenuClaudeAccountsList, "claude-accounts-list", "", "Path to Claude accounts list (label:dir)")
 	mainMenuCmd.Flags().StringVar(&mainMenuClaudeAccountsDir, "claude-accounts-dir", "", "Path to Claude accounts directory (per-account config dirs)")
 	mainMenuCmd.Flags().StringVar(&mainMenuClaudeDefaultLabelFile, "claude-default-label-file", "", "Path to the Default login's custom label file")
+	mainMenuCmd.Flags().StringVar(&mainMenuAutoSwitchFile, "auto-switch-file", "", "Path to the automatic account-switching on/off flag file")
 	rootCmd.AddCommand(mainMenuCmd)
 }
 
@@ -117,6 +119,9 @@ func runMainMenu(cmd *cobra.Command, args []string) error {
 		model.SetClaudeAccounts(tui.LoadClaudeAccountsList(mainMenuClaudeAccountsList))
 		model.SetActiveClaudeAccount(tui.ReadActiveClaudeAccount(mainMenuClaudeAccountFile))
 		model.SetClaudeAccountPaths(mainMenuClaudeAccountsList, mainMenuClaudeAccountsDir)
+	}
+	if mainMenuAutoSwitchFile != "" {
+		model.SetAutoSwitchFile(mainMenuAutoSwitchFile)
 	}
 	if mainMenuClaudeDefaultLabelFile != "" {
 		model.SetClaudeDefaultLabelFile(mainMenuClaudeDefaultLabelFile)

@@ -335,11 +335,10 @@ func (m *MainMenuModel) clickTarget(t hitTarget) (tea.Model, tea.Cmd) {
 func (m *MainMenuModel) clickSettings(idx int) (tea.Model, tea.Cmd) {
 	m.settingsSelected = idx
 	m.focus = FocusBody
-	loginIdx := m.settingsItemCount() - 1
 	switch {
 	case idx == 5: // Default projects dir → inline edit
 		return m.settingsEnter()
-	case idx == loginIdx: // Login → account management
+	case idx == m.loginRowIndex(): // Login → account management
 		return m.settingsEnter()
 	case idx == 6 && m.ClaudeConfigVisible() && m.selectedConfig > 0:
 		// Plan row on a custom config → open the model map (its ⏎ action). Cycling

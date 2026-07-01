@@ -104,12 +104,12 @@ func TestSettings_shows_config_row_for_non_claude(t *testing.T) {
 
 func TestSettings_nav_count_includes_config_for_all_agents(t *testing.T) {
 	m, _ := newClaudeMenu(t)
-	if got := m.settingsItemCount(); got != 8 {
-		t.Fatalf("claude should have 8 settings items (incl. Plan + Login), got %d", got)
+	if got := m.settingsItemCount(); got != 9 {
+		t.Fatalf("claude should have 9 settings items (incl. Plan + Login), got %d", got)
 	}
 	m.CycleAITool("next")
-	if got := m.settingsItemCount(); got != 8 {
-		t.Fatalf("non-claude should also have 8 settings items (shared Plan + Login), got %d", got)
+	if got := m.settingsItemCount(); got != 9 {
+		t.Fatalf("non-claude should also have 9 settings items (shared Plan + Login), got %d", got)
 	}
 }
 

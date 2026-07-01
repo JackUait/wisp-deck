@@ -319,6 +319,11 @@ type MainMenuModel struct {
 	defaultAccountLabel    string          // display label for the implicit Default login
 	claudeDefaultLabelFile string          // file persisting the Default login's label
 
+	// Automatic account switching (rotation proxy) toggle. Stored in its own
+	// on/off flag file, shared with wrapper.sh and lib/auto-switch.sh.
+	autoSwitch     string // "on" or "off"
+	autoSwitchFile string // flag file path for persistence
+
 	// Login-management panel, opened from the LOGIN row (mirrors the model-map
 	// panel that Plan opens). Lists Default + managed logins + an add row.
 	accountMenuOpen      bool
@@ -1231,14 +1236,58 @@ func (m *MainMenuModel) CycleTab(direction string) {
 
 // settingsItemCount returns the number of settings rows: 6 base (Ghost, Tab,
 // Sound, Panel, Theme, Dir) + the Plan row when the Claude config control is
-// visible + the always-present Login row (the account-management entry point).
+// visible + the always-present Login row + the Account-switching toggle.
 func (m *MainMenuModel) settingsItemCount() int {
 	n := 6
 	if m.ClaudeConfigVisible() {
 		n++ // Plan
 	}
 	n++ // Login
+	n++ // Account switching
 	return n
+}
+
+// loginRowIndex is the fixed index of the Login row (Plan is always present).
+func (m *MainMenuModel) loginRowIndex() int { return m.settingsItemCount() - 2 }
+
+// autoSwitchRowIndex is the index of the Account-switching toggle (last row).
+func (m *MainMenuModel) autoSwitchRowIndex() int { return m.settingsItemCount() - 1 }
+
+// SetAutoSwitchFile records the on/off flag file and loads its current value.
+func (m *MainMenuModel) SetAutoSwitchFile(path string) {
+	m.autoSwitchFile = path
+	m.autoSwitch = readAutoSwitch(path)
+}
+
+// AutoSwitchEnabled reports whether automatic account switching is on.
+func (m *MainMenuModel) AutoSwitchEnabled() bool { return m.autoSwitch == "on" }
+
+// CycleAutoSwitch toggles automatic account switching and persists it.
+func (m *MainMenuModel) CycleAutoSwitch() {
+	if m.autoSwitch == "on" {
+		m.autoSwitch = "off"
+	} else {
+		m.autoSwitch = "on"
+	}
+	if m.autoSwitchFile != "" {
+		_ = os.MkdirAll(filepath.Dir(m.autoSwitchFile), 0o755)
+		_ = os.WriteFile(m.autoSwitchFile, []byte(m.autoSwitch+"\n"), 0o644)
+	}
+}
+
+// readAutoSwitch reads the on/off flag file; anything other than "on" is off.
+func readAutoSwitch(path string) string {
+	if path == "" {
+		return "off"
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "off"
+	}
+	if strings.TrimSpace(string(data)) == "on" {
+		return "on"
+	}
+	return "off"
 }
 
 // LoadClaudeConfigsList parses a name:file list file into ClaudeConfig entries.
@@ -2333,6 +2382,8 @@ func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 		// Open the login-management panel (switch / add / remove logins).
 		m.openAccountMenu()
 		return m, nil
+	case m.autoSwitchRowIndex():
+		m.CycleAutoSwitch()
 	}
 	return m, nil
 }
@@ -2354,6 +2405,8 @@ func (m *MainMenuModel) settingsValueRight() {
 		m.CycleClaudeConfig("next")
 	case 7:
 		m.CycleAccount("next")
+	case m.autoSwitchRowIndex():
+		m.CycleAutoSwitch()
 	}
 }
 
@@ -2374,6 +2427,8 @@ func (m *MainMenuModel) settingsValueLeft() {
 		m.CycleClaudeConfig("prev")
 	case 7:
 		m.CycleAccount("prev")
+	case m.autoSwitchRowIndex():
+		m.CycleAutoSwitch()
 	}
 }
 
