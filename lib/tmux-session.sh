@@ -69,15 +69,35 @@ build_ai_launch_cmd() {
   # otherwise fall back to the most recent cwd-scoped conversation. The
   # specific id matters when several tabs of one project are restored — `-c`
   # would open the same conversation in all of them.
+  #
+  # Each claude step is guarded: `claude --resume`/-c can fail AT STARTUP
+  # ("No conversation found" — e.g. a resume bug, a transcript deleted since
+  # validation, or a project with no conversations at all), which would dump
+  # the restored tab to a bare shell. A step that exits non-zero within the
+  # fallback window chains to the next-safest launch: --resume <id> → -c →
+  # plain claude. A non-zero exit AFTER the window is a crash or user action —
+  # never relaunch then.
   if [ "${WISP_DECK_RESUME:-0}" = "1" ]; then
-    local claude_resume="-c"
-    if [ -n "${WISP_DECK_RESUME_SESSION:-}" ]; then
-      claude_resume="--resume ${WISP_DECK_RESUME_SESSION}"
+    if [ "$tool" = "opencode" ]; then
+      echo "$opencode_cmd --continue"
+      return 0
     fi
-    case "$tool" in
-      opencode) echo "$opencode_cmd --continue" ;;
-      *)        echo "${claude_account}${claude_filter}$claude_cmd ${claude_resume}${claude_settings}" ;;
-    esac
+    local win="${WISP_DECK_RESUME_FALLBACK_WINDOW:-10}"
+    local base="${claude_account}${claude_filter}$claude_cmd"
+    local steps=("-c" "")
+    if [ -n "${WISP_DECK_RESUME_SESSION:-}" ]; then
+      steps=("--resume ${WISP_DECK_RESUME_SESSION}" "-c" "")
+    fi
+    local chain="" step launch
+    for step in "${steps[@]}"; do
+      launch="${base}${step:+ $step}${claude_settings}"
+      if [ -z "$chain" ]; then
+        chain="_wd_t0=\$(date +%s); $launch; _wd_rc=\$?"
+      else
+        chain="$chain; if [ \$_wd_rc -ne 0 ] && [ \$(( \$(date +%s) - _wd_t0 )) -lt $win ]; then _wd_t0=\$(date +%s); $launch; _wd_rc=\$?; fi"
+      fi
+    done
+    echo "$chain"
     return 0
   fi
 
