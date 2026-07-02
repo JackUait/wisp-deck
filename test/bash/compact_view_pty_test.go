@@ -744,3 +744,90 @@ func TestCompactView_multiselect_discards_selected_files(t *testing.T) {
 		t.Errorf("unselected c.txt must keep its edit: got %q", got)
 	}
 }
+
+// Discoverability: the select/discard keys must be advertised in-UI, not just in
+// docs. The hint appears the moment the cursor is over a file row and is gone
+// when nothing is hovered (so the idle view stays full-height). Drives the real
+// loop under zsh, checks the idle frame has no hint, then hovers a file row and
+// asserts the hint ("d discard") shows up.
+func TestCompactView_shows_hover_hint(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not available")
+	}
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "a.txt", "base\n")
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "a.txt", "base\nDIRTY\n")
+
+	cmd := exec.Command(zsh, "-c", "source "+module+" && compact_view "+dir)
+	env := []string{}
+	for _, e := range os.Environ() {
+		if len(e) >= 5 && e[:5] == "TMUX=" {
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=5", "TERM=xterm")
+
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 12, Cols: 60})
+	if err != nil {
+		t.Fatalf("start pty: %v", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	var mu sync.Mutex
+	var out bytes.Buffer
+	go func() {
+		b := make([]byte, 4096)
+		for {
+			n, err := ptmx.Read(b)
+			if n > 0 {
+				mu.Lock()
+				out.Write(b[:n])
+				mu.Unlock()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	time.Sleep(700 * time.Millisecond) // idle first frame
+	mu.Lock()
+	idle := out.String()
+	out.Reset()
+	mu.Unlock()
+	if strings.Contains(idle, "d discard") {
+		t.Errorf("idle frame (no hover) should not show the hint; got:\n%s", idle)
+	}
+
+	// Hover the single file row: screen row 4 (row 3 is the "modified" header).
+	_, _ = ptmx.Write([]byte("\x1b[<35;10;4M"))
+	time.Sleep(300 * time.Millisecond)
+	mu.Lock()
+	hovered := out.String()
+	mu.Unlock()
+
+	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
+	time.Sleep(200 * time.Millisecond)
+
+	if !strings.Contains(hovered, "d discard") {
+		t.Errorf("hovering a file row should reveal the 'd discard' hint; got:\n%s", hovered)
+	}
+}

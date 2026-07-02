@@ -1807,6 +1807,26 @@ func TestApplySelectionMarkers_preserves_visible_width(t *testing.T) {
 	}
 }
 
+// ledger_hint is the dim key-hint shown while the cursor is over a file row, so
+// the select/discard keys are discoverable without reading docs.
+func TestLedgerHint_none_marked_shows_keys(t *testing.T) {
+	out, code := cvFuncArgv(t, "ledger_hint", "0")
+	assertExitCode(t, code, 0)
+	clean := ansiRE.ReplaceAllString(out, "")
+	if !strings.Contains(clean, "x mark") || !strings.Contains(clean, "d discard") {
+		t.Errorf("hint should advertise the mark/discard keys: got %q", clean)
+	}
+}
+
+func TestLedgerHint_marked_shows_count(t *testing.T) {
+	out, code := cvFuncArgv(t, "ledger_hint", "2")
+	assertExitCode(t, code, 0)
+	clean := ansiRE.ReplaceAllString(out, "")
+	if !strings.Contains(clean, "2") || !strings.Contains(clean, "d discard") {
+		t.Errorf("hint with marked files should show the count and discard key: got %q", clean)
+	}
+}
+
 // discard_worktree_files reverts every selected path back to HEAD, leaving an
 // unselected modified file untouched.
 func TestDiscardWorktreeFiles_reverts_all_selected(t *testing.T) {

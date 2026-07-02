@@ -361,6 +361,20 @@ apply_selection_markers() {
   printf '%s' "${out%$'\n'}"
 }
 
+# ledger_hint renders the dim key-hint shown while the cursor is over a file row
+# — how to mark files and discard them — so the feature is discoverable without
+# docs. With <marked> > 0 it also reports the count staged for discard.
+# Usage: ledger_hint <marked_count>
+ledger_hint() {
+  local marked="$1"
+  local dim="\033[2m" reset="\033[0m"
+  if [ "$marked" -gt 0 ]; then
+    printf " ${dim}✓%s · x mark · d discard${reset}" "$marked"
+  else
+    printf " ${dim}x mark · d discard${reset}"
+  fi
+}
+
 # discard_worktree_files reverts every member path of <selected> back to the
 # index (see discard_worktree_file). Returns non-zero when ANY restore fails.
 # Usage: discard_worktree_files <project_dir> <selected>
@@ -998,7 +1012,9 @@ compact_view() {
     local body_rows=$((h - header_rows))
     [ "$body_rows" -lt 1 ] && body_rows=1
     # Reserve the bottom row for a footer — the scroll position indicator when the
-    # body overflows, OR the y/n confirm prompt while a discard is armed.
+    # body overflows, OR the y/n confirm prompt while a discard is armed. The
+    # hover hint does NOT reserve a row (it reuses the overflow footer, or the
+    # slack below a short list), so moving the cursor never resizes the viewport.
     reserve=0
     { [ "$body_total" -gt "$body_rows" ] || [ "$discard_armed" = 1 ]; } && reserve=1
     if [ "$reserve" = 1 ]; then
@@ -1029,15 +1045,26 @@ compact_view() {
         printf '%s\n' "$header"
         if [ "$reserve" = 1 ]; then
           printf '%s\n' "$draw_body" | viewport_slice "$scroll" "$avail"
-          # The confirm prompt takes the footer while armed; otherwise the scroll
-          # position indicator (only present when the body actually overflows).
+          # Footer priority on the reserved row: the armed confirm, else the hover
+          # hint (shown while the cursor is over a file row), else the scroll
+          # position indicator (present whenever the body overflows).
           if [ "$discard_armed" = 1 ]; then
             discard_prompt "$(selection_count "$discard_set")"
+          elif [ "$hover_line" -gt 0 ]; then
+            ledger_hint "$(selection_count "$SELECTED")"
           else
             scroll_status "$scroll" "$avail" "$body_total"
           fi
         else
-          printf '%s' "$draw_body"
+          # Short list (no reserved footer): print it in full, then — only while a
+          # file row is hovered and a spare row exists below — append the hint in
+          # that slack, so the idle view stays full-height and never jitters.
+          if [ "$hover_line" -gt 0 ] && [ "$((h - header_rows - body_total))" -gt 0 ]; then
+            printf '%s\n' "$draw_body"
+            ledger_hint "$(selection_count "$SELECTED")"
+          else
+            printf '%s' "$draw_body"
+          fi
         fi
       )
       # Home the cursor and overwrite the frame IN PLACE — never a full-screen
