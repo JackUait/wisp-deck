@@ -26,6 +26,18 @@ current_boot_id() {
 # Field delimiter is '|' — project paths containing '|' are not supported.
 write_session_snapshot() {
   local tmux_cmd="$1" snap_file="$2"
+  # While a restore chain is draining (a fresh restore-queue exists), the
+  # alive sessions are only the restored-so-far subset — rewriting the
+  # snapshot now would lose the pointers to the not-yet-restored tabs. A
+  # stale queue (>5 min, broken chain) no longer blocks; restore_queue_pop
+  # discards it on the next launch anyway.
+  local queue="${snap_file%/*}/restore-queue"
+  if [ -f "$queue" ]; then
+    local now mtime
+    now="$(date +%s)"
+    mtime="$(stat -f %m "$queue" 2>/dev/null || echo 0)"
+    [ $((now - mtime)) -le 300 ] && return 0
+  fi
   local sessions
   # If the tmux server is unreachable (e.g. just after a reboot), do NOT
   # overwrite the snapshot — leaving it frozen is what enables restore.
@@ -82,6 +94,11 @@ maybe_restore_session() {
     return 0
   fi
 
+  # Keep a copy of the pre-reboot snapshot: the heartbeat rewrites
+  # last-session from currently-alive sessions soon after restore starts, so
+  # this backup is the only recovery artifact if the chain breaks.
+  cp "$snap" "$snap.prev" 2>/dev/null || true
+
   local tmp="$queue.tmp.$$"
   : > "$tmp"
   local queued=0 b proj path tool term sid
@@ -89,6 +106,16 @@ maybe_restore_session() {
   while IFS='|' read -r b proj path tool term sid; do
     [ -n "$b" ] || continue
     [ "$b" = "$cur_boot" ] && continue
+    # A stamped id is only trustworthy if its transcript is actually
+    # resumable — the statusline may have stamped a brand-new session that
+    # never got a transcript (or a model turn) before the reboot, and
+    # `claude --resume <dead-id>` fails hard, dumping the tab to a bare
+    # shell. Blank such ids so the tab falls back to `claude -c` (or the
+    # duplicate-pinning below).
+    if [ "$tool" = "claude" ] && [ -n "$sid" ] \
+      && ! claude_transcript_resumable "$path" "$sid"; then
+      sid=""
+    fi
     entries+=("${path}|${tool}|${sid}")
   done < "$snap"
 
@@ -180,9 +207,20 @@ claude_project_dir() {
   echo "$HOME/.claude/projects/${1//[^A-Za-z0-9]/-}"
 }
 
-# Print the most recently used conversation id for <path> that is not in
-# <used> (a newline-separated id list). Prints nothing when the project has
-# no transcript store or every transcript is taken.
+# True iff <sid>'s transcript for project <path> exists AND contains at least
+# one model turn. Claude refuses to resume a session without a model turn
+# ("No conversation found with session ID") exactly like a missing file, and
+# the failed `--resume` exits to a bare shell instead of opening anything.
+# Usage: claude_transcript_resumable <path> <sid>
+claude_transcript_resumable() {
+  local file
+  file="$(claude_project_dir "$1")/$2.jsonl"
+  [ -f "$file" ] && grep -q '"type":"assistant"' "$file"
+}
+
+# Print the most recently used conversation id for <path> that is resumable
+# and not in <used> (a newline-separated id list). Prints nothing when the
+# project has no transcript store or every transcript is taken.
 # Usage: claude_pick_transcript <path> <used>
 claude_pick_transcript() {
   local path="$1" used="$2"
@@ -191,6 +229,7 @@ claude_pick_transcript() {
   [ -d "$dir" ] || return 0
   while IFS= read -r f; do
     [ -n "$f" ] || continue
+    grep -q '"type":"assistant"' "$f" 2>/dev/null || continue
     sid="${f##*/}"
     sid="${sid%.jsonl}"
     if ! printf '%s\n' "$used" | grep -qxF "$sid"; then

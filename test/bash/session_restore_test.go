@@ -54,18 +54,15 @@ maybe_restore_session ` + quote(configDir) + ` ` + quote(curBoot) + ` "/w/wrappe
 
 func TestMaybeRestore_writes_ordered_queue_and_marker(t *testing.T) {
 	dir := t.TempDir()
-	// First line carries a Claude conversation id (6th field); second is an
-	// old-format 5-field line — its queue entry gets an empty id.
+	home := t.TempDir()
+	// First line carries a Claude conversation id (6th field, backed by a
+	// resumable transcript); second is an old-format 5-field line — its queue
+	// entry gets an empty id.
+	writeTranscript(t, home, "/p/app", "sid-a", 1*time.Hour)
 	writeTempFile(t, dir, "last-session",
 		"111|app|/p/app|claude|ghostty|sid-a\n111|web|/p/web|opencode|ghostty\n")
-	rec := filepath.Join(dir, "rec")
-	_, code := runMaybeRestore(t, dir, "222", rec)
+	_, code := runMaybeRestoreHome(t, dir, "222", home)
 	assertExitCode(t, code, 0)
-
-	// No windows spawned — restore now goes through the tab queue.
-	if _, err := os.Stat(rec); err == nil {
-		t.Error("maybe_restore_session must not spawn windows anymore")
-	}
 	queue, err := os.ReadFile(filepath.Join(dir, "restore-queue"))
 	if err != nil {
 		t.Fatalf("restore-queue not written: %v", err)
@@ -238,8 +235,17 @@ maybe_restore_session ` + quote(configDir) + ` ` + quote(curBoot) + `
 
 // writeTranscript creates a fake Claude conversation transcript for a project
 // path (munged as Claude does: every non-alphanumeric byte becomes '-') with
-// the given mtime age.
+// the given mtime age. The content includes a model turn ("type":"assistant")
+// — that is what makes a real transcript resumable.
 func writeTranscript(t *testing.T, home, projPath, sid string, age time.Duration) {
+	t.Helper()
+	writeTranscriptRaw(t, home, projPath, sid,
+		"{\"type\":\"user\"}\n{\"type\":\"assistant\"}\n", age)
+}
+
+// writeTranscriptRaw is writeTranscript with explicit file content, for
+// faking transcripts that are NOT resumable (no model turn).
+func writeTranscriptRaw(t *testing.T, home, projPath, sid, content string, age time.Duration) {
 	t.Helper()
 	munged := ""
 	for _, r := range projPath {
@@ -254,7 +260,7 @@ func writeTranscript(t *testing.T, home, projPath, sid string, age time.Duration
 		t.Fatalf("mkdir transcripts: %v", err)
 	}
 	f := filepath.Join(dir, sid+".jsonl")
-	if err := os.WriteFile(f, []byte("{}\n"), 0644); err != nil {
+	if err := os.WriteFile(f, []byte(content), 0644); err != nil {
 		t.Fatalf("write transcript: %v", err)
 	}
 	ts := time.Now().Add(-age)
@@ -347,6 +353,186 @@ func TestMaybeRestore_duplicate_fill_survives_missing_transcript_dir(t *testing.
 	want := "222|/p/app|claude|\n222|/p/app|claude|"
 	if got != want {
 		t.Errorf("queue:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestMaybeRestore_blanks_stamped_sid_without_transcript(t *testing.T) {
+	// The statusline stamps whatever session_id claude currently shows — for a
+	// brand-new or just-/clear'd session no transcript exists yet, and
+	// `claude --resume <id>` fails hard ("No conversation found") and exits to
+	// a bare shell. A stamped id with no transcript on disk must be blanked so
+	// the tab falls back to the safe `claude -c`.
+	dir := t.TempDir()
+	home := t.TempDir()
+	writeTranscript(t, home, "/p/app", "sid-real", 1*time.Hour)
+	writeTempFile(t, dir, "last-session",
+		"111|app|/p/app|claude|ghostty|sid-dead\n")
+	_, code := runMaybeRestoreHome(t, dir, "222", home)
+	assertExitCode(t, code, 0)
+	queue, err := os.ReadFile(filepath.Join(dir, "restore-queue"))
+	if err != nil {
+		t.Fatalf("restore-queue not written: %v", err)
+	}
+	got := strings.TrimSpace(string(queue))
+	want := "222|/p/app|claude|"
+	if got != want {
+		t.Errorf("queue:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestMaybeRestore_blanks_stamped_sid_without_model_turn(t *testing.T) {
+	// A transcript can exist yet be unresumable: claude marks sessions with no
+	// model turn (no assistant reply yet) as non-resumable, and --resume fails
+	// on them exactly like on a missing file. Such an id must be blanked too.
+	dir := t.TempDir()
+	home := t.TempDir()
+	writeTranscriptRaw(t, home, "/p/app", "sid-empty",
+		"{\"type\":\"user\"}\n", 1*time.Hour)
+	writeTempFile(t, dir, "last-session",
+		"111|app|/p/app|claude|ghostty|sid-empty\n")
+	_, code := runMaybeRestoreHome(t, dir, "222", home)
+	assertExitCode(t, code, 0)
+	queue, err := os.ReadFile(filepath.Join(dir, "restore-queue"))
+	if err != nil {
+		t.Fatalf("restore-queue not written: %v", err)
+	}
+	got := strings.TrimSpace(string(queue))
+	want := "222|/p/app|claude|"
+	if got != want {
+		t.Errorf("queue:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestMaybeRestore_keeps_stamped_sid_with_resumable_transcript(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	writeTranscript(t, home, "/p/app", "sid-good", 1*time.Hour)
+	writeTempFile(t, dir, "last-session",
+		"111|app|/p/app|claude|ghostty|sid-good\n")
+	_, code := runMaybeRestoreHome(t, dir, "222", home)
+	assertExitCode(t, code, 0)
+	queue, err := os.ReadFile(filepath.Join(dir, "restore-queue"))
+	if err != nil {
+		t.Fatalf("restore-queue not written: %v", err)
+	}
+	got := strings.TrimSpace(string(queue))
+	want := "222|/p/app|claude|sid-good"
+	if got != want {
+		t.Errorf("queue:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestMaybeRestore_dead_stamped_duplicate_gets_pinned_distinct(t *testing.T) {
+	// Two tabs of one project: one stamped with a dead id, one unstamped.
+	// After blanking the dead id both are unstamped duplicates, so the pinning
+	// logic must give each a distinct resumable transcript.
+	dir := t.TempDir()
+	home := t.TempDir()
+	writeTranscript(t, home, "/p/app", "sid-new", 1*time.Hour)
+	writeTranscript(t, home, "/p/app", "sid-old", 2*time.Hour)
+	writeTempFile(t, dir, "last-session",
+		"111|app|/p/app|claude|ghostty|sid-dead\n111|app|/p/app|claude|ghostty|\n")
+	_, code := runMaybeRestoreHome(t, dir, "222", home)
+	assertExitCode(t, code, 0)
+	queue, err := os.ReadFile(filepath.Join(dir, "restore-queue"))
+	if err != nil {
+		t.Fatalf("restore-queue not written: %v", err)
+	}
+	got := strings.TrimSpace(string(queue))
+	want := "222|/p/app|claude|sid-new\n222|/p/app|claude|sid-old"
+	if got != want {
+		t.Errorf("queue:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestMaybeRestore_backs_up_prior_snapshot(t *testing.T) {
+	// The heartbeat rewrites last-session from currently-alive sessions soon
+	// after restore starts, destroying the only pointers to the pre-reboot
+	// tabs. Keep a copy so a broken restore chain stays recoverable.
+	dir := t.TempDir()
+	snapContent := "111|app|/p/app|claude|ghostty|sid-a\n"
+	writeTempFile(t, dir, "last-session", snapContent)
+	rec := filepath.Join(dir, "rec")
+	_, code := runMaybeRestore(t, dir, "222", rec)
+	assertExitCode(t, code, 0)
+	prev, err := os.ReadFile(filepath.Join(dir, "last-session.prev"))
+	if err != nil {
+		t.Fatalf("last-session.prev not written: %v", err)
+	}
+	if string(prev) != snapContent {
+		t.Errorf("backup = %q, want %q", string(prev), snapContent)
+	}
+}
+
+func TestClaudePickTranscript_skips_transcript_without_model_turn(t *testing.T) {
+	// The mtime-based pick must never pin a tab to an unresumable transcript —
+	// `claude --resume` would fail and dump the tab to a bare shell.
+	home := t.TempDir()
+	writeTranscriptRaw(t, home, "/p/app", "sid-unresumable",
+		"{\"type\":\"user\"}\n", 1*time.Hour)
+	writeTranscript(t, home, "/p/app", "sid-resumable", 2*time.Hour)
+	out, code := runBashFunc(t, "lib/session-restore.sh", "claude_pick_transcript",
+		[]string{"/p/app", ""}, buildEnv(t, nil, "HOME="+home))
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "sid-resumable" {
+		t.Errorf("picked %q, want %q", strings.TrimSpace(out), "sid-resumable")
+	}
+}
+
+func TestWriteSessionSnapshot_noop_while_restore_queue_fresh(t *testing.T) {
+	// While a restore chain is draining (fresh restore-queue), the heartbeat
+	// must not rewrite the snapshot: the alive sessions are only the
+	// restored-so-far subset, and overwriting would lose the rest.
+	dir := t.TempDir()
+	snap := writeTempFile(t, dir, "last-session", "111|app|/p/app|claude|ghostty|sid-a\n")
+	writeTempFile(t, dir, "restore-queue", "222|/p/web|claude|sid-b\n")
+	tmuxBody := `
+case "$1" in
+  list-sessions) echo "100 dev-app-1" ;;
+  show-environment)
+    printf 'WISP_DECK=1\nWISP_DECK_BOOT=222\nWISP_DECK_PROJECT=app\nWISP_DECK_PATH=/p/app\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\n' ;;
+esac
+`
+	binDir := mockCommand(t, dir, "tmux", tmuxBody)
+	env := buildEnv(t, []string{binDir})
+	_, code := runBashFunc(t, "lib/session-restore.sh", "write_session_snapshot",
+		[]string{"tmux", snap}, env)
+	assertExitCode(t, code, 0)
+	data, _ := os.ReadFile(snap)
+	got := strings.TrimSpace(string(data))
+	want := "111|app|/p/app|claude|ghostty|sid-a"
+	if got != want {
+		t.Errorf("snapshot rewritten during restore: got %q, want %q", got, want)
+	}
+}
+
+func TestWriteSessionSnapshot_writes_after_restore_queue_stale(t *testing.T) {
+	// A stale queue (>5 min — the chain broke) must not freeze the snapshot
+	// forever; normal heartbeat snapshotting resumes.
+	dir := t.TempDir()
+	snap := writeTempFile(t, dir, "last-session", "111|app|/p/app|claude|ghostty|sid-a\n")
+	queue := writeTempFile(t, dir, "restore-queue", "222|/p/web|claude|sid-b\n")
+	old := time.Now().Add(-10 * time.Minute)
+	if err := os.Chtimes(queue, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	tmuxBody := `
+case "$1" in
+  list-sessions) echo "100 dev-app-1" ;;
+  show-environment)
+    printf 'WISP_DECK=1\nWISP_DECK_BOOT=222\nWISP_DECK_PROJECT=app\nWISP_DECK_PATH=/p/app\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\n' ;;
+esac
+`
+	binDir := mockCommand(t, dir, "tmux", tmuxBody)
+	env := buildEnv(t, []string{binDir})
+	_, code := runBashFunc(t, "lib/session-restore.sh", "write_session_snapshot",
+		[]string{"tmux", snap}, env)
+	assertExitCode(t, code, 0)
+	data, _ := os.ReadFile(snap)
+	got := strings.TrimSpace(string(data))
+	want := "222|app|/p/app|claude|ghostty|"
+	if got != want {
+		t.Errorf("snapshot not rewritten after queue went stale: got %q, want %q", got, want)
 	}
 }
 

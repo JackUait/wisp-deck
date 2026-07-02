@@ -1601,7 +1601,68 @@ func TestStatusline_stamp_claude_session_sets_tmux_session_env(t *testing.T) {
 	rec := filepath.Join(dir, "rec")
 	binDir := mockCommand(t, dir, "tmux", fmt.Sprintf(`echo "$@" >> %q`, rec))
 	env := buildEnv(t, []string{binDir}, "TMUX=/tmp/sock,1,0")
-	json := `{"session_id":"sid-42","transcript_path":"/t/x.jsonl","cwd":"/p/app"}`
+	transcript := filepath.Join(dir, "x.jsonl")
+	if err := os.WriteFile(transcript,
+		[]byte("{\"type\":\"user\"}\n{\"type\":\"assistant\"}\n"), 0644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	json := `{"session_id":"sid-42","transcript_path":"` + transcript + `","cwd":"/p/app"}`
+	_, code := runBashFunc(t, "lib/statusline.sh", "gt_stamp_claude_session",
+		[]string{json}, env)
+	assertExitCode(t, code, 0)
+	data, err := os.ReadFile(rec)
+	if err != nil {
+		t.Fatalf("tmux not invoked: %v", err)
+	}
+	assertContains(t, string(data), "set-environment WISP_DECK_CLAUDE_SESSION sid-42")
+}
+
+func TestStatusline_stamp_claude_session_noop_when_transcript_missing(t *testing.T) {
+	// A freshly-launched or just-/clear'd session shows a session_id before
+	// any transcript exists on disk. Stamping that id would make restore run
+	// `claude --resume <id>`, which fails ("No conversation found") and dumps
+	// the tab to a bare shell. Keep the previous (resumable) id instead.
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "rec")
+	binDir := mockCommand(t, dir, "tmux", fmt.Sprintf(`echo "$@" >> %q`, rec))
+	env := buildEnv(t, []string{binDir}, "TMUX=/tmp/sock,1,0")
+	json := `{"session_id":"sid-42","transcript_path":"` + filepath.Join(dir, "nope.jsonl") + `","cwd":"/p/app"}`
+	_, code := runBashFunc(t, "lib/statusline.sh", "gt_stamp_claude_session",
+		[]string{json}, env)
+	assertExitCode(t, code, 0)
+	if _, err := os.Stat(rec); err == nil {
+		t.Error("must not stamp a session whose transcript does not exist yet")
+	}
+}
+
+func TestStatusline_stamp_claude_session_noop_without_model_turn(t *testing.T) {
+	// Claude marks sessions with no model turn as non-resumable; --resume
+	// fails on them exactly like on a missing transcript.
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "rec")
+	binDir := mockCommand(t, dir, "tmux", fmt.Sprintf(`echo "$@" >> %q`, rec))
+	env := buildEnv(t, []string{binDir}, "TMUX=/tmp/sock,1,0")
+	transcript := filepath.Join(dir, "x.jsonl")
+	if err := os.WriteFile(transcript, []byte("{\"type\":\"user\"}\n"), 0644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	json := `{"session_id":"sid-42","transcript_path":"` + transcript + `","cwd":"/p/app"}`
+	_, code := runBashFunc(t, "lib/statusline.sh", "gt_stamp_claude_session",
+		[]string{json}, env)
+	assertExitCode(t, code, 0)
+	if _, err := os.Stat(rec); err == nil {
+		t.Error("must not stamp a session whose transcript has no model turn")
+	}
+}
+
+func TestStatusline_stamp_claude_session_stamps_when_no_transcript_path(t *testing.T) {
+	// Older claude versions omit transcript_path from the statusline payload —
+	// keep the pre-guard behavior there (restore re-validates the id anyway).
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "rec")
+	binDir := mockCommand(t, dir, "tmux", fmt.Sprintf(`echo "$@" >> %q`, rec))
+	env := buildEnv(t, []string{binDir}, "TMUX=/tmp/sock,1,0")
+	json := `{"session_id":"sid-42","cwd":"/p/app"}`
 	_, code := runBashFunc(t, "lib/statusline.sh", "gt_stamp_claude_session",
 		[]string{json}, env)
 	assertExitCode(t, code, 0)

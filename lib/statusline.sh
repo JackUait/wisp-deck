@@ -124,8 +124,20 @@ get_tree_cpu_pct() {
 # Usage: gt_stamp_claude_session <statusline_json>
 gt_stamp_claude_session() {
   [ -n "${TMUX:-}" ] || return 0
-  local sid
+  local sid transcript
   sid="$(echo "$1" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')"
   [ -n "$sid" ] || return 0
+  # Only stamp ids that `claude --resume` would accept: the transcript must
+  # exist on disk and contain a model turn. A freshly-launched (or just
+  # /clear'd) session already shows a session_id while neither is true yet —
+  # stamping it would make restore fail hard ("No conversation found") and
+  # dump the tab to a bare shell. Until the new conversation is durable, the
+  # previously stamped (resumable) id stays in place. Payloads without a
+  # transcript_path (older claude) stamp unconditionally, as before; restore
+  # re-validates the id anyway.
+  transcript="$(echo "$1" | sed -n 's/.*"transcript_path":"\([^"]*\)".*/\1/p')"
+  if [ -n "$transcript" ]; then
+    { [ -f "$transcript" ] && grep -q '"type":"assistant"' "$transcript"; } || return 0
+  fi
   tmux set-environment WISP_DECK_CLAUDE_SESSION "$sid" 2>/dev/null || true
 }
