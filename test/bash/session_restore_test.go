@@ -536,6 +536,34 @@ esac
 	}
 }
 
+func TestWriteSessionSnapshot_removes_stale_tmp_files(t *testing.T) {
+	// A heartbeat SIGKILL'd mid-write (e.g. at shutdown) leaves its
+	// last-session.tmp.<pid> behind forever. The next snapshot write must
+	// sweep such debris — but only stale files, never a fresh tmp that a
+	// concurrent writer is about to mv into place.
+	dir := t.TempDir()
+	snap := writeTempFile(t, dir, "last-session", "111|app|/p/app|claude|ghostty|\n")
+	staleTmp := writeTempFile(t, dir, "last-session.tmp.12345", "")
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(staleTmp, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	freshTmp := writeTempFile(t, dir, "last-session.tmp.67890", "")
+	// tmux server dead: the function returns before writing, but the sweep
+	// must still have happened.
+	binDir := mockCommand(t, dir, "tmux", `exit 1`)
+	env := buildEnv(t, []string{binDir})
+	_, code := runBashFunc(t, "lib/session-restore.sh", "write_session_snapshot",
+		[]string{"tmux", snap}, env)
+	assertExitCode(t, code, 0)
+	if _, err := os.Stat(staleTmp); err == nil {
+		t.Error("stale tmp file not removed")
+	}
+	if _, err := os.Stat(freshTmp); err != nil {
+		t.Error("fresh tmp file must be kept (concurrent writer)")
+	}
+}
+
 func TestRestoreQueuePop_pops_first_line_and_keeps_rest(t *testing.T) {
 	dir := t.TempDir()
 	writeTempFile(t, dir, "restore-queue",

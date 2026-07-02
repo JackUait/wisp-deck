@@ -26,6 +26,11 @@ current_boot_id() {
 # Field delimiter is '|' — project paths containing '|' are not supported.
 write_session_snapshot() {
   local tmux_cmd="$1" snap_file="$2"
+  # Sweep tmp files orphaned by writers killed mid-write (shutdown SIGKILLs
+  # the heartbeat). Only stale ones — a fresh tmp may belong to a concurrent
+  # writer about to mv it into place.
+  find "${snap_file%/*}" -maxdepth 1 -name "${snap_file##*/}.tmp.*" \
+    -mmin +60 -delete 2>/dev/null || true
   # While a restore chain is draining (a fresh restore-queue exists), the
   # alive sessions are only the restored-so-far subset — rewriting the
   # snapshot now would lose the pointers to the not-yet-restored tabs. A
