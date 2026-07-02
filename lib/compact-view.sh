@@ -375,6 +375,21 @@ ledger_hint() {
   fi
 }
 
+# ledger_footer renders the reserved bottom row while a file row is hovered and
+# the list overflows: the scroll position indicator AND the mark/discard hint,
+# side by side. The hint no longer REPLACES the scroll data — both share the row,
+# separated by a dim middot — so the user never loses their position to see the
+# keys. Delegates to scroll_status and ledger_hint so each stays the single
+# source of its own formatting.
+# Usage: ledger_footer <scroll> <avail> <total> <marked>
+ledger_footer() {
+  local scroll="$1" avail="$2" total="$3" marked="$4"
+  local dim="\033[2m" reset="\033[0m"
+  scroll_status "$scroll" "$avail" "$total"
+  printf " ${dim}·${reset}"
+  ledger_hint "$marked"
+}
+
 # discard_worktree_files reverts every member path of <selected> back to the
 # index (see discard_worktree_file). Returns non-zero when ANY restore fails.
 # Usage: discard_worktree_files <project_dir> <selected>
@@ -1045,13 +1060,14 @@ compact_view() {
         printf '%s\n' "$header"
         if [ "$reserve" = 1 ]; then
           printf '%s\n' "$draw_body" | viewport_slice "$scroll" "$avail"
-          # Footer priority on the reserved row: the armed confirm, else the hover
-          # hint (shown while the cursor is over a file row), else the scroll
-          # position indicator (present whenever the body overflows).
+          # Footer priority on the reserved row: the armed confirm, else — while
+          # the cursor is over a file row — the scroll position AND the mark/discard
+          # hint side by side (the hint no longer replaces the scroll data), else
+          # the bare scroll position indicator (present whenever the body overflows).
           if [ "$discard_armed" = 1 ]; then
             discard_prompt "$(selection_count "$discard_set")"
           elif [ "$hover_line" -gt 0 ]; then
-            ledger_hint "$(selection_count "$SELECTED")"
+            ledger_footer "$scroll" "$avail" "$body_total" "$(selection_count "$SELECTED")"
           else
             scroll_status "$scroll" "$avail" "$body_total"
           fi

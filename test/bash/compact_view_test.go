@@ -1827,6 +1827,37 @@ func TestLedgerHint_marked_shows_count(t *testing.T) {
 	}
 }
 
+// ledger_footer combines the scroll position indicator with the mark/discard
+// hint on ONE reserved row, so hovering an overflowing list keeps the scroll
+// data visible AND advertises the keys — the hint no longer REPLACES the scroll
+// position (see the reserved-footer render in compact_view).
+func TestLedgerFooter_shows_scroll_and_hint(t *testing.T) {
+	// scroll=10, avail=24, total=34 -> "11-34/34"; 0 files marked.
+	out, code := cvFuncArgv(t, "ledger_footer", "10", "24", "34", "0")
+	assertExitCode(t, code, 0)
+	clean := ansiRE.ReplaceAllString(out, "")
+	if !strings.Contains(clean, "11-34/34") {
+		t.Errorf("footer must keep the scroll position data: got %q", clean)
+	}
+	if !strings.Contains(clean, "x mark") || !strings.Contains(clean, "d discard") {
+		t.Errorf("footer must also advertise the mark/discard keys: got %q", clean)
+	}
+}
+
+// With files marked, the footer still shows the scroll data and now reports the
+// marked count alongside the keys.
+func TestLedgerFooter_shows_scroll_and_marked_count(t *testing.T) {
+	out, code := cvFuncArgv(t, "ledger_footer", "10", "24", "34", "2")
+	assertExitCode(t, code, 0)
+	clean := ansiRE.ReplaceAllString(out, "")
+	if !strings.Contains(clean, "11-34/34") {
+		t.Errorf("footer must keep the scroll position data: got %q", clean)
+	}
+	if !strings.Contains(clean, "2") || !strings.Contains(clean, "d discard") {
+		t.Errorf("footer must report the marked count and discard key: got %q", clean)
+	}
+}
+
 // discard_worktree_files reverts every selected path back to HEAD, leaving an
 // unselected modified file untouched.
 func TestDiscardWorktreeFiles_reverts_all_selected(t *testing.T) {
