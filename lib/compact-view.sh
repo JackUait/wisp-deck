@@ -4,6 +4,8 @@
 # Branch as a heading, net +/- stamp, aligned +/- columns with filenames.
 # Refreshes every 2 seconds. Scroll with the mouse wheel, arrows/j/k,
 # space/b (page), g/G (top/bottom) when the list overflows. Ctrl-C to exit.
+# Hover a file row and press 'x' to mark it (✓); press 'd' to discard the marked
+# files (or, with none marked, the hovered file) after a y/n confirm.
 
 # format_file shows the file BASENAME only (the path is dropped), truncating
 # with an ellipsis when it exceeds max width.
@@ -263,6 +265,112 @@ should_discard() {
 discard_worktree_file() {
   local dir="$1" file="$2"
   git -C "$dir" restore -- "$file"
+}
+
+# ── Multi-select (batch discard) ────────────────────────────────────────────
+# The user can mark several files in the ledger (hover a row, press 'x') and
+# discard them together (press 'd', confirm y/n). The selection is a
+# newline-delimited set of file PATHS — tracked by path, not by body-line index,
+# so it survives the ledger's periodic rebuild and any scrolling. These helpers
+# manage and render that set; the loop wires them to the x/d/y/n keys.
+
+# toggle_selection echoes <selected> with <path> removed when it is already a
+# member (whole-line match) or appended when it is not. Empty lines are dropped.
+# Usage: toggle_selection <selected> <path>
+toggle_selection() {
+  local selected="$1" path="$2" out="" line found=0
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    if [ "$line" = "$path" ]; then found=1; continue; fi
+    out="${out}${line}"$'\n'
+  done <<< "$selected"
+  [ "$found" -eq 0 ] && out="${out}${path}"$'\n'
+  printf '%s' "${out%$'\n'}"
+}
+
+# selection_contains exits 0 when <path> is a whole-line member of <selected>,
+# non-zero otherwise. Whole-line so "a.txt" never matches "src/a.txt".
+# Usage: selection_contains <selected> <path>
+selection_contains() {
+  local selected="$1" path="$2" line
+  while IFS= read -r line; do
+    [ "$line" = "$path" ] && return 0
+  done <<< "$selected"
+  return 1
+}
+
+# selection_count echoes the number of non-empty members of <selected>.
+# Usage: selection_count <selected>
+selection_count() {
+  local selected="$1" line n=0
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    n=$((n + 1))
+  done <<< "$selected"
+  printf '%d' "$n"
+}
+
+# prune_selection echoes <selected> minus any member absent from the
+# newline-delimited <valid> path set (a file that left the changeset — was
+# discarded, committed, or reverted externally), keeping survivors in order.
+# Usage: prune_selection <selected> <valid>
+prune_selection() {
+  local selected="$1" valid="$2" out="" line
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    if selection_contains "$valid" "$line"; then
+      out="${out}${line}"$'\n'
+    fi
+  done <<< "$selected"
+  printf '%s' "${out%$'\n'}"
+}
+
+# discard_prompt echoes the armed-confirm footer shown while a batch discard is
+# pending: "Discard N file(s)? [y/n]" — singular "file" when N == 1.
+# Usage: discard_prompt <count>
+discard_prompt() {
+  local n="$1" unit="files"
+  [ "$n" = 1 ] && unit="file"
+  local yellow="\033[33m" bold="\033[1m" reset="\033[0m" dim="\033[2m"
+  printf "${yellow}${bold}Discard %s %s?${reset} ${dim}[y/n]${reset}" "$n" "$unit"
+}
+
+# apply_selection_markers rewrites each body line whose mapped path (the SAME
+# line index in <body_map>) is a member of <selected>, replacing the row's
+# 3-space indent with a 3-column " ✓ " marker so selected files read as checked.
+# The marker preserves the row's VISIBLE width (3 columns in, 3 columns out) so
+# column alignment and the hover-highlight padding math stay intact. Non-file
+# rows (empty map line) and unselected rows pass through untouched. An empty
+# selection returns the body verbatim (the redraw fast path). Fork-free (nth_line
+# + selection_contains, no $()) so it stays cheap on the hover redraw path.
+# Usage: apply_selection_markers <body> <body_map> <selected>
+apply_selection_markers() {
+  local body="$1" map="$2" selected="$3"
+  [ -z "$selected" ] && { printf '%s' "$body"; return; }
+  local green=$'\033[32m' bold=$'\033[1m' reset=$'\033[0m'
+  local marker="${green}${bold} ✓ ${reset}"
+  local out="" bline i=0
+  while IFS= read -r bline; do
+    i=$((i + 1))
+    nth_line "$map" "$i"
+    if [ -n "$NTH_LINE" ] && selection_contains "$selected" "$NTH_LINE"; then
+      bline="${marker}${bline#   }"   # swap the 3-space indent for the 3-col mark
+    fi
+    out="${out}${bline}"$'\n'
+  done <<< "$body"
+  printf '%s' "${out%$'\n'}"
+}
+
+# discard_worktree_files reverts every member path of <selected> back to the
+# index (see discard_worktree_file). Returns non-zero when ANY restore fails.
+# Usage: discard_worktree_files <project_dir> <selected>
+discard_worktree_files() {
+  local dir="$1" selected="$2" line rc=0
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    discard_worktree_file "$dir" "$line" || rc=1
+  done <<< "$selected"
+  return "$rc"
 }
 
 # open_diff_popup floats a whole-window tmux popup showing the clicked path's
@@ -531,6 +639,14 @@ compact_view() {
   local header_rows=2
   local staged unstaged body_map
   local mterm mrest mrow bl cpath prev_hover prev_scroll hover_keep
+  # Multi-select batch discard: SELECTED is a newline-delimited set of marked
+  # file PATHS (tracked by path so it survives the ledger's rebuild/scroll).
+  # discard_armed shows the y/n confirm footer; discard_set is what a confirm
+  # will restore (the selection, or the hovered file when nothing is selected).
+  # state_dirty forces a repaint when the selection/armed state changes without a
+  # rebuild or hover/scroll change; reserve marks that a bottom footer row is in
+  # use (scroll status OR the confirm prompt).
+  local SELECTED="" discard_armed=0 discard_set="" state_dirty=0 reserve=0
   # Frame-erase helpers, built ONCE: $nl is a literal newline (the match), $rowend
   # is "erase-to-end-of-line + newline" (the replacement). The flicker-free redraw
   # swaps every newline in the composed frame for $rowend so each row scrubs the
@@ -561,6 +677,51 @@ compact_view() {
       ' ') scroll=$((scroll + avail)) ;;
       g) scroll=0 ;;
       G) scroll=$body_total ;;
+      x)
+        # Toggle selection of the file row under the cursor. The drain loop zeroed
+        # hover_line at the top of this event; hover_keep still holds the row the
+        # cursor was on, so use it (and restore hover_line so the bar stays put).
+        hover_line="$hover_keep"
+        if [ "$hover_line" -gt 0 ]; then
+          nth_line "$body_map" "$hover_line"
+          if [ -n "$NTH_LINE" ]; then
+            SELECTED=$(toggle_selection "$SELECTED" "$NTH_LINE")
+            state_dirty=1
+          fi
+        fi
+        ;;
+      d)
+        # Arm (or, when already armed, cancel) a batch discard. The set to discard
+        # is the selected files, or — when nothing is selected — the file under
+        # the cursor, so 'd' is never a dead key over a hovered row.
+        if [ "$discard_armed" = 1 ]; then
+          discard_armed=0
+        else
+          hover_line="$hover_keep"
+          discard_set="$SELECTED"
+          if [ -z "$discard_set" ] && [ "$hover_line" -gt 0 ]; then
+            nth_line "$body_map" "$hover_line"
+            [ -n "$NTH_LINE" ] && discard_set="$NTH_LINE"
+          fi
+          [ -n "$discard_set" ] && discard_armed=1
+        fi
+        state_dirty=1
+        ;;
+      y)
+        # Confirm an armed batch discard: restore every path in the set, clear the
+        # selection, and rebuild so the reverted files leave the ledger.
+        if [ "$discard_armed" = 1 ]; then
+          discard_worktree_files "$project_dir" "$discard_set"
+          SELECTED=""
+          discard_armed=0
+          discard_set=""
+          need_build=1
+        fi
+        ;;
+      n)
+        # Cancel an armed batch discard (the selection is kept).
+        [ "$discard_armed" = 1 ] && { discard_armed=0; state_dirty=1; }
+        ;;
       $'\e')
         # CSI sequence: arrows, page keys, or an SGR mouse report. A terminal
         # sends the whole sequence atomically, so its bytes are already buffered
@@ -573,6 +734,11 @@ compact_view() {
         # The cost is nil in normal use (a lone, unbound ESC just waits 0.5s for a
         # follow-up that never comes — and nothing here is bound to a bare ESC).
         read_key 0.5 || true
+        if [ "$KEY" != "[" ] && [ "$discard_armed" = 1 ]; then
+          # Lone Esc (no CSI follow-up) cancels an armed batch discard.
+          discard_armed=0
+          state_dirty=1
+        fi
         if [ "$KEY" = "[" ]; then
           read_key 0.5 || true
           case "$KEY" in
@@ -821,12 +987,21 @@ compact_view() {
     # event and helped the hover highlight crawl.
     split_content "$content"
     header="$HEADER"; body="$BODY"; body_total="$BODY_TOTAL"; header_rows="$HEADER_ROWS"
+    # Drop any marked file that left the changeset since the last build (it was
+    # discarded, committed, or reverted externally), so the selection — and the
+    # confirm count — never references a file that's no longer listed. body_map
+    # carries one path per body line (empty on header/blank rows), which is the
+    # valid-path set. Runs on the build tick only, never on the hover hot path.
+    SELECTED=$(prune_selection "$SELECTED" "$body_map")
     fi
 
     local body_rows=$((h - header_rows))
     [ "$body_rows" -lt 1 ] && body_rows=1
-    # Reserve the last row for the position indicator when the body overflows.
-    if [ "$body_total" -gt "$body_rows" ]; then
+    # Reserve the bottom row for a footer — the scroll position indicator when the
+    # body overflows, OR the y/n confirm prompt while a discard is armed.
+    reserve=0
+    { [ "$body_total" -gt "$body_rows" ] || [ "$discard_armed" = 1 ]; } && reserve=1
+    if [ "$reserve" = 1 ]; then
       avail=$((body_rows - 1))
       [ "$avail" -lt 1 ] && avail=1
     else
@@ -846,14 +1021,23 @@ compact_view() {
     # Redraw only when something visible changed (need_draw). Hover motion that
     # lands on the same row leaves need_draw=0, so the screen doesn't flicker.
     if [ "$need_draw" = 1 ]; then
-      draw_body=$(highlight_body_line "$body" "$hover_line" "$hover_style" "$w")
+      # Mark the selected rows (✓) first, then overlay the hover bar. The markers
+      # preserve each row's visible width, so the hover padding math is unaffected.
+      draw_body=$(apply_selection_markers "$body" "$body_map" "$SELECTED")
+      draw_body=$(highlight_body_line "$draw_body" "$hover_line" "$hover_style" "$w")
       frame=$(
         printf '%s\n' "$header"
-        if [ "$body_total" -le "$body_rows" ]; then
-          printf '%s' "$draw_body"
-        else
+        if [ "$reserve" = 1 ]; then
           printf '%s\n' "$draw_body" | viewport_slice "$scroll" "$avail"
-          scroll_status "$scroll" "$avail" "$body_total"
+          # The confirm prompt takes the footer while armed; otherwise the scroll
+          # position indicator (only present when the body actually overflows).
+          if [ "$discard_armed" = 1 ]; then
+            discard_prompt "$(selection_count "$discard_set")"
+          else
+            scroll_status "$scroll" "$avail" "$body_total"
+          fi
+        else
+          printf '%s' "$draw_body"
         fi
       )
       # Home the cursor and overwrite the frame IN PLACE — never a full-screen
@@ -895,6 +1079,7 @@ compact_view() {
     prev_hover="$hover_line"   # what's on screen now, for the post-drain compare
     prev_scroll="$scroll"
     need_build=0
+    state_dirty=0              # set by x/d/y/n when the selection or armed state changes
     while true; do
       hover_keep="$hover_line" # restored if this event is a malformed mouse report
       hover_line=0             # most keys clear the hover; mouse motion re-sets it
@@ -906,7 +1091,7 @@ compact_view() {
     # Repaint once — and only when the settled state actually differs from what is
     # already on screen (a flood that ends where it began draws nothing), or a
     # rebuild is pending after a popup.
-    if [ "$need_build" = 1 ] || [ "$hover_line" != "$prev_hover" ] || [ "$scroll" != "$prev_scroll" ]; then
+    if [ "$need_build" = 1 ] || [ "$hover_line" != "$prev_hover" ] || [ "$scroll" != "$prev_scroll" ] || [ "$state_dirty" = 1 ]; then
       need_draw=1
     else
       need_draw=0

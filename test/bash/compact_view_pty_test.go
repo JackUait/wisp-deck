@@ -641,3 +641,106 @@ func TestCompactView_header_stays_pinned_when_scrolled(t *testing.T) {
 		t.Errorf("top file (f00.txt) should have scrolled away after G; frame:\n%s", frame)
 	}
 }
+
+// End-to-end: select several files with the keyboard toggle and discard them
+// together. Drives the REAL loop over a pty — hover a.txt's row and press 'x',
+// hover b.txt's row and press 'x' (marking both), then 'd' to arm the confirm
+// and 'y' to run it — and asserts BOTH selected files reverted to HEAD while the
+// unselected c.txt keeps its working-tree edit. This exercises the whole wiring:
+// hover→path mapping, toggle_selection, the armed confirm, and the batch restore.
+func TestCompactView_multiselect_discards_selected_files(t *testing.T) {
+	// The live pane runs zsh, and the mouse-report follow-up reads (read -k) that
+	// map a hover to a file row depend on zsh's semantics, so drive the loop under
+	// zsh exactly like the hover tests above.
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not available")
+	}
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	for _, f := range []string{"a.txt", "b.txt", "c.txt"} {
+		writeTempFile(t, dir, f, "base\n")
+		git("add", f)
+	}
+	git("commit", "-q", "-m", "init")
+	// Modify all three so the ledger lists them (alphabetical numstat order).
+	for _, f := range []string{"a.txt", "b.txt", "c.txt"} {
+		writeTempFile(t, dir, f, "base\nDIRTY\n")
+	}
+
+	cmd := exec.Command(zsh, "-c", "source "+module+" && compact_view "+dir)
+	env := []string{}
+	for _, e := range os.Environ() {
+		if len(e) >= 5 && e[:5] == "TMUX=" {
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=5", "TERM=xterm")
+
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 12, Cols: 60})
+	if err != nil {
+		t.Fatalf("start pty: %v", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	go func() {
+		b := make([]byte, 4096)
+		for {
+			if _, err := ptmx.Read(b); err != nil {
+				return
+			}
+		}
+	}()
+
+	// Body layout with a short "main" heading (header_rows=2): screen row 3 is the
+	// "modified" group header, row 4 = a.txt, row 5 = b.txt, row 6 = c.txt. A
+	// no-button SGR motion report (button 35) sets the hover to the row's file.
+	hover := func(row int) {
+		_, _ = ptmx.Write([]byte(fmt.Sprintf("\x1b[<35;10;%dM", row)))
+		time.Sleep(120 * time.Millisecond)
+	}
+
+	time.Sleep(700 * time.Millisecond) // first frame
+
+	hover(4)                         // a.txt
+	_, _ = ptmx.Write([]byte("x"))   // select a.txt
+	time.Sleep(120 * time.Millisecond)
+	hover(5)                         // b.txt
+	_, _ = ptmx.Write([]byte("x"))   // select b.txt
+	time.Sleep(120 * time.Millisecond)
+	_, _ = ptmx.Write([]byte("d"))   // arm the confirm
+	time.Sleep(150 * time.Millisecond)
+	_, _ = ptmx.Write([]byte("y"))   // confirm the batch discard
+	time.Sleep(500 * time.Millisecond)
+
+	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
+	time.Sleep(300 * time.Millisecond)
+
+	read := func(f string) string {
+		b, _ := os.ReadFile(filepath.Join(dir, f))
+		return string(b)
+	}
+	if got := read("a.txt"); got != "base\n" {
+		t.Errorf("a.txt should be reverted after batch discard: got %q, want %q", got, "base\n")
+	}
+	if got := read("b.txt"); got != "base\n" {
+		t.Errorf("b.txt should be reverted after batch discard: got %q, want %q", got, "base\n")
+	}
+	if got := read("c.txt"); got != "base\nDIRTY\n" {
+		t.Errorf("unselected c.txt must keep its edit: got %q", got)
+	}
+}

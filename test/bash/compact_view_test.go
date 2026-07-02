@@ -1617,3 +1617,224 @@ func TestCompactView_hover_hotpath_stays_fork_free(t *testing.T) {
 			"redirect; that fork-free pattern is what keeps the per-event hover cheap.")
 	}
 }
+
+// ── Multi-select & batch discard ────────────────────────────────────────────
+//
+// Selection is a newline-delimited set of file PATHS (stable across the 2s
+// rebuild and scrolling, unlike body-line indices). These pure helpers manage
+// the set and render it; the loop wires them to the x/d/y/n keys.
+
+// cvFuncArgv sources compact-view.sh and calls <fn> with the given args passed
+// as REAL positional parameters ("$@"), so newline-delimited selection sets
+// survive verbatim — runBashFunc's %q quoting would turn a newline into a
+// literal "\n" inside bash double-quotes (see body_path_map's test helper).
+func cvFuncArgv(t *testing.T, fn string, args ...string) (string, int) {
+	t.Helper()
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+	script := "source " + module + " && " + fn + ` "$@"`
+	cmd := exec.Command("bash", append([]string{"-c", script, "bash"}, args...)...)
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			code = ee.ExitCode()
+		} else {
+			t.Fatalf("run %s: %v", fn, err)
+		}
+	}
+	return string(out), code
+}
+
+// toggle_selection adds a path when absent and removes it when present, echoing
+// the new newline-delimited set.
+func TestToggleSelection_adds_when_absent(t *testing.T) {
+	out, code := cvFuncArgv(t, "toggle_selection", "", "a.txt")
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "a.txt" {
+		t.Errorf("adding to empty set: got %q, want %q", out, "a.txt")
+	}
+}
+
+func TestToggleSelection_appends_second(t *testing.T) {
+	out, code := cvFuncArgv(t, "toggle_selection", "a.txt", "b.txt")
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "a.txt\nb.txt" {
+		t.Errorf("appending: got %q, want %q", out, "a.txt\nb.txt")
+	}
+}
+
+func TestToggleSelection_removes_when_present(t *testing.T) {
+	out, code := cvFuncArgv(t, "toggle_selection", "a.txt\nb.txt\nc.txt", "b.txt")
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "a.txt\nc.txt" {
+		t.Errorf("removing middle: got %q, want %q", out, "a.txt\nc.txt")
+	}
+}
+
+func TestToggleSelection_removing_only_member_empties(t *testing.T) {
+	out, code := cvFuncArgv(t, "toggle_selection", "a.txt", "a.txt")
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("removing sole member: got %q, want empty", out)
+	}
+}
+
+// A path is matched WHOLE-line: "a.txt" must not match "src/a.txt".
+func TestToggleSelection_matches_whole_path_only(t *testing.T) {
+	out, code := cvFuncArgv(t, "toggle_selection", "src/a.txt", "a.txt")
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "src/a.txt\na.txt" {
+		t.Errorf("substring must not match: got %q, want %q", out, "src/a.txt\na.txt")
+	}
+}
+
+// selection_contains exits 0 when the path is a member, non-zero otherwise.
+func TestSelectionContains_true_for_member(t *testing.T) {
+	_, code := cvFuncArgv(t, "selection_contains", "a.txt\nb.txt", "b.txt")
+	if code != 0 {
+		t.Errorf("selection_contains exit = %d, want 0 for a member", code)
+	}
+}
+
+func TestSelectionContains_false_for_nonmember(t *testing.T) {
+	_, code := cvFuncArgv(t, "selection_contains", "a.txt\nb.txt", "c.txt")
+	if code == 0 {
+		t.Error("selection_contains should be non-zero for a non-member")
+	}
+}
+
+func TestSelectionContains_false_for_substring(t *testing.T) {
+	_, code := cvFuncArgv(t, "selection_contains", "src/a.txt", "a.txt")
+	if code == 0 {
+		t.Error("selection_contains must match whole paths, not substrings")
+	}
+}
+
+// selection_count echoes the number of non-empty members.
+func TestSelectionCount_counts_members(t *testing.T) {
+	out, code := cvFuncArgv(t, "selection_count", "a.txt\nb.txt\nc.txt")
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "3" {
+		t.Errorf("count: got %q, want 3", out)
+	}
+}
+
+func TestSelectionCount_empty_is_zero(t *testing.T) {
+	out, code := cvFuncArgv(t, "selection_count", "")
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "0" {
+		t.Errorf("empty count: got %q, want 0", out)
+	}
+}
+
+// prune_selection drops members no longer present in the valid path set (a file
+// that left the changeset), keeping the rest in order.
+func TestPruneSelection_drops_missing_keeps_present(t *testing.T) {
+	out, code := cvFuncArgv(t, "prune_selection", "a.txt\nb.txt\nc.txt", "a.txt\nc.txt")
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "a.txt\nc.txt" {
+		t.Errorf("prune: got %q, want %q", out, "a.txt\nc.txt")
+	}
+}
+
+func TestPruneSelection_all_missing_empties(t *testing.T) {
+	out, code := cvFuncArgv(t, "prune_selection", "a.txt\nb.txt", "x.txt\ny.txt")
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("prune all-missing: got %q, want empty", out)
+	}
+}
+
+// discard_prompt is the armed-confirm footer text; "file" is singular at 1.
+func TestDiscardPrompt_plural(t *testing.T) {
+	out, code := cvFuncArgv(t, "discard_prompt", "3")
+	assertExitCode(t, code, 0)
+	clean := ansiRE.ReplaceAllString(out, "")
+	if !strings.Contains(clean, "Discard 3 files?") || !strings.Contains(clean, "[y/n]") {
+		t.Errorf("plural prompt: got %q", clean)
+	}
+}
+
+func TestDiscardPrompt_singular(t *testing.T) {
+	out, code := cvFuncArgv(t, "discard_prompt", "1")
+	assertExitCode(t, code, 0)
+	clean := ansiRE.ReplaceAllString(out, "")
+	if !strings.Contains(clean, "Discard 1 file?") {
+		t.Errorf("singular prompt: got %q, want to contain %q", clean, "Discard 1 file?")
+	}
+	if strings.Contains(clean, "files?") {
+		t.Errorf("singular prompt should not say 'files': got %q", clean)
+	}
+}
+
+// apply_selection_markers marks each selected FILE row (per body_map) with a ✓
+// and leaves unselected rows and non-file rows (empty map path) untouched.
+func TestApplySelectionMarkers_marks_selected_file_rows(t *testing.T) {
+	// A body with a header row, two file rows, a blank row. The map carries a path
+	// on the file rows and an empty line on the header/blank rows.
+	body := "HEADER\n   +1 −0  a.txt\n   +2 −0  b.txt\n"
+	bodyMap := "\na.txt\nb.txt\n"
+	out, code := cvFuncArgv(t, "apply_selection_markers", body, bodyMap, "a.txt")
+	assertExitCode(t, code, 0)
+	lines := strings.Split(out, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected >=3 lines, got %q", out)
+	}
+	if !strings.Contains(lines[1], "✓") {
+		t.Errorf("selected row a.txt should carry a ✓ marker: got %q", lines[1])
+	}
+	if strings.Contains(lines[2], "✓") {
+		t.Errorf("unselected row b.txt must not carry a marker: got %q", lines[2])
+	}
+	if strings.Contains(lines[0], "✓") {
+		t.Errorf("header row must not carry a marker: got %q", lines[0])
+	}
+}
+
+// The marker must preserve the row's VISIBLE width (it replaces the 3-space
+// indent with a 3-column " ✓ "), so column alignment and the hover-highlight
+// padding math are unaffected. Compare the stripped-ANSI visible length.
+func TestApplySelectionMarkers_preserves_visible_width(t *testing.T) {
+	body := "   +1 −0  a.txt"
+	bodyMap := "a.txt"
+	out, code := cvFuncArgv(t, "apply_selection_markers", body, bodyMap, "a.txt")
+	assertExitCode(t, code, 0)
+	got := len([]rune(ansiRE.ReplaceAllString(strings.TrimRight(out, "\n"), "")))
+	want := len([]rune(body))
+	if got != want {
+		t.Errorf("visible width changed by marker: got %d, want %d (row %q)",
+			got, want, ansiRE.ReplaceAllString(out, ""))
+	}
+}
+
+// discard_worktree_files reverts every selected path back to HEAD, leaving an
+// unselected modified file untouched.
+func TestDiscardWorktreeFiles_reverts_all_selected(t *testing.T) {
+	dir := t.TempDir()
+	git := discardGitRepo(t, dir)
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	for _, f := range []string{"a.txt", "b.txt", "c.txt"} {
+		writeTempFile(t, dir, f, "base\n")
+		git("add", f)
+	}
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "a.txt", "base\nDIRTY\n")
+	writeTempFile(t, dir, "b.txt", "base\nDIRTY\n")
+	writeTempFile(t, dir, "c.txt", "base\nDIRTY\n") // NOT selected — must stay dirty
+
+	_, code := cvFuncArgv(t, "discard_worktree_files", dir, "a.txt\nb.txt")
+	if code != 0 {
+		t.Fatalf("discard_worktree_files exit = %d, want 0", code)
+	}
+	for _, f := range []string{"a.txt", "b.txt"} {
+		got, _ := os.ReadFile(filepath.Join(dir, f))
+		if string(got) != "base\n" {
+			t.Errorf("%s not reverted: got %q, want %q", f, string(got), "base\n")
+		}
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "c.txt"))
+	if string(got) != "base\nDIRTY\n" {
+		t.Errorf("unselected c.txt should be untouched: got %q", string(got))
+	}
+}
