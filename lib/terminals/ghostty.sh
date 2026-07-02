@@ -55,6 +55,47 @@ terminal_setup_config() {
   fi
 }
 
+# Return 0 if the Ghostty config already contains a wisp-deck-managed command
+# line, in ANY historical form (bare path, bare "~/..." path, "/bin/bash -l
+# <wrapper>", or "direct:/bin/bash -l <wrapper>"). Matched by the wrapper path,
+# so a command line the user wrote themselves is not mistaken for ours.
+# Args: config_path
+terminal_config_has_wisp_command() {
+  local config_path="$1"
+  [ -f "$config_path" ] || return 1
+  grep -q '^command[[:space:]]*=.*wisp-deck/wrapper\.sh' "$config_path"
+}
+
+# Decide-and-apply the wrapper command line into the Ghostty config.
+#
+# A config that already contains OUR command line (any historical form) is
+# ALWAYS repaired to the current correct "direct:/bin/bash -l <abs>" form,
+# regardless of $choice — an old bare-path line makes Ghostty "fail to launch
+# the wrapper" on 1.2.x, and a stale wisp-deck line is ours to fix. Only when
+# the existing config has NO wisp-deck line do we honour $choice ("1" = merge,
+# anything else = skip), so a user's own `command` is never clobbered silently.
+# A missing config is created with our command line.
+# Args: config_path wrapper_path choice
+terminal_apply_config() {
+  local config_path="$1" wrapper_path="$2" choice="$3"
+
+  if terminal_config_has_wisp_command "$config_path"; then
+    terminal_setup_config "$config_path" "$wrapper_path"
+    return 0
+  fi
+
+  if [ ! -f "$config_path" ]; then
+    mkdir -p "$(dirname "$config_path")"
+    terminal_setup_config "$config_path" "$wrapper_path"
+    return 0
+  fi
+
+  case "$choice" in
+    1) terminal_setup_config "$config_path" "$wrapper_path" ;;
+    *) info "Skipped config modification. Add the wrapper manually." ;;
+  esac
+}
+
 # Remove wisp-deck command line from Ghostty config.
 # Matches only wisp-deck's own wrapper line so a user-written command survives.
 terminal_cleanup_config() {

@@ -126,7 +126,12 @@ header "Setting up Ghostty config..."
 TERMINAL_CONFIG="$(terminal_get_config_path)"
 WRAPPER_PATH="$(terminal_get_wrapper_path)"
 
-if [ -f "$TERMINAL_CONFIG" ]; then
+# Only prompt Merge/Skip when the user has an existing config with a command
+# line that is NOT ours. A pre-existing wisp-deck command line (possibly a
+# stale, broken bare-path form from an old version) is always repaired by
+# terminal_apply_config, and a missing config is always created.
+config_choice=1
+if [ -f "$TERMINAL_CONFIG" ] && ! terminal_config_has_wisp_command "$TERMINAL_CONFIG"; then
   warn "Existing config found at $TERMINAL_CONFIG"
   echo ""
   echo -e "  ${_BOLD}1)${_NC} Merge — add the wrapper command to your existing config"
@@ -134,15 +139,8 @@ if [ -f "$TERMINAL_CONFIG" ]; then
   echo ""
   read -rn1 -p "$(echo -e "${_BLUE}Choose (1/2):${_NC} ")" config_choice </dev/tty
   echo ""
-
-  case "$config_choice" in
-    1) terminal_setup_config "$TERMINAL_CONFIG" "$WRAPPER_PATH" ;;
-    *) info "Skipped config modification. Add the wrapper manually." ;;
-  esac
-else
-  mkdir -p "$(dirname "$TERMINAL_CONFIG")"
-  terminal_setup_config "$TERMINAL_CONFIG" "$WRAPPER_PATH"
 fi
+terminal_apply_config "$TERMINAL_CONFIG" "$WRAPPER_PATH" "$config_choice"
 
 # Suppress the macOS "Last login" banner so a new tab opens straight into the
 # Wisp Deck splash instead of briefly flashing a bare login shell. Ghostty

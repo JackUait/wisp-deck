@@ -2,4 +2,8 @@ keybind = cmd+shift+left=previous_tab
 keybind = cmd+shift+right=next_tab
 keybind = cmd+t=new_tab
 macos-option-as-alt = left
-command = ~/.config/wisp-deck/wrapper.sh
+# The wisp-deck installer adds the wrapper command for you, using an absolute
+# path in Ghostty's required form:
+#   command = direct:/bin/bash -l /Users/<you>/.config/wisp-deck/wrapper.sh
+# Do not hand-copy a bare "command = ~/.config/wisp-deck/wrapper.sh" line — the
+# tilde is not expanded by the exec'd shell, so Ghostty fails to launch it.

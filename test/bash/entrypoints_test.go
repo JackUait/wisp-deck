@@ -842,18 +842,37 @@ func TestGhosttyClaudeWrapper_file_does_not_exist_in_repo(t *testing.T) {
 	}
 }
 
-func TestGhosttyConfig_template_uses_new_wrapper_path(t *testing.T) {
+// The reference Ghostty config templates must NOT ship an active bare/tilde
+// command line. A bare path (or a "~/..." path, which the exec'd bash never
+// expands) breaks with "failed to launch the wrapper" on Ghostty 1.2.x. The
+// installer writes the correct "command = direct:/bin/bash -l <absolute>" line
+// dynamically, so a static template can only ever be a broken footgun.
+func TestGhosttyConfig_templates_ship_no_broken_command_line(t *testing.T) {
 	root := projectRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, "ghostty", "config"))
-	if err != nil {
-		t.Fatalf("failed to read ghostty/config: %v", err)
-	}
-	content := string(data)
-	if strings.Contains(content, "claude-wrapper.sh") {
-		t.Errorf("ghostty/config template still references claude-wrapper.sh — update to ~/.config/wisp-deck/wrapper.sh")
-	}
-	if !strings.Contains(content, "wisp-deck/wrapper.sh") {
-		t.Errorf("ghostty/config template must use ~/.config/wisp-deck/wrapper.sh as the command")
+	for _, rel := range []string{"ghostty/config", "terminals/ghostty/config"} {
+		rel := rel
+		t.Run(rel, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(root, rel))
+			if err != nil {
+				t.Fatalf("failed to read %s: %v", rel, err)
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "#") {
+					continue // comments are documentation, not active config
+				}
+				if !strings.HasPrefix(trimmed, "command") {
+					continue
+				}
+				// An active command line is only acceptable in the direct: form.
+				if !strings.Contains(trimmed, "direct:/bin/bash -l") {
+					t.Errorf("%s ships a broken command line %q — bare/tilde paths fail to launch on Ghostty 1.2.x; drop it or use the direct: form", rel, trimmed)
+				}
+			}
+			if strings.Contains(string(data), "claude-wrapper.sh") {
+				t.Errorf("%s still references claude-wrapper.sh — the old entry point", rel)
+			}
+		})
 	}
 }
 

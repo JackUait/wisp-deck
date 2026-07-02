@@ -131,6 +131,151 @@ func TestGhosttyAdapter_setup_config_uses_direct_prefix(t *testing.T) {
 	assertNotContains(t, content, "command = /bin/bash -l")
 }
 
+// --- config_has_wisp_command: detect a wisp-deck-managed command line ---
+
+func TestGhosttyAdapter_config_has_wisp_command_detects_all_historical_forms(t *testing.T) {
+	tmpDir := t.TempDir()
+	cases := map[string]string{
+		"bare-tilde":    "command = ~/.config/wisp-deck/wrapper.sh\n",
+		"bare-absolute": "command = /Users/u/.config/wisp-deck/wrapper.sh\n",
+		"bin-bash-l":    "command = /bin/bash -l /Users/u/.config/wisp-deck/wrapper.sh\n",
+		"direct":        "command = direct:/bin/bash -l /Users/u/.config/wisp-deck/wrapper.sh\n",
+	}
+	for name, content := range cases {
+		content := content
+		t.Run(name, func(t *testing.T) {
+			cfg := writeTempFile(t, tmpDir, "config-"+name, "font-size = 14\n"+content)
+			snippet := ghosttyAdapterSnippet(t,
+				fmt.Sprintf(`terminal_config_has_wisp_command %q && echo YES || echo NO`, cfg))
+			out, code := runBashSnippet(t, snippet, nil)
+			assertExitCode(t, code, 0)
+			if strings.TrimSpace(out) != "YES" {
+				t.Errorf("expected wisp command detected for %s, got %q", name, strings.TrimSpace(out))
+			}
+		})
+	}
+}
+
+func TestGhosttyAdapter_config_has_wisp_command_false_for_user_command_and_missing(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	userCfg := writeTempFile(t, tmpDir, "user-config", "command = /opt/homebrew/bin/fish\n")
+	snippet := ghosttyAdapterSnippet(t,
+		fmt.Sprintf(`terminal_config_has_wisp_command %q && echo YES || echo NO`, userCfg))
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "NO" {
+		t.Errorf("user's own command line must not be treated as wisp-deck's, got %q", strings.TrimSpace(out))
+	}
+
+	missing := filepath.Join(tmpDir, "does-not-exist")
+	snippet2 := ghosttyAdapterSnippet(t,
+		fmt.Sprintf(`terminal_config_has_wisp_command %q && echo YES || echo NO`, missing))
+	out2, code2 := runBashSnippet(t, snippet2, nil)
+	assertExitCode(t, code2, 0)
+	if strings.TrimSpace(out2) != "NO" {
+		t.Errorf("missing config must report no wisp command, got %q", strings.TrimSpace(out2))
+	}
+}
+
+// --- apply_config: the installer's decision, now testable ---
+
+// The regression that broke `npx wisp-deck`: a returning user whose Ghostty
+// config had an old *bare* wisp-deck command line (broken on Ghostty 1.2.x)
+// picked "Skip", so the stale line survived and Ghostty "failed to launch the
+// wrapper". apply_config must ALWAYS repair a wisp-deck-managed line to the
+// current direct: form, regardless of the Merge/Skip choice.
+func TestGhosttyAdapter_apply_config_repairs_stale_wisp_line_even_on_skip(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := writeTempFile(t, tmpDir, "config",
+		"font-size = 14\ncommand = ~/.config/wisp-deck/wrapper.sh\n")
+	wrapperPath := filepath.Join(tmpDir, ".config/wisp-deck/wrapper.sh")
+
+	// choice "2" = Skip — must NOT prevent repair of our own broken line.
+	snippet := ghosttyAdapterSnippet(t,
+		fmt.Sprintf(`terminal_apply_config %q %q 2`, configFile, wrapperPath))
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "Replaced")
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	content := string(data)
+	assertContains(t, content, "command = direct:/bin/bash -l "+wrapperPath)
+	assertContains(t, content, "font-size = 14")
+	assertNotContains(t, content, "command = ~/.config/wisp-deck/wrapper.sh")
+}
+
+func TestGhosttyAdapter_apply_config_respects_skip_for_user_command(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := writeTempFile(t, tmpDir, "config", "command = /opt/homebrew/bin/fish\n")
+	wrapperPath := filepath.Join(tmpDir, "wrapper.sh")
+
+	snippet := ghosttyAdapterSnippet(t,
+		fmt.Sprintf(`terminal_apply_config %q %q 2`, configFile, wrapperPath))
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "Skipped")
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	content := string(data)
+	assertContains(t, content, "command = /opt/homebrew/bin/fish")
+	assertNotContains(t, content, "wisp-deck/wrapper.sh")
+}
+
+func TestGhosttyAdapter_apply_config_merges_user_command_on_choice_1(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := writeTempFile(t, tmpDir, "config", "command = /opt/homebrew/bin/fish\n")
+	wrapperPath := filepath.Join(tmpDir, "wrapper.sh")
+
+	snippet := ghosttyAdapterSnippet(t,
+		fmt.Sprintf(`terminal_apply_config %q %q 1`, configFile, wrapperPath))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	assertContains(t, string(data), "command = direct:/bin/bash -l "+wrapperPath)
+}
+
+func TestGhosttyAdapter_apply_config_creates_config_when_missing(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "ghostty", "config") // parent dir absent
+	wrapperPath := filepath.Join(tmpDir, "wrapper.sh")
+
+	// choice irrelevant when no config exists — we always create ours.
+	snippet := ghosttyAdapterSnippet(t,
+		fmt.Sprintf(`terminal_apply_config %q %q 2`, configFile, wrapperPath))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("expected config created, read failed: %v", err)
+	}
+	assertContains(t, string(data), "command = direct:/bin/bash -l "+wrapperPath)
+}
+
+// The installer must delegate its Ghostty-config decision to terminal_apply_config
+// so the auto-repair path can't be bypassed by the inline Merge/Skip prompt.
+func TestWispDeck_uses_terminal_apply_config(t *testing.T) {
+	root := projectRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "bin", "wisp-deck"))
+	if err != nil {
+		t.Fatalf("failed to read bin/wisp-deck: %v", err)
+	}
+	if !strings.Contains(string(data), "terminal_apply_config") {
+		t.Errorf("bin/wisp-deck must apply the Ghostty config via terminal_apply_config so a stale wisp-deck command line is always repaired")
+	}
+}
+
 func TestGhosttyAdapter_cleanup_config_removes_command_line(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := writeTempFile(t, tmpDir, "config", "font-size = 14\ncommand = direct:/bin/bash -l /Users/u/.config/wisp-deck/wrapper.sh\ntheme = dark\n")
