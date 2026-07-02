@@ -177,6 +177,14 @@ func TestGhosttyAdapter_config_has_wisp_command_detects_all_historical_forms(t *
 		"bare-absolute": "command = /Users/u/.config/wisp-deck/wrapper.sh\n",
 		"bin-bash-l":    "command = /bin/bash -l /Users/u/.config/wisp-deck/wrapper.sh\n",
 		"direct":        "command = direct:/bin/bash -l /Users/u/.config/wisp-deck/wrapper.sh\n",
+		// Legacy project names / entry points — an upgraded user's config may
+		// still carry these, and they must be recognized as ours so they get
+		// repaired instead of surviving to break "failed to launch".
+		"legacy-ghost-tab-tilde":  "command = ~/.config/ghost-tab/wrapper.sh\n",
+		"legacy-ghost-tab-abs":    "command = /Users/u/.config/ghost-tab/wrapper.sh\n",
+		"legacy-vibecode":         "command = ~/.config/vibecode-editor/wrapper.sh\n",
+		"legacy-claude-wrapper":   "command = ~/.config/ghostty/claude-wrapper.sh\n",
+		"legacy-binbash-ghosttab": "command = /bin/bash -l /Users/u/.config/ghost-tab/wrapper.sh\n",
 	}
 	for name, content := range cases {
 		content := content
@@ -243,6 +251,83 @@ func TestGhosttyAdapter_apply_config_repairs_stale_wisp_line_even_on_skip(t *tes
 	assertContains(t, content, "command = direct:/bin/bash -l "+wrapperPath)
 	assertContains(t, content, "font-size = 14")
 	assertNotContains(t, content, "command = ~/.config/wisp-deck/wrapper.sh")
+}
+
+// The reported "still gets the wrapper.sh problem" case: a user upgraded from
+// an old ghost-tab install, so their Ghostty config has a legacy tilde command
+// line. The installer must recognize it as ours and repair it to the working
+// absolute form even when the user would pick Skip.
+func TestGhosttyAdapter_apply_config_repairs_legacy_ghost_tab_line_even_on_skip(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := writeTempFile(t, tmpDir, "config",
+		"font-size = 14\ncommand = ~/.config/ghost-tab/wrapper.sh\n")
+	wrapperPath := filepath.Join(tmpDir, ".config/wisp-deck/wrapper.sh")
+
+	snippet := ghosttyAdapterSnippet(t,
+		fmt.Sprintf(`terminal_apply_config %q %q 2`, configFile, wrapperPath))
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "Replaced")
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	content := string(data)
+	assertContains(t, content, "command = direct:/bin/bash -l "+wrapperPath)
+	assertNotContains(t, content, "ghost-tab")
+}
+
+// --- multi-location repair: Ghostty also reads the macOS Application Support
+// config, which the primary flow never creates or edits. A stale wisp-deck
+// command line there must still be repaired. ---
+
+func TestGhosttyAdapter_get_config_paths_includes_macos_location(t *testing.T) {
+	home := t.TempDir()
+	snippet := ghosttyAdapterSnippet(t, `terminal_get_config_paths`)
+	env := buildEnv(t, nil, fmt.Sprintf("HOME=%s", home))
+	out, code := runBashSnippet(t, snippet, env)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, home+"/.config/ghostty/config")
+	assertContains(t, out, home+"/Library/Application Support/com.mitchellh.ghostty/config")
+}
+
+func TestGhosttyAdapter_repair_all_locations_fixes_macos_config(t *testing.T) {
+	home := t.TempDir()
+	libCfg := filepath.Join(home, "Library/Application Support/com.mitchellh.ghostty/config")
+	if err := os.MkdirAll(filepath.Dir(libCfg), 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	// The user's only Ghostty config is the macOS one, with a broken legacy line.
+	if err := os.WriteFile(libCfg, []byte("command = ~/.config/ghost-tab/wrapper.sh\n"), 0644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	wrapperPath := filepath.Join(home, ".config/wisp-deck/wrapper.sh")
+
+	snippet := ghosttyAdapterSnippet(t,
+		fmt.Sprintf(`terminal_repair_all_config_locations %q`, wrapperPath))
+	env := buildEnv(t, nil, fmt.Sprintf("HOME=%s", home))
+	_, code := runBashSnippet(t, snippet, env)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(libCfg)
+	if err != nil {
+		t.Fatalf("failed to read macos config: %v", err)
+	}
+	content := string(data)
+	assertContains(t, content, "command = direct:/bin/bash -l "+wrapperPath)
+	assertNotContains(t, content, "ghost-tab")
+}
+
+func TestWispDeck_repairs_all_ghostty_config_locations(t *testing.T) {
+	root := projectRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "bin", "wisp-deck"))
+	if err != nil {
+		t.Fatalf("failed to read bin/wisp-deck: %v", err)
+	}
+	if !strings.Contains(string(data), "terminal_repair_all_config_locations") {
+		t.Errorf("bin/wisp-deck must repair every Ghostty config location so a stale command line in the macOS Application Support config is fixed too")
+	}
 }
 
 func TestGhosttyAdapter_apply_config_respects_skip_for_user_command(t *testing.T) {

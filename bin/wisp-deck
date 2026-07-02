@@ -142,6 +142,11 @@ if [ -f "$TERMINAL_CONFIG" ] && ! terminal_config_has_wisp_command "$TERMINAL_CO
 fi
 terminal_apply_config "$TERMINAL_CONFIG" "$WRAPPER_PATH" "$config_choice"
 
+# Repair a stale wisp-deck command line in any OTHER Ghostty config location
+# (e.g. the macOS Application Support config, or a legacy ghost-tab/tilde line),
+# so an old broken command can't survive anywhere Ghostty reads it.
+terminal_repair_all_config_locations "$WRAPPER_PATH"
+
 # Suppress the macOS "Last login" banner so a new tab opens straight into the
 # Wisp Deck splash instead of briefly flashing a bare login shell. Ghostty
 # launches the wrapper via `login`, which prints the banner unless ~/.hushlogin

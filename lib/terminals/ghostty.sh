@@ -1,9 +1,18 @@
 #!/bin/bash
 # Ghostty terminal adapter.
 
-# Return the path to Ghostty's config file.
+# Return the primary Ghostty config file path (created if none exists).
 terminal_get_config_path() {
   echo "$HOME/.config/ghostty/config"
+}
+
+# Return EVERY Ghostty config location Ghostty reads on macOS, one per line.
+# Ghostty loads ~/.config/ghostty/config and also the Application Support path;
+# a stale wisp-deck command line in either breaks "failed to launch", so the
+# installer must be able to repair both — not just the primary.
+terminal_get_config_paths() {
+  echo "$HOME/.config/ghostty/config"
+  echo "$HOME/Library/Application Support/com.mitchellh.ghostty/config"
 }
 
 # Return the path where the wrapper script should be.
@@ -55,15 +64,36 @@ terminal_setup_config() {
   fi
 }
 
-# Return 0 if the Ghostty config already contains a wisp-deck-managed command
-# line, in ANY historical form (bare path, bare "~/..." path, "/bin/bash -l
-# <wrapper>", or "direct:/bin/bash -l <wrapper>"). Matched by the wrapper path,
-# so a command line the user wrote themselves is not mistaken for ours.
+# Pattern matching a command line WISP-DECK manages, in ANY historical form:
+# the launch form (bare path, "~/..." path, "/bin/bash -l …", "direct:…") does
+# not matter — what identifies it as ours is the wrapper path. That covers the
+# current project dir (wisp-deck) AND the legacy dirs (ghost-tab,
+# vibecode-editor) and the oldest claude-wrapper.sh entry point, since an
+# upgraded user's config can still carry any of them. Anchored to our known
+# paths so a command line the user wrote themselves is never mistaken for ours.
+_WISP_MANAGED_COMMAND_RE='^command[[:space:]]*=.*(/(wisp-deck|ghost-tab|vibecode-editor)/wrapper\.sh|/claude-wrapper\.sh)'
+
+# Return 0 if the config contains a wisp-deck-managed command line.
 # Args: config_path
 terminal_config_has_wisp_command() {
   local config_path="$1"
   [ -f "$config_path" ] || return 1
-  grep -q '^command[[:space:]]*=.*wisp-deck/wrapper\.sh' "$config_path"
+  grep -Eq "$_WISP_MANAGED_COMMAND_RE" "$config_path"
+}
+
+# Repair a stale wisp-deck command line in EVERY Ghostty config location that
+# has one — including the macOS Application Support config the primary setup
+# never creates or edits. Rewrites it to the current correct absolute form so an
+# old tilde/relative/legacy-named path can't survive to break the launch.
+# Args: wrapper_path
+terminal_repair_all_config_locations() {
+  local wrapper_path="$1"
+  local cfg
+  while IFS= read -r cfg; do
+    if terminal_config_has_wisp_command "$cfg"; then
+      terminal_setup_config "$cfg" "$wrapper_path"
+    fi
+  done < <(terminal_get_config_paths)
 }
 
 # Decide-and-apply the wrapper command line into the Ghostty config.
