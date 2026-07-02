@@ -111,13 +111,17 @@ else
     # window continues its own setup.
     restore_advance "$SHARE_DIR"
     RESTORE_MODE=1
-    IFS='|' read -r _q_path _q_tool _q_sid <<< "$_queue_entry"
+    IFS='|' read -r _q_path _q_tool _q_sid _q_layout <<< "$_queue_entry"
     cd "$_q_path" || exit 1
     PROJECT_NAME="$(basename "$_q_path")"
     SELECTED_AI_TOOL="$_q_tool"
     # This tab's own conversation id (may be empty on old snapshots);
     # build_ai_launch_cmd resumes it specifically instead of `claude -c`.
     export WISP_DECK_RESUME_SESSION="$_q_sid"
+    # This tab's exact pane geometry at close time (may be empty on old
+    # snapshots); replayed with select-layout after the panes are built so the
+    # window reopens at the positions the user left it in.
+    WISP_DECK_RESUME_LAYOUT="$_q_layout"
     type stop_loading_screen &>/dev/null && stop_loading_screen
   else
 
@@ -434,3 +438,12 @@ _spare_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/spare-tabs.sh\" && spare_
   select-pane -L \; \
   split-window -v -p 45 -c "$PROJECT_DIR" "$_spare_cmd" \; \
   select-pane -R
+
+# Restore: replay the captured pane geometry over the just-built panes. The
+# build order above is deterministic and identical to capture time, so the
+# panes line up with the layout's cells; select-layout reproduces their exact
+# sizes (scaling proportionally if this terminal window is a different size).
+# Skipped when no layout was captured (old snapshot) — the default split stays.
+if [ "${RESTORE_MODE:-0}" = "1" ] && [ -n "${WISP_DECK_RESUME_LAYOUT:-}" ]; then
+  "$TMUX_CMD" select-layout -t "$SESSION_NAME:0" "$WISP_DECK_RESUME_LAYOUT" 2>/dev/null || true
+fi
