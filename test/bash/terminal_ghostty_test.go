@@ -3,10 +3,47 @@ package bash_test
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// ghosttyDirectArgv extracts the `command = ...` value the installer wrote into
+// a Ghostty config and returns the argv Ghostty would execve for it. Ghostty's
+// `direct:` prefix means the remainder is split into argv and executed WITHOUT a
+// shell (so no ~ expansion, no PATH tricks) — this mirrors that exactly. It
+// fails the test if the command is missing, lacks the direct: prefix, or ends
+// in a non-absolute wrapper path — the three shapes that cannot launch.
+func ghosttyDirectArgv(t *testing.T, configPath string) []string {
+	t.Helper()
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("failed to read produced config: %v", err)
+	}
+	var cmdVal string
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "command") && strings.Contains(trimmed, "=") {
+			cmdVal = strings.TrimSpace(strings.SplitN(trimmed, "=", 2)[1])
+		}
+	}
+	if cmdVal == "" {
+		t.Fatal("installer produced no `command =` line")
+	}
+	if !strings.HasPrefix(cmdVal, "direct:") {
+		t.Fatalf("command %q lacks the direct: prefix — Ghostty wraps bare commands in a shell (exec -l / --posix) and fails to launch the wrapper", cmdVal)
+	}
+	argv := strings.Fields(strings.TrimPrefix(cmdVal, "direct:"))
+	if len(argv) == 0 {
+		t.Fatalf("command %q has no argv after direct:", cmdVal)
+	}
+	last := argv[len(argv)-1]
+	if !strings.HasPrefix(last, "/") {
+		t.Fatalf("wrapper path %q is not absolute — the exec'd shell does not expand ~ or resolve relative paths, so Ghostty fails to launch it", last)
+	}
+	return argv
+}
 
 func ghosttyAdapterSnippet(t *testing.T, body string) string {
 	t.Helper()
@@ -273,6 +310,38 @@ func TestWispDeck_uses_terminal_apply_config(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "terminal_apply_config") {
 		t.Errorf("bin/wisp-deck must apply the Ghostty config via terminal_apply_config so a stale wisp-deck command line is always repaired")
+	}
+}
+
+// TestGhosttyAdapter_produced_command_actually_launches_wrapper is the
+// end-to-end backstop for the whole "Ghostty can't launch the wrapper" bug
+// class. Whatever command string the installer produces, executing it exactly
+// as Ghostty's direct: mechanism does MUST actually run the wrapper. This
+// catches regressions that string assertions can miss: a reverted bare/tilde
+// path, a --posix breakage, a wrong exec form, or a non-runnable path.
+func TestGhosttyAdapter_produced_command_actually_launches_wrapper(t *testing.T) {
+	tmpDir := t.TempDir() // temp paths have no spaces, so field-splitting is faithful
+	wrapperPath := filepath.Join(tmpDir, "wrapper.sh")
+	if err := os.WriteFile(wrapperPath, []byte("#!/bin/bash\necho WRAPPER_LAUNCHED_OK\n"), 0755); err != nil {
+		t.Fatalf("failed to write wrapper: %v", err)
+	}
+	configFile := filepath.Join(tmpDir, "config")
+
+	// Produce the real command line via the installer's own adapter function.
+	snippet := ghosttyAdapterSnippet(t,
+		fmt.Sprintf(`terminal_setup_config %q %q`, configFile, wrapperPath))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	argv := ghosttyDirectArgv(t, configFile)
+
+	// Execute exactly as Ghostty's direct: mechanism does: execve(argv), no shell.
+	out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("produced Ghostty command failed to launch wrapper: %v\nargv: %v\noutput: %s", err, argv, out)
+	}
+	if !strings.Contains(string(out), "WRAPPER_LAUNCHED_OK") {
+		t.Fatalf("produced Ghostty command did not run the wrapper\nargv: %v\noutput: %s", argv, out)
 	}
 }
 
