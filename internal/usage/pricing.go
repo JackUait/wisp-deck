@@ -17,6 +17,7 @@ var modelRates = map[string]modelRate{
 	"claude-opus-4-8":   {5, 25},
 	"claude-sonnet-4-5": {3, 15},
 	"claude-sonnet-4-6": {3, 15},
+	"claude-sonnet-5":   {3, 15},
 	"claude-haiku-4-5":  {1, 5},
 	"claude-fable-5":    {10, 50},
 	"claude-mythos-5":   {10, 50},
@@ -123,6 +124,20 @@ const (
 	cacheReadMult = 0.10
 )
 
+// anthropicFamilyRates prices Anthropic model families by their current-generation
+// tier rate. It is the automatic fallback for newly released claude-<family>-...
+// ids that don't yet have an explicit entry above, so a fresh model (e.g.
+// "claude-opus-5") is priced at its tier rate instead of showing as unpriced in
+// the Stats tab. Explicit entries still win via longest-prefix in rateFor; this
+// only fires when nothing else matches.
+var anthropicFamilyRates = map[string]modelRate{
+	"opus":   {5, 25},
+	"sonnet": {3, 15},
+	"haiku":  {1, 5},
+	"fable":  {10, 50},
+	"mythos": {10, 50},
+}
+
 // rateFor returns the rate whose key is the longest prefix of model. Longest-prefix
 // wins so overlapping ids resolve deterministically despite random map iteration
 // order (e.g. "mimo-v2.5-pro" must not match the shorter "mimo-v2.5").
@@ -137,7 +152,18 @@ func rateFor(model string) (modelRate, bool) {
 			best, bestN, found = r, len(prefix), true
 		}
 	}
-	return best, found
+	if found {
+		return best, true
+	}
+	// Fallback: a not-yet-listed Anthropic model ("claude-<family>-...") is priced
+	// at its family's current tier rate so new releases price automatically.
+	if fam, ok := strings.CutPrefix(model, "claude-"); ok {
+		name, _, _ := strings.Cut(fam, "-")
+		if r, ok := anthropicFamilyRates[name]; ok {
+			return r, true
+		}
+	}
+	return best, false
 }
 
 // RateFor returns the published input/output price per 1,000,000 tokens for a

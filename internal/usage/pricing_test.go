@@ -18,6 +18,11 @@ func TestModelCostUSD_tiers(t *testing.T) {
 	if !approx(usd, 18) {
 		t.Errorf("sonnet = %v, want 18", usd)
 	}
+	// sonnet 5 1M in + 1M out = $3 + $15 = $18 (standard published rate)
+	usd, _ = ModelCostUSD(ModelUsage{Model: "claude-sonnet-5", Input: 1_000_000, Output: 1_000_000})
+	if !approx(usd, 18) {
+		t.Errorf("sonnet-5 = %v, want 18", usd)
+	}
 	// haiku 1M in = $1
 	usd, _ = ModelCostUSD(ModelUsage{Model: "claude-haiku-4-5", Input: 1_000_000})
 	if !approx(usd, 1) {
@@ -27,6 +32,34 @@ func TestModelCostUSD_tiers(t *testing.T) {
 	usd, _ = ModelCostUSD(ModelUsage{Model: "claude-fable-5", Input: 1_000_000, Output: 1_000_000})
 	if !approx(usd, 60) {
 		t.Errorf("fable = %v, want 60", usd)
+	}
+}
+
+func TestModelCostUSD_futureAnthropicModelsAutoPriced(t *testing.T) {
+	// New Anthropic models are added automatically: any claude-<family>-... id
+	// with no explicit map entry falls back to its tier's current rate rather
+	// than showing as unpriced ("—") in the Stats tab. 1M input + 1M output.
+	cases := []struct {
+		model string
+		want  float64
+	}{
+		{"claude-opus-5", 30},     // $5 + $25
+		{"claude-opus-4-9", 30},   // future opus point release
+		{"claude-sonnet-6", 18},   // $3 + $15
+		{"claude-sonnet-5-1", 18}, // future sonnet point release
+		{"claude-haiku-5", 6},     // $1 + $5
+		{"claude-fable-6", 60},    // $10 + $50
+		{"claude-mythos-6", 60},   // $10 + $50
+	}
+	for _, c := range cases {
+		usd, priced := ModelCostUSD(ModelUsage{Model: c.model, Input: 1_000_000, Output: 1_000_000})
+		if !priced || !approx(usd, c.want) {
+			t.Errorf("%s = %v priced=%v, want %v/true", c.model, usd, priced, c.want)
+		}
+	}
+	// A non-Anthropic unknown model still resolves to unpriced.
+	if _, priced := ModelCostUSD(ModelUsage{Model: "vendorx-mega-9", Input: 1_000_000}); priced {
+		t.Errorf("unknown non-Anthropic model should be unpriced")
 	}
 }
 
