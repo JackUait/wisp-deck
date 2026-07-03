@@ -1754,6 +1754,79 @@ func TestStatusline_account_label_default_when_list_missing(t *testing.T) {
 	}
 }
 
+// The Default (Keychain) login can be renamed via the account menu; the custom
+// label is persisted in the claude-account-default-label file. When gt_claude_
+// account_label falls back to Default, it must honor that renamed value.
+
+func TestStatusline_account_label_default_uses_renamed_label(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "claude-accounts.list")
+	writeTempFile(t, dir, "claude-accounts.list", "Personal:personal\n")
+	def := filepath.Join(dir, "claude-account-default-label")
+	writeTempFile(t, dir, "claude-account-default-label", "Work\n")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_claude_account_label",
+		[]string{"", list, def}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "Work" {
+		t.Fatalf("renamed Default must show %q, got %q", "Work", strings.TrimSpace(out))
+	}
+}
+
+func TestStatusline_account_label_unknown_dir_uses_renamed_default_label(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "claude-accounts.list")
+	writeTempFile(t, dir, "claude-accounts.list", "Personal:personal\n")
+	def := filepath.Join(dir, "claude-account-default-label")
+	writeTempFile(t, dir, "claude-account-default-label", "Work\n")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_claude_account_label",
+		[]string{"/some/root/claude-accounts/ghost", list, def}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "Work" {
+		t.Fatalf("unknown dir must fall back to renamed Default %q, got %q", "Work", strings.TrimSpace(out))
+	}
+}
+
+func TestStatusline_account_label_default_literal_when_label_file_absent(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "claude-accounts.list")
+	writeTempFile(t, dir, "claude-accounts.list", "Personal:personal\n")
+	def := filepath.Join(dir, "does-not-exist")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_claude_account_label",
+		[]string{"", list, def}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "Default" {
+		t.Fatalf("absent label file must read as %q, got %q", "Default", strings.TrimSpace(out))
+	}
+}
+
+func TestStatusline_account_label_default_literal_when_label_file_blank(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "claude-accounts.list")
+	writeTempFile(t, dir, "claude-accounts.list", "Personal:personal\n")
+	def := filepath.Join(dir, "claude-account-default-label")
+	writeTempFile(t, dir, "claude-account-default-label", "   \n")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_claude_account_label",
+		[]string{"", list, def}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "Default" {
+		t.Fatalf("blank label file must read as %q, got %q", "Default", strings.TrimSpace(out))
+	}
+}
+
+func TestStatusline_account_label_registered_dir_ignores_default_label_file(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "claude-accounts.list")
+	writeTempFile(t, dir, "claude-accounts.list", "Personal:personal\n")
+	def := filepath.Join(dir, "claude-account-default-label")
+	writeTempFile(t, dir, "claude-account-default-label", "Work\n")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_claude_account_label",
+		[]string{"/some/root/claude-accounts/personal", list, def}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "Personal" {
+		t.Fatalf("a registered account keeps its list label, got %q", strings.TrimSpace(out))
+	}
+}
+
 // --- gt_multiple_claude_accounts ---
 //
 // The account segment is only worth showing when the user actually juggles

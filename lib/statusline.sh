@@ -144,12 +144,23 @@ gt_multiple_claude_accounts() {
 # statusline runs as a child of `claude`, which wrapper.sh launches with the
 # active account's CLAUDE_CONFIG_DIR exported (unset for the Keychain Default),
 # so $1 is that inherited value and its basename is the account's dir name. An
-# empty config dir (Default) or a dir absent from the list reads as "Default",
-# mirroring the menu/ledger's ACCOUNT row.
-# Usage: gt_claude_account_label "$CLAUDE_CONFIG_DIR" <list_file>  =>  "Work Max"
+# empty config dir (Default) or a dir absent from the list reads as the Default
+# login's label, mirroring the menu/ledger's ACCOUNT row. The Default login can
+# be renamed via the account menu (persisted in the optional default-label file
+# $3); when set, that custom label is shown instead of the literal "Default".
+# Usage: gt_claude_account_label "$CLAUDE_CONFIG_DIR" <list_file> [default_label_file]
 gt_claude_account_label() {
-  local config_dir="$1" list_file="$2" active label dir
-  [ -z "$config_dir" ] && { printf 'Default\n'; return 0; }
+  local config_dir="$1" list_file="$2" default_label_file="${3:-}"
+  local active label dir default_label="Default"
+  # Resolve the Default login's display label — a custom name if the user
+  # renamed it, else the literal "Default" (mirrors Go's GetDefaultLabel).
+  if [ -n "$default_label_file" ] && [ -f "$default_label_file" ]; then
+    IFS= read -r default_label < "$default_label_file" || true
+    default_label="${default_label#"${default_label%%[![:space:]]*}"}"  # ltrim
+    default_label="${default_label%"${default_label##*[![:space:]]}"}"  # rtrim
+    [ -z "$default_label" ] && default_label="Default"
+  fi
+  [ -z "$config_dir" ] && { printf '%s\n' "$default_label"; return 0; }
   active="${config_dir##*/}"
   if [ -n "$active" ] && [ -f "$list_file" ]; then
     while IFS=: read -r label dir; do
@@ -160,7 +171,7 @@ gt_claude_account_label() {
       fi
     done < "$list_file"
   fi
-  printf 'Default\n'
+  printf '%s\n' "$default_label"
 }
 
 gt_stamp_claude_session() {

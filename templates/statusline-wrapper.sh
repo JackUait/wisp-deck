@@ -25,11 +25,15 @@ fi
 # 2+ accounts connected (the accounts list holds at least two entries), so users
 # with a single login get no extra clutter.
 account_label=""
-accounts_list="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/claude-accounts.list"
+_gt_accounts_root="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
+accounts_list="$_gt_accounts_root/claude-accounts.list"
+# The Default login can be renamed via the account menu; its custom label lives
+# here, so the statusline shows the renamed value instead of "Default".
+default_label_file="$_gt_accounts_root/claude-account-default-label"
 if type gt_claude_account_label &>/dev/null \
    && type gt_multiple_claude_accounts &>/dev/null \
    && gt_multiple_claude_accounts "$accounts_list"; then
-  account_label=$(gt_claude_account_label "${CLAUDE_CONFIG_DIR:-}" "$accounts_list")
+  account_label=$(gt_claude_account_label "${CLAUDE_CONFIG_DIR:-}" "$accounts_list" "$default_label_file")
 fi
 
 # Find parent Claude Code process and get total tree memory + CPU usage
