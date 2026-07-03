@@ -364,6 +364,10 @@ type MainMenuModel struct {
 	// valid offset for the current terminal height, recomputed on each render.
 	statsOffset    int
 	statsMaxOffset int
+	// statsCompact hides the per-model breakdown, showing only each month's
+	// headline row and progress bar. Toggled by the Full/Compact button or 'c'.
+	statsCompact   bool
+	hoverStatsMode int // hovered Full/Compact button index, or -1
 }
 
 // NewMainMenu creates a new main menu model.
@@ -395,6 +399,7 @@ func NewMainMenu(projects []models.Project, aiTools []string, currentAI string, 
 		staleConfirmIdx:           -1,
 		defaultAccountLabel:       "Default",
 		hoverTab:                  -1,
+		hoverStatsMode:            -1,
 		modelMapHover:             -1,
 		modelMapSlotHover:         -1,
 		accountMenuHover:          -1,
@@ -2252,6 +2257,22 @@ func (m *MainMenuModel) projectsEnter() (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
+// setStatsCompact switches the Stats view between full (per-model rows) and compact
+// (progress bar only). Toggling changes the body height, so the scroll is
+// re-anchored to the top to avoid landing past the shorter content.
+func (m *MainMenuModel) setStatsCompact(compact bool) {
+	if m.statsCompact == compact {
+		return
+	}
+	m.statsCompact = compact
+	m.statsOffset = 0
+}
+
+// toggleStatsCompact flips the Full/Compact view mode.
+func (m *MainMenuModel) toggleStatsCompact() {
+	m.setStatsCompact(!m.statsCompact)
+}
+
 // statsScrollDown scrolls the stats body down one line, bounded by statsMaxOffset
 // (recomputed on each render from the terminal height). The render also re-clamps,
 // so a stale bound here can never scroll past the content.
@@ -2270,6 +2291,11 @@ func (m *MainMenuModel) handleRune(r rune) (tea.Model, tea.Cmd) {
 		return m, nil
 	case 'k':
 		m.runeMoveUp()
+		return m, nil
+	case 'c':
+		if m.activeTab == TabStats {
+			m.toggleStatsCompact()
+		}
 		return m, nil
 	case 'J':
 		if m.activeTab == TabProjects {

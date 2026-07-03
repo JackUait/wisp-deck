@@ -26,6 +26,117 @@ func manyStatsMonths(n int) []usage.MonthlyUsage {
 	return months
 }
 
+// statsMonthWithModels is a single month carrying per-model rows, for exercising
+// the full/compact view toggle.
+func statsMonthWithModels() []usage.MonthlyUsage {
+	return []usage.MonthlyUsage{
+		{Month: "2026-06", Input: 1_000_000, Models: []usage.ModelUsage{
+			{Model: "claude-opus-4-8", Input: 600_000},
+			{Model: "claude-sonnet-5", Input: 400_000},
+		}},
+	}
+}
+
+// TestRenderStatsBox_modeToggleButton verifies the Stats view renders a Full /
+// Compact toggle control (a labelled, clickable button) with the active mode marked.
+func TestRenderStatsBox_modeToggleButton(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabStats)
+	updated, _ := m.Update(statsLoadedMsg{months: statsMonthWithModels()})
+	mm := updated.(*MainMenuModel)
+	out := stripANSI(mm.renderStatsBox())
+	for _, want := range []string{"Full", "Compact"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stats view missing %q toggle label:\n%s", want, out)
+		}
+	}
+	// Default is full mode: the active label is bracketed like the tab bar.
+	if !strings.Contains(out, "[Full]") {
+		t.Errorf("full mode should mark [Full] active:\n%s", out)
+	}
+}
+
+// TestRenderStatsBox_compactHidesModels verifies compact mode drops the per-model
+// tree rows while keeping each month's headline row and its progress bar.
+func TestRenderStatsBox_compactHidesModels(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabStats)
+	updated, _ := m.Update(statsLoadedMsg{months: statsMonthWithModels()})
+	mm := updated.(*MainMenuModel)
+
+	full := stripANSI(mm.renderStatsBox())
+	if !strings.Contains(full, "opus-4-8") {
+		t.Fatalf("full mode should list per-model rows:\n%s", full)
+	}
+
+	mm.statsCompact = true
+	compact := stripANSI(mm.renderStatsBox())
+	if strings.Contains(compact, "opus-4-8") || strings.Contains(compact, "sonnet-5") {
+		t.Errorf("compact mode must hide per-model rows:\n%s", compact)
+	}
+	// Month headline and its gauge stay.
+	if !strings.Contains(compact, "Jun 2026") {
+		t.Errorf("compact mode should keep the month row:\n%s", compact)
+	}
+	if !strings.ContainsAny(compact, "█░") {
+		t.Errorf("compact mode should keep the progress bar:\n%s", compact)
+	}
+}
+
+// TestStatsModeButton_clickTogglesMode drives the toggle via the mouse hit-test +
+// click path: clicking "Compact" enters compact mode, clicking "Full" leaves it.
+func TestStatsModeButton_clickTogglesMode(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabStats)
+	m.SetSize(120, 40)
+	updated, _ := m.Update(statsLoadedMsg{months: statsMonthWithModels()})
+	mm := updated.(*MainMenuModel)
+	_ = mm.renderStatsBox() // populate menuLines / row indices
+
+	row := mm.statsModeRowIndex()
+	ranges := statsModeHitRanges()
+	midOf := func(r [2]int) int { return (r[0] + r[1]) / 2 }
+
+	// Click "Compact" (index 1).
+	target := mm.HitTest(midOf(ranges[1]), row)
+	if target.region != regionStatsMode || target.index != 1 {
+		t.Fatalf("HitTest on Compact = %+v, want regionStatsMode index 1", target)
+	}
+	mm.clickTarget(target)
+	if !mm.statsCompact {
+		t.Errorf("clicking Compact should set statsCompact=true")
+	}
+
+	// Click "Full" (index 0).
+	target = mm.HitTest(midOf(ranges[0]), row)
+	if target.region != regionStatsMode || target.index != 0 {
+		t.Fatalf("HitTest on Full = %+v, want regionStatsMode index 0", target)
+	}
+	mm.clickTarget(target)
+	if mm.statsCompact {
+		t.Errorf("clicking Full should set statsCompact=false")
+	}
+}
+
+// TestStatsModeButton_keyToggles verifies 'c' flips the mode while on the Stats tab.
+func TestStatsModeButton_keyToggles(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabStats)
+	updated, _ := m.Update(statsLoadedMsg{months: statsMonthWithModels()})
+	mm := updated.(*MainMenuModel)
+	if mm.statsCompact {
+		t.Fatal("should start in full mode")
+	}
+	mm.handleRune('c')
+	if !mm.statsCompact {
+		t.Errorf("'c' should toggle into compact mode")
+	}
+	mm.handleRune('c')
+	if mm.statsCompact {
+		t.Errorf("'c' should toggle back to full mode")
+	}
+}
+
 // TestRenderStatsBox_cappedTo70PercentHeight verifies the Stats box never grows
 // past ~70% of the available height: with content that would otherwise fill the
 // whole terminal, the box clips to the 70% budget and shows a ▼ overflow marker.

@@ -643,7 +643,7 @@ func (m *MainMenuModel) focusHint() string {
 		case TabSettings:
 			return "↑↓ move · ←→ change · ↵ edit · ↑ sections"
 		case TabStats:
-			return "↑↓ scroll · ↑ sections"
+			return "↑↓ scroll · c full/compact · ↑ sections"
 		default: // projects
 			return "↑↓ move · ↵ open · ↑ sections · O open once · P plain · L login"
 		}

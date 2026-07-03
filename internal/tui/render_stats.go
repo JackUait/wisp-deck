@@ -8,6 +8,45 @@ import (
 	"github.com/jackuait/wisp-deck/internal/usage"
 )
 
+// statsModeLabels and statsModeCaption define the Full/Compact toggle rendered at
+// the top of the Stats content. Keep in sync with statsModeHitRanges in mouse.go.
+var statsModeLabels = []string{"Full", "Compact"}
+
+const statsModeCaption = "View: "
+
+// renderStatsModeRow renders the Full/Compact toggle button. The active mode is
+// bracketed and bold (mirroring the active tab); the other is dim, and brightens +
+// underlines on hover, so it reads as a clickable control.
+func (m *MainMenuModel) renderStatsModeRow(leftBorder, rightBorder string) string {
+	activeStyle := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
+	inactiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	hoverStyle := lipgloss.NewStyle().Foreground(m.theme.Bright).Underline(true)
+	captionStyle := lipgloss.NewStyle().Foreground(m.theme.Dim)
+
+	activeIdx := 0
+	if m.statsCompact {
+		activeIdx = 1
+	}
+
+	parts := make([]string, len(statsModeLabels))
+	for i, label := range statsModeLabels {
+		switch {
+		case i == activeIdx:
+			parts[i] = activeStyle.Render("[" + label + "]")
+		case i == m.hoverStatsMode:
+			parts[i] = hoverStyle.Render(" " + label + " ")
+		default:
+			parts[i] = inactiveStyle.Render(" " + label + " ")
+		}
+	}
+	content := captionStyle.Render(statsModeCaption) + strings.Join(parts, "  ")
+	gap := menuContentWidth - lipgloss.Width(content) - 1
+	if gap < 0 {
+		gap = 0
+	}
+	return leftBorder + " " + content + strings.Repeat(" ", gap) + rightBorder
+}
+
 // renderStatsRows renders the stats content as a flat slice of box rows. It is the
 // concatenation of the three groups returned by statsRowGroups; retained so callers
 // (and tests) that want the whole content block keep working.
@@ -84,6 +123,10 @@ func (m *MainMenuModel) statsRowGroups(leftBorder, rightBorder string) (headerRo
 		return headerRows, nil, nil
 	}
 
+	// Data state: replace the leading blank row with the Full/Compact toggle button
+	// (keeps the header row count and box-relative indices stable for hit-testing).
+	headerRows[0] = m.renderStatsModeRow(leftBorder, rightBorder)
+
 	// Column header row.
 	header := lipgloss.NewStyle().Foreground(m.theme.Dim).Bold(true)
 	hdr := "  " + header.Render(fmt.Sprintf("%-8s %7s   %7s   %7s   %7s         %9s",
@@ -143,6 +186,11 @@ func (m *MainMenuModel) statsRowGroups(leftBorder, rightBorder string) (headerRo
 		}
 		barRow := leftBorder + barLine + strings.Repeat(" ", costPad) + primaryBoldStyle.Render(costStr) + rightBorder
 		bodyRows = append(bodyRows, barRow)
+
+		// Compact mode stops at the month headline + bar, skipping the breakdown.
+		if m.statsCompact {
+			continue
+		}
 
 		// Per-model breakdown: which models drove the month's spend. Drawn as a tree
 		// hanging off the month (├─ for each model, └─ for the last) and muted so the

@@ -34,6 +34,7 @@ const (
 	regionTab
 	regionBody
 	regionSettings
+	regionStatsMode // the Full/Compact toggle in the Stats view
 )
 
 // hitTarget is the element under a given box-relative coordinate.
@@ -92,6 +93,34 @@ func tabHitRanges() [][2]int {
 		w := lipgloss.Width(label) + 2
 		ranges[i] = [2]int{col, col + w}
 		col += w + 2 // two-space separator between tabs
+	}
+	return ranges
+}
+
+// statsModeRowIndex returns the box-relative row of the Full/Compact toggle in the
+// Stats view: it is the first stats content row, right below the separator that
+// follows the tab bar.
+func (m *MainMenuModel) statsModeRowIndex() int {
+	return m.tabBarRowIndex() + 2
+}
+
+// statsModeButtonVisible reports whether the Full/Compact toggle is shown — only
+// once usage data has loaded (the loading/error/empty states have no toggle row).
+func (m *MainMenuModel) statsModeButtonVisible() bool {
+	return m.activeTab == TabStats && !m.statsLoading && m.statsErr == nil && len(m.statsMonths) > 0
+}
+
+// statsModeHitRanges returns the [start, end) box-relative column span of each
+// Full/Compact label, mirroring renderStatsModeRow's layout: a leading "│ " (cols
+// 0,1), the caption, then each bracketed label (width = label+2) joined by two
+// spaces.
+func statsModeHitRanges() [][2]int {
+	ranges := make([][2]int, len(statsModeLabels))
+	col := 2 + lipgloss.Width(statsModeCaption)
+	for i, label := range statsModeLabels {
+		w := lipgloss.Width(label) + 2
+		ranges[i] = [2]int{col, col + w}
+		col += w + 2
 	}
 	return ranges
 }
@@ -161,6 +190,16 @@ func (m *MainMenuModel) HitTest(boxX, boxY int) hitTarget {
 		for i, r := range tabHitRanges() {
 			if boxX >= r[0] && boxX < r[1] {
 				return hitTarget{region: regionTab, index: i}
+			}
+		}
+		return hitTarget{region: regionNone}
+	}
+
+	// Stats Full/Compact toggle (a fixed header row, not scrolled with the body).
+	if m.statsModeButtonVisible() && boxY == m.statsModeRowIndex() {
+		for i, r := range statsModeHitRanges() {
+			if boxX >= r[0] && boxX < r[1] {
+				return hitTarget{region: regionStatsMode, index: i}
 			}
 		}
 		return hitTarget{region: regionNone}
@@ -256,6 +295,11 @@ func (m *MainMenuModel) applyHover(t hitTarget) {
 	} else {
 		m.hoverTab = -1
 	}
+	if t.region == regionStatsMode {
+		m.hoverStatsMode = t.index
+	} else {
+		m.hoverStatsMode = -1
+	}
 }
 
 // isHovered reports whether the pointer is currently over the given region.
@@ -326,6 +370,11 @@ func (m *MainMenuModel) clickTarget(t hitTarget) (tea.Model, tea.Cmd) {
 		return m, nil
 	case regionSettings:
 		return m.clickSettings(t.index)
+	case regionStatsMode:
+		// index 0 = Full, 1 = Compact.
+		m.focus = FocusBody
+		m.setStatsCompact(t.index == 1)
+		return m, nil
 	}
 	return m, nil
 }
