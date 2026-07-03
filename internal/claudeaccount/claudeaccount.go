@@ -190,9 +190,65 @@ func Rename(listFile, dir, newLabel string) error {
 	return os.WriteFile(listFile, []byte(strings.Join(lines, "\n")), 0644)
 }
 
+// sharedStateItems mirrors WISP_DECK_CLAUDE_SHARED_STATE_ITEMS in
+// lib/claude-shared-settings.sh: conversation state that belongs to the user's
+// single shared store (~/.claude), not to any one login.
+var sharedStateItems = []string{
+	"projects", "history.jsonl", "todos", "session-env", "file-history", "plans",
+}
+
+// rescueState moves any REAL (non-symlink) conversation state left in an
+// account dir into the shared store before the dir is deleted. Normally the
+// launch-time sync has already symlinked these items, but an account that was
+// never launched post-sharing (or whose link was severed) still holds real
+// transcripts — os.RemoveAll would destroy the only copy. Files missing from
+// the store are moved in; identical duplicates are dropped; a differing
+// same-path copy is preserved as <name>.conflict so nothing is ever lost.
+func rescueState(accountDir, claudeDir string) error {
+	for _, item := range sharedStateItems {
+		src := filepath.Join(accountDir, item)
+		info, err := os.Lstat(src)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			continue // absent, or already an alias of the shared store
+		}
+		err = filepath.Walk(src, func(p string, fi os.FileInfo, err error) error {
+			if err != nil || !fi.Mode().IsRegular() {
+				return err
+			}
+			rel, err := filepath.Rel(src, p)
+			if err != nil {
+				return err
+			}
+			target := filepath.Join(claudeDir, item, rel)
+			if info.Mode().IsRegular() {
+				target = filepath.Join(claudeDir, item)
+			}
+			if _, err := os.Lstat(target); os.IsNotExist(err) {
+				if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+					return err
+				}
+				return os.Rename(p, target)
+			}
+			a, errA := os.ReadFile(target)
+			b, errB := os.ReadFile(p)
+			if errA == nil && errB == nil && string(a) == string(b) {
+				return nil // identical duplicate — safe to drop with the dir
+			}
+			return os.Rename(p, target+".conflict")
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Remove deletes an account: it drops the matching "label:dir" line from the
-// list file and removes the account's config directory. If the removed account
-// was active, it clears the pointer (reverting to Default).
+// list file, rescues any real conversation state into the shared ~/.claude
+// store, and removes the account's config directory. If the rescue fails the
+// dir is renamed aside instead of deleted — transcripts must never be
+// destroyed. If the removed account was active, it clears the pointer
+// (reverting to Default).
 func Remove(listFile, accountsDir, pointerFile, dir string) error {
 	data, err := os.ReadFile(listFile)
 	if err != nil && !os.IsNotExist(err) {
@@ -216,7 +272,17 @@ func Remove(listFile, accountsDir, pointerFile, dir string) error {
 	if err := os.WriteFile(listFile, []byte(out), 0644); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(filepath.Join(accountsDir, dir)); err != nil {
+	accountDir := filepath.Join(accountsDir, dir)
+	rescueErr := fmt.Errorf("no home dir")
+	if home, err := os.UserHomeDir(); err == nil {
+		rescueErr = rescueState(accountDir, filepath.Join(home, ".claude"))
+	}
+	if rescueErr != nil {
+		// Never delete state we could not rescue: park the dir instead.
+		if err := os.Rename(accountDir, accountDir+".removed"); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	} else if err := os.RemoveAll(accountDir); err != nil {
 		return err
 	}
 	if GetActive(pointerFile) == dir {

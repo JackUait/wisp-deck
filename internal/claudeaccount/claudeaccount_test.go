@@ -234,3 +234,67 @@ func TestResolveDir_existing_vs_missing_vs_default(t *testing.T) {
 		t.Fatalf("missing dir should resolve empty, got %q", got)
 	}
 }
+
+// Removing an account whose conversation state is still a REAL directory (the
+// launch-time sharing sync never ran on this machine, or a link was severed)
+// must first rescue that state into ~/.claude — os.RemoveAll would otherwise
+// permanently destroy transcripts that exist nowhere else.
+func TestRemove_rescues_unlinked_conversation_state(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := t.TempDir()
+	accountsDir := filepath.Join(dir, "claude-accounts")
+	list := filepath.Join(dir, "claude-accounts.list")
+	ptr := filepath.Join(dir, "claude-account")
+
+	work, _ := Add(list, accountsDir, "Work")
+	transcript := filepath.Join(accountsDir, work, "projects", "-p", "sid.jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(transcript, []byte(`{"type":"assistant"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Remove(list, accountsDir, ptr, work); err != nil {
+		t.Fatal(err)
+	}
+	rescued := filepath.Join(home, ".claude", "projects", "-p", "sid.jsonl")
+	if _, err := os.Stat(rescued); err != nil {
+		t.Fatalf("transcript must be rescued into ~/.claude before removal: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(accountsDir, work)); !os.IsNotExist(err) {
+		t.Fatalf("account dir should be gone after rescue")
+	}
+}
+
+// With the state already shared (projects is a symlink into ~/.claude),
+// removing the account must delete only the link — never the shared store.
+func TestRemove_never_follows_symlinked_state_into_store(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	store := filepath.Join(home, ".claude", "projects")
+	kept := filepath.Join(store, "-p", "keep.jsonl")
+	if err := os.MkdirAll(filepath.Dir(kept), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kept, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	accountsDir := filepath.Join(dir, "claude-accounts")
+	list := filepath.Join(dir, "claude-accounts.list")
+	ptr := filepath.Join(dir, "claude-account")
+
+	work, _ := Add(list, accountsDir, "Work")
+	if err := os.Symlink(store, filepath.Join(accountsDir, work, "projects")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Remove(list, accountsDir, ptr, work); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(kept); err != nil {
+		t.Fatalf("shared store must survive account removal: %v", err)
+	}
+}

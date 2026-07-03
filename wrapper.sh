@@ -165,6 +165,13 @@ else
           # Keychain default. Export the active account's isolated CLAUDE_CONFIG_DIR
           # before exec'ing the shell; Default leaves it unset (Keychain login).
           apply_plain_terminal_claude_account "$SHARE_DIR/claude-accounts" "$SHARE_DIR/claude-account"
+          # An account registered in the menu this launch missed the early
+          # state/settings sync — link it before claude can write a private
+          # store or start with blank settings.
+          if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+            sync_claude_shared_state "$HOME/.claude" "$CLAUDE_CONFIG_DIR"
+            sync_claude_shared_settings "$HOME/.claude" "$CLAUDE_CONFIG_DIR"
+          fi
           exec "$SHELL"
           ;;
         add-worktree)
@@ -292,6 +299,10 @@ if [ "$SELECTED_AI_TOOL" = "claude" ]; then
   # each launch (Claude may rewrite a settings file in place, severing the link).
   if [ -n "$WISP_DECK_CLAUDE_ACCOUNT_DIR" ]; then
     sync_claude_shared_settings "$HOME/.claude" "$WISP_DECK_CLAUDE_ACCOUNT_DIR"
+    # Also share conversation state here (not only at wrapper start): an
+    # account registered in the menu THIS launch didn't exist when the early
+    # sync ran, and must not start a private transcript store.
+    sync_claude_shared_state "$HOME/.claude" "$WISP_DECK_CLAUDE_ACCOUNT_DIR"
   fi
 fi
 # Account-rotation proxy: when the auto-switch setting is on and there are at

@@ -1,6 +1,7 @@
 package bash_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,6 +71,173 @@ func TestSyncSharedState_source_wins_on_transcript_conflict(t *testing.T) {
 	got, _ := os.ReadFile(filepath.Join(source, "projects", "-p", "sid.jsonl"))
 	if string(got) != "standard-copy" {
 		t.Fatalf("standard store's copy must win on conflict, got %q", got)
+	}
+	// The losing account copy is preserved (as a *.conflict-* sibling), never
+	// silently deleted — a severed link can leave the account copy with turns
+	// the store copy lacks.
+	if findFileContaining(t, filepath.Join(source, "projects"), "account-copy") == "" {
+		t.Fatalf("conflicting account copy must be preserved somewhere under the store")
+	}
+}
+
+// findFileContaining walks root and returns the path of the first regular file
+// whose content contains needle, or "".
+func findFileContaining(t *testing.T, root, needle string) string {
+	t.Helper()
+	var found string
+	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || !info.Mode().IsRegular() || found != "" {
+			return nil
+		}
+		b, _ := os.ReadFile(p)
+		if strings.Contains(string(b), needle) {
+			found = p
+		}
+		return nil
+	})
+	return found
+}
+
+func TestSyncSharedState_identical_duplicate_is_dropped_without_conflict_copy(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "standard")
+	account := filepath.Join(dir, "account")
+	writeSharedFile(t, filepath.Join(source, "projects", "-p", "sid.jsonl"), "same")
+	writeSharedFile(t, filepath.Join(account, "projects", "-p", "sid.jsonl"), "same")
+
+	_, code := runStateSync(t, source, account)
+	assertExitCode(t, code, 0)
+
+	entries, _ := os.ReadDir(filepath.Join(source, "projects", "-p"))
+	if len(entries) != 1 {
+		t.Fatalf("identical account copy must be dropped, not kept as a conflict file: %v", entries)
+	}
+}
+
+func TestSyncSharedState_steady_state_is_a_true_noop(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "standard")
+	account := filepath.Join(dir, "account")
+	writeSharedFile(t, filepath.Join(source, "projects", "-p", "sid.jsonl"), "x")
+	writeSharedFile(t, filepath.Join(source, "history.jsonl"), "h")
+	if err := os.MkdirAll(account, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-link every item, then make the account dir read-only: a true no-op
+	// needs no writes at all. Re-linking on every launch (rm + ln) would open a
+	// window where a live claude append lands in a fresh real file that the
+	// next launch's migration races against.
+	for _, item := range []string{"projects", "history.jsonl"} {
+		if err := os.Symlink(filepath.Join(source, item), filepath.Join(account, item)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(account, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(account, 0o755) })
+
+	out, code := runStateSync(t, source, account)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("steady-state sync must be silent (no rm/ln attempts), got %q", out)
+	}
+	if target, err := os.Readlink(filepath.Join(account, "projects")); err != nil || target != filepath.Join(source, "projects") {
+		t.Fatalf("existing correct link must be left untouched: %q %v", target, err)
+	}
+}
+
+func TestSyncSharedState_unmergeable_files_survive_and_heal_later(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "standard")
+	account := filepath.Join(dir, "account")
+	// The store's project subdir is unwritable, so the mv into it must fail —
+	// the account transcript must survive somewhere on disk (never be deleted)
+	// and reach the store once the store is writable again.
+	writeSharedFile(t, filepath.Join(source, "projects", "-p", "existing.jsonl"), "x")
+	writeSharedFile(t, filepath.Join(account, "projects", "-p", "fresh.jsonl"), "precious")
+	if err := os.Chmod(filepath.Join(source, "projects", "-p"), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(source, "projects", "-p"), 0o755) })
+
+	_, code := runStateSync(t, source, account)
+	assertExitCode(t, code, 0)
+	if findFileContaining(t, dir, "precious") == "" {
+		t.Fatalf("unmergeable transcript was destroyed — it must survive a failed merge")
+	}
+
+	if err := os.Chmod(filepath.Join(source, "projects", "-p"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, code = runStateSync(t, source, account)
+	assertExitCode(t, code, 0)
+	if _, err := os.Stat(filepath.Join(source, "projects", "-p", "fresh.jsonl")); err != nil {
+		t.Fatalf("second sync must complete the merge into the store: %v", err)
+	}
+}
+
+func TestSyncSharedState_drains_leftover_aside_dir(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "standard")
+	account := filepath.Join(dir, "account")
+	writeSharedFile(t, filepath.Join(source, "projects", "-p", "std.jsonl"), "x")
+	// An interrupted earlier migration left an aside dir behind; its owning
+	// process (pid 99999 — above macOS's max pid) is gone.
+	writeSharedFile(t, filepath.Join(account, "projects.migrating.99999", "-p", "orphan.jsonl"), "orphan")
+	if err := os.MkdirAll(account, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, code := runStateSync(t, source, account)
+	assertExitCode(t, code, 0)
+
+	if _, err := os.Stat(filepath.Join(source, "projects", "-p", "orphan.jsonl")); err != nil {
+		t.Fatalf("aside leftovers must be merged into the store: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(account, "projects.migrating.99999")); err == nil {
+		t.Fatalf("drained aside dir must be removed")
+	}
+}
+
+func TestSyncSharedState_leaves_live_migrations_aside_alone(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "standard")
+	account := filepath.Join(dir, "account")
+	writeSharedFile(t, filepath.Join(source, "history.jsonl"), "{\"h\":\"a\"}\n")
+	// An aside owned by a LIVE process (this test) — a concurrent launch is
+	// mid-drain. Touching it here would double-append its history entries.
+	aside := filepath.Join(account, fmt.Sprintf("history.jsonl.migrating.%d", os.Getpid()))
+	writeSharedFile(t, aside, "{\"h\":\"b\"}\n")
+
+	_, code := runStateSync(t, source, account)
+	assertExitCode(t, code, 0)
+
+	if _, err := os.Stat(aside); err != nil {
+		t.Fatalf("a live migration's aside must not be touched: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(source, "history.jsonl"))
+	if strings.Contains(string(got), `"b"`) {
+		t.Fatalf("concurrent aside must not be drained by another launch, got %q", got)
+	}
+}
+
+func TestSyncSharedState_history_append_is_deduplicated(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "standard")
+	account := filepath.Join(dir, "account")
+	// Severed-link shape: the account copy is a full copy of the shared history
+	// plus new entries. A blind append would duplicate the whole history.
+	writeSharedFile(t, filepath.Join(source, "history.jsonl"), "{\"h\":\"a\"}\n{\"h\":\"b\"}\n")
+	writeSharedFile(t, filepath.Join(account, "history.jsonl"), "{\"h\":\"a\"}\n{\"h\":\"b\"}\n{\"h\":\"c\"}\n")
+
+	_, code := runStateSync(t, source, account)
+	assertExitCode(t, code, 0)
+
+	got, _ := os.ReadFile(filepath.Join(source, "history.jsonl"))
+	want := "{\"h\":\"a\"}\n{\"h\":\"b\"}\n{\"h\":\"c\"}\n"
+	if string(got) != want {
+		t.Fatalf("history must gain only the missing entries, got %q", got)
 	}
 }
 

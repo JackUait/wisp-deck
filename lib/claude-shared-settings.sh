@@ -73,41 +73,81 @@ WISP_DECK_CLAUDE_SHARED_STATE_ITEMS=(
   plans          # saved plan-mode plans
 )
 
-# Merge one account-local state path into the shared store before linking.
-# Files missing from the store are moved in; on a same-path conflict the shared
-# store's copy wins (transcript ids are unique per store, so real conflicts do
-# not occur in practice) — except a top-level .jsonl file (history.jsonl), whose
-# account entries are appended so neither login's prompt history is dropped.
-# Usage: _wd_merge_state_into_source <src> <dest>
-_wd_merge_state_into_source() {
-  local src="$1" dest="$2" f rel
-  if [ -f "$dest" ]; then
+# Append the lines of <extra> that are not already in <base> onto <base>.
+# A severed history.jsonl link leaves the account with a full COPY of the shared
+# history plus its new entries — a blind `cat` append would duplicate the whole
+# history on every heal. An empty/missing base falls back to a plain append
+# (grep -f with an empty pattern file matches nothing, which -v would invert to
+# "append everything" on GNU but is undefined on BSD).
+# Usage: _wd_append_jsonl_dedup <base> <extra>
+_wd_append_jsonl_dedup() {
+  local base="$1" extra="$2" add
+  if [ -s "$base" ]; then
+    # Buffer the missing lines before appending — appending to the pattern
+    # file while grep might still read it is undefined (SC2094).
+    add="$(grep -vxF -f "$base" "$extra" 2>/dev/null)" || true
+    [ -n "$add" ] && printf '%s\n' "$add" >> "$base"
+  else
+    cat "$extra" >> "$base" 2>/dev/null || true
+  fi
+  return 0
+}
+
+# Drain an aside copy (a renamed-away account item) into the shared store,
+# deleting only what was actually merged. Files missing from the store are
+# moved in; identical duplicates are dropped; a differing same-path copy is
+# preserved next to the store copy as *.conflict-<pid> (never silently
+# deleted — it may hold turns the store copy lacks). Anything that could not
+# be merged (e.g. an unwritable store) stays in the aside path for the next
+# launch to retry — this function must NEVER unconditionally delete.
+# Usage: _wd_drain_state_aside <src> <aside>
+_wd_drain_state_aside() {
+  local src="$1" aside="$2" f rel target
+  if [ -f "$aside" ]; then
     if [ ! -e "$src" ]; then
-      mkdir -p "$(dirname "$src")"
-      mv "$dest" "$src"
-    elif [ -f "$src" ] && [[ "$dest" == *.jsonl ]]; then
-      cat "$dest" >> "$src"
+      mkdir -p "$(dirname "$src")" 2>/dev/null || true
+      mv "$aside" "$src" 2>/dev/null || true
+    elif [[ "$src" == *.jsonl ]]; then
+      _wd_append_jsonl_dedup "$src" "$aside" && rm -f "$aside"
+    elif cmp -s "$src" "$aside" 2>/dev/null; then
+      rm -f "$aside"
+    else
+      mv "$aside" "$src.conflict-$$" 2>/dev/null || true
     fi
     return 0
   fi
-  [ -d "$dest" ] || return 0
+  [ -d "$aside" ] || return 0
   while IFS= read -r -d '' f; do
-    rel="${f#"$dest"/}"
-    if [ ! -e "$src/$rel" ]; then
-      mkdir -p "$(dirname "$src/$rel")"
-      mv "$f" "$src/$rel"
+    rel="${f#"$aside"/}"
+    target="$src/$rel"
+    if [ ! -e "$target" ]; then
+      mkdir -p "$(dirname "$target")" 2>/dev/null || true
+      mv "$f" "$target" 2>/dev/null || true
+    elif cmp -s "$target" "$f" 2>/dev/null; then
+      rm -f "$f"
+    else
+      mv "$f" "$target.conflict-$$" 2>/dev/null || true
     fi
-  done < <(find "$dest" -type f -print0 2>/dev/null)
+  done < <(find "$aside" -type f -print0 2>/dev/null)
+  # Remove only emptied directories; unmerged files keep the aside alive so a
+  # later launch retries. `-delete` prunes depth-first, including the root.
+  find "$aside" -type d -empty -delete 2>/dev/null || true
+  return 0
 }
 
 # sync_claude_shared_state <source_dir> <account_dir>
-# Make the account's conversation state an alias of the standard login's store:
-# merge anything the account recorded locally into the store (never losing a
-# transcript), then symlink each state item to it. Same guards as the settings
-# sync; idempotent — an already-linked item is left alone, so repeated launches
-# are cheap no-ops.
+# Make the account's conversation state an alias of the standard login's store.
+# Steady state (item already linked to the store) is a strict no-op — no
+# rm/relink, because that would open a per-launch window where a live claude
+# append lands in a fresh real file that a concurrent migration could delete.
+# A real (unlinked) item is migrated by RENAME-ASIDE: atomically mv it away,
+# link the store into place immediately (a live writer's next path-open lands
+# in the store), then drain the aside copy file-by-file. Only one concurrent
+# launch can win each mv; losers see the link and skip. Nothing is ever
+# rm -rf'd: unmerged files survive in the aside path until a launch drains
+# them. Same guards as the settings sync.
 sync_claude_shared_state() {
-  local source_dir="$1" account_dir="$2" item src dest
+  local source_dir="$1" account_dir="$2" item src dest aside aside_pid
   [ -n "$source_dir" ] && [ -n "$account_dir" ] || return 0
   [ -d "$source_dir" ] && [ -d "$account_dir" ] || return 0
   [ "$source_dir" = "$account_dir" ] && return 0
@@ -115,18 +155,58 @@ sync_claude_shared_state() {
   for item in "${WISP_DECK_CLAUDE_SHARED_STATE_ITEMS[@]}"; do
     src="$source_dir/$item"
     dest="$account_dir/$item"
-    if [ -e "$dest" ] && [ ! -L "$dest" ]; then
-      _wd_merge_state_into_source "$src" "$dest"
-    fi
-    # Nothing to share yet (neither side has the item): drop a dangling link if
-    # one exists and move on.
-    if [ ! -e "$src" ]; then
-      [ -L "$dest" ] && rm -f "$dest"
+    # Finish any migration a previous (interrupted/failed) launch left behind —
+    # but only when its owner (the pid suffix) is gone. A live aside belongs to
+    # a concurrent launch mid-drain; draining it from two processes at once
+    # would append the same history entries twice.
+    for aside in "$dest".migrating.*; do
+      [ -e "$aside" ] || continue
+      aside_pid="${aside##*.}"
+      case "$aside_pid" in '' | *[!0-9]*) aside_pid="" ;; esac
+      if [ -n "$aside_pid" ] && kill -0 "$aside_pid" 2>/dev/null; then
+        continue
+      fi
+      _wd_drain_state_aside "$src" "$aside"
+    done
+    # Steady state: already linked to the store — leave it strictly alone.
+    if [ -L "$dest" ] && [ "$(readlink "$dest" 2>/dev/null)" = "$src" ]; then
       continue
     fi
-    rm -rf "$dest"
-    ln -sfn "$src" "$dest"
+    if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+      aside="$dest.migrating.$$"
+      # Atomic claim; a concurrent launch losing this mv just skips.
+      mv "$dest" "$aside" 2>/dev/null || continue
+      if [ ! -e "$src" ]; then
+        # Store has no such item yet: the account copy becomes the store copy.
+        mkdir -p "$(dirname "$src")" 2>/dev/null || true
+        if ! mv "$aside" "$src" 2>/dev/null; then
+          # Could not seed the store (unwritable?) — roll back and retry later.
+          mv "$aside" "$dest" 2>/dev/null || true
+          continue
+        fi
+      fi
+      # No -f: never clobber a file a live claude re-created at this path in
+      # the tiny window since the mv — it holds real data; if present, mv it
+      # into the aside pile and retry the link once.
+      if ! ln -s "$src" "$dest" 2>/dev/null; then
+        if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+          mkdir -p "$aside" 2>/dev/null || true
+          mv "$dest" "$aside/$(basename "$dest").reappeared.$$" 2>/dev/null || true
+          ln -s "$src" "$dest" 2>/dev/null || true
+        fi
+      fi
+      [ -e "$aside" ] && _wd_drain_state_aside "$src" "$aside"
+    else
+      # dest absent, or a symlink pointing somewhere stale.
+      if [ ! -e "$src" ]; then
+        [ -L "$dest" ] && rm -f "$dest"
+        continue
+      fi
+      rm -f "$dest" 2>/dev/null
+      ln -s "$src" "$dest" 2>/dev/null || true
+    fi
   done
+  return 0
 }
 
 # sync_all_claude_accounts_state <source_dir> <accounts_dir>
