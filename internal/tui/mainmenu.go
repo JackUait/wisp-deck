@@ -2266,11 +2266,32 @@ func (m *MainMenuModel) setStatsCompact(compact bool) {
 	}
 	m.statsCompact = compact
 	m.statsOffset = 0
+	m.persistSetting("stats_mode", statsModeString(compact))
 }
 
 // toggleStatsCompact flips the Full/Compact view mode.
 func (m *MainMenuModel) toggleStatsCompact() {
 	m.setStatsCompact(!m.statsCompact)
+}
+
+// statsModeString maps the compact flag to its persisted setting value.
+func statsModeString(compact bool) string {
+	if compact {
+		return "compact"
+	}
+	return "full"
+}
+
+// SetStatsMode seeds the Stats view mode from a saved preference at launch:
+// "compact" starts on the bar-only view, "full" (or anything else) on the full
+// per-model breakdown. It sets the flag directly so restoring never re-persists.
+func (m *MainMenuModel) SetStatsMode(mode string) {
+	switch mode {
+	case "compact":
+		m.statsCompact = true
+	case "full":
+		m.statsCompact = false
+	}
 }
 
 // statsScrollDown scrolls the stats body down one line, bounded by statsMaxOffset

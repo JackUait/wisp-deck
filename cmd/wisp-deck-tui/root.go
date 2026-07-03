@@ -62,6 +62,25 @@ func readThemePref() string {
 	return ""
 }
 
+// readStatsModePref reads the saved "stats_mode=" preference from the settings
+// file, or "" if unset/unreadable. Used to restore the Stats view's Full/Compact
+// mode across sessions.
+func readStatsModePref() string {
+	f, err := os.Open(settingsFilePath())
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if v, ok := strings.CutPrefix(line, "stats_mode="); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
 // effectiveThemePref resolves the theme preference: the explicit --theme flag
 // wins; otherwise the saved setting; otherwise "auto".
 func effectiveThemePref() string {
