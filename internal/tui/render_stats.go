@@ -14,24 +14,36 @@ var statsModeLabels = []string{"Full", "Compact"}
 
 const statsModeCaption = "View: "
 
-// statsModeMarkerSelected and statsModeMarkerUnselected are the radio-style square
-// glyphs for the Full/Compact toggle: a filled square marks the selected mode, a
-// hollow square marks the others — reading like a view switcher. Each part renders
-// as "<square> <label>" (width label+2), matching statsModeHitRanges in mouse.go.
-const (
-	statsModeMarkerSelected   = "■"
-	statsModeMarkerUnselected = "□"
-)
-
-// renderStatsModeRow renders the Full/Compact toggle as a view switcher: the
-// selected mode gets a filled orange (Primary) square and bold label; the others
-// get a hollow dim square, brightening + underlining on hover so they read as
-// clickable controls.
+// renderStatsModeRow renders the Full/Compact toggle to match the top tab
+// switcher: when the Stats body is focused (so ←/→ switches the mode), the
+// selected mode is a solid filled pill (dark ink on the Primary background); when
+// unfocused it's a bold bracketed accent ([label]). The others are dim and
+// brighten + underline on hover so they read as clickable controls. Every cell
+// keeps the label+2 width, so statsModeHitRanges in mouse.go stays valid.
 func (m *MainMenuModel) renderStatsModeRow(leftBorder, rightBorder string) string {
-	activeStyle := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
-	inactiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	hoverStyle := lipgloss.NewStyle().Foreground(m.theme.Bright).Underline(true)
+	bodyFocused := m.focus == FocusBody
 	captionStyle := lipgloss.NewStyle().Foreground(m.theme.Dim)
+
+	var activeStyle lipgloss.Style
+	inactiveColor := lipgloss.Color("245")
+	if bodyFocused {
+		activeStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("232")). // near-black ink on the pill
+			Background(m.theme.Primary).
+			Bold(true)
+		inactiveColor = lipgloss.Color("250")
+	} else {
+		activeStyle = lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
+	}
+	inactiveStyle := lipgloss.NewStyle().Foreground(inactiveColor)
+	hoverStyle := lipgloss.NewStyle().Foreground(m.theme.Bright).Underline(true)
+
+	renderActive := func(label string) string {
+		if bodyFocused {
+			return activeStyle.Render(" " + label + " ")
+		}
+		return activeStyle.Render("[" + label + "]")
+	}
 
 	activeIdx := 0
 	if m.statsCompact {
@@ -42,11 +54,11 @@ func (m *MainMenuModel) renderStatsModeRow(leftBorder, rightBorder string) strin
 	for i, label := range statsModeLabels {
 		switch {
 		case i == activeIdx:
-			parts[i] = activeStyle.Render(statsModeMarkerSelected + " " + label)
+			parts[i] = renderActive(label)
 		case i == m.hoverStatsMode:
-			parts[i] = hoverStyle.Render(statsModeMarkerUnselected + " " + label)
+			parts[i] = hoverStyle.Render(" " + label + " ")
 		default:
-			parts[i] = inactiveStyle.Render(statsModeMarkerUnselected + " " + label)
+			parts[i] = inactiveStyle.Render(" " + label + " ")
 		}
 	}
 	content := captionStyle.Render(statsModeCaption) + strings.Join(parts, "  ")

@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jackuait/wisp-deck/internal/usage"
+	"github.com/muesli/termenv"
 )
 
 // manyStatsMonths builds n months each with a couple of per-model rows so the
@@ -37,43 +38,65 @@ func statsMonthWithModels() []usage.MonthlyUsage {
 	}
 }
 
+// statsModeActivePill returns the styled string the Stats toggle should emit for
+// the selected mode when the Stats body is focused: a filled pill (dark ink on the
+// Primary background, bold), exactly matching the nav-focused active tab.
+func statsModeActivePill(m *MainMenuModel, label string) string {
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("232")).
+		Background(m.theme.Primary).
+		Bold(true).
+		Render(" " + label + " ")
+}
+
 // TestRenderStatsBox_modeToggleButton verifies the Stats view renders a Full /
-// Compact toggle control (a labelled, clickable button) with the active mode marked.
+// Compact toggle that looks like the top tab switcher: the selected mode is a
+// filled orange pill (body focused), the others are dim.
 func TestRenderStatsBox_modeToggleButton(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	m.SetActiveTab(TabStats)
+	m.SetFocus(FocusBody)
 	updated, _ := m.Update(statsLoadedMsg{months: statsMonthWithModels()})
 	mm := updated.(*MainMenuModel)
-	out := stripANSI(mm.renderStatsBox())
+	out := mm.renderStatsBox()
 	for _, want := range []string{"Full", "Compact"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("stats view missing %q toggle label:\n%s", want, out)
+		if !strings.Contains(stripANSI(out), want) {
+			t.Errorf("stats view missing %q toggle label:\n%s", want, stripANSI(out))
 		}
 	}
-	// The toggle reads like a view switcher: a filled square marks the selected
-	// mode, hollow squares mark the others. Default is full mode.
-	if !strings.Contains(out, "■ Full") {
-		t.Errorf("full mode should mark the selected mode with a filled square (■ Full):\n%s", out)
+	// Default is full mode: the selected label is the filled pill, like the tab bar.
+	if !strings.Contains(out, statsModeActivePill(mm, "Full")) {
+		t.Errorf("full mode should render the selected mode as a filled pill:\n%s", stripANSI(out))
 	}
-	if !strings.Contains(out, "□ Compact") {
-		t.Errorf("unselected mode should show a hollow square (□ Compact):\n%s", out)
+	// The unselected mode is not a pill.
+	if strings.Contains(out, statsModeActivePill(mm, "Compact")) {
+		t.Errorf("unselected Compact should not be a filled pill:\n%s", stripANSI(out))
 	}
 }
 
-// TestRenderStatsBox_modeSquareFollowsSelection verifies the filled square tracks
-// the selected mode: switching to compact fills Compact's square and hollows Full's.
-func TestRenderStatsBox_modeSquareFollowsSelection(t *testing.T) {
+// TestRenderStatsBox_modePillFollowsSelection verifies the filled pill tracks the
+// selected mode: switching to compact pills Compact and un-pills Full.
+func TestRenderStatsBox_modePillFollowsSelection(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	m.SetActiveTab(TabStats)
+	m.SetFocus(FocusBody)
 	updated, _ := m.Update(statsLoadedMsg{months: statsMonthWithModels()})
 	mm := updated.(*MainMenuModel)
 	mm.statsCompact = true
-	out := stripANSI(mm.renderStatsBox())
-	if !strings.Contains(out, "■ Compact") {
-		t.Errorf("compact mode should mark ■ Compact selected:\n%s", out)
+	out := mm.renderStatsBox()
+	if !strings.Contains(out, statsModeActivePill(mm, "Compact")) {
+		t.Errorf("compact mode should render Compact as the filled pill:\n%s", stripANSI(out))
 	}
-	if !strings.Contains(out, "□ Full") {
-		t.Errorf("compact mode should hollow □ Full:\n%s", out)
+	if strings.Contains(out, statsModeActivePill(mm, "Full")) {
+		t.Errorf("compact mode should not pill Full:\n%s", stripANSI(out))
 	}
 }
 
