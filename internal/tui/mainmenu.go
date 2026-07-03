@@ -2166,6 +2166,11 @@ func (m *MainMenuModel) focusLeft() tea.Cmd {
 		if m.activeTab == TabSettings {
 			m.settingsValueLeft()
 		}
+		// On the Stats tab, ← targets the Full label of the view-mode toggle
+		// (keyboard equivalent of clicking it), instead of blindly flipping.
+		if m.activeTab == TabStats {
+			m.setStatsCompact(false)
+		}
 	}
 	return nil
 }
@@ -2187,6 +2192,11 @@ func (m *MainMenuModel) focusRight() tea.Cmd {
 	case FocusBody:
 		if m.activeTab == TabSettings {
 			m.settingsValueRight()
+		}
+		// On the Stats tab, → targets the Compact label of the view-mode toggle
+		// (keyboard equivalent of clicking it), instead of blindly flipping.
+		if m.activeTab == TabStats {
+			m.setStatsCompact(true)
 		}
 	}
 	return nil
