@@ -193,11 +193,38 @@ func (m *Manager) pickBest(exclude map[int]bool, now time.Time) int {
 	return best
 }
 
+// pickSoftFallback returns the least-utilized account that is only soft-blocked
+// — at/above the switch threshold but not errored, throttled, or upstream-
+// rejected — or -1 when none qualifies. The threshold is an early-switch
+// heuristic, not a hard limit: when the whole pool has crossed it, the session
+// keeps being served until upstream actually rejects.
+func (m *Manager) pickSoftFallback(exclude map[int]bool, now time.Time) int {
+	best := -1
+	var bestUtil float64
+	for i := range m.accounts {
+		if exclude[i] {
+			continue
+		}
+		m.clearExpired(i, now)
+		a := m.accounts[i]
+		if a.errored || (!a.throttledUntil.IsZero() && now.Before(a.throttledUntil)) || a.q.status == "rejected" {
+			continue
+		}
+		if u := m.util(i); best < 0 || u < bestUtil {
+			best = i
+			bestUtil = u
+		}
+	}
+	return best
+}
+
 // GetActiveAccount selects the account to serve a request, excluding any indices
 // already tried this request. Mirrors teamclaude's getActiveAccount(tried): the
 // current account is kept while it is available and not excluded; otherwise the
-// best available account is chosen. Returns (index, true) or (-1, false) when
-// every account is exhausted.
+// best available account is chosen. When no account is below the switch
+// threshold, the least-utilized soft-blocked account serves as a fallback (see
+// pickSoftFallback). Returns (index, true) or (-1, false) only when every
+// account is hard-blocked (throttled, upstream-rejected, or errored).
 func (m *Manager) GetActiveAccount(exclude map[int]bool, now time.Time) (int, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -205,6 +232,9 @@ func (m *Manager) GetActiveAccount(exclude map[int]bool, now time.Time) (int, bo
 		return m.current, true
 	}
 	best := m.pickBest(exclude, now)
+	if best < 0 {
+		best = m.pickSoftFallback(exclude, now)
+	}
 	if best < 0 {
 		return -1, false
 	}

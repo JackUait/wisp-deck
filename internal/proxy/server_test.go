@@ -274,6 +274,29 @@ func TestServer_switchesAccountOn429(t *testing.T) {
 	}
 }
 
+func TestServer_servesFromNearQuotaAccountWhenAllNearQuota(t *testing.T) {
+	// Regression: when every pooled account sits at/above the switch threshold
+	// but upstream still accepts requests, the proxy must forward from the
+	// least-utilized account rather than fabricating an "all accounts exhausted"
+	// error — otherwise the session is interrupted at 98% when it would have kept
+	// working without the proxy.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		io.WriteString(w, "still-serving")
+	}))
+	defer upstream.Close()
+
+	mgr := NewManager([]Account{{Label: "A", AccessToken: "tok-A"}, {Label: "B", AccessToken: "tok-B"}}, 0.98)
+	mgr.UpdateQuota(0, hdr("anthropic-ratelimit-unified-5h-utilization", "0.99"))
+	mgr.UpdateQuota(1, hdr("anthropic-ratelimit-unified-7d-utilization", "0.985"))
+	srv := newTestServer(t, mgr, upstream.URL)
+
+	rec := doRequest(t, srv, "proxy-key", `{}`)
+	if rec.Code != 200 || rec.Body.String() != "still-serving" {
+		t.Fatalf("got (%d, %q), want (200, still-serving) — near-quota is not exhausted", rec.Code, rec.Body.String())
+	}
+}
+
 func TestServer_passesThrough429WhenAllExhausted(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("retry-after", "5")

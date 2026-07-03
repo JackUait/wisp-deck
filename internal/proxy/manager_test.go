@@ -128,12 +128,54 @@ func TestGetActiveAccount_excludesTried(t *testing.T) {
 }
 
 func TestGetActiveAccount_noneAvailable(t *testing.T) {
+	// Exhausted means hard-blocked: upstream-rejected or throttled — a merely
+	// near-threshold account would still be served via the soft fallback.
 	m := NewManager(testAccounts(2), 0.98)
 	now := time.Now()
-	m.UpdateQuota(0, hdr("anthropic-ratelimit-unified-5h-utilization", "0.99"))
+	m.UpdateQuota(0, hdr(
+		"anthropic-ratelimit-unified-5h-utilization", "1.0",
+		"anthropic-ratelimit-unified-status", "rejected",
+	))
 	m.MarkThrottled(1, now.Add(time.Hour))
 	if _, ok := m.GetActiveAccount(nil, now); ok {
 		t.Error("expected ok=false when every account is exhausted")
+	}
+}
+
+func TestGetActiveAccount_softFallbackWhenAllNearQuota(t *testing.T) {
+	// The switch threshold is an early-switch heuristic, not a hard limit: when
+	// EVERY account is at/above it (but none upstream-rejected), the proxy must
+	// keep serving from the least-utilized account instead of erroring — the
+	// session is only interrupted when upstream actually rejects.
+	m := NewManager(testAccounts(2), 0.98)
+	now := time.Now()
+	m.UpdateQuota(0, hdr("anthropic-ratelimit-unified-5h-utilization", "0.995"))
+	m.UpdateQuota(1, hdr("anthropic-ratelimit-unified-5h-utilization", "0.985"))
+	idx, ok := m.GetActiveAccount(nil, now)
+	if !ok || idx != 1 {
+		t.Errorf("got (idx=%d ok=%v), want (1, true) — least-utilized soft-blocked account", idx, ok)
+	}
+}
+
+func TestGetActiveAccount_softFallbackSkipsHardBlocked(t *testing.T) {
+	// The soft fallback must never resurrect a hard-blocked account: throttled
+	// (real 429 window), upstream-rejected, or errored ones stay out.
+	m := NewManager(testAccounts(3), 0.98)
+	now := time.Now()
+	m.UpdateQuota(0, hdr("anthropic-ratelimit-unified-5h-utilization", "0.99"))
+	m.MarkThrottled(0, now.Add(time.Hour))
+	m.UpdateQuota(1, hdr(
+		"anthropic-ratelimit-unified-5h-utilization", "0.985",
+		"anthropic-ratelimit-unified-status", "rejected",
+	))
+	m.UpdateQuota(2, hdr("anthropic-ratelimit-unified-5h-utilization", "0.999"))
+	idx, ok := m.GetActiveAccount(nil, now)
+	if !ok || idx != 2 {
+		t.Errorf("got (idx=%d ok=%v), want (2, true) — only non-hard-blocked near-quota account", idx, ok)
+	}
+	m.MarkErrored(2)
+	if _, ok := m.GetActiveAccount(nil, now); ok {
+		t.Error("expected ok=false once the last soft-blocked account errors out")
 	}
 }
 
