@@ -19,6 +19,18 @@ if [ -n "$effort_level" ]; then
   model_name="$model_name [$effort_level]"
 fi
 
+# Native Claude account label for this tab. wrapper.sh launches `claude` with the
+# active account's isolated CLAUDE_CONFIG_DIR exported (unset for the Keychain
+# Default), which this statusline process inherits. Shown only when the
+# multi-account feature is actually in use — the accounts list has at least one
+# entry — so single-login users get no extra clutter.
+account_label=""
+accounts_list="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/claude-accounts.list"
+if type gt_claude_account_label &>/dev/null \
+   && grep -q '^[^#[:space:]]' "$accounts_list" 2>/dev/null; then
+  account_label=$(gt_claude_account_label "${CLAUDE_CONFIG_DIR:-}" "$accounts_list")
+fi
+
 # Find parent Claude Code process and get total tree memory + CPU usage
 pid=$PPID
 mem_label=""
@@ -84,5 +96,12 @@ if [ -n "$cpu_label" ]; then
 fi
 if [ -n "$model_name" ]; then
   line="$line$(printf ' | \033[01;34m%s\033[00m' "$model_name")"
+fi
+# A Nerd Font account glyph (󰀄) precedes the active Claude account label so the
+# user can tell at a glance which login this tab is talking to. Literal UTF-8 is
+# embedded directly: this runs under macOS bash 3.2 (--posix), whose printf has
+# no \u/\U escape support.
+if [ -n "$account_label" ]; then
+  line="$line$(printf ' | \033[01;32m󰀄 %s\033[00m' "$account_label")"
 fi
 printf '%s' "$line"

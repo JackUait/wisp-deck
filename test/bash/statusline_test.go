@@ -1699,3 +1699,57 @@ func TestStatusline_stamp_claude_session_noop_without_session_id(t *testing.T) {
 		t.Error("must not stamp when the payload has no session_id")
 	}
 }
+
+// --- gt_claude_account_label ---
+//
+// The statusline runs as a child of `claude`, which wrapper.sh launches with the
+// active account's isolated CLAUDE_CONFIG_DIR exported (unset for the Keychain
+// Default). gt_claude_account_label maps that config dir to its display label so
+// the statusline can show which account this tab is using.
+
+func TestStatusline_account_label_default_when_config_dir_empty(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "claude-accounts.list")
+	writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_claude_account_label",
+		[]string{"", list}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "Default" {
+		t.Fatalf("got %q, want %q", strings.TrimSpace(out), "Default")
+	}
+}
+
+func TestStatusline_account_label_maps_config_dir_basename_to_list_label(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "claude-accounts.list")
+	writeTempFile(t, dir, "claude-accounts.list", "Work Max:work\nPersonal:personal\n")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_claude_account_label",
+		[]string{"/some/root/claude-accounts/personal", list}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "Personal" {
+		t.Fatalf("got %q, want %q", strings.TrimSpace(out), "Personal")
+	}
+}
+
+func TestStatusline_account_label_unknown_dir_falls_back_to_default(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "claude-accounts.list")
+	writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_claude_account_label",
+		[]string{"/some/root/claude-accounts/ghost", list}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "Default" {
+		t.Fatalf("got %q, want %q", strings.TrimSpace(out), "Default")
+	}
+}
+
+func TestStatusline_account_label_default_when_list_missing(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "does-not-exist.list")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_claude_account_label",
+		[]string{"/some/root/claude-accounts/work", list}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "Default" {
+		t.Fatalf("got %q, want %q", strings.TrimSpace(out), "Default")
+	}
+}

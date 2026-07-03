@@ -122,6 +122,30 @@ get_tree_cpu_pct() {
 # the id up so a restored tab reopens its own conversation (`claude --resume`)
 # instead of the project's most recent one.
 # Usage: gt_stamp_claude_session <statusline_json>
+# Map an account's isolated CLAUDE_CONFIG_DIR to its display label, so the
+# statusline can show which native Claude account this tab is using. The
+# statusline runs as a child of `claude`, which wrapper.sh launches with the
+# active account's CLAUDE_CONFIG_DIR exported (unset for the Keychain Default),
+# so $1 is that inherited value and its basename is the account's dir name. An
+# empty config dir (Default) or a dir absent from the list reads as "Default",
+# mirroring the menu/ledger's ACCOUNT row.
+# Usage: gt_claude_account_label "$CLAUDE_CONFIG_DIR" <list_file>  =>  "Work Max"
+gt_claude_account_label() {
+  local config_dir="$1" list_file="$2" active label dir
+  [ -z "$config_dir" ] && { printf 'Default\n'; return 0; }
+  active="${config_dir##*/}"
+  if [ -n "$active" ] && [ -f "$list_file" ]; then
+    while IFS=: read -r label dir; do
+      [[ -z "$label" || "$label" == \#* ]] && continue
+      if [ "$dir" = "$active" ]; then
+        printf '%s\n' "$label"
+        return 0
+      fi
+    done < "$list_file"
+  fi
+  printf 'Default\n'
+}
+
 gt_stamp_claude_session() {
   [ -n "${TMUX:-}" ] || return 0
   local sid transcript
