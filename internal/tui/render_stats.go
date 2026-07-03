@@ -149,6 +149,9 @@ func (m *MainMenuModel) statsRowGroups(leftBorder, rightBorder string) (headerRo
 	// (keeps the header row count and box-relative indices stable for hit-testing).
 	headerRows[0] = m.renderStatsModeRow(leftBorder, rightBorder)
 
+	// Blank spacer below the toggle so it doesn't crowd the table header.
+	headerRows = append(headerRows, emptyRow)
+
 	// Column header row.
 	header := lipgloss.NewStyle().Foreground(m.theme.Dim).Bold(true)
 	hdr := "  " + header.Render(fmt.Sprintf("%-8s %7s   %7s   %7s   %7s         %9s",

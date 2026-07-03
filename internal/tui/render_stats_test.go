@@ -78,6 +78,38 @@ func TestRenderStatsBox_modeToggleButton(t *testing.T) {
 	}
 }
 
+// TestRenderStatsBox_gapBelowViewRow verifies a blank spacer row sits between the
+// View toggle and the Month column header, so the toggle doesn't crowd the table.
+func TestRenderStatsBox_gapBelowViewRow(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabStats)
+	m.SetSize(120, 40)
+	updated, _ := m.Update(statsLoadedMsg{months: statsMonthWithModels()})
+	mm := updated.(*MainMenuModel)
+	lines := strings.Split(stripANSI(mm.renderStatsBox()), "\n")
+
+	viewIdx, monthIdx := -1, -1
+	for i, l := range lines {
+		if strings.Contains(l, "View:") {
+			viewIdx = i
+		}
+		if strings.Contains(l, "Month") {
+			monthIdx = i
+			break
+		}
+	}
+	if viewIdx < 0 || monthIdx < 0 {
+		t.Fatalf("missing View (%d) or Month (%d) row:\n%s", viewIdx, monthIdx, strings.Join(lines, "\n"))
+	}
+	if monthIdx != viewIdx+2 {
+		t.Errorf("Month header at line %d, want %d (one blank spacer below the View row):\n%s",
+			monthIdx, viewIdx+2, strings.Join(lines, "\n"))
+	}
+	if strings.ContainsAny(lines[viewIdx+1], "MonthViewFullCompact") {
+		t.Errorf("row below the View toggle should be blank, got %q", lines[viewIdx+1])
+	}
+}
+
 // TestRenderStatsBox_modePillFollowsSelection verifies the filled pill tracks the
 // selected mode: switching to compact pills Compact and un-pills Full.
 func TestRenderStatsBox_modePillFollowsSelection(t *testing.T) {
