@@ -11,9 +11,11 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -46,6 +48,10 @@ type Server struct {
 	mitmHost string      // upstream hostname intercepted on CONNECT
 	certs    *Certs      // non-nil when MITM forward-proxy mode is enabled
 	tlsConf  *tls.Config // leaf config presented to intercepted clients
+
+	activeAccountFile string     // path to persist the active account's dir (empty = off)
+	activeMu          sync.Mutex // guards lastRecordedDir
+	lastRecordedDir   string     // dedup: skip rewriting the file when unchanged
 }
 
 // Option configures a Server.
@@ -63,6 +69,37 @@ func WithNow(now func() time.Time) Option { return func(s *Server) { s.now = now
 
 // WithSleep overrides the retry-after wait function (used in tests).
 func WithSleep(sleep func(time.Duration)) Option { return func(s *Server) { s.sleep = sleep } }
+
+// WithActiveAccountFile makes the proxy persist the currently-serving account's
+// directory name to path whenever it changes (initial pick and every failover),
+// so the status line can reflect which account rotation has landed on. Empty
+// path (the default) disables it.
+func WithActiveAccountFile(path string) Option {
+	return func(s *Server) { s.activeAccountFile = path }
+}
+
+// recordActiveAccount persists dir to the active-account file, atomically
+// (write-temp-then-rename) and only when it changed since the last write. It is
+// best-effort: a write failure is ignored so it never disrupts request serving.
+func (s *Server) recordActiveAccount(dir string) {
+	if s.activeAccountFile == "" || dir == "" {
+		return
+	}
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	if dir == s.lastRecordedDir {
+		return
+	}
+	tmp := s.activeAccountFile + ".tmp"
+	if err := os.WriteFile(tmp, []byte(dir+"\n"), 0o644); err != nil {
+		return
+	}
+	if err := os.Rename(tmp, s.activeAccountFile); err != nil {
+		os.Remove(tmp)
+		return
+	}
+	s.lastRecordedDir = dir
+}
 
 // NewServer builds a Server over the account manager.
 func NewServer(mgr *Manager, proxyKey, upstream string, opts ...Option) *Server {
@@ -226,6 +263,9 @@ func (s *Server) proxyRequest(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		// This account served the request — record it as the current one so the
+		// status line reflects the account rotation actually landed on.
+		s.recordActiveAccount(acct.Dir)
 		s.relay(w, resp)
 		return
 	}

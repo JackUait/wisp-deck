@@ -33,7 +33,15 @@ default_label_file="$_gt_accounts_root/claude-account-default-label"
 if type gt_claude_account_label &>/dev/null \
    && type gt_multiple_claude_accounts &>/dev/null \
    && gt_multiple_claude_accounts "$accounts_list"; then
-  account_label=$(gt_claude_account_label "${CLAUDE_CONFIG_DIR:-}" "$accounts_list" "$default_label_file")
+  # When the rotation proxy is active it swaps accounts per-request while claude
+  # keeps its single (Default) config dir, so the proxy's current account (from
+  # WISP_DECK_PROXY_ACCOUNT_FILE) takes precedence over CLAUDE_CONFIG_DIR.
+  account_dir="${CLAUDE_CONFIG_DIR:-}"
+  if type gt_proxy_active_dir &>/dev/null; then
+    proxy_dir=$(gt_proxy_active_dir "${WISP_DECK_PROXY_ACCOUNT_FILE:-}")
+    [ -n "$proxy_dir" ] && account_dir="$proxy_dir"
+  fi
+  account_label=$(gt_claude_account_label "$account_dir" "$accounts_list" "$default_label_file")
 fi
 
 # Find parent Claude Code process and get total tree memory + CPU usage

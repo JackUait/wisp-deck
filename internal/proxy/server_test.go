@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -318,5 +320,76 @@ func TestServer_passesThrough429WhenAllExhausted(t *testing.T) {
 	}
 	if rec.Header().Get("retry-after") == "" {
 		t.Error("exhausted response should carry a retry-after header")
+	}
+}
+
+func TestServer_recordsActiveAccountDirOnServe(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		io.WriteString(w, "ok")
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "active-account")
+	mgr := NewManager([]Account{{Label: "A", Dir: "a", AccessToken: "tok-A"}, {Label: "B", Dir: "b", AccessToken: "tok-B"}}, 0.98)
+	srv := NewServer(mgr, "proxy-key", upstream.URL,
+		WithSleep(func(time.Duration) {}), WithActiveAccountFile(file))
+
+	doRequest(t, srv, "proxy-key", `{}`)
+
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("active-account file not written: %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "a" {
+		t.Fatalf("active-account file = %q, want %q", got, "a")
+	}
+}
+
+func TestServer_updatesActiveAccountFileOnFailover(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "Bearer tok-A" {
+			w.Header().Set("retry-after", "300")
+			w.WriteHeader(429)
+			return
+		}
+		w.WriteHeader(200)
+		io.WriteString(w, "ok-from-B")
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "active-account")
+	mgr := NewManager([]Account{{Label: "A", Dir: "a", AccessToken: "tok-A"}, {Label: "B", Dir: "b", AccessToken: "tok-B"}}, 0.98)
+	srv := NewServer(mgr, "proxy-key", upstream.URL,
+		WithSleep(func(time.Duration) {}), WithActiveAccountFile(file))
+
+	rec := doRequest(t, srv, "proxy-key", `{}`)
+	if rec.Body.String() != "ok-from-B" {
+		t.Fatalf("expected failover to B, got %q", rec.Body.String())
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("active-account file not written: %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "b" {
+		t.Fatalf("after failover, active-account file = %q, want %q", got, "b")
+	}
+}
+
+func TestServer_noActiveAccountFileIsNoop(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		io.WriteString(w, "ok")
+	}))
+	defer upstream.Close()
+
+	mgr := NewManager([]Account{{Label: "A", Dir: "a", AccessToken: "tok-A"}, {Label: "B", Dir: "b", AccessToken: "tok-B"}}, 0.98)
+	srv := NewServer(mgr, "proxy-key", upstream.URL, WithSleep(func(time.Duration) {}))
+
+	rec := doRequest(t, srv, "proxy-key", `{}`)
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200 when no active-account file configured", rec.Code)
 	}
 }

@@ -54,6 +54,11 @@ build_ai_launch_cmd() {
     else
       claude_account="${claude_account}ANTHROPIC_BASE_URL=\"http://127.0.0.1:${WISP_DECK_PROXY_PORT}\" ANTHROPIC_API_KEY=\"${WISP_DECK_PROXY_KEY}\" "
     fi
+    # Pass the proxy's active-account state file into claude's env so the status
+    # line (a child of claude) can show the pooled account rotation landed on.
+    if [ -n "${WISP_DECK_PROXY_ACCOUNT_FILE:-}" ]; then
+      claude_account="${claude_account}WISP_DECK_PROXY_ACCOUNT_FILE=\"${WISP_DECK_PROXY_ACCOUNT_FILE}\" "
+    fi
   fi
 
   # Claude-only: a launch prefix that runs Claude behind the screenshot-drag

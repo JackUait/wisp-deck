@@ -17,13 +17,14 @@ import (
 )
 
 var (
-	proxyAccountsDir string
-	proxyListFile    string
-	proxyThreshold   float64
-	proxyPort        int
-	proxyUpstream    string
-	proxyMITM        bool
-	proxyCertDir     string
+	proxyAccountsDir    string
+	proxyListFile       string
+	proxyThreshold      float64
+	proxyPort           int
+	proxyUpstream       string
+	proxyMITM           bool
+	proxyCertDir        string
+	proxyActiveAcctFile string
 )
 
 var proxyCmd = &cobra.Command{
@@ -42,6 +43,7 @@ func init() {
 	proxyCmd.Flags().StringVar(&proxyUpstream, "upstream", "https://api.anthropic.com", "upstream Anthropic base URL")
 	proxyCmd.Flags().BoolVar(&proxyMITM, "mitm", true, "enable the CONNECT/MITM forward proxy (like teamclaude's default); --mitm=false uses base-URL mode only")
 	proxyCmd.Flags().StringVar(&proxyCertDir, "cert-dir", "", "directory for the MITM CA/leaf certs (defaults to the accounts dir's parent)")
+	proxyCmd.Flags().StringVar(&proxyActiveAcctFile, "active-account-file", "", "path to persist the currently-serving account's dir name (for the status line)")
 	rootCmd.AddCommand(proxyCmd)
 }
 
@@ -75,7 +77,18 @@ func runProxy(cmd *cobra.Command, args []string) error {
 	mgr := proxy.NewManager(accounts, proxyThreshold)
 	mgr.SelectBest(time.Now())
 	key := generateProxyKey()
-	srv := proxy.NewServer(mgr, key, proxyUpstream, proxy.WithAccountsDir(proxyAccountsDir))
+	srv := proxy.NewServer(mgr, key, proxyUpstream,
+		proxy.WithAccountsDir(proxyAccountsDir),
+		proxy.WithActiveAccountFile(proxyActiveAcctFile))
+
+	// Seed the active-account file with the initial pick so the status line shows
+	// the starting account before the first request triggers any rotation.
+	if proxyActiveAcctFile != "" {
+		active := mgr.Active()
+		if active.Dir != "" {
+			_ = os.WriteFile(proxyActiveAcctFile, []byte(active.Dir+"\n"), 0o644)
+		}
+	}
 
 	// Enable the CONNECT/MITM forward proxy by default (teamclaude's default
 	// mode), so even hardcoded api.anthropic.com endpoints get the injected

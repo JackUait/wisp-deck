@@ -139,6 +139,21 @@ gt_multiple_claude_accounts() {
   [ "$count" -ge 2 ]
 }
 
+# Print the account-rotation proxy's currently-serving account dir name, read
+# from the state file the proxy rewrites on each switch (empty if the path is
+# blank, missing, or empty). When set, it overrides CLAUDE_CONFIG_DIR for the
+# statusline label: the proxy rotates accounts while `claude` keeps its single
+# (Default) config dir, so the env var alone would never reflect a switch.
+# Usage: gt_proxy_active_dir "$WISP_DECK_PROXY_ACCOUNT_FILE"  =>  "work"
+gt_proxy_active_dir() {
+  local file="$1" dir=""
+  { [ -n "$file" ] && [ -s "$file" ]; } || return 0
+  IFS= read -r dir < "$file" || true
+  dir="${dir#"${dir%%[![:space:]]*}"}"  # ltrim
+  dir="${dir%"${dir##*[![:space:]]}"}"  # rtrim
+  printf '%s\n' "$dir"
+}
+
 # Map an account's isolated CLAUDE_CONFIG_DIR to its display label, so the
 # statusline can show which native Claude account this tab is using. The
 # statusline runs as a child of `claude`, which wrapper.sh launches with the

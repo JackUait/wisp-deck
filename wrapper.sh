@@ -270,6 +270,7 @@ cleanup() {
   cleanup_tmux_session "$SESSION_NAME" "$WATCHER_PID" "$TMUX_CMD"
   rm -f "$SHARE_DIR/spare-${SESSION_NAME}.conf"
   rm -f "$SHARE_DIR/proxy-${SESSION_NAME}.log"
+  rm -f "$SHARE_DIR/proxy-account-${SESSION_NAME}"
   rm -rf "$SHARE_DIR/spare-zdotdir-${SESSION_NAME}"
 }
 trap cleanup EXIT HUP TERM INT
@@ -316,15 +317,22 @@ PROXY_PID=""
 WISP_DECK_PROXY_PORT=""
 WISP_DECK_PROXY_KEY=""
 WISP_DECK_PROXY_CA=""
+WISP_DECK_PROXY_ACCOUNT_FILE=""
 if [ "$SELECTED_AI_TOOL" = "claude" ] \
    && is_auto_switch_enabled "$_gt_cfg_root/auto-switch-accounts" \
    && auto_switch_eligible "$_gt_cfg_root/claude-accounts.list" \
    && command -v wisp-deck-tui >/dev/null 2>&1; then
   _proxy_log="$SHARE_DIR/proxy-${SESSION_NAME}.log"
   : > "$_proxy_log"
+  # The proxy records its currently-serving account's dir here on each switch, so
+  # the status line can show which pooled account rotation has landed on. Cleared
+  # on window close by cleanup().
+  WISP_DECK_PROXY_ACCOUNT_FILE="$SHARE_DIR/proxy-account-${SESSION_NAME}"
+  rm -f "$WISP_DECK_PROXY_ACCOUNT_FILE"
   wisp-deck-tui proxy \
     --accounts-dir "$_gt_cfg_root/claude-accounts" \
     --list "$_gt_cfg_root/claude-accounts.list" \
+    --active-account-file "$WISP_DECK_PROXY_ACCOUNT_FILE" \
     >> "$_proxy_log" 2>&1 &
   PROXY_PID=$!
   # Wait briefly for the proxy to announce its port + key (first line of output).
@@ -346,9 +354,10 @@ if [ "$SELECTED_AI_TOOL" = "claude" ] \
     warn "Account-rotation proxy failed to start; launching with the selected account."
     [ -n "$PROXY_PID" ] && kill_tree "$PROXY_PID" TERM 2>/dev/null || true
     PROXY_PID=""
+    WISP_DECK_PROXY_ACCOUNT_FILE=""
   fi
 fi
-export WISP_DECK_CLAUDE_ACCOUNT_DIR WISP_DECK_PROXY_PORT WISP_DECK_PROXY_KEY WISP_DECK_PROXY_CA
+export WISP_DECK_CLAUDE_ACCOUNT_DIR WISP_DECK_PROXY_PORT WISP_DECK_PROXY_KEY WISP_DECK_PROXY_CA WISP_DECK_PROXY_ACCOUNT_FILE
 
 # Resolve the active subscription/plan display name for the compact-view ledger.
 # Subscriptions are shared across agents, so this is resolved for every tool.

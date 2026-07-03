@@ -1827,6 +1827,45 @@ func TestStatusline_account_label_registered_dir_ignores_default_label_file(t *t
 	}
 }
 
+// --- gt_proxy_active_dir ---
+//
+// When the account-rotation proxy is active, `claude` keeps one (Default) config
+// dir while the proxy swaps accounts per-request, writing the current account's
+// dir name to a file. gt_proxy_active_dir reads that file so the statusline can
+// override CLAUDE_CONFIG_DIR with the account rotation actually landed on.
+
+func TestStatusline_proxy_active_dir_reads_file(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "proxy-account")
+	writeTempFile(t, dir, "proxy-account", "work\n")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_proxy_active_dir",
+		[]string{f}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "work" {
+		t.Fatalf("got %q, want %q", strings.TrimSpace(out), "work")
+	}
+}
+
+func TestStatusline_proxy_active_dir_empty_when_file_absent(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "nope")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_proxy_active_dir",
+		[]string{f}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("absent file must yield empty, got %q", strings.TrimSpace(out))
+	}
+}
+
+func TestStatusline_proxy_active_dir_empty_when_arg_blank(t *testing.T) {
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_proxy_active_dir",
+		[]string{""}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("blank path must yield empty, got %q", strings.TrimSpace(out))
+	}
+}
+
 // --- gt_multiple_claude_accounts ---
 //
 // The account segment is only worth showing when the user actually juggles
