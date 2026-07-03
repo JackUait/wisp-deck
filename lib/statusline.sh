@@ -122,6 +122,23 @@ get_tree_cpu_pct() {
 # the id up so a restored tab reopens its own conversation (`claude --resume`)
 # instead of the project's most recent one.
 # Usage: gt_stamp_claude_session <statusline_json>
+# Exit 0 when the accounts list holds at least two label:dir entries (skipping
+# comments, blanks, and malformed lines) — i.e. the user has multiple Claude
+# accounts to juggle, so the statusline account segment is worth showing. Mirrors
+# the codebase's existing "2+ accounts" convention (auto_switch_eligible).
+# Usage: gt_multiple_claude_accounts <list_file> && show_account_segment
+gt_multiple_claude_accounts() {
+  local file="$1" count=0 line
+  [ -f "$file" ] || return 1
+  while IFS= read -r line; do
+    line="${line#"${line%%[![:space:]]*}"}"  # ltrim
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" != *:* ]] && continue
+    count=$((count + 1))
+  done < "$file"
+  [ "$count" -ge 2 ]
+}
+
 # Map an account's isolated CLAUDE_CONFIG_DIR to its display label, so the
 # statusline can show which native Claude account this tab is using. The
 # statusline runs as a child of `claude`, which wrapper.sh launches with the

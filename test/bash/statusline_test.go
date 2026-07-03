@@ -1753,3 +1753,53 @@ func TestStatusline_account_label_default_when_list_missing(t *testing.T) {
 		t.Fatalf("got %q, want %q", strings.TrimSpace(out), "Default")
 	}
 }
+
+// --- gt_multiple_claude_accounts ---
+//
+// The account segment is only worth showing when the user actually juggles
+// multiple accounts. gt_multiple_claude_accounts gates it: exit 0 only when the
+// accounts list holds at least two label:dir entries, mirroring the codebase's
+// existing "2+ accounts" convention (auto_switch_eligible).
+
+func TestStatusline_multiple_accounts_false_when_list_missing(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "does-not-exist.list")
+	_, code := runBashFunc(t, "lib/statusline.sh", "gt_multiple_claude_accounts",
+		[]string{list}, nil)
+	if code == 0 {
+		t.Fatalf("missing list must not count as 2+ accounts (got exit %d)", code)
+	}
+}
+
+func TestStatusline_multiple_accounts_false_when_single_entry(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "claude-accounts.list")
+	writeTempFile(t, dir, "claude-accounts.list", "# accounts\nWork:work\n")
+	_, code := runBashFunc(t, "lib/statusline.sh", "gt_multiple_claude_accounts",
+		[]string{list}, nil)
+	if code == 0 {
+		t.Fatalf("a single account must not count as 2+ (got exit %d)", code)
+	}
+}
+
+func TestStatusline_multiple_accounts_true_when_two_entries(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "claude-accounts.list")
+	writeTempFile(t, dir, "claude-accounts.list", "Work:work\nPersonal:personal\n")
+	_, code := runBashFunc(t, "lib/statusline.sh", "gt_multiple_claude_accounts",
+		[]string{list}, nil)
+	assertExitCode(t, code, 0)
+}
+
+func TestStatusline_multiple_accounts_ignores_comments_blanks_and_malformed(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "claude-accounts.list")
+	// Two comment lines, a blank, and a malformed (no colon) line surround a
+	// single real entry — that is still just one account, so exit non-zero.
+	writeTempFile(t, dir, "claude-accounts.list", "# a\n\nnotanaccount\nWork:work\n# b\n")
+	_, code := runBashFunc(t, "lib/statusline.sh", "gt_multiple_claude_accounts",
+		[]string{list}, nil)
+	if code == 0 {
+		t.Fatalf("comments/blanks/malformed lines must not inflate the count (got exit %d)", code)
+	}
+}

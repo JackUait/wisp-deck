@@ -21,13 +21,14 @@ fi
 
 # Native Claude account label for this tab. wrapper.sh launches `claude` with the
 # active account's isolated CLAUDE_CONFIG_DIR exported (unset for the Keychain
-# Default), which this statusline process inherits. Shown only when the
-# multi-account feature is actually in use — the accounts list has at least one
-# entry — so single-login users get no extra clutter.
+# Default), which this statusline process inherits. Shown only when the user has
+# 2+ accounts connected (the accounts list holds at least two entries), so users
+# with a single login get no extra clutter.
 account_label=""
 accounts_list="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/claude-accounts.list"
 if type gt_claude_account_label &>/dev/null \
-   && grep -q '^[^#[:space:]]' "$accounts_list" 2>/dev/null; then
+   && type gt_multiple_claude_accounts &>/dev/null \
+   && gt_multiple_claude_accounts "$accounts_list"; then
   account_label=$(gt_claude_account_label "${CLAUDE_CONFIG_DIR:-}" "$accounts_list")
 fi
 
