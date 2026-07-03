@@ -570,9 +570,18 @@ func TestOpenDiffPopup_builds_whole_file_diff_popup(t *testing.T) {
 	dir := t.TempDir()
 	binDir := mockCommand(t, dir, "tmux", `echo "$@"`)
 	env := buildEnv(t, []string{binDir})
+	// A real repo with a COMMITTED file, so file_diff_command takes the tracked
+	// path and diffs the clicked file against HEAD.
+	repo := t.TempDir()
+	git := discardGitRepo(t, repo)
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, repo, "x.sh", "echo hi\n")
+	git("add", "x.sh")
+	git("commit", "-q", "-m", "init")
 	root := projectRoot(t)
 	module := filepath.Join(root, "lib", "compact-view.sh")
-	script := "source " + module + " && open_diff_popup /proj lib/x.sh"
+	script := "source " + module + " && open_diff_popup " + repo + " x.sh"
 	cmd := exec.Command("bash", "-c", script)
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
@@ -582,7 +591,7 @@ func TestOpenDiffPopup_builds_whole_file_diff_popup(t *testing.T) {
 	got := string(out)
 	assertContains(t, got, "display-popup")
 	assertContains(t, got, "diff HEAD -U999999")
-	assertContains(t, got, "lib/x.sh")
+	assertContains(t, got, "x.sh")
 	assertContains(t, got, "color=never")
 }
 
@@ -1152,11 +1161,11 @@ func TestCompactView_does_not_leak_width_variable_under_zsh(t *testing.T) {
 	}
 }
 
-// The "new" (untracked) section is excess for a line-change ledger: untracked
-// files carry no +/- counts. compact_view must omit it entirely — no "new"
-// header, no untracked filenames, and (since the old block declared `local
-// display` inside its loop) no leaked "display=..." line under zsh.
-func TestCompactView_omits_untracked_new_section(t *testing.T) {
+// A just-created (untracked) file must appear in the ledger under a dedicated
+// "new" group so the user can see — and discard — files they just made. The
+// group renders the file's basename with its all-added line count (+N −0), the
+// SAME row shape as tracked changes, with no leaked "display=..." line under zsh.
+func TestCompactView_shows_untracked_in_new_section(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
 		t.Skip("zsh not available")
@@ -1197,11 +1206,11 @@ func TestCompactView_omits_untracked_new_section(t *testing.T) {
 	out, _ := cmd.CombinedOutput()
 	got := string(out)
 
-	if strings.Contains(got, "untrackedonly.txt") {
-		t.Errorf("untracked filename should not appear:\n%q", got)
+	if !strings.Contains(got, "untrackedonly.txt") {
+		t.Errorf("untracked filename should appear in the ledger:\n%q", got)
 	}
-	if strings.Contains(got, "new") {
-		t.Errorf("'new' section header should not appear:\n%q", got)
+	if !strings.Contains(got, "new") {
+		t.Errorf("'new' section header should appear:\n%q", got)
 	}
 	if strings.Contains(got, "display=") {
 		t.Errorf("leaked 'display=' from untracked loop:\n%q", got)
@@ -1521,6 +1530,116 @@ func TestDiscardWorktreeFile_keeps_staged_change(t *testing.T) {
 	}
 	if string(staged) != "staged\n" {
 		t.Errorf("staged copy should be intact: got %q, want %q", string(staged), "staged\n")
+	}
+}
+
+// Discarding a just-created (untracked) file removes it from the worktree —
+// git restore is a no-op for a file git does not track, so "discard" for an
+// untracked file means deleting it (undoing the creation).
+func TestDiscardWorktreeFile_deletes_untracked_file(t *testing.T) {
+	dir := t.TempDir()
+	git := discardGitRepo(t, dir)
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "a.txt", "committed\n")
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "brand-new.txt", "just created\n") // untracked
+
+	_, code := runBashFunc(t, "lib/compact-view.sh", "discard_worktree_file",
+		[]string{dir, "brand-new.txt"}, nil)
+	if code != 0 {
+		t.Fatalf("discard_worktree_file exit = %d, want 0", code)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "brand-new.txt")); !os.IsNotExist(err) {
+		t.Errorf("untracked file should be deleted, but it still exists (stat err = %v)", err)
+	}
+}
+
+// file_diff_command builds the git diff invocation that feeds the diff-view
+// pager. A tracked file diffs against HEAD (its committed version).
+func TestFileDiffCommand_tracked_file_diffs_head(t *testing.T) {
+	dir := t.TempDir()
+	git := discardGitRepo(t, dir)
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "a.txt", "committed\n")
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "a.txt", "committed\nedit\n")
+
+	out, code := cvFuncArgv(t, "file_diff_command", dir, "a.txt")
+	assertExitCode(t, code, 0)
+	if !strings.Contains(out, "diff HEAD") {
+		t.Errorf("tracked file should diff against HEAD, got:\n%q", out)
+	}
+	if strings.Contains(out, "--no-index") {
+		t.Errorf("tracked file must not use --no-index, got:\n%q", out)
+	}
+}
+
+// A just-created UNTRACKED file has no HEAD version, so its diff is taken
+// against /dev/null (--no-index) — rendering the whole new file as additions
+// instead of an empty popup.
+func TestFileDiffCommand_untracked_file_diffs_devnull(t *testing.T) {
+	dir := t.TempDir()
+	git := discardGitRepo(t, dir)
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "a.txt", "committed\n")
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "brand-new.txt", "a\nb\n") // untracked
+
+	out, code := cvFuncArgv(t, "file_diff_command", dir, "brand-new.txt")
+	assertExitCode(t, code, 0)
+	if !strings.Contains(out, "--no-index") || !strings.Contains(out, "/dev/null") {
+		t.Errorf("untracked file should diff against /dev/null via --no-index, got:\n%q", out)
+	}
+}
+
+// untracked_numstat enumerates just-created (untracked) files as numstat rows
+// so they flow through the SAME render/click pipeline as tracked changes: one
+// "<added>\t0\t<path>" line per file, the added count being the file's line
+// count (a brand-new file is all additions).
+func TestUntrackedNumstat_lists_untracked_with_added_count(t *testing.T) {
+	dir := t.TempDir()
+	git := discardGitRepo(t, dir)
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "committed.txt", "x\n")
+	git("add", "committed.txt")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "new.txt", "a\nb\nc\n") // untracked, 3 lines
+
+	out, code := cvFuncArgv(t, "untracked_numstat", dir)
+	assertExitCode(t, code, 0)
+	if !strings.Contains(out, "3\t0\tnew.txt") {
+		t.Errorf("expected a numstat row \"3\\t0\\tnew.txt\", got:\n%q", out)
+	}
+	// A tracked, unmodified file must NOT be reported as untracked.
+	if strings.Contains(out, "committed.txt") {
+		t.Errorf("tracked file should not appear in untracked_numstat:\n%q", out)
+	}
+}
+
+// untracked_numstat honours .gitignore (git ls-files --exclude-standard): an
+// ignored file is not a "new" change the user needs to see in the ledger.
+func TestUntrackedNumstat_excludes_gitignored(t *testing.T) {
+	dir := t.TempDir()
+	git := discardGitRepo(t, dir)
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "seed.txt", "x\n")
+	git("add", "seed.txt")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, ".gitignore", "ignored.txt\n")
+	writeTempFile(t, dir, "ignored.txt", "secret\n") // untracked but ignored
+
+	out, code := cvFuncArgv(t, "untracked_numstat", dir)
+	assertExitCode(t, code, 0)
+	if strings.Contains(out, "ignored.txt") {
+		t.Errorf("gitignored file should be excluded from untracked_numstat:\n%q", out)
 	}
 }
 

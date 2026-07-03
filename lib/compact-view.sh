@@ -132,17 +132,37 @@ numstat_path() {
   printf '%s' "$p"
 }
 
+# untracked_numstat lists the repo's just-created files — untracked and NOT
+# gitignored (git ls-files --others --exclude-standard) — as `git --numstat`-
+# shaped rows, "<added>\t0\t<path>", so a brand-new file feeds the SAME ledger
+# render and click→path map as a tracked change. A new file is all additions, so
+# <added> is its line count: `git diff --no-index` against /dev/null yields git's
+# own count (honouring a missing trailing newline, and emitting "-" for binary,
+# exactly as numstat does elsewhere). The NUL-delimited ls-files keeps paths with
+# spaces or newlines intact; diff prints "/dev/null => <path>", so field 1 is the
+# added count and we re-emit the clean working-tree path as field 3.
+# Usage: untracked_numstat <project_dir>
+untracked_numstat() {
+  local dir="$1" file count
+  while IFS= read -r -d '' file; do
+    count=$(git -C "$dir" diff --no-index --numstat -- /dev/null "$file" 2>/dev/null | cut -f1)
+    [ -z "$count" ] && count=0
+    printf '%s\t0\t%s\n' "$count" "$file"
+  done < <(git -C "$dir" ls-files --others --exclude-standard -z 2>/dev/null)
+}
+
 # body_path_map emits ONE line per rendered body line: the file's path on a file
 # row, and an EMPTY line on a group-header or trailing-blank row. A click's
 # body-line index is looked up against this map to find the path to diff. It
 # MUST mirror render_group's line structure exactly — 1 header line + N file
-# rows + 1 trailing blank per non-empty group, staged first then modified, or a
-# single (empty-path) line for the "no changes" state — so the Nth map line
-# always describes the Nth body line. Untracked files are omitted (as in the
-# ledger). Renames resolve to their post-rename path via numstat_path.
-# Usage: body_path_map <staged numstat> <unstaged numstat>
+# rows + 1 trailing blank per non-empty group, staged first, then modified, then
+# new (untracked), or a single (empty-path) line for the "no changes" state — so
+# the Nth map line always describes the Nth body line. Renames resolve to their
+# post-rename path via numstat_path. The untracked snapshot (from
+# untracked_numstat) is optional so the two-arg tracked-only callers still work.
+# Usage: body_path_map <staged numstat> <unstaged numstat> [untracked numstat]
 body_path_map() {
-  local staged="$1" unstaged="$2"
+  local staged="$1" unstaged="$2" untracked="$3"
   emit_group() {
     local data="$1"
     [ -z "$data" ] && return
@@ -156,7 +176,8 @@ body_path_map() {
   }
   emit_group "$staged"
   emit_group "$unstaged"
-  if [ -z "$staged" ] && [ -z "$unstaged" ]; then
+  emit_group "$untracked"
+  if [ -z "$staged" ] && [ -z "$unstaged" ] && [ -z "$untracked" ]; then
     printf '\n'                       # "no changes" row -> no path
   fi
 }
@@ -258,13 +279,21 @@ should_discard() {
   [ "$(cat "$file" 2>/dev/null)" = "discard" ]
 }
 
-# discard_worktree_file discards a tracked file's working-tree changes, restoring
-# the worktree from the index (git's own "discard changes in working directory").
-# A staged copy, if any, is left intact. Returns git's exit status.
+# discard_worktree_file discards a file the way its state demands. A tracked file
+# (in the index — including a staged-new one) has its working-tree changes
+# restored from the index (git's own "discard changes in working directory"),
+# leaving any staged copy intact. A just-created UNTRACKED file has nothing in git
+# to restore FROM, so "discard" means undoing the creation: the file is removed
+# (git clean). ls-files --error-unmatch exits 0 only when the path is tracked,
+# which is how the two cases are told apart. Returns git's exit status.
 # Usage: discard_worktree_file <project_dir> <file>
 discard_worktree_file() {
   local dir="$1" file="$2"
-  git -C "$dir" restore -- "$file"
+  if git -C "$dir" ls-files --error-unmatch -- "$file" >/dev/null 2>&1; then
+    git -C "$dir" restore -- "$file"
+  else
+    git -C "$dir" clean -fq -- "$file"
+  fi
 }
 
 # ── Multi-select (batch discard) ────────────────────────────────────────────
@@ -402,8 +431,28 @@ discard_worktree_files() {
   return "$rc"
 }
 
+# file_diff_command echoes the shell command whose output feeds the diff-view
+# pager for <file>. A tracked file diffs against HEAD — its committed version. A
+# just-created UNTRACKED file has no HEAD blob, so diffing against HEAD would emit
+# nothing (a blank popup); it diffs against /dev/null via --no-index instead,
+# rendering the whole new file as additions. ls-files --error-unmatch exits 0
+# only for a tracked path, which distinguishes the two. Paths are %q-quoted so
+# spaces survive the tmux command string; -U999999 gives full context and
+# --color=never leaves coloring to the pager.
+# Usage: file_diff_command <project_dir> <file>
+file_diff_command() {
+  local dir="$1" file="$2" qd qf
+  qd=$(printf '%q' "$dir")
+  qf=$(printf '%q' "$file")
+  if git -C "$dir" ls-files --error-unmatch -- "$file" >/dev/null 2>&1; then
+    printf 'git -C %s --no-pager diff HEAD -U999999 --color=never -- %s' "$qd" "$qf"
+  else
+    printf 'git -C %s --no-pager diff --no-index -U999999 --color=never -- /dev/null %s' "$qd" "$qf"
+  fi
+}
+
 # open_diff_popup floats a whole-window tmux popup showing the clicked path's
-# diff versus HEAD. The whole file is fed to the pager (-U999999, full context),
+# diff versus HEAD (or, for an untracked file, its whole content as additions). The whole file is fed to the pager (-U999999, full context),
 # but the pager DEFAULTS to a changes-only view — just the changed lines plus a
 # few lines of context, the rest collapsed behind a "⋯ N unchanged lines" marker
 # — with a "Full" toggle (click or 'f') to reveal the whole file. Sending the
@@ -427,8 +476,7 @@ discard_worktree_files() {
 open_diff_popup() {
   local dir="$1" file="$2"
   command -v tmux &>/dev/null || return 0
-  local qd qf qtool
-  qd=$(printf '%q' "$dir")
+  local qf qtool
   qf=$(printf '%q' "$file")
   # The pager themes its chrome (border, rule, tabs) from --ai-tool. Forward the
   # session's active tool (exported as WISP_DECK_TOOL) so OpenCode sessions get
@@ -473,8 +521,10 @@ open_diff_popup() {
   # margin, and closes when a click lands in that margin (tmux ignores clicks
   # outside a smaller popup). No -T title — the pager's header already shows the
   # path + added/deleted counts.
+  local diffcmd
+  diffcmd=$(file_diff_command "$dir" "$file")
   tmux display-popup -E -B -w 100% -h 100% \
-    "git -C ${qd} --no-pager diff HEAD -U999999 --color=never -- ${qf} | ${strip} | wisp-deck-tui diff-view --ai-tool ${qtool} --title ${qf} ${backdrop_arg} ${decision_arg}"
+    "${diffcmd} | ${strip} | wisp-deck-tui diff-view --ai-tool ${qtool} --title ${qf} ${backdrop_arg} ${decision_arg}"
 
   # The user confirmed a discard in the pager: revert the file's working-tree
   # changes now that the popup has closed.
@@ -666,7 +716,7 @@ compact_view() {
   # w` each iteration flashed "w=141" on screen until the next refresh.
   local w h content header body body_total avail mbtn draw_body frame
   local header_rows=2
-  local staged unstaged body_map
+  local staged unstaged untracked body_map
   local mterm mrest mrow bl cpath prev_hover prev_scroll hover_keep
   # Multi-select batch discard: SELECTED is a newline-delimited set of marked
   # file PATHS (tracked by path so it survives the ledger's rebuild/scroll).
@@ -880,15 +930,17 @@ compact_view() {
     # Rebuild the ledger only on a refresh tick; scroll keys just re-slice the
     # cached content so the wheel stays snappy (no git calls per keystroke).
     if [ "$need_build" = 1 ]; then
-    # Gather the tracked changes up here (not inside the render subshell) so the
-    # SAME data feeds both the rendered body and the click→path map. Untracked
-    # files carry no +/- counts and are intentionally omitted from the ledger.
+    # Gather the changes up here (not inside the render subshell) so the SAME data
+    # feeds both the rendered body and the click→path map. Just-created files are
+    # untracked, so git diff never lists them — untracked_numstat enumerates them
+    # separately (as +N −0 rows) into the "new" group below.
     staged=$(git -C "$project_dir" diff --cached --numstat 2>/dev/null)
     unstaged=$(git -C "$project_dir" diff --numstat 2>/dev/null)
+    untracked=$(untracked_numstat "$project_dir")
     # One path per body line, mirroring the render below. Captured (like the
     # body) via $(), so both shed their trailing blank identically and the Nth
     # map line keeps describing the Nth body line.
-    body_map=$(body_path_map "$staged" "$unstaged")
+    body_map=$(body_path_map "$staged" "$unstaged" "$untracked")
     content=$(
       cd "$project_dir" || exit 1
 
@@ -912,17 +964,20 @@ compact_view() {
         fi
       fi
 
-      # Tracked changes ($staged/$unstaged) are gathered by the parent shell and
-      # inherited here, so the render and the click→path map share one snapshot.
+      # The changes ($staged/$unstaged/$untracked) are gathered by the parent
+      # shell and inherited here, so the render and the click→path map share one
+      # snapshot.
 
       # Count totals
-      local n_staged=0 n_unstaged=0
+      local n_staged=0 n_unstaged=0 n_untracked=0
       [ -n "$staged" ] && n_staged=$(echo "$staged" | wc -l | tr -d ' ')
       [ -n "$unstaged" ] && n_unstaged=$(echo "$unstaged" | wc -l | tr -d ' ')
+      [ -n "$untracked" ] && n_untracked=$(echo "$untracked" | wc -l | tr -d ' ')
 
-      # Net line totals across tracked changes (the ledger "stamp")
+      # Net line totals across all changes (the ledger "stamp"); a new file's
+      # every line counts as an addition, so untracked rows feed the +total too.
       local sums ta td
-      sums=$(printf '%s\n%s\n' "$staged" "$unstaged" | sum_numstat)
+      sums=$(printf '%s\n%s\n%s\n' "$staged" "$unstaged" "$untracked" | sum_numstat)
       ta=${sums% *}
       td=${sums#* }
 
@@ -932,7 +987,7 @@ compact_view() {
       local leaf="${branch##*/}"
       local ns=""
       [ "$leaf" != "$branch" ] && ns="${branch%/*}/"
-      local total_files=$((n_staged + n_unstaged))
+      local total_files=$((n_staged + n_unstaged + n_untracked))
       local funit="files"
       [ "$total_files" -eq 1 ] && funit="file"
       local stamp=""
@@ -995,12 +1050,16 @@ compact_view() {
       local has_content=0
       [ -n "$staged" ] && has_content=1
       [ -n "$unstaged" ] && has_content=1
+      [ -n "$untracked" ] && has_content=1
 
       # ── Staged ──
       render_group "$staged" "$green" "●" "staged" "$name_width" "$n_staged"
 
       # ── Modified ──
       render_group "$unstaged" "$yellow" "●" "modified" "$name_width" "$n_unstaged"
+
+      # ── New (untracked, just-created files) ──
+      render_group "$untracked" "$cyan" "●" "new" "$name_width" "$n_untracked"
 
       # Empty state
       if [ "$has_content" -eq 0 ]; then
