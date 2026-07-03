@@ -14,9 +14,19 @@ var statsModeLabels = []string{"Full", "Compact"}
 
 const statsModeCaption = "View: "
 
-// renderStatsModeRow renders the Full/Compact toggle button. The active mode is
-// bracketed and bold (mirroring the active tab); the other is dim, and brightens +
-// underlines on hover, so it reads as a clickable control.
+// statsModeMarkerSelected and statsModeMarkerUnselected are the radio-style square
+// glyphs for the Full/Compact toggle: a filled square marks the selected mode, a
+// hollow square marks the others — reading like a view switcher. Each part renders
+// as "<square> <label>" (width label+2), matching statsModeHitRanges in mouse.go.
+const (
+	statsModeMarkerSelected   = "■"
+	statsModeMarkerUnselected = "□"
+)
+
+// renderStatsModeRow renders the Full/Compact toggle as a view switcher: the
+// selected mode gets a filled orange (Primary) square and bold label; the others
+// get a hollow dim square, brightening + underlining on hover so they read as
+// clickable controls.
 func (m *MainMenuModel) renderStatsModeRow(leftBorder, rightBorder string) string {
 	activeStyle := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
 	inactiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
@@ -32,11 +42,11 @@ func (m *MainMenuModel) renderStatsModeRow(leftBorder, rightBorder string) strin
 	for i, label := range statsModeLabels {
 		switch {
 		case i == activeIdx:
-			parts[i] = activeStyle.Render("[" + label + "]")
+			parts[i] = activeStyle.Render(statsModeMarkerSelected + " " + label)
 		case i == m.hoverStatsMode:
-			parts[i] = hoverStyle.Render(" " + label + " ")
+			parts[i] = hoverStyle.Render(statsModeMarkerUnselected + " " + label)
 		default:
-			parts[i] = inactiveStyle.Render(" " + label + " ")
+			parts[i] = inactiveStyle.Render(statsModeMarkerUnselected + " " + label)
 		}
 	}
 	content := captionStyle.Render(statsModeCaption) + strings.Join(parts, "  ")

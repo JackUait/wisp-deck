@@ -112,8 +112,8 @@ func (m *MainMenuModel) statsModeButtonVisible() bool {
 
 // statsModeHitRanges returns the [start, end) box-relative column span of each
 // Full/Compact label, mirroring renderStatsModeRow's layout: a leading "│ " (cols
-// 0,1), the caption, then each bracketed label (width = label+2) joined by two
-// spaces.
+// 0,1), the caption, then each "<square> <label>" cell (width = label+2, the
+// square+space prefix replacing the old brackets) joined by two spaces.
 func statsModeHitRanges() [][2]int {
 	ranges := make([][2]int, len(statsModeLabels))
 	col := 2 + lipgloss.Width(statsModeCaption)

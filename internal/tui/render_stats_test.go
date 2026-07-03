@@ -50,9 +50,30 @@ func TestRenderStatsBox_modeToggleButton(t *testing.T) {
 			t.Errorf("stats view missing %q toggle label:\n%s", want, out)
 		}
 	}
-	// Default is full mode: the active label is bracketed like the tab bar.
-	if !strings.Contains(out, "[Full]") {
-		t.Errorf("full mode should mark [Full] active:\n%s", out)
+	// The toggle reads like a view switcher: a filled square marks the selected
+	// mode, hollow squares mark the others. Default is full mode.
+	if !strings.Contains(out, "■ Full") {
+		t.Errorf("full mode should mark the selected mode with a filled square (■ Full):\n%s", out)
+	}
+	if !strings.Contains(out, "□ Compact") {
+		t.Errorf("unselected mode should show a hollow square (□ Compact):\n%s", out)
+	}
+}
+
+// TestRenderStatsBox_modeSquareFollowsSelection verifies the filled square tracks
+// the selected mode: switching to compact fills Compact's square and hollows Full's.
+func TestRenderStatsBox_modeSquareFollowsSelection(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabStats)
+	updated, _ := m.Update(statsLoadedMsg{months: statsMonthWithModels()})
+	mm := updated.(*MainMenuModel)
+	mm.statsCompact = true
+	out := stripANSI(mm.renderStatsBox())
+	if !strings.Contains(out, "■ Compact") {
+		t.Errorf("compact mode should mark ■ Compact selected:\n%s", out)
+	}
+	if !strings.Contains(out, "□ Full") {
+		t.Errorf("compact mode should hollow □ Full:\n%s", out)
 	}
 }
 
