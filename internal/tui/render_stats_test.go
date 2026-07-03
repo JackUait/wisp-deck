@@ -1,12 +1,70 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jackuait/wisp-deck/internal/usage"
 )
+
+// manyStatsMonths builds n months each with a couple of per-model rows so the
+// rendered stats content is far taller than any modest terminal.
+func manyStatsMonths(n int) []usage.MonthlyUsage {
+	months := make([]usage.MonthlyUsage, 0, n)
+	for i := 0; i < n; i++ {
+		months = append(months, usage.MonthlyUsage{
+			Month: fmt.Sprintf("2026-%02d", (i%12)+1),
+			Input: 1_000_000,
+			Models: []usage.ModelUsage{
+				{Model: "claude-opus-4-8", Input: 600_000},
+				{Model: "claude-sonnet-5", Input: 400_000},
+			},
+		})
+	}
+	return months
+}
+
+// TestRenderStatsBox_scrollsWhenTallerThanTerminal is the core regression for the
+// Stats tab overflowing the screen: with a short terminal and many months, the box
+// must clip to the height budget and surface a ▼ overflow indicator, and scrolling
+// down must bring a ▲ into view. Previously the tab windowed by whole months
+// (statsWindow=8), so a handful of months with many model rows still overflowed
+// vertically and never scrolled.
+func TestRenderStatsBox_scrollsWhenTallerThanTerminal(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabStats)
+	const h = 24
+	m.SetSize(120, h)
+
+	updated, _ := m.Update(statsLoadedMsg{months: manyStatsMonths(12)})
+	mm := updated.(*MainMenuModel)
+
+	box := mm.renderStatsBox()
+	lines := strings.Split(box, "\n")
+	if len(lines) > h {
+		t.Fatalf("stats box overflows terminal: %d lines > height %d", len(lines), h)
+	}
+	if !strings.Contains(stripANSI(box), "▼") {
+		t.Errorf("expected a ▼ overflow indicator when content exceeds height:\n%s", stripANSI(box))
+	}
+
+	// Scroll to the bottom; a ▲ (content above) must appear.
+	for i := 0; i < 200; i++ {
+		mm.statsScrollDown()
+	}
+	bottom := stripANSI(mm.renderStatsBox())
+	if !strings.Contains(bottom, "▲") {
+		t.Errorf("expected a ▲ indicator after scrolling to the bottom:\n%s", bottom)
+	}
+	if strings.Count(strings.ReplaceAll(bottom, "\n", ""), "") == 0 {
+		t.Fatal("empty box")
+	}
+	if got := strings.Split(mm.renderStatsBox(), "\n"); len(got) > h {
+		t.Errorf("stats box still overflows after scroll: %d > %d", len(got), h)
+	}
+}
 
 func TestRenderStatsBox_hasTabBar(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")

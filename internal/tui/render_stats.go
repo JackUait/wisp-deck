@@ -8,9 +8,24 @@ import (
 	"github.com/jackuait/wisp-deck/internal/usage"
 )
 
-// renderStatsRows renders the stats content as box rows using leftBorder/rightBorder,
-// reading cached stats fields from MainMenuModel instead of calling NewStatsModel().
+// renderStatsRows renders the stats content as a flat slice of box rows. It is the
+// concatenation of the three groups returned by statsRowGroups; retained so callers
+// (and tests) that want the whole content block keep working.
 func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string {
+	header, body, footer := m.statsRowGroups(leftBorder, rightBorder)
+	rows := make([]string, 0, len(header)+len(body)+len(footer))
+	rows = append(rows, header...)
+	rows = append(rows, body...)
+	rows = append(rows, footer...)
+	return rows
+}
+
+// statsRowGroups splits the stats content into a fixed header (column labels), a
+// scrollable body (one group of rows per month), and a fixed footer (grand totals).
+// Only the body is scrolled when the tab is taller than the terminal, so the column
+// headers and the grand-total line stay pinned. Non-data states (loading, error,
+// empty) put everything in the header group with no body to scroll.
+func (m *MainMenuModel) statsRowGroups(leftBorder, rightBorder string) (headerRows, bodyRows, footerRows []string) {
 	primaryBoldStyle := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
 	dimStyle := lipgloss.NewStyle().Foreground(m.theme.Dim)
 	numStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
@@ -42,32 +57,31 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 		return leftBorder + prefix + strings.Repeat(" ", gap) + valRendered + rightBorder
 	}
 
-	var rows []string
-	rows = append(rows, emptyRow)
+	headerRows = append(headerRows, emptyRow)
 
 	// Loading state.
 	if m.statsLoading {
-		rows = append(rows, textRow(primaryBoldStyle.Render("Crunching token usage…")))
-		rows = append(rows, emptyRow)
-		rows = append(rows, textRow(faint.Render("Usage data is read from ~/.claude/usage/")))
-		rows = append(rows, emptyRow)
-		return rows
+		headerRows = append(headerRows, textRow(primaryBoldStyle.Render("Crunching token usage…")))
+		headerRows = append(headerRows, emptyRow)
+		headerRows = append(headerRows, textRow(faint.Render("Usage data is read from ~/.claude/usage/")))
+		headerRows = append(headerRows, emptyRow)
+		return headerRows, nil, nil
 	}
 
 	// Error state.
 	if m.statsErr != nil {
-		rows = append(rows, textRow(errStyle.Render("Failed to load usage: "+m.statsErr.Error())))
-		rows = append(rows, emptyRow)
-		return rows
+		headerRows = append(headerRows, textRow(errStyle.Render("Failed to load usage: "+m.statsErr.Error())))
+		headerRows = append(headerRows, emptyRow)
+		return headerRows, nil, nil
 	}
 
 	// Empty state (loaded but no data).
 	if len(m.statsMonths) == 0 {
-		rows = append(rows, textRow(muted.Render("No usage data found yet.")))
-		rows = append(rows, emptyRow)
-		rows = append(rows, textRow(faint.Render("Usage data is read from ~/.claude/usage/")))
-		rows = append(rows, emptyRow)
-		return rows
+		headerRows = append(headerRows, textRow(muted.Render("No usage data found yet.")))
+		headerRows = append(headerRows, emptyRow)
+		headerRows = append(headerRows, textRow(faint.Render("Usage data is read from ~/.claude/usage/")))
+		headerRows = append(headerRows, emptyRow)
+		return headerRows, nil, nil
 	}
 
 	// Column header row.
@@ -78,30 +92,25 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 	if hdrGap < 0 {
 		hdrGap = 0
 	}
-	rows = append(rows, leftBorder+hdr+strings.Repeat(" ", hdrGap)+rightBorder)
+	headerRows = append(headerRows, leftBorder+hdr+strings.Repeat(" ", hdrGap)+rightBorder)
 
 	// Separator
 	sepRow := leftBorder + strings.Repeat(" ", menuContentWidth) + rightBorder
-	rows = append(rows, sepRow)
+	headerRows = append(headerRows, sepRow)
 
-	// Visible window of months.
-	end := m.statsOffset + statsWindow
-	if end > len(m.statsMonths) {
-		end = len(m.statsMonths)
-	}
-	visibleMonths := m.statsMonths[m.statsOffset:end]
-
+	// Every month is rendered into the scrollable body; the visible slice is
+	// chosen later by applyStatsScroll based on the terminal height budget.
 	grandTotal := statsGrandTotal(m.statsMonths)
 	allTotal := grandTotal.Total()
 	if allTotal < 1 {
 		allTotal = 1
 	}
 
-	for i, mu := range visibleMonths {
+	for i, mu := range m.statsMonths {
 		// Blank spacer between months so one month's per-model rows don't run
 		// straight into the next month's header.
 		if i > 0 {
-			rows = append(rows, emptyRow)
+			bodyRows = append(bodyRows, emptyRow)
 		}
 
 		frac := float64(mu.Total()) / float64(allTotal)
@@ -123,7 +132,7 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 		if dataGap < 0 {
 			dataGap = 0
 		}
-		rows = append(rows, leftBorder+dataLine+strings.Repeat(" ", dataGap)+rightBorder)
+		bodyRows = append(bodyRows, leftBorder+dataLine+strings.Repeat(" ", dataGap)+rightBorder)
 
 		// Bar + percent + cost on line below the data.
 		gaugeStr := statsGauge(frac, lipgloss.NewStyle().Foreground(m.theme.Primary), dimStyle)
@@ -133,7 +142,7 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 			costPad = 1
 		}
 		barRow := leftBorder + barLine + strings.Repeat(" ", costPad) + primaryBoldStyle.Render(costStr) + rightBorder
-		rows = append(rows, barRow)
+		bodyRows = append(bodyRows, barRow)
 
 		// Per-model breakdown: which models drove the month's spend. Drawn as a tree
 		// hanging off the month (├─ for each model, └─ for the last) and muted so the
@@ -158,12 +167,12 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 			if modelPad < 1 {
 				modelPad = 1
 			}
-			rows = append(rows, leftBorder+modelLine+strings.Repeat(" ", modelPad)+dimStyle.Render(modelCost)+rightBorder)
+			bodyRows = append(bodyRows, leftBorder+modelLine+strings.Repeat(" ", modelPad)+dimStyle.Render(modelCost)+rightBorder)
 		}
 	}
 
 	// Grand total row.
-	rows = append(rows, sepRow)
+	footerRows = append(footerRows, sepRow)
 	g := grandTotal
 	grandCost := 0.0
 	grandAllPriced := true
@@ -179,11 +188,11 @@ func (m *MainMenuModel) renderStatsRows(leftBorder, rightBorder string) []string
 		grandCostStr = "~" + grandCostStr
 	}
 
-	rows = append(rows, itemRow("Total", humanizeTokens(g.Total()), primaryBoldStyle, primaryBoldStyle))
-	rows = append(rows, itemRow("Est. cost", grandCostStr, header, primaryBoldStyle))
-	rows = append(rows, emptyRow)
+	footerRows = append(footerRows, itemRow("Total", humanizeTokens(g.Total()), primaryBoldStyle, primaryBoldStyle))
+	footerRows = append(footerRows, itemRow("Est. cost", grandCostStr, header, primaryBoldStyle))
+	footerRows = append(footerRows, emptyRow)
 
-	return rows
+	return headerRows, bodyRows, footerRows
 }
 
 // renderStatsBox renders the Stats tab: shared chrome (top border + title row +
@@ -204,8 +213,70 @@ func (m *MainMenuModel) renderStatsBox() string {
 	lines = append(lines, m.emptyMenuRow(leftBorder, rightBorder))
 	lines = append(lines, m.renderTabBar(leftBorder, rightBorder))
 	lines = append(lines, separator)
-	lines = append(lines, m.renderStatsRows(leftBorder, rightBorder)...)
+
+	statsHeader, statsBody, statsFooter := m.statsRowGroups(leftBorder, rightBorder)
+	// Index of the first scrollable body line and the first line past it, within
+	// the full box. Only the month body between the column headers and the grand
+	// total is scrolled.
+	bodyStart := len(lines) + len(statsHeader)
+	bodyEnd := bodyStart + len(statsBody)
+
+	lines = append(lines, statsHeader...)
+	lines = append(lines, statsBody...)
+	lines = append(lines, statsFooter...)
 	lines = append(lines, bottom)
 	lines = append(lines, m.renderHelpRow())
+
+	lines = m.applyStatsScroll(lines, bodyStart, bodyEnd)
 	return strings.Join(lines, "\n")
+}
+
+// applyStatsScroll clips the scrollable month body (lines[bodyStart:bodyEnd]) to the
+// terminal's height budget, driven by m.statsOffset (a line offset). The column
+// headers above and the grand-total footer below stay pinned; ▲/▼ indicators mark
+// hidden content. It also records the largest valid offset in m.statsMaxOffset so
+// the scroll handlers can bound themselves, and clamps a stale offset into range.
+func (m *MainMenuModel) applyStatsScroll(lines []string, bodyStart, bodyEnd int) []string {
+	avail := m.availableMenuHeight()
+	body := bodyEnd - bodyStart
+	// Rows outside the body (chrome, column headers, footer, borders, help) are
+	// always shown; the body gets whatever height remains.
+	fixed := len(lines) - body
+	availBody := avail - fixed
+
+	if avail <= 0 || body == 0 || availBody >= body {
+		// Everything fits (or no height info yet): show it all, no scrolling.
+		m.statsMaxOffset = 0
+		m.statsOffset = 0
+		return lines
+	}
+	if availBody < 1 {
+		availBody = 1
+	}
+
+	maxOffset := body - availBody
+	m.statsMaxOffset = maxOffset
+	offset := m.statsOffset
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	m.statsOffset = offset
+
+	window := make([]string, availBody)
+	copy(window, lines[bodyStart+offset:bodyStart+offset+availBody])
+	if offset > 0 {
+		window[0] = m.scrollIndicatorRow("▲")
+	}
+	if offset+availBody < body {
+		window[len(window)-1] = m.scrollIndicatorRow("▼")
+	}
+
+	out := make([]string, 0, len(lines)-body+availBody)
+	out = append(out, lines[:bodyStart]...)
+	out = append(out, window...)
+	out = append(out, lines[bodyEnd:]...)
+	return out
 }

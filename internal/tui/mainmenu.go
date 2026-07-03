@@ -359,7 +359,11 @@ type MainMenuModel struct {
 	statsLoading bool
 	statsMonths  []usage.MonthlyUsage
 	statsErr     error
-	statsOffset  int
+	// statsOffset is the top line index of the visible slice of the scrollable
+	// month body (line-based, not month-based). statsMaxOffset is the largest
+	// valid offset for the current terminal height, recomputed on each render.
+	statsOffset    int
+	statsMaxOffset int
 }
 
 // NewMainMenu creates a new main menu model.
@@ -2248,13 +2252,11 @@ func (m *MainMenuModel) projectsEnter() (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
-// statsScrollDown advances the stats month window by one, bounded to the data.
+// statsScrollDown scrolls the stats body down one line, bounded by statsMaxOffset
+// (recomputed on each render from the terminal height). The render also re-clamps,
+// so a stale bound here can never scroll past the content.
 func (m *MainMenuModel) statsScrollDown() {
-	max := len(m.statsMonths) - statsWindow
-	if max < 0 {
-		max = 0
-	}
-	if m.statsOffset < max {
+	if m.statsOffset < m.statsMaxOffset {
 		m.statsOffset++
 	}
 }
