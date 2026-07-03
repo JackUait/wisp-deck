@@ -237,7 +237,9 @@ func (m *MainMenuModel) renderStatsBox() string {
 // hidden content. It also records the largest valid offset in m.statsMaxOffset so
 // the scroll handlers can bound themselves, and clamps a stale offset into range.
 func (m *MainMenuModel) applyStatsScroll(lines []string, bodyStart, bodyEnd int) []string {
-	avail := m.availableMenuHeight()
+	// Cap the box to ~70% of the available height so the Stats tab stays compact
+	// and scrolls, rather than stretching to fill the whole screen.
+	avail := m.availableMenuHeight() * statsHeightPercent / 100
 	body := bodyEnd - bodyStart
 	// Rows outside the body (chrome, column headers, footer, borders, help) are
 	// always shown; the body gets whatever height remains.

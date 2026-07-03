@@ -26,6 +26,42 @@ func manyStatsMonths(n int) []usage.MonthlyUsage {
 	return months
 }
 
+// TestRenderStatsBox_cappedTo70PercentHeight verifies the Stats box never grows
+// past ~70% of the available height: with content that would otherwise fill the
+// whole terminal, the box clips to the 70% budget and shows a ▼ overflow marker.
+func TestRenderStatsBox_cappedTo70PercentHeight(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabStats)
+	const h = 40
+	m.SetSize(120, h)
+
+	updated, _ := m.Update(statsLoadedMsg{months: manyStatsMonths(10)})
+	mm := updated.(*MainMenuModel)
+
+	lines := strings.Split(mm.renderStatsBox(), "\n")
+	cap70 := h * 7 / 10
+	if len(lines) > cap70 {
+		t.Fatalf("stats box = %d lines, want ≤ %d (70%% of %d)", len(lines), cap70, h)
+	}
+	if !strings.Contains(stripANSI(strings.Join(lines, "\n")), "▼") {
+		t.Errorf("expected a ▼ overflow indicator when capped below content height")
+	}
+}
+
+// TestRenderStatsBox_shortContentNotCapped verifies the 70% cap only clips overflow:
+// content that already fits within the budget is shown in full, with no ▲/▼ markers.
+func TestRenderStatsBox_shortContentNotCapped(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabStats)
+	m.SetSize(120, 60) // 70% = 42 rows, plenty for one month
+	updated, _ := m.Update(statsLoadedMsg{months: manyStatsMonths(1)})
+	mm := updated.(*MainMenuModel)
+	out := stripANSI(mm.renderStatsBox())
+	if strings.Contains(out, "▼") || strings.Contains(out, "▲") {
+		t.Errorf("short content should not show scroll indicators:\n%s", out)
+	}
+}
+
 // TestRenderStatsBox_scrollsWhenTallerThanTerminal is the core regression for the
 // Stats tab overflowing the screen: with a short terminal and many months, the box
 // must clip to the height budget and surface a ▼ overflow indicator, and scrolling

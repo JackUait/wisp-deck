@@ -17,6 +17,10 @@ const (
 	statsGaugeW = 46 // gauge length (columns); spans the data columns up to Cache R's right edge
 	statsColEnd = 66 // right edge of the Total column; money/totals align here
 	statsWindow = 8  // months visible at once before scrolling
+
+	// statsHeightPercent caps the embedded Stats tab's box to this share of the
+	// available height so it stays compact and scrolls instead of filling the screen.
+	statsHeightPercent = 70
 )
 
 // monthLabel turns a "YYYY-MM" bucket into a human label like "Jun 2026". Other
