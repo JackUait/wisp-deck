@@ -85,6 +85,15 @@ PROJECTS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/projects"
 # Boot id (stable per uptime) for once-per-boot restore.
 WISP_DECK_BOOT_ID="$(current_boot_id)"
 
+# Unify conversation state across Claude logins BEFORE the restore gate: merge
+# every account's locally-recorded transcripts/history into ~/.claude and link
+# the accounts to that shared store. Without this, switching the active login
+# between boots split the history into per-account stores — /resume "lost" the
+# other store's sessions and post-reboot restore resumed the wrong conversation
+# (queue-build validates sids against ~/.claude while the restored tab may
+# launch under an account's isolated CLAUDE_CONFIG_DIR).
+sync_all_claude_accounts_state "$HOME/.claude" "$SHARE_DIR/claude-accounts"
+
 # Set when this window restores a prior-boot session from the restore queue;
 # makes the AI tool resume its conversation (WISP_DECK_RESUME).
 RESTORE_MODE=0
