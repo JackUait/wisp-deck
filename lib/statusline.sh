@@ -122,21 +122,26 @@ get_tree_cpu_pct() {
 # the id up so a restored tab reopens its own conversation (`claude --resume`)
 # instead of the project's most recent one.
 # Usage: gt_stamp_claude_session <statusline_json>
-# Exit 0 when the accounts list holds at least two label:dir entries (skipping
-# comments, blanks, and malformed lines) — i.e. the user has multiple Claude
-# accounts to juggle, so the statusline account segment is worth showing. Mirrors
-# the codebase's existing "2+ accounts" convention (auto_switch_eligible).
+# Exit 0 when the user has 2+ Claude accounts to juggle, so the statusline
+# account segment is worth showing. The list holds only the *managed* logins;
+# the implicit Default (Keychain) login always exists on top of them — mirroring
+# the Go account menu, where row 0 is the Default and rows 1..len are the managed
+# entries. So the user has 2+ accounts as soon as the list holds a single managed
+# label:dir entry (skipping comments, blanks, and malformed lines): that one plus
+# the Default. An empty or missing list means only the Default exists — one
+# account, nothing to disambiguate — so the segment stays hidden. (This differs
+# from auto_switch_eligible, which needs 2+ *managed* logins to rotate between.)
 # Usage: gt_multiple_claude_accounts <list_file> && show_account_segment
 gt_multiple_claude_accounts() {
-  local file="$1" count=0 line
+  local file="$1" line
   [ -f "$file" ] || return 1
   while IFS= read -r line; do
     line="${line#"${line%%[![:space:]]*}"}"  # ltrim
     [[ -z "$line" || "$line" == \#* ]] && continue
     [[ "$line" != *:* ]] && continue
-    count=$((count + 1))
+    return 0  # a single managed login + the implicit Default = 2 accounts
   done < "$file"
-  [ "$count" -ge 2 ]
+  return 1
 }
 
 # Print the account-rotation proxy's currently-serving account dir name, read

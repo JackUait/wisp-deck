@@ -1869,9 +1869,12 @@ func TestStatusline_proxy_active_dir_empty_when_arg_blank(t *testing.T) {
 // --- gt_multiple_claude_accounts ---
 //
 // The account segment is only worth showing when the user actually juggles
-// multiple accounts. gt_multiple_claude_accounts gates it: exit 0 only when the
-// accounts list holds at least two label:dir entries, mirroring the codebase's
-// existing "2+ accounts" convention (auto_switch_eligible).
+// multiple accounts. gt_multiple_claude_accounts gates it. The accounts list
+// holds only the *managed* logins; the implicit Default (Keychain) login always
+// exists on top of them (mirrors the Go account menu: row 0 = Default, rows
+// 1..len = managed). So the user has 2+ accounts as soon as the list holds a
+// single managed entry — the segment must show then, disambiguating Default from
+// that one managed login. Exit 0 iff the list holds >= 1 managed label:dir entry.
 
 func TestStatusline_multiple_accounts_false_when_list_missing(t *testing.T) {
 	dir := t.TempDir()
@@ -1879,19 +1882,32 @@ func TestStatusline_multiple_accounts_false_when_list_missing(t *testing.T) {
 	_, code := runBashFunc(t, "lib/statusline.sh", "gt_multiple_claude_accounts",
 		[]string{list}, nil)
 	if code == 0 {
-		t.Fatalf("missing list must not count as 2+ accounts (got exit %d)", code)
+		t.Fatalf("missing list means only the Default login exists — not 2+ accounts (got exit %d)", code)
 	}
 }
 
-func TestStatusline_multiple_accounts_false_when_single_entry(t *testing.T) {
+func TestStatusline_multiple_accounts_false_when_list_empty(t *testing.T) {
 	dir := t.TempDir()
 	list := filepath.Join(dir, "claude-accounts.list")
-	writeTempFile(t, dir, "claude-accounts.list", "# accounts\nWork:work\n")
+	// A list with only comments and blanks registers no managed logins, so only
+	// the implicit Default remains — a single account, segment stays hidden.
+	writeTempFile(t, dir, "claude-accounts.list", "# accounts\n\n")
 	_, code := runBashFunc(t, "lib/statusline.sh", "gt_multiple_claude_accounts",
 		[]string{list}, nil)
 	if code == 0 {
-		t.Fatalf("a single account must not count as 2+ (got exit %d)", code)
+		t.Fatalf("no managed logins means only the Default — not 2+ accounts (got exit %d)", code)
 	}
+}
+
+func TestStatusline_multiple_accounts_true_when_single_entry(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "claude-accounts.list")
+	// One managed login plus the always-present implicit Default = 2 accounts,
+	// so the segment must show to tell them apart.
+	writeTempFile(t, dir, "claude-accounts.list", "# accounts\nPersonal:personal\n")
+	_, code := runBashFunc(t, "lib/statusline.sh", "gt_multiple_claude_accounts",
+		[]string{list}, nil)
+	assertExitCode(t, code, 0)
 }
 
 func TestStatusline_multiple_accounts_true_when_two_entries(t *testing.T) {
@@ -1907,11 +1923,10 @@ func TestStatusline_multiple_accounts_ignores_comments_blanks_and_malformed(t *t
 	dir := t.TempDir()
 	list := filepath.Join(dir, "claude-accounts.list")
 	// Two comment lines, a blank, and a malformed (no colon) line surround a
-	// single real entry — that is still just one account, so exit non-zero.
+	// single real managed entry — that entry plus the implicit Default is 2
+	// accounts, so the segment shows (exit 0) without the junk inflating anything.
 	writeTempFile(t, dir, "claude-accounts.list", "# a\n\nnotanaccount\nWork:work\n# b\n")
 	_, code := runBashFunc(t, "lib/statusline.sh", "gt_multiple_claude_accounts",
 		[]string{list}, nil)
-	if code == 0 {
-		t.Fatalf("comments/blanks/malformed lines must not inflate the count (got exit %d)", code)
-	}
+	assertExitCode(t, code, 0)
 }
