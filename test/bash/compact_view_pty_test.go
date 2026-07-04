@@ -524,7 +524,7 @@ func TestCompactView_coalesces_motion_flood_into_few_redraws(t *testing.T) {
 	}
 	// And the flood must have been PROCESSED to a settled highlight, not ignored.
 	if !strings.Contains(got, "48;5;238") {
-		t.Errorf("after the motion flood the hover highlight (48;5;238) never rendered; "+
+		t.Errorf("after the motion flood the hover highlight (48;5;238) never rendered; " +
 			"the coalesced repaint dropped the settled cursor position.")
 	}
 }
@@ -717,15 +717,15 @@ func TestCompactView_multiselect_discards_selected_files(t *testing.T) {
 
 	time.Sleep(700 * time.Millisecond) // first frame
 
-	hover(4)                         // a.txt
-	_, _ = ptmx.Write([]byte("x"))   // select a.txt
+	hover(4)                       // a.txt
+	_, _ = ptmx.Write([]byte("x")) // select a.txt
 	time.Sleep(120 * time.Millisecond)
-	hover(5)                         // b.txt
-	_, _ = ptmx.Write([]byte("x"))   // select b.txt
+	hover(5)                       // b.txt
+	_, _ = ptmx.Write([]byte("x")) // select b.txt
 	time.Sleep(120 * time.Millisecond)
-	_, _ = ptmx.Write([]byte("d"))   // arm the confirm
+	_, _ = ptmx.Write([]byte("d")) // arm the confirm
 	time.Sleep(150 * time.Millisecond)
-	_, _ = ptmx.Write([]byte("y"))   // confirm the batch discard
+	_, _ = ptmx.Write([]byte("y")) // confirm the batch discard
 	time.Sleep(500 * time.Millisecond)
 
 	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
@@ -1199,5 +1199,129 @@ func TestCompactView_branch_bar_no_local_redisplay_leak(t *testing.T) {
 	if m := redisplayRE.FindString(got); m != "" {
 		t.Errorf("a shell variable was redisplayed onto the screen (%q) — an in-loop `local NAME` "+
 			"without assignment leaks under zsh. Declare loop-locals ONCE before the loop.", m)
+	}
+}
+
+// Regression (class-wide "never blink again"): an IDLE ledger — no input, no
+// changing git state — must render byte-identical frames tick after tick. A
+// "blink" is by definition a frame that momentarily differs from its neighbors,
+// so frame stability is the truest encoding of the contract. This catches the
+// whole class of transient-corruption bugs, not one variable: the zsh `local
+// NAME` redisplay leak (this bug), a stray plain-value dump like "w=141" that a
+// `$'...'` regex would miss, or any future cause. The refresh loop writes each
+// frame as one printf that begins with cursor-home (ESC[H); splitting the raw
+// pty stream on ESC[H yields the per-tick chunks. A redisplay prints its junk to
+// stdout just BEFORE the next frame's ESC[H, so it lands as a trailing diff on a
+// chunk — making that chunk differ from a clean one. We drive the REAL loop
+// under zsh against an upstream-diverged repo (exercises the branch-bar path),
+// let it idle across many ticks, and assert the steady-state frames are all equal.
+func TestCompactView_idle_frames_are_stable_no_blink(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not available")
+	}
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	// Bare remote so HEAD can be ahead of its upstream (branch bar shows ↑N),
+	// running the exact build path that leaked ab_counts.
+	remote := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", "--bare", remote).CombinedOutput(); err != nil {
+		t.Fatalf("git init bare: %v\n%s", err, out)
+	}
+	git("init", "-q")
+	writeTempFile(t, dir, "seed.txt", "x\n")
+	git("add", "seed.txt")
+	git("commit", "-q", "-m", "init")
+	git("remote", "add", "origin", remote)
+	git("push", "-q", "-u", "origin", "HEAD")
+	for i := 0; i < 8; i++ {
+		writeTempFile(t, dir, "seed.txt", fmt.Sprintf("x%d\n", i))
+		git("commit", "-q", "-am", fmt.Sprintf("c%d", i))
+	}
+	for i := 0; i < 6; i++ {
+		writeTempFile(t, dir, fmt.Sprintf("f%02d.txt", i), "changed\n")
+	}
+
+	cmd := exec.Command(zsh, "-c", "source "+module+" && compact_view "+dir)
+	env := []string{}
+	for _, e := range os.Environ() {
+		if len(e) >= 5 && e[:5] == "TMUX=" {
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=0.1", "TERM=xterm")
+
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 20, Cols: 60})
+	if err != nil {
+		t.Fatalf("start pty: %v", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	var mu sync.Mutex
+	var out bytes.Buffer
+	go func() {
+		b := make([]byte, 4096)
+		for {
+			n, err := ptmx.Read(b)
+			if n > 0 {
+				mu.Lock()
+				out.Write(b[:n])
+				mu.Unlock()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	// Idle: no keystrokes. Observe many refresh ticks (interval 0.1s).
+	time.Sleep(1200 * time.Millisecond)
+	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	got := out.String()
+	mu.Unlock()
+
+	// Split the stream into per-tick chunks on the cursor-home that opens each
+	// redraw (printf '\033[H%s\033[K\033[J'). Chunk[i] holds tick i's frame.
+	frames := strings.Split(got, "\x1b[H")
+	if len(frames) < 6 {
+		t.Fatalf("expected many idle redraws (>=6 chunks); got %d.\nraw:\n%q", len(frames), got)
+	}
+	// The redraw is the ONLY thing that should write to stdout, and it ends every
+	// frame with the trailing erase \033[J. So in each steady-state chunk there
+	// must be NOTHING after the frame's final \033[J and before the next chunk's
+	// cursor-home. A variable redisplay (zsh `local NAME`, a stray echo, any
+	// between-frames write — plain-value OR $'...') lands exactly there, so a
+	// non-empty tail is the general signature of the blink — for THIS bug and any
+	// future one, regardless of whether the leak repeats every tick (which would
+	// fool a frame-equality check). Skip warmup (alt-screen enter + first paint)
+	// and the final chunk (truncated by Ctrl-C / teardown escapes).
+	for i, chunk := range frames[2 : len(frames)-1] {
+		j := strings.LastIndex(chunk, "\x1b[J")
+		if j < 0 {
+			continue // not a full redraw chunk (e.g. a split escape); ignore
+		}
+		tail := chunk[j+len("\x1b[J"):]
+		if tail != "" {
+			t.Fatalf("idle ledger BLINKS: %q was written between the end of a frame "+
+				"(\\033[J) and the next redraw (\\033[H) on steady-state tick %d. Only the "+
+				"home-anchored frame printf may touch stdout; a stray write here is the blink. "+
+				"(Commonly a zsh `local NAME`-without-assignment redisplay inside the loop.)",
+				tail, i)
+		}
 	}
 }
