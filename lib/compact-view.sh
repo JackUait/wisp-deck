@@ -190,37 +190,63 @@ body_path_map() {
 # row. This is the single source of truth for the body's vertical offset once a
 # long branch+plan heading can overflow a narrow pane.
 # Usage: header_rows_for <visible_width> <pane_width>
-header_rows_for() {
+# wrap_rows_for returns how many SCREEN rows a line of <vis> visible columns
+# occupies in a pane <pw> columns wide. A line exactly as wide as the pane does
+# NOT wrap (terminals hold a pending wrap at the last column until the next glyph
+# prints), so the threshold is vis > pw. Always at least one row.
+wrap_rows_for() {
   local vis="$1" pw="$2"
   [ "$pw" -lt 1 ] && pw=1
   local wrapped=$(( (vis + pw - 1) / pw ))
   [ "$wrapped" -lt 1 ] && wrapped=1
-  printf '%d' $((wrapped + 1))
+  printf '%d' "$wrapped"
 }
 
-# heading_layout computes the right-align pad and the true visible width of the
-# pinned ledger heading, so the stamp (net +/- and file count) sits flush-right
-# without ever overflowing the inner width. The ahead/behind marker (ab_vis —
-# the visible columns of "↑N"/"↓M") is part of the left run alongside the branch
-# and plan, so it MUST be reserved in the pad. Omitting it lets a large marker
-# (e.g. "↑22") push the line past the inner width, and the terminal wraps the
-# stamp's tail (the "2" of "+5581 −72") onto a second row.
+header_rows_for() {
+  printf '%d' "$(( $(wrap_rows_for "$1" "$2") + 1 ))"
+}
+
+# heading_layout decides where the pinned ledger heading's +/- stamp goes and how
+# many SCREEN rows the heading spans (excluding the separator). The stamp (file
+# count + net +/-) is a single block that is NEVER split: it sits right-aligned on
+# the branch line when it fits, and when there is no room it moves WHOLE onto its
+# own new row below the branch — never dropped, never wrapped mid-block.
 #
-# The heading is printed as: leading space + headtext + marker + plan + pad +
-# stamp. When the stamp fits (pad ≥ 1) the line fills exactly 1 + iw columns;
-# otherwise the stamp is dropped and only the left run (1 + headtext + marker +
-# plan) is drawn. Echoes "<pad> <head_vis>" for the render and header_rows_for.
-# Usage: heading_layout <iw> <headtext_w> <ab_vis> <plan_w> <stamp_w>
+# The branch line is: leading space + headtext + ahead/behind marker (ab_vis, the
+# visible cols of "↑N"/"↓M") + plan. The marker is part of that left run, so it is
+# reserved when testing whether the stamp fits after it. The pane width <w> lets
+# an over-wide branch or stamp line count its own wrapping too.
+#
+# Echoes "<mode> <pad> <head_rows>":
+#   mode      = inline (stamp on the branch line) | below (own new row) | none
+#   pad       = right-align spaces before the stamp on its target row
+#   head_rows = screen rows the heading occupies (excl. the separator)
+# Usage: heading_layout <iw> <headtext_w> <ab_vis> <plan_w> <stamp_w> <w>
 heading_layout() {
-  local iw="$1" headtext_w="$2" ab_vis="$3" plan_w="$4" stamp_w="$5"
-  local pad=$((iw - headtext_w - ab_vis - plan_w - stamp_w))
-  local head_vis
-  if [ "$stamp_w" -gt 0 ] && [ "$pad" -ge 1 ]; then
-    head_vis=$((1 + iw))
-  else
-    head_vis=$((1 + headtext_w + ab_vis + plan_w))
+  local iw="$1" headtext_w="$2" ab_vis="$3" plan_w="$4" stamp_w="$5" w="$6"
+  local branch_vis=$((1 + headtext_w + ab_vis + plan_w))
+
+  if [ "$stamp_w" -le 0 ]; then
+    printf 'none 0 %s\n' "$(wrap_rows_for "$branch_vis" "$w")"
+    return 0
   fi
-  printf '%s %s\n' "$pad" "$head_vis"
+
+  # Try to place the stamp inline, right-aligned after the branch+marker+plan.
+  local pad=$((iw - headtext_w - ab_vis - plan_w - stamp_w))
+  if [ "$pad" -ge 1 ]; then
+    # Fits: the branch line fills exactly 1 + iw columns.
+    printf 'inline %s %s\n' "$pad" "$(wrap_rows_for $((1 + iw)) "$w")"
+    return 0
+  fi
+
+  # No room on the branch line — move the whole stamp to its own row below,
+  # right-aligned within the inner width. The heading now spans the branch row(s)
+  # plus the stamp row(s).
+  local below_pad=$((iw - stamp_w))
+  [ "$below_pad" -lt 1 ] && below_pad=1
+  local stamp_vis=$((below_pad + stamp_w))
+  local rows=$(( $(wrap_rows_for "$branch_vis" "$w") + $(wrap_rows_for "$stamp_vis" "$w") ))
+  printf 'below %s %s\n' "$below_pad" "$rows"
 }
 
 # body_line_for_click maps a clicked SCREEN row to a 1-based body-line index, or
@@ -1027,20 +1053,17 @@ compact_view() {
       local plan_w=0
       [ -n "$plan" ] && plan_w=$(( ${#plan} + 3 ))
 
-      # Right-align the stamp on the heading line when it fits. heading_layout
-      # reserves the ahead/behind marker (ab_vis) in the pad so the whole line —
-      # leading space, ns+leaf, marker, inline plan, pad, and the right-aligned
-      # stamp — fits the inner width instead of overflowing and wrapping the
-      # stamp's tail onto a second row.
+      # Place the stamp with heading_layout: right-aligned on the branch line
+      # when it fits (mode inline), else moved WHOLE onto its own new row below
+      # (mode below) — the +/- block is never split across rows. The returned
+      # head_rows counts every screen row the pinned heading spans; +1 for the
+      # separator. Emit that total as the content's first line for split_content;
+      # the renderer/click math read the pinned-header offset from there so mouse
+      # clicks/hover still map to the right file row.
       local headtext="${ns}${leaf}"
-      local pad head_vis
-      # head_vis is how many SCREEN rows the heading occupies: a heading wider
-      # than the pane wraps onto extra rows, which the pinned-header offset must
-      # account for so mouse clicks/hover map to the right file row. Emit the row
-      # count as the content's first line for split_content; the renderer/click
-      # math read it from there.
-      read -r pad head_vis <<< "$(heading_layout "$iw" "${#headtext}" "$ab_vis" "$plan_w" "${#stamp}")"
-      printf '%s\n' "$(header_rows_for "$head_vis" "$w")"
+      local mode pad head_rows
+      read -r mode pad head_rows <<< "$(heading_layout "$iw" "${#headtext}" "$ab_vis" "$plan_w" "${#stamp}" "$w")"
+      printf '%s\n' "$((head_rows + 1))"
 
       printf " ${dim}%s${reset}${bold}${bright}%s${reset}" "$ns" "$leaf"
       # %b (not %s): ahead_behind carries the literal "\033[..." color escapes,
@@ -1048,7 +1071,9 @@ compact_view() {
       # would leak them as visible "\033[36m↑1\033[0m" text on the branch line.
       [ -n "$ahead_behind" ] && printf '%b' "$ahead_behind"
       [ -n "$plan" ] && printf " ${dim}·${reset} ${dim}%s${reset}" "$plan"
-      if [ -n "$stamp" ] && [ "$pad" -ge 1 ]; then
+      # A newline before the stamp when it lives on its own row (mode below).
+      [ "$mode" = "below" ] && printf "\n"
+      if [ "$mode" = "inline" ] || [ "$mode" = "below" ]; then
         printf '%*s' "$pad" ''
         printf "${dim}%s %s${reset}  ${green}+%s${reset} ${red}−%s${reset}" \
           "$total_files" "$funit" "$ta" "$td"

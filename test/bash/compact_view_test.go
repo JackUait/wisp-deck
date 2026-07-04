@@ -562,55 +562,76 @@ func TestHeaderRowsFor_empty_heading_is_two_rows(t *testing.T) {
 	}
 }
 
-// heading_layout computes the right-align pad and the heading's true visible
-// width for the pinned ledger header, given the inner width and the visible
-// widths of its parts. The ahead/behind marker (ab_vis, e.g. "↑22") is part of
-// the left run, so it MUST be reserved in the pad — otherwise the right-aligned
-// +/- stamp overflows the inner width and the terminal wraps its tail (the "2"
-// of "+5581 −72") onto a second row. Output: "<pad> <head_vis>".
+// heading_layout decides where the ledger's +/- stamp goes and how many SCREEN
+// rows the pinned heading spans. The stamp is one block and is never split: it
+// sits right-aligned on the branch line when it fits (mode "inline"), otherwise
+// the WHOLE block moves to its own new row below the branch (mode "below") — it
+// is never dropped and never wrapped mid-block. The ahead/behind marker (ab_vis,
+// e.g. "↑22") is part of the branch line, so it is reserved when deciding fit.
+// Output: "<mode> <pad> <head_rows>" (head_rows excludes the separator).
 
-// Regression: the "master ↑22 · Standard Claude  21 files  +5581 −72" line from
-// the bug report. Inner width 56, "master" (6), "↑22" marker (4), "Standard
-// Claude" plan (15+3=18), and a 19-col stamp. The marker must be reserved so the
-// whole line fits the inner width (head_vis == 1 + iw == 57) instead of
-// overflowing to 61 columns and wrapping the stamp tail.
-func TestHeadingLayout_reserves_ahead_marker_so_stamp_never_wraps(t *testing.T) {
+// The "master ↑22 · Standard Claude  21 files  +5581 −72" line from the report,
+// in a 60-col pane (inner 56). The marker is reserved, so the stamp fits inline,
+// right-aligned, on a single heading row.
+func TestHeadingLayout_stamp_stays_inline_when_it_fits(t *testing.T) {
 	out, code := runBashFunc(t, "lib/compact-view.sh", "heading_layout",
-		[]string{"56", "6", "4", "18", "19"}, nil)
+		[]string{"56", "6", "4", "18", "19", "60"}, nil)
 	assertExitCode(t, code, 0)
 	fields := strings.Fields(out)
-	if len(fields) != 2 {
-		t.Fatalf("expected \"<pad> <head_vis>\", got %q", out)
+	if len(fields) != 3 {
+		t.Fatalf("expected \"<mode> <pad> <head_rows>\", got %q", out)
 	}
-	pad, headVis := fields[0], fields[1]
-	if headVis != "57" {
-		t.Errorf("head_vis = %s, want 57 (1 + inner width); the ↑22 marker must be reserved, not stacked on top", headVis)
+	mode, pad, rows := fields[0], fields[1], fields[2]
+	if mode != "inline" {
+		t.Errorf("mode = %s, want inline (the stamp fits on the branch line)", mode)
 	}
-	// Reconstruct the physically printed width: leading space + headtext + marker
-	// + plan + pad + stamp. It must equal head_vis and stay within the inner
-	// width, proving nothing overflows to wrap.
 	if pad != "9" {
-		t.Errorf("pad = %s, want 9 (56 - 6 - 4 - 18 - 19); the marker's 4 cols must be subtracted", pad)
+		t.Errorf("pad = %s, want 9 (56 - 6 - 4 - 18 - 19); the ↑22 marker must be reserved", pad)
+	}
+	if rows != "1" {
+		t.Errorf("head_rows = %s, want 1 (branch + inline stamp = one row)", rows)
 	}
 }
 
-// When the stamp cannot fit even after reserving the marker (pad < 1), the render
-// drops it, so head_vis collapses to just the left run and no overflow occurs.
-func TestHeadingLayout_drops_stamp_when_it_cannot_fit(t *testing.T) {
+// No room on the branch line (inner 46 in a 50-col pane): the whole stamp block
+// moves to its own new row below the branch instead of being dropped or split,
+// so the heading spans two rows.
+func TestHeadingLayout_stamp_moves_to_new_row_when_no_space(t *testing.T) {
 	out, code := runBashFunc(t, "lib/compact-view.sh", "heading_layout",
-		[]string{"20", "6", "4", "18", "19"}, nil)
+		[]string{"46", "6", "4", "18", "19", "50"}, nil)
 	assertExitCode(t, code, 0)
 	fields := strings.Fields(out)
-	if len(fields) != 2 {
-		t.Fatalf("expected \"<pad> <head_vis>\", got %q", out)
+	if len(fields) != 3 {
+		t.Fatalf("expected \"<mode> <pad> <head_rows>\", got %q", out)
 	}
-	pad, headVis := fields[0], fields[1]
-	if pad != "-27" {
-		t.Errorf("pad = %s, want -27 (does not fit)", pad)
+	mode, pad, rows := fields[0], fields[1], fields[2]
+	if mode != "below" {
+		t.Errorf("mode = %s, want below (no space on the branch line → stamp moves to a new row, not dropped)", mode)
 	}
-	// Left run only: 1 + 6 + 4 + 18 = 29 (stamp omitted, so its 19 cols drop out).
-	if headVis != "29" {
-		t.Errorf("head_vis = %s, want 29 (left run only when stamp is dropped)", headVis)
+	if rows != "2" {
+		t.Errorf("head_rows = %s, want 2 (branch row + its own stamp row)", rows)
+	}
+	// Right-aligned on its own row within the inner width: 46 - 19 = 27.
+	if pad != "27" {
+		t.Errorf("pad = %s, want 27 (right-align the stamp on its new row)", pad)
+	}
+}
+
+// With no changes there is no stamp, so the heading is just the branch line: one
+// row, mode "none".
+func TestHeadingLayout_no_stamp_is_a_single_row(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "heading_layout",
+		[]string{"56", "6", "4", "18", "0", "60"}, nil)
+	assertExitCode(t, code, 0)
+	fields := strings.Fields(out)
+	if len(fields) != 3 {
+		t.Fatalf("expected \"<mode> <pad> <head_rows>\", got %q", out)
+	}
+	if fields[0] != "none" {
+		t.Errorf("mode = %s, want none (no changes → no stamp)", fields[0])
+	}
+	if fields[2] != "1" {
+		t.Errorf("head_rows = %s, want 1", fields[2])
 	}
 }
 
