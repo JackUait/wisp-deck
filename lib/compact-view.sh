@@ -799,6 +799,12 @@ compact_view() {
   local w h content header body body_total avail mbtn draw_body frame
   local header_rows=2
   local staged unstaged untracked body_map
+  # branch/ahead/behind + ab_counts are (re)assigned every build tick below. They
+  # MUST be declared here, ONCE, not with an in-loop `local`: under zsh (the
+  # pane's shell) `local NAME` without an assignment on an already-set variable is
+  # a *display* command that dumps "NAME=value" to stdout — the branch bar blinked
+  # a raw `ab_counts=$'8\t0'` on every tick after the first (see the NOTE above).
+  local branch ahead behind ab_counts
   local mterm mrest mrow bl cpath prev_hover prev_scroll hover_keep
   # Multi-select batch discard: SELECTED is a newline-delimited set of marked
   # file PATHS (tracked by path so it survives the ledger's rebuild/scroll).
@@ -1029,7 +1035,6 @@ compact_view() {
     branch=$(git -C "$project_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "detached")
     ahead=0; behind=0
     if git -C "$project_dir" rev-parse '@{u}' &>/dev/null 2>&1; then
-      local ab_counts
       ab_counts=$(git -C "$project_dir" rev-list --left-right --count "HEAD...@{u}" 2>/dev/null)
       if [ -n "$ab_counts" ]; then
         ahead=$(echo "$ab_counts" | cut -f1)

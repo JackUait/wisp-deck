@@ -1088,3 +1088,116 @@ func TestCompactView_overflow_hover_keeps_scroll_and_hint(t *testing.T) {
 		t.Errorf("overflow hover should KEEP the scroll position data next to the hint; got:\n%s", hovered)
 	}
 }
+
+// Regression: the bottom branch bar must never LEAK a raw shell variable dump
+// onto the screen (the "blinking" bug). The live pane runs this script under
+// zsh, where `local NAME` with NO assignment on an ALREADY-SET variable is a
+// *display* command that prints "NAME=value" to stdout. The branch-bar build
+// declared `local ab_counts` INSIDE the refresh loop; on the first tick it is a
+// harmless declaration, but on every subsequent tick ab_counts is already set,
+// so zsh dumped `ab_counts=$'8\t0'` right after the branch bar for one frame —
+// a visible blink. The fix hoists the declaration to the pre-loop local block
+// (like every other loop-local) so it is never a redisplay. This drives the
+// REAL loop under zsh against an upstream-diverged repo across multiple refresh
+// ticks and asserts no such variable dump ever reaches the screen.
+func TestCompactView_branch_bar_no_local_redisplay_leak(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not available")
+	}
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	// A bare "remote" so HEAD can diverge from its upstream (ahead > 0), which is
+	// what makes the branch-bar build run the `local ab_counts` path.
+	remote := t.TempDir()
+	rc := exec.Command("git", "init", "-q", "--bare", remote)
+	if out, err := rc.CombinedOutput(); err != nil {
+		t.Fatalf("git init bare: %v\n%s", err, out)
+	}
+	git("init", "-q")
+	writeTempFile(t, dir, "seed.txt", "x\n")
+	git("add", "seed.txt")
+	git("commit", "-q", "-m", "init")
+	git("remote", "add", "origin", remote)
+	git("push", "-q", "-u", "origin", "HEAD")
+	// Diverge: 8 commits ahead of the pushed upstream (rev-list emits "8\t0").
+	for i := 0; i < 8; i++ {
+		writeTempFile(t, dir, "seed.txt", fmt.Sprintf("x%d\n", i))
+		git("commit", "-q", "-am", fmt.Sprintf("c%d", i))
+	}
+	// Some working-tree changes so the ledger has a body to render.
+	for i := 0; i < 6; i++ {
+		writeTempFile(t, dir, fmt.Sprintf("f%02d.txt", i), "changed\n")
+	}
+
+	// Mirror the live pane exactly: zsh -c sourcing the module. A short refresh
+	// interval so several build ticks fire within the observation window (the
+	// leak only appears on the SECOND and later ticks, once ab_counts is set).
+	cmd := exec.Command(zsh, "-c", "source "+module+" && compact_view "+dir)
+	env := []string{}
+	for _, e := range os.Environ() {
+		if len(e) >= 5 && e[:5] == "TMUX=" {
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=0.1", "TERM=xterm")
+
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 20, Cols: 60})
+	if err != nil {
+		t.Fatalf("start pty: %v", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	var mu sync.Mutex
+	var out bytes.Buffer
+	go func() {
+		b := make([]byte, 4096)
+		for {
+			n, err := ptmx.Read(b)
+			if n > 0 {
+				mu.Lock()
+				out.Write(b[:n])
+				mu.Unlock()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	// Observe across many refresh ticks (interval 0.1s) so tick 2+ runs.
+	time.Sleep(900 * time.Millisecond)
+	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	got := out.String()
+	mu.Unlock()
+
+	// The specific leak from this bug.
+	if strings.Contains(got, "ab_counts=") {
+		t.Errorf("branch-bar build leaked the raw `ab_counts=` variable dump onto the screen "+
+			"(zsh `local NAME` redisplay inside the loop); frame blinks. Hoist the declaration "+
+			"out of the loop. Got:\n%s", got)
+	}
+	// The general signature of ANY zsh loop-local redisplay of a value holding a
+	// tab/newline (git numstat, rev-list, etc.): `name=$'...'`. Guards the whole
+	// class so a future stray in-loop `local NAME` can't reintroduce the blink.
+	redisplayRE := regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*=\$'`)
+	if m := redisplayRE.FindString(got); m != "" {
+		t.Errorf("a shell variable was redisplayed onto the screen (%q) — an in-loop `local NAME` "+
+			"without assignment leaks under zsh. Declare loop-locals ONCE before the loop.", m)
+	}
+}
