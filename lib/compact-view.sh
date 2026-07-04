@@ -206,6 +206,31 @@ header_rows_for() {
   printf '%d' "$(( $(wrap_rows_for "$1" "$2") + 1 ))"
 }
 
+# ahead_behind_marker builds the upstream-divergence markers ("↑N" ahead, "↓M"
+# behind) that trail the branch name in the ledger heading. Every value in the
+# heading shares ONE separator — a dim dot — so each present marker is joined
+# with " · " (like the " · plan" separator) rather than a bare space. The arrows
+# are colored (cyan ahead, yellow behind) for the render's %b emit.
+#
+# Echoes the colored marker string on the first line and its VISIBLE column width
+# (ANSI excluded, for the heading-fit math) on the second — so the marker keeps
+# its leading space and the empty case is a blank line then "0". " · ↑N" spans
+# " · " (3) + arrow (1) + the digit count.
+# Usage: ahead_behind_marker <ahead> <behind> <dim> <cyan> <yellow> <reset>
+ahead_behind_marker() {
+  local ahead="${1:-0}" behind="${2:-0}" dim="$3" cyan="$4" yellow="$5" reset="$6"
+  local marker="" vis=0
+  if [ "$ahead" -gt 0 ] 2>/dev/null; then
+    marker=" ${dim}·${reset} ${cyan}↑${ahead}${reset}"
+    vis=$((vis + 4 + ${#ahead}))
+  fi
+  if [ "$behind" -gt 0 ] 2>/dev/null; then
+    marker="${marker} ${dim}·${reset} ${yellow}↓${behind}${reset}"
+    vis=$((vis + 4 + ${#behind}))
+  fi
+  printf '%s\n%s\n' "$marker" "$vis"
+}
+
 # heading_layout decides where the pinned ledger heading's +/- stamp goes and how
 # many SCREEN rows the heading spans (excluding the separator). The stamp (file
 # count + net +/-) is a single block that is NEVER split: it sits right-aligned on
@@ -1001,18 +1026,24 @@ compact_view() {
 
       # Branch + ahead/behind. ab_vis tracks the marker's VISIBLE width (the ANSI
       # colors don't take columns) so the heading's wrap height can be computed:
-      # " ↑N" / " ↓M" each span a space + a 1-column arrow + the digit count.
+      # " · ↑N" / " · ↓M" each span the " · " separator + a 1-column arrow + the
+      # digit count. The markers are dot-separated so every heading value shares
+      # one separator, matching the " · plan" join.
       local branch ahead_behind="" ab_vis=0
       branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "detached")
       if git rev-parse '@{u}' &>/dev/null 2>&1; then
-        local counts ahead behind
+        local counts ahead=0 behind=0 _marker
         counts=$(git rev-list --left-right --count "HEAD...@{u}" 2>/dev/null)
         if [ -n "$counts" ]; then
           ahead=$(echo "$counts" | cut -f1)
           behind=$(echo "$counts" | cut -f2)
-          [ "$ahead" -gt 0 ] && { ahead_behind=" ${cyan}↑${ahead}${reset}"; ab_vis=$((ab_vis + 2 + ${#ahead})); }
-          [ "$behind" -gt 0 ] && { ahead_behind="${ahead_behind} ${yellow}↓${behind}${reset}"; ab_vis=$((ab_vis + 2 + ${#behind})); }
         fi
+        # Marker string on line 1 (keeps its leading space), visible width on
+        # line 2. %/## strip on the single embedded newline preserves the marker
+        # verbatim and works under both bash and zsh.
+        _marker=$(ahead_behind_marker "$ahead" "$behind" "$dim" "$cyan" "$yellow" "$reset")
+        ahead_behind=${_marker%$'\n'*}
+        ab_vis=${_marker##*$'\n'}
       fi
 
       # The changes ($staged/$unstaged/$untracked) are gathered by the parent

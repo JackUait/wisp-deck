@@ -636,6 +636,71 @@ func TestHeadingLayout_no_stamp_is_a_single_row(t *testing.T) {
 	}
 }
 
+// ahead_behind_marker builds the "↑N"/"↓M" upstream markers that trail the
+// branch in the ledger heading. Every heading value shares one separator — a
+// dot — so each present marker is prefixed with " · " (not a bare space), to
+// match the " · plan" separator. Output: "<colored marker>\n<visible width>".
+// Colors are passed empty here so the marker text can be asserted directly.
+
+func TestAheadBehindMarker_ahead_is_dot_separated(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "ahead_behind_marker",
+		[]string{"22", "0", "", "", "", ""}, nil)
+	assertExitCode(t, code, 0)
+	lines := strings.SplitN(strings.TrimRight(out, "\n"), "\n", 2)
+	if len(lines) != 2 {
+		t.Fatalf("expected \"<marker>\\n<vis>\", got %q", out)
+	}
+	if lines[0] != " · ↑22" {
+		t.Errorf("marker = %q, want %q (dot-separated, not a bare space)", lines[0], " · ↑22")
+	}
+	// " · ↑22" = space + dot + space + arrow + "22" = 6 visible columns.
+	if lines[1] != "6" {
+		t.Errorf("vis = %q, want 6", lines[1])
+	}
+}
+
+func TestAheadBehindMarker_behind_is_dot_separated(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "ahead_behind_marker",
+		[]string{"0", "3", "", "", "", ""}, nil)
+	assertExitCode(t, code, 0)
+	lines := strings.SplitN(strings.TrimRight(out, "\n"), "\n", 2)
+	if len(lines) != 2 {
+		t.Fatalf("expected \"<marker>\\n<vis>\", got %q", out)
+	}
+	if lines[0] != " · ↓3" {
+		t.Errorf("marker = %q, want %q", lines[0], " · ↓3")
+	}
+	if lines[1] != "5" {
+		t.Errorf("vis = %q, want 5", lines[1])
+	}
+}
+
+func TestAheadBehindMarker_both_join_with_dots(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "ahead_behind_marker",
+		[]string{"22", "3", "", "", "", ""}, nil)
+	assertExitCode(t, code, 0)
+	lines := strings.SplitN(strings.TrimRight(out, "\n"), "\n", 2)
+	if len(lines) != 2 {
+		t.Fatalf("expected \"<marker>\\n<vis>\", got %q", out)
+	}
+	if lines[0] != " · ↑22 · ↓3" {
+		t.Errorf("marker = %q, want %q (both markers dot-separated)", lines[0], " · ↑22 · ↓3")
+	}
+	if lines[1] != "11" {
+		t.Errorf("vis = %q, want 11 (6 + 5)", lines[1])
+	}
+}
+
+func TestAheadBehindMarker_none_is_empty(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "ahead_behind_marker",
+		[]string{"0", "0", "", "", "", ""}, nil)
+	assertExitCode(t, code, 0)
+	// Empty marker line then "0": trimming trailing newlines leaves just "0".
+	if strings.TrimSpace(out) != "0" {
+		t.Errorf("want empty marker and vis 0, got %q", out)
+	}
+}
+
 // open_diff_popup floats a whole-window tmux popup running the full-file diff
 // for the clicked path, piped through less. It builds the popup command; the
 // actual rendering is tmux's job (mocked here).
