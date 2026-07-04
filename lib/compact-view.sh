@@ -1023,9 +1023,9 @@ compact_view() {
     # map line keeps describing the Nth body line.
     body_map=$(body_path_map "$staged" "$unstaged" "$untracked")
     # Branch + upstream divergence, gathered ONCE here (on the build tick, not the
-    # hover hot path) so the SAME snapshot feeds both the pinned heading (inside
-    # the content subshell, which inherits these) and the bottom branch bar (built
-    # outside it). ahead = commits to push, behind = commits to pull.
+    # hover hot path) for the bottom branch bar (built outside the content
+    # subshell). ahead = commits to push, behind = commits to pull. The branch is
+    # shown ONLY at the bottom, so it is not passed into the heading.
     branch=$(git -C "$project_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "detached")
     ahead=0; behind=0
     if git -C "$project_dir" rev-parse '@{u}' &>/dev/null 2>&1; then
@@ -1036,24 +1036,12 @@ compact_view() {
         behind=$(echo "$ab_counts" | cut -f2)
       fi
     fi
-    # Colored heading marker (" · ↑N · ↓M") + its visible width, shared by the
-    # heading below. Marker on line 1 (keeps its leading space), width on line 2;
-    # %/## strip the single newline under both bash and zsh.
-    _ab_marker=$(ahead_behind_marker "$ahead" "$behind" "$dim" "$cyan" "$yellow" "$reset")
-    ahead_behind=${_ab_marker%$'\n'*}
-    ab_vis=${_ab_marker##*$'\n'}
     content=$(
       cd "$project_dir" || exit 1
 
       # Inner content width (2-space padding each side)
       local iw=$((w - 4))
       [ "$iw" -lt 20 ] && iw=20
-
-      # Branch + ahead/behind are gathered by the parent shell (see the build
-      # block above) and inherited here, so the pinned heading and the bottom
-      # branch bar share ONE upstream snapshot. ab_vis is the marker's VISIBLE
-      # width (ANSI excluded) so the heading's wrap height can be computed:
-      # " · ↑N" / " · ↓M" each span the " · " separator + a 1-col arrow + digits.
 
       # The changes ($staged/$unstaged/$untracked) are gathered by the parent
       # shell and inherited here, so the render and the click→path map share one
@@ -1072,12 +1060,11 @@ compact_view() {
       ta=${sums% *}
       td=${sums#* }
 
-      # ── Header: branch heading with dimmed namespace + changed-file count and
-      # net +/- stamp. This whole line (plus the separator below) is PINNED by
-      # the renderer — it never scrolls — so the changeset size stays in view.
-      local leaf="${branch##*/}"
-      local ns=""
-      [ "$leaf" != "$branch" ] && ns="${branch%/*}/"
+      # ── Header: the active plan (PLAN control) on the left and the changed-file
+      # count + net +/- stamp on the right. The branch name is shown ONLY at the
+      # bottom bar, so it is deliberately absent here. This whole line (plus the
+      # separator below) is PINNED by the renderer — it never scrolls — so the
+      # changeset size stays in view.
       local total_files=$((n_staged + n_unstaged + n_untracked))
       local funit="files"
       [ "$total_files" -eq 1 ] && funit="file"
@@ -1085,32 +1072,26 @@ compact_view() {
       if [ "$total_files" -gt 0 ]; then
         stamp="${total_files} ${funit}  +${ta} −${td}"
       fi
-      # Active subscription/plan (PLAN control), shown inline after the branch so
-      # the ledger always states which plan the session runs on. The " · "
-      # separator is 3 columns wide; reserve them (plus the name) in the pad so
-      # the right-aligned stamp can't collide with it.
+      # Active subscription/plan leads the heading so the ledger always states
+      # which plan the session runs on; empty when unset (then the stamp alone
+      # fills the pinned line).
       local plan="${WISP_DECK_PLAN:-}"
-      local plan_w=0
-      [ -n "$plan" ] && plan_w=$(( ${#plan} + 3 ))
 
-      # Place the stamp with heading_layout: right-aligned on the branch line
+      # Place the stamp with heading_layout: right-aligned on the heading line
       # when it fits (mode inline), else moved WHOLE onto its own new row below
-      # (mode below) — the +/- block is never split across rows. The returned
-      # head_rows counts every screen row the pinned heading spans; +1 for the
-      # separator. Emit that total as the content's first line for split_content;
-      # the renderer/click math read the pinned-header offset from there so mouse
-      # clicks/hover still map to the right file row.
-      local headtext="${ns}${leaf}"
+      # (mode below) — the +/- block is never split across rows. The plan is the
+      # heading's only left-run text now (no branch, no ahead/behind marker), so
+      # the marker/plan-segment widths are 0. The returned head_rows counts every
+      # screen row the pinned heading spans; +1 for the separator. Emit that total
+      # as the content's first line for split_content; the renderer/click math
+      # read the pinned-header offset from there so clicks/hover map to the right
+      # file row.
       local mode pad head_rows
-      read -r mode pad head_rows <<< "$(heading_layout "$iw" "${#headtext}" "$ab_vis" "$plan_w" "${#stamp}" "$w")"
+      read -r mode pad head_rows <<< "$(heading_layout "$iw" "${#plan}" 0 0 "${#stamp}" "$w")"
       printf '%s\n' "$((head_rows + 1))"
 
-      printf " ${dim}%s${reset}${bold}${bright}%s${reset}" "$ns" "$leaf"
-      # %b (not %s): ahead_behind carries the literal "\033[..." color escapes,
-      # which printf only interprets in a format string / via %b — a plain %s
-      # would leak them as visible "\033[36m↑1\033[0m" text on the branch line.
-      [ -n "$ahead_behind" ] && printf '%b' "$ahead_behind"
-      [ -n "$plan" ] && printf " ${dim}·${reset} ${dim}%s${reset}" "$plan"
+      # Leading space (matches heading_layout's +1), then the plan (may be empty).
+      printf " ${dim}%s${reset}" "$plan"
       # A newline before the stamp when it lives on its own row (mode below).
       [ "$mode" = "below" ] && printf "\n"
       if [ "$mode" = "inline" ] || [ "$mode" = "below" ]; then

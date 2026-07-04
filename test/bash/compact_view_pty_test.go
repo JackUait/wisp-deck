@@ -542,10 +542,11 @@ func lastFrame(s string) string {
 	return ansiRE.ReplaceAllString(s, "")
 }
 
-// The branch heading + changed-file count must be PINNED: scrolling the file
-// list must never push it off screen. Overflow the list, jump to the bottom
-// with G, and assert the latest frame still shows the branch while a top file
-// has scrolled away and a bottom file is visible.
+// The pinned chrome must stay put when scrolling: the changed-file stamp is
+// pinned at the top and the branch bar at the bottom, so neither is ever pushed
+// off screen. Overflow the list, jump to the bottom with G, and assert the latest
+// frame still shows the branch (now at the bottom bar) while a top file has
+// scrolled away and a bottom file is visible.
 func TestCompactView_header_stays_pinned_when_scrolled(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
@@ -832,12 +833,12 @@ func TestCompactView_shows_hover_hint(t *testing.T) {
 	}
 }
 
-// The branch name and its push/pull commit counts must show at the BOTTOM of the
-// file-list view (below the listed files), not only in the pinned top heading.
-// Drives the real loop under zsh with an upstream two commits ahead, and asserts
-// the last content line is a branch bar reading "main ... ↑2", sitting below the
-// a.txt file row.
-func TestCompactView_shows_branch_at_bottom_with_push_pull(t *testing.T) {
+// The branch name and its push/pull commit counts must show ONLY at the BOTTOM
+// of the file-list view (below the listed files) — never in the pinned top
+// heading. Drives the real loop under zsh with an upstream two commits ahead, and
+// asserts the last content line is a branch bar reading "main ... ↑2" sitting
+// below the a.txt file row, and that "main" appears on no other line.
+func TestCompactView_shows_branch_only_at_bottom_with_push_pull(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
 		t.Skip("zsh not available")
@@ -933,6 +934,17 @@ func TestCompactView_shows_branch_at_bottom_with_push_pull(t *testing.T) {
 	bottom := lines[len(lines)-1]
 	if !strings.Contains(bottom, "main") || !strings.Contains(bottom, "↑2") {
 		t.Errorf("bottom line must be the branch bar with push count (\"main ... ↑2\"); got %q\nframe:\n%s", bottom, frame)
+	}
+	// The branch must appear ONLY at the bottom — not in the pinned top heading or
+	// anywhere else. Exactly one line may mention it.
+	branchLines := 0
+	for _, ln := range lines {
+		if strings.Contains(ln, "main") {
+			branchLines++
+		}
+	}
+	if branchLines != 1 {
+		t.Errorf("branch name must appear ONLY at the bottom bar (exactly 1 line); found %d:\n%s", branchLines, strings.Join(lines, "\n"))
 	}
 	// The bottom bar must sit BELOW the file list: a.txt appears on an earlier line.
 	fileRow := -1
