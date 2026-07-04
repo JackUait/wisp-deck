@@ -1179,6 +1179,15 @@ compact_view() {
       frame=$(
         printf '%s\n' "$header"
         printf '%s\n' "$draw_body" | viewport_slice "$scroll" "$avail"
+        # Pad the body region up to a CONSTANT `avail` rows with blank lines, so
+        # the bottom bar always lands on the pane's last row no matter how few
+        # files are listed. viewport_slice printed min(avail, body_total - scroll)
+        # rows; the rest are filler.
+        _shown=$((body_total - scroll))
+        [ "$_shown" -gt "$avail" ] && _shown="$avail"
+        [ "$_shown" -lt 0 ] && _shown=0
+        _blank=$((avail - _shown))
+        while [ "$_blank" -gt 0 ]; do printf '\n'; _blank=$((_blank - 1)); done
         # Bottom bar. The armed discard confirm owns the whole row; otherwise the
         # branch name + push/pull counts lead, then — appended and dot-separated —
         # the scroll position when the list overflows and the mark/discard hint

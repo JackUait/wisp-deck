@@ -957,6 +957,39 @@ func TestCompactView_shows_branch_only_at_bottom_with_push_pull(t *testing.T) {
 	if fileRow < 0 || fileRow >= len(lines)-1 {
 		t.Errorf("a.txt (the file list) must appear above the bottom branch bar; lines:\n%s", strings.Join(lines, "\n"))
 	}
+
+	// It must sit at the VERY bottom of the pane, not just below the (short) list:
+	// the body is padded with blank rows so the bar lands on the last screen row.
+	// Keep every row (blanks included) and confirm the branch bar is the last row,
+	// with blank filler on the row directly above it.
+	var rows []string
+	for _, ln := range strings.Split(frame, "\n") {
+		rows = append(rows, strings.TrimRight(ln, " \t\r"))
+	}
+	// Drop any trailing fully-empty rows the split may leave, then the last row
+	// must be the branch bar and the one above it blank (the padding).
+	last := len(rows) - 1
+	for last > 0 && rows[last] == "" {
+		last--
+	}
+	if !strings.Contains(rows[last], "main") {
+		t.Errorf("the very last rendered row must be the branch bar; got %q", rows[last])
+	}
+	// A 1-file list is far shorter than the 12-row pane, so there is blank filler
+	// pushing the bar down: the row directly above it is empty.
+	if last < 1 || rows[last-1] != "" {
+		t.Errorf("branch bar must be pushed to the pane bottom with blank filler above it; row above = %q\nrows:\n%s", func() string {
+			if last >= 1 {
+				return rows[last-1]
+			}
+			return "<none>"
+		}(), strings.Join(rows, "\n"))
+	}
+	// And the bar sits near the pane's last row (pane is 12 tall): the list is only
+	// a few rows, so without bottom-pinning the bar would be near the top.
+	if last < 9 {
+		t.Errorf("branch bar landed on row %d, expected near the pane bottom (~row 12); rows:\n%s", last+1, strings.Join(rows, "\n"))
+	}
 }
 
 // Regression: on an OVERFLOWING list, hovering a file row must show the scroll
