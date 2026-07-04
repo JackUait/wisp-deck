@@ -1949,6 +1949,52 @@ func TestCompactView_hover_hotpath_stays_fork_free(t *testing.T) {
 	}
 }
 
+// Tripwire: the hover/click hit-test must stay bounded to THIS pane HORIZONTALLY,
+// not keyed on the row alone. The outer tmux runs with mouse OFF, so the active
+// ledger pane receives motion/click reports for the whole terminal width — a
+// cursor over the neighbouring AI pane carries the SAME row as a file but a
+// column past this pane's edge. Dropping the column bound was the root cause of a
+// row staying highlighted after the pointer moved sideways out of the list. This
+// guards the whole wiring so a refactor can't silently reintroduce the row-only
+// mapping: the event handler must extract the column (mcol) and thread it — plus
+// the pane width $w — into set_hover_from_row and body_line_for_click, which must
+// reject an out-of-pane column. (Behavioural coverage:
+// TestCompactView_hover_clears_when_pointer_leaves_pane_sideways.)
+func TestCompactView_hover_is_bounded_to_pane_width(t *testing.T) {
+	srcBytes, err := os.ReadFile(filepath.Join(projectRoot(t), "lib", "compact-view.sh"))
+	if err != nil {
+		t.Fatalf("read compact-view.sh: %v", err)
+	}
+	src := string(srcBytes)
+
+	// 1. The mouse-report parser must extract the column, not just the row.
+	if !strings.Contains(src, "mcol=") {
+		t.Errorf("the mouse-report handler no longer extracts the cursor column (mcol=...); " +
+			"without it the hover can't tell a same-row cursor in the AI pane from one on the " +
+			"file list, so the highlight stays lit after the pointer leaves sideways.")
+	}
+	// 2. Motion must pass the column through to set_hover_from_row.
+	if !strings.Contains(src, `set_hover_from_row "$mrow" "$mcol"`) {
+		t.Errorf(`the motion/wheel handler must call set_hover_from_row "$mrow" "$mcol": the ` +
+			"column is what bounds the hover to this pane. A row-only call brings back the " +
+			"stale-highlight-on-leave bug.")
+	}
+	// 3. set_hover_from_row must forward the column AND the pane width ($w) into the
+	//    row→line mapper, which is where the out-of-pane column is rejected.
+	hover := extractBashFunc(src, "set_hover_from_row")
+	if !strings.Contains(hover, `"$2"`) || !strings.Contains(hover, `"$w"`) {
+		t.Errorf("set_hover_from_row must thread the cursor column ($2) and the pane width ($w) " +
+			"into body_line_for_click so a cursor past this pane's edge clears the hover.")
+	}
+	// 4. body_line_for_click must actually enforce the horizontal bound (reject a
+	//    column outside [1, width]) — not just accept the extra args and ignore them.
+	blfc := extractBashFunc(src, "body_line_for_click")
+	if !strings.Contains(blfc, "col") || !strings.Contains(blfc, "width") {
+		t.Errorf("body_line_for_click no longer bounds the hit by column/width; a report from a " +
+			"neighbouring pane (column past this pane's width) must yield 0, not a file row.")
+	}
+}
+
 // ── Multi-select & batch discard ────────────────────────────────────────────
 //
 // Selection is a newline-delimited set of file PATHS (stable across the 2s

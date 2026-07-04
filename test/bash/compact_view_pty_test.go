@@ -529,6 +529,134 @@ func TestCompactView_coalesces_motion_flood_into_few_redraws(t *testing.T) {
 	}
 }
 
+// Regression: hovering a file row and then moving the pointer SIDEWAYS out of
+// the file list must clear the highlight. The outer tmux runs with mouse OFF, so
+// the active ledger pane receives motion reports for the WHOLE terminal width —
+// including cursor positions over the neighbouring AI pane to its right. The
+// hover derivation keyed on the report's ROW alone, ignoring the column, so a
+// cursor that drifted right into the AI pane at the same vertical level as a file
+// left that row lit forever (no in-pane event ever arrived to clear it). The fix
+// bounds the hover to this pane's width: a report whose column exceeds the pane
+// width clears the highlight. Drives the REAL loop under zsh, hovers a row, then
+// fires a same-row motion report with a column far past the pane edge and asserts
+// the highlight (SGR 48;5;238) goes away.
+func TestCompactView_hover_clears_when_pointer_leaves_pane_sideways(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not available")
+	}
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "a.txt", "base\n")
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "a.txt", "base\nDIRTY\n")
+
+	cmd := exec.Command(zsh, "-c", "source "+module+" && compact_view "+dir)
+	env := []string{}
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "TMUX=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	// Long interval so no timed rebuild interleaves and repaints between the two
+	// motion reports (which could mask the clear/stale distinction).
+	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=5", "TERM=xterm")
+
+	const cols = 60
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 12, Cols: cols})
+	if err != nil {
+		t.Fatalf("start pty: %v", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	var mu sync.Mutex
+	var out bytes.Buffer
+	go func() {
+		b := make([]byte, 4096)
+		for {
+			n, err := ptmx.Read(b)
+			if n > 0 {
+				mu.Lock()
+				out.Write(b[:n])
+				mu.Unlock()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	// The current frame is the slice from the last cursor-home (each redraw begins
+	// with \033[H); keep the ANSI so the highlight SGR is visible.
+	lastRawFrame := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		s := out.String()
+		if i := strings.LastIndex(s, "\x1b[H"); i >= 0 {
+			return s[i:]
+		}
+		return s
+	}
+	frameHasHighlight := func() bool { return strings.Contains(lastRawFrame(), "48;5;238") }
+
+	// Wait for the first frame.
+	for i := 0; i < 40 && !strings.Contains(lastRawFrame(), "modified"); i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Hover a.txt's row: rows 1-2 are the pinned header, row 3 the "modified"
+	// group header, row 4 the file. Column 10 is well inside the 60-col pane.
+	_, _ = ptmx.Write([]byte("\x1b[<35;10;4M"))
+	lit := false
+	for i := 0; i < 40; i++ {
+		if frameHasHighlight() {
+			lit = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !lit {
+		t.Fatalf("hover over the file row never lit the highlight; cannot test the clear.\nframe:\n%q", lastRawFrame())
+	}
+
+	// Move the pointer SIDEWAYS into the neighbouring pane: SAME row (4), but a
+	// column far past the pane's right edge (200 > 60). With mouse off in the outer
+	// tmux this report still reaches the active ledger; the highlight must clear.
+	_, _ = ptmx.Write([]byte("\x1b[<35;200;4M"))
+	cleared := false
+	for i := 0; i < 40; i++ {
+		if !frameHasHighlight() {
+			cleared = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
+	time.Sleep(200 * time.Millisecond)
+
+	if !cleared {
+		t.Errorf("the file row stayed highlighted after the pointer moved sideways out of the "+
+			"list (column past the pane width). Hover must be bounded to this pane's width, not "+
+			"keyed on the row alone.\nframe:\n%q", lastRawFrame())
+	}
+}
+
 // stripANSI removes CSI escape sequences so frame content can be asserted on.
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]`)
 
