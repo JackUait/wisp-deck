@@ -307,11 +307,21 @@ heading_layout() {
 # subshell fork — that fork cost ~8ms under load and was a chief reason the
 # selection bar crawled behind the cursor. Hot-path callers redirect stdout to
 # /dev/null (a fork-free redirect) and read $BODY_LINE; see set_hover_from_row.
-# Usage: body_line_for_click <row> <scroll> <avail> <total> [header_rows]
+# The optional <col> <width> bound the hit horizontally: the outer tmux runs with
+# mouse OFF, so the active ledger pane receives motion/click reports for the WHOLE
+# terminal width — including cursor positions over the neighbouring AI pane. A
+# report whose column falls outside this pane's width belongs to that other pane,
+# not a hover/click on our list, so it yields 0. Omitting them keeps the historical
+# row-only behaviour for callers/tests that predate the horizontal bound.
+# Usage: body_line_for_click <row> <scroll> <avail> <total> [header_rows] [col] [width]
 body_line_for_click() {
-  local row="$1" scroll="$2" avail="$3" total="$4" header_rows="${5:-2}"
+  local row="$1" scroll="$2" avail="$3" total="$4" header_rows="${5:-2}" col="${6:-}" width="${7:-}"
   local vr=$((row - header_rows))       # 1-based row within the body viewport
   BODY_LINE=0
+  # Cursor is in another pane (column past this pane's edge) -> not our row.
+  if [ -n "$col" ] && [ -n "$width" ]; then
+    { [ "$col" -lt 1 ] || [ "$col" -gt "$width" ]; } && { printf 0; return; }
+  fi
   { [ "$vr" -lt 1 ] || [ "$vr" -gt "$avail" ]; } && { printf 0; return; }
   local line=$((scroll + vr))
   { [ "$line" -lt 1 ] || [ "$line" -gt "$total" ]; } && { printf 0; return; }
@@ -750,12 +760,17 @@ compact_view() {
   # next motion frame — a visible blink while scrolling. Reads the loop-scope
   # scroll/avail/body_total/header_rows/body_map via dynamic scope.
   set_hover_from_row() {
+    # $1 = cursor row, $2 = cursor column. The column bounds the hover to THIS
+    # pane's width ($w): with the outer tmux mouse OFF, the active ledger receives
+    # motion reports for the whole terminal, so a cursor over the AI pane to the
+    # right carries a column past $w — passing it to body_line_for_click clears the
+    # highlight instead of leaving the same-row file lit after the pointer left.
     # Fork-free: body_line_for_click stores its result in $BODY_LINE; the
     # >/dev/null swallows its (redundant) printf without spawning a subshell. A
     # $() here cost ~8ms PER motion event under load — the hover hot path runs
     # once per buffered report, so that fork is what made the highlight crawl.
     local b
-    body_line_for_click "$1" "$scroll" "$avail" "$body_total" "$header_rows" >/dev/null
+    body_line_for_click "$1" "$scroll" "$avail" "$body_total" "$header_rows" "$2" "$w" >/dev/null
     b="$BODY_LINE"
     nth_line "$body_map" "$b"
     if [ "$b" != 0 ] && [ -n "$NTH_LINE" ]; then hover_line="$b"; else hover_line=0; fi
@@ -805,7 +820,7 @@ compact_view() {
   # a *display* command that dumps "NAME=value" to stdout — the branch bar blinked
   # a raw `ab_counts=$'8\t0'` on every tick after the first (see the NOTE above).
   local branch ahead behind ab_counts
-  local mterm mrest mrow bl cpath prev_hover prev_scroll hover_keep
+  local mterm mrest mcol mrow bl cpath prev_hover prev_scroll hover_keep
   # Multi-select batch discard: SELECTED is a newline-delimited set of marked
   # file PATHS (tracked by path so it survives the ledger's rebuild/scroll).
   # discard_armed shows the y/n confirm footer; discard_set is what a confirm
@@ -938,9 +953,11 @@ compact_view() {
               if [ -z "$mterm" ] || ! [[ "$mbtn" =~ $mouse_re ]]; then
                 hover_line="$hover_keep"
               else
-              # Cursor row from "btn;col;row" — every position-bearing report
-              # (wheel and motion alike) carries it, so extract it once.
-              mrest="${mbtn#*;}"; mrow="${mrest#*;}"
+              # Cursor col+row from "btn;col;row" — every position-bearing report
+              # (wheel and motion alike) carries both, so extract them once. The
+              # column bounds the hover/click to this pane (mouse is OFF in the
+              # outer tmux, so the active ledger sees the whole terminal's width).
+              mrest="${mbtn#*;}"; mcol="${mrest%%;*}"; mrow="${mrest#*;}"
               case "${mbtn%%;*}" in
                 64|65)
                   # Wheel up=64 / down=65. Adjust and clamp the scroll, then
@@ -954,21 +971,21 @@ compact_view() {
                     scroll=$((scroll + 3))
                   fi
                   scroll=$(clamp_scroll "$scroll" "$body_total" "$avail")
-                  set_hover_from_row "$mrow"
+                  set_hover_from_row "$mrow" "$mcol"
                   ;;
                 32|33|34|35)
                   # Mouse motion (hover/drag, SGR adds 32 to the button code):
                   # highlight the file row under the cursor. The coalescing loop
                   # repaints only if the SETTLED hover differs from what's on
                   # screen, so same-row motion is a no-op without a per-event check.
-                  set_hover_from_row "$mrow"
+                  set_hover_from_row "$mrow" "$mcol"
                   ;;
                 0)
                   # Left-click: map the report's row (the 3rd ";"-field of
                   # "btn;col;row") to a body line, then to a path, and float the
                   # whole-file diff over the window.
                   if [ "$mterm" = M ]; then
-                    bl=$(body_line_for_click "$mrow" "$scroll" "$avail" "$body_total" "$header_rows")
+                    bl=$(body_line_for_click "$mrow" "$scroll" "$avail" "$body_total" "$header_rows" "$mcol" "$w")
                     if [ "$bl" != 0 ]; then
                       nth_line "$body_map" "$bl"; cpath="$NTH_LINE"
                       if [ -n "$cpath" ]; then

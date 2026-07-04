@@ -500,6 +500,43 @@ func TestBodyLineForClick_omitted_header_rows_defaults_to_two(t *testing.T) {
 	}
 }
 
+// The outer tmux runs with mouse OFF (so drag-drop/clicks reach the right pane),
+// which means the active ledger pane receives motion reports for the WHOLE
+// terminal width — including cursor positions over the neighbouring AI pane to
+// its right. Those carry a column beyond this pane's width. Keying the hover/
+// click on the row alone left the row under the cursor's *vertical* position lit
+// even after the pointer moved sideways into another pane. The 6th/7th args
+// (<col> <width>) reject a report whose column falls outside [1, width].
+func TestBodyLineForClick_column_beyond_pane_width_yields_zero(t *testing.T) {
+	// row 5, header_rows 2 -> body line 3; but col 200 is past width 80 (the
+	// cursor is over the AI pane), so no hover/click on this pane.
+	out, code := runBashFunc(t, "lib/compact-view.sh", "body_line_for_click",
+		[]string{"5", "0", "20", "30", "2", "200", "80"}, nil)
+	assertExitCode(t, code, 0)
+	if got := strings.TrimSpace(out); got != "0" {
+		t.Errorf("column 200 past pane width 80 should yield 0, got %q", got)
+	}
+}
+
+func TestBodyLineForClick_column_within_pane_width_maps(t *testing.T) {
+	// Same row, but the cursor is inside this pane (col 40 <= width 80): the row
+	// maps normally to body line 3.
+	out, _ := runBashFunc(t, "lib/compact-view.sh", "body_line_for_click",
+		[]string{"5", "0", "20", "30", "2", "40", "80"}, nil)
+	if got := strings.TrimSpace(out); got != "3" {
+		t.Errorf("column 40 within pane width 80 should map to body line 3, got %q", got)
+	}
+}
+
+func TestBodyLineForClick_column_at_right_edge_maps(t *testing.T) {
+	// The last column of the pane (col == width) is still inside it.
+	out, _ := runBashFunc(t, "lib/compact-view.sh", "body_line_for_click",
+		[]string{"5", "0", "20", "30", "2", "80", "80"}, nil)
+	if got := strings.TrimSpace(out); got != "3" {
+		t.Errorf("column at right edge should map to body line 3, got %q", got)
+	}
+}
+
 // body_line_for_click also stores its result in the global BODY_LINE so the hover
 // hot path can read it without a $() subshell fork (that fork cost ~8ms/event
 // under load and made the selection bar crawl). Assert the global matches the
