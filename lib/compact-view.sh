@@ -240,10 +240,10 @@ heading_layout() {
   fi
 
   # No room on the branch line — move the whole stamp to its own row below,
-  # right-aligned within the inner width. The heading now spans the branch row(s)
-  # plus the stamp row(s).
-  local below_pad=$((iw - stamp_w))
-  [ "$below_pad" -lt 1 ] && below_pad=1
+  # LEFT-aligned (one leading space, under the branch line's left edge) like text
+  # wrapping to a new line. The heading now spans the branch row(s) plus the
+  # stamp row(s).
+  local below_pad=1
   local stamp_vis=$((below_pad + stamp_w))
   local rows=$(( $(wrap_rows_for "$branch_vis" "$w") + $(wrap_rows_for "$stamp_vis" "$w") ))
   printf 'below %s %s\n' "$below_pad" "$rows"

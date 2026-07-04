@@ -611,9 +611,10 @@ func TestHeadingLayout_stamp_moves_to_new_row_when_no_space(t *testing.T) {
 	if rows != "2" {
 		t.Errorf("head_rows = %s, want 2 (branch row + its own stamp row)", rows)
 	}
-	// Right-aligned on its own row within the inner width: 46 - 19 = 27.
-	if pad != "27" {
-		t.Errorf("pad = %s, want 27 (right-align the stamp on its new row)", pad)
+	// Left-aligned on its own row — one leading space, matching the branch line's
+	// left edge, like text wrapping to a new line (NOT right-aligned).
+	if pad != "1" {
+		t.Errorf("pad = %s, want 1 (stamp starts from the left on its new row)", pad)
 	}
 }
 
