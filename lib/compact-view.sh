@@ -198,6 +198,31 @@ header_rows_for() {
   printf '%d' $((wrapped + 1))
 }
 
+# heading_layout computes the right-align pad and the true visible width of the
+# pinned ledger heading, so the stamp (net +/- and file count) sits flush-right
+# without ever overflowing the inner width. The ahead/behind marker (ab_vis —
+# the visible columns of "↑N"/"↓M") is part of the left run alongside the branch
+# and plan, so it MUST be reserved in the pad. Omitting it lets a large marker
+# (e.g. "↑22") push the line past the inner width, and the terminal wraps the
+# stamp's tail (the "2" of "+5581 −72") onto a second row.
+#
+# The heading is printed as: leading space + headtext + marker + plan + pad +
+# stamp. When the stamp fits (pad ≥ 1) the line fills exactly 1 + iw columns;
+# otherwise the stamp is dropped and only the left run (1 + headtext + marker +
+# plan) is drawn. Echoes "<pad> <head_vis>" for the render and header_rows_for.
+# Usage: heading_layout <iw> <headtext_w> <ab_vis> <plan_w> <stamp_w>
+heading_layout() {
+  local iw="$1" headtext_w="$2" ab_vis="$3" plan_w="$4" stamp_w="$5"
+  local pad=$((iw - headtext_w - ab_vis - plan_w - stamp_w))
+  local head_vis
+  if [ "$stamp_w" -gt 0 ] && [ "$pad" -ge 1 ]; then
+    head_vis=$((1 + iw))
+  else
+    head_vis=$((1 + headtext_w + ab_vis + plan_w))
+  fi
+  printf '%s %s\n' "$pad" "$head_vis"
+}
+
 # body_line_for_click maps a clicked SCREEN row to a 1-based body-line index, or
 # 0 when the click landed on the pinned header, the bottom scroll-status row, or
 # past the end of the content. The header occupies <header_rows> screen rows (2
@@ -1002,24 +1027,19 @@ compact_view() {
       local plan_w=0
       [ -n "$plan" ] && plan_w=$(( ${#plan} + 3 ))
 
-      # Right-align the stamp on the heading line when it fits.
+      # Right-align the stamp on the heading line when it fits. heading_layout
+      # reserves the ahead/behind marker (ab_vis) in the pad so the whole line —
+      # leading space, ns+leaf, marker, inline plan, pad, and the right-aligned
+      # stamp — fits the inner width instead of overflowing and wrapping the
+      # stamp's tail onto a second row.
       local headtext="${ns}${leaf}"
-      local pad=$((iw - ${#headtext} - plan_w - ${#stamp}))
-
-      # How many SCREEN rows will the heading line occupy? It is emitted with a
-      # single leading space, then ns+leaf, the ahead/behind marker, the inline
-      # plan, and — only when it fits (pad ≥ 1) — the right-aligned stamp. When
-      # the stamp shows, the line fills the inner width plus the marker; when it
-      # doesn't, only the left run is printed. A heading wider than the pane wraps
-      # onto extra rows, which the pinned-header offset must account for so mouse
-      # clicks/hover map to the right file row. Emit the row count as the content's
-      # first line for split_content; the renderer/click math read it from there.
-      local head_vis
-      if [ -n "$stamp" ] && [ "$pad" -ge 1 ]; then
-        head_vis=$((1 + iw + ab_vis))
-      else
-        head_vis=$((1 + ${#headtext} + ab_vis + plan_w))
-      fi
+      local pad head_vis
+      # head_vis is how many SCREEN rows the heading occupies: a heading wider
+      # than the pane wraps onto extra rows, which the pinned-header offset must
+      # account for so mouse clicks/hover map to the right file row. Emit the row
+      # count as the content's first line for split_content; the renderer/click
+      # math read it from there.
+      read -r pad head_vis <<< "$(heading_layout "$iw" "${#headtext}" "$ab_vis" "$plan_w" "${#stamp}")"
       printf '%s\n' "$(header_rows_for "$head_vis" "$w")"
 
       printf " ${dim}%s${reset}${bold}${bright}%s${reset}" "$ns" "$leaf"

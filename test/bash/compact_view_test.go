@@ -562,6 +562,58 @@ func TestHeaderRowsFor_empty_heading_is_two_rows(t *testing.T) {
 	}
 }
 
+// heading_layout computes the right-align pad and the heading's true visible
+// width for the pinned ledger header, given the inner width and the visible
+// widths of its parts. The ahead/behind marker (ab_vis, e.g. "↑22") is part of
+// the left run, so it MUST be reserved in the pad — otherwise the right-aligned
+// +/- stamp overflows the inner width and the terminal wraps its tail (the "2"
+// of "+5581 −72") onto a second row. Output: "<pad> <head_vis>".
+
+// Regression: the "master ↑22 · Standard Claude  21 files  +5581 −72" line from
+// the bug report. Inner width 56, "master" (6), "↑22" marker (4), "Standard
+// Claude" plan (15+3=18), and a 19-col stamp. The marker must be reserved so the
+// whole line fits the inner width (head_vis == 1 + iw == 57) instead of
+// overflowing to 61 columns and wrapping the stamp tail.
+func TestHeadingLayout_reserves_ahead_marker_so_stamp_never_wraps(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "heading_layout",
+		[]string{"56", "6", "4", "18", "19"}, nil)
+	assertExitCode(t, code, 0)
+	fields := strings.Fields(out)
+	if len(fields) != 2 {
+		t.Fatalf("expected \"<pad> <head_vis>\", got %q", out)
+	}
+	pad, headVis := fields[0], fields[1]
+	if headVis != "57" {
+		t.Errorf("head_vis = %s, want 57 (1 + inner width); the ↑22 marker must be reserved, not stacked on top", headVis)
+	}
+	// Reconstruct the physically printed width: leading space + headtext + marker
+	// + plan + pad + stamp. It must equal head_vis and stay within the inner
+	// width, proving nothing overflows to wrap.
+	if pad != "9" {
+		t.Errorf("pad = %s, want 9 (56 - 6 - 4 - 18 - 19); the marker's 4 cols must be subtracted", pad)
+	}
+}
+
+// When the stamp cannot fit even after reserving the marker (pad < 1), the render
+// drops it, so head_vis collapses to just the left run and no overflow occurs.
+func TestHeadingLayout_drops_stamp_when_it_cannot_fit(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "heading_layout",
+		[]string{"20", "6", "4", "18", "19"}, nil)
+	assertExitCode(t, code, 0)
+	fields := strings.Fields(out)
+	if len(fields) != 2 {
+		t.Fatalf("expected \"<pad> <head_vis>\", got %q", out)
+	}
+	pad, headVis := fields[0], fields[1]
+	if pad != "-27" {
+		t.Errorf("pad = %s, want -27 (does not fit)", pad)
+	}
+	// Left run only: 1 + 6 + 4 + 18 = 29 (stamp omitted, so its 19 cols drop out).
+	if headVis != "29" {
+		t.Errorf("head_vis = %s, want 29 (left run only when stamp is dropped)", headVis)
+	}
+}
+
 // open_diff_popup floats a whole-window tmux popup running the full-file diff
 // for the clicked path, piped through less. It builds the popup command; the
 // actual rendering is tmux's job (mocked here).
