@@ -231,6 +231,27 @@ ahead_behind_marker() {
   printf '%s\n%s\n' "$marker" "$vis"
 }
 
+# branch_status renders the bottom-bar branch indicator: the branch name followed
+# by its upstream divergence — "↑N" commits to push (ahead) and "↓M" to pull
+# (behind) — dot-separated exactly like the top heading (reusing
+# ahead_behind_marker). In sync, or with no upstream (ahead == behind == 0), only
+# the name shows. A dim namespace ("feature/") with a bright leaf mirrors the
+# heading's branch styling. Emits real ANSI (printf interprets the \033 escapes).
+# Usage: branch_status <branch> <ahead> <behind>
+branch_status() {
+  local branch="$1" ahead="${2:-0}" behind="${3:-0}"
+  local dim="\033[90m" bright="\033[97m" cyan="\033[36m" yellow="\033[33m" reset="\033[0m"
+  local leaf="${branch##*/}" ns="" m marker
+  [ "$leaf" != "$branch" ] && ns="${branch%/*}/"
+  m=$(ahead_behind_marker "$ahead" "$behind" "$dim" "$cyan" "$yellow" "$reset")
+  marker=${m%$'\n'*}
+  # Branch name: dim namespace + bright leaf (colors in the format string are
+  # interpreted; the name itself is data via %s). Then the marker via %b, whose
+  # literal \033 escapes ahead_behind_marker embedded need interpreting.
+  printf " ${dim}%s${reset}${bright}%s${reset}" "$ns" "$leaf"
+  printf '%b' "$marker"
+}
+
 # heading_layout decides where the pinned ledger heading's +/- stamp goes and how
 # many SCREEN rows the heading spans (excluding the separator). The stamp (file
 # count + net +/-) is a single block that is NEVER split: it sits right-aligned on
@@ -478,21 +499,6 @@ ledger_hint() {
   else
     printf " ${dim}x mark · d discard${reset}"
   fi
-}
-
-# ledger_footer renders the reserved bottom row while a file row is hovered and
-# the list overflows: the scroll position indicator AND the mark/discard hint,
-# side by side. The hint no longer REPLACES the scroll data — both share the row,
-# separated by a dim middot — so the user never loses their position to see the
-# keys. Delegates to scroll_status and ledger_hint so each stays the single
-# source of its own formatting.
-# Usage: ledger_footer <scroll> <avail> <total> <marked>
-ledger_footer() {
-  local scroll="$1" avail="$2" total="$3" marked="$4"
-  local dim="\033[2m" reset="\033[0m"
-  scroll_status "$scroll" "$avail" "$total"
-  printf " ${dim}·${reset}"
-  ledger_hint "$marked"
 }
 
 # discard_worktree_files reverts every member path of <selected> back to the
@@ -799,9 +805,8 @@ compact_view() {
   # discard_armed shows the y/n confirm footer; discard_set is what a confirm
   # will restore (the selection, or the hovered file when nothing is selected).
   # state_dirty forces a repaint when the selection/armed state changes without a
-  # rebuild or hover/scroll change; reserve marks that a bottom footer row is in
-  # use (scroll status OR the confirm prompt).
-  local SELECTED="" discard_armed=0 discard_set="" state_dirty=0 reserve=0
+  # rebuild or hover/scroll change.
+  local SELECTED="" discard_armed=0 discard_set="" state_dirty=0
   # Frame-erase helpers, built ONCE: $nl is a literal newline (the match), $rowend
   # is "erase-to-end-of-line + newline" (the replacement). The flicker-free redraw
   # swaps every newline in the composed frame for $rowend so each row scrubs the
@@ -1017,6 +1022,26 @@ compact_view() {
     # body) via $(), so both shed their trailing blank identically and the Nth
     # map line keeps describing the Nth body line.
     body_map=$(body_path_map "$staged" "$unstaged" "$untracked")
+    # Branch + upstream divergence, gathered ONCE here (on the build tick, not the
+    # hover hot path) so the SAME snapshot feeds both the pinned heading (inside
+    # the content subshell, which inherits these) and the bottom branch bar (built
+    # outside it). ahead = commits to push, behind = commits to pull.
+    branch=$(git -C "$project_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "detached")
+    ahead=0; behind=0
+    if git -C "$project_dir" rev-parse '@{u}' &>/dev/null 2>&1; then
+      local ab_counts
+      ab_counts=$(git -C "$project_dir" rev-list --left-right --count "HEAD...@{u}" 2>/dev/null)
+      if [ -n "$ab_counts" ]; then
+        ahead=$(echo "$ab_counts" | cut -f1)
+        behind=$(echo "$ab_counts" | cut -f2)
+      fi
+    fi
+    # Colored heading marker (" · ↑N · ↓M") + its visible width, shared by the
+    # heading below. Marker on line 1 (keeps its leading space), width on line 2;
+    # %/## strip the single newline under both bash and zsh.
+    _ab_marker=$(ahead_behind_marker "$ahead" "$behind" "$dim" "$cyan" "$yellow" "$reset")
+    ahead_behind=${_ab_marker%$'\n'*}
+    ab_vis=${_ab_marker##*$'\n'}
     content=$(
       cd "$project_dir" || exit 1
 
@@ -1024,27 +1049,11 @@ compact_view() {
       local iw=$((w - 4))
       [ "$iw" -lt 20 ] && iw=20
 
-      # Branch + ahead/behind. ab_vis tracks the marker's VISIBLE width (the ANSI
-      # colors don't take columns) so the heading's wrap height can be computed:
-      # " · ↑N" / " · ↓M" each span the " · " separator + a 1-column arrow + the
-      # digit count. The markers are dot-separated so every heading value shares
-      # one separator, matching the " · plan" join.
-      local branch ahead_behind="" ab_vis=0
-      branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "detached")
-      if git rev-parse '@{u}' &>/dev/null 2>&1; then
-        local counts ahead=0 behind=0 _marker
-        counts=$(git rev-list --left-right --count "HEAD...@{u}" 2>/dev/null)
-        if [ -n "$counts" ]; then
-          ahead=$(echo "$counts" | cut -f1)
-          behind=$(echo "$counts" | cut -f2)
-        fi
-        # Marker string on line 1 (keeps its leading space), visible width on
-        # line 2. %/## strip on the single embedded newline preserves the marker
-        # verbatim and works under both bash and zsh.
-        _marker=$(ahead_behind_marker "$ahead" "$behind" "$dim" "$cyan" "$yellow" "$reset")
-        ahead_behind=${_marker%$'\n'*}
-        ab_vis=${_marker##*$'\n'}
-      fi
+      # Branch + ahead/behind are gathered by the parent shell (see the build
+      # block above) and inherited here, so the pinned heading and the bottom
+      # branch bar share ONE upstream snapshot. ab_vis is the marker's VISIBLE
+      # width (ANSI excluded) so the heading's wrap height can be computed:
+      # " · ↑N" / " · ↓M" each span the " · " separator + a 1-col arrow + digits.
 
       # The changes ($staged/$unstaged/$untracked) are gathered by the parent
       # shell and inherited here, so the render and the click→path map share one
@@ -1161,18 +1170,13 @@ compact_view() {
 
     local body_rows=$((h - header_rows))
     [ "$body_rows" -lt 1 ] && body_rows=1
-    # Reserve the bottom row for a footer — the scroll position indicator when the
-    # body overflows, OR the y/n confirm prompt while a discard is armed. The
-    # hover hint does NOT reserve a row (it reuses the overflow footer, or the
-    # slack below a short list), so moving the cursor never resizes the viewport.
-    reserve=0
-    { [ "$body_total" -gt "$body_rows" ] || [ "$discard_armed" = 1 ]; } && reserve=1
-    if [ "$reserve" = 1 ]; then
-      avail=$((body_rows - 1))
-      [ "$avail" -lt 1 ] && avail=1
-    else
-      avail="$body_rows"
-    fi
+    # The bottom row is ALWAYS reserved for the branch bar (branch name + push/pull
+    # commit counts), which sits at the bottom of the file-list view. That row also
+    # carries the scroll position (on overflow), the mark/discard hint (on hover),
+    # and the y/n confirm (while a discard is armed). A CONSTANT reserve also means
+    # the viewport height never changes on hover, so the list never jitters.
+    avail=$((body_rows - 1))
+    [ "$avail" -lt 1 ] && avail=1
     scroll=$(clamp_scroll "$scroll" "$body_total" "$avail")
 
     # Keep the hover highlight only on an actual file row: drop it if the
@@ -1193,28 +1197,22 @@ compact_view() {
       draw_body=$(highlight_body_line "$draw_body" "$hover_line" "$hover_style" "$w")
       frame=$(
         printf '%s\n' "$header"
-        if [ "$reserve" = 1 ]; then
-          printf '%s\n' "$draw_body" | viewport_slice "$scroll" "$avail"
-          # Footer priority on the reserved row: the armed confirm, else — while
-          # the cursor is over a file row — the scroll position AND the mark/discard
-          # hint side by side (the hint no longer replaces the scroll data), else
-          # the bare scroll position indicator (present whenever the body overflows).
-          if [ "$discard_armed" = 1 ]; then
-            discard_prompt "$(selection_count "$discard_set")"
-          elif [ "$hover_line" -gt 0 ]; then
-            ledger_footer "$scroll" "$avail" "$body_total" "$(selection_count "$SELECTED")"
-          else
+        printf '%s\n' "$draw_body" | viewport_slice "$scroll" "$avail"
+        # Bottom bar. The armed discard confirm owns the whole row; otherwise the
+        # branch name + push/pull counts lead, then — appended and dot-separated —
+        # the scroll position when the list overflows and the mark/discard hint
+        # while a file row is hovered.
+        if [ "$discard_armed" = 1 ]; then
+          discard_prompt "$(selection_count "$discard_set")"
+        else
+          branch_status "$branch" "$ahead" "$behind"
+          if [ "$body_total" -gt "$avail" ]; then
+            printf ' \033[90m·\033[0m'
             scroll_status "$scroll" "$avail" "$body_total"
           fi
-        else
-          # Short list (no reserved footer): print it in full, then — only while a
-          # file row is hovered and a spare row exists below — append the hint in
-          # that slack, so the idle view stays full-height and never jitters.
-          if [ "$hover_line" -gt 0 ] && [ "$((h - header_rows - body_total))" -gt 0 ]; then
-            printf '%s\n' "$draw_body"
+          if [ "$hover_line" -gt 0 ]; then
+            printf ' \033[90m·\033[0m'
             ledger_hint "$(selection_count "$SELECTED")"
-          else
-            printf '%s' "$draw_body"
           fi
         fi
       )

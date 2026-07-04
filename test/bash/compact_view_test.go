@@ -701,6 +701,42 @@ func TestAheadBehindMarker_none_is_empty(t *testing.T) {
 	}
 }
 
+// branch_status renders the bottom-bar branch indicator: the branch name plus
+// its push/pull divergence — "↑N" commits to push (ahead of upstream), "↓M" to
+// pull (behind) — dot-separated like the heading. In sync (or no upstream), only
+// the name shows.
+
+func TestBranchStatus_shows_branch_with_push_and_pull(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "branch_status",
+		[]string{"main", "2", "1"}, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "main")
+	assertContains(t, out, "↑2") // commits to push
+	assertContains(t, out, "↓1") // commits to pull
+}
+
+func TestBranchStatus_in_sync_shows_only_the_name(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "branch_status",
+		[]string{"main", "0", "0"}, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "main")
+	if strings.ContainsAny(out, "↑↓") {
+		t.Errorf("in-sync branch must show no push/pull markers, got %q", out)
+	}
+}
+
+func TestBranchStatus_ahead_only(t *testing.T) {
+	out, code := runBashFunc(t, "lib/compact-view.sh", "branch_status",
+		[]string{"feature/login", "3", "0"}, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "feature/")
+	assertContains(t, out, "login")
+	assertContains(t, out, "↑3")
+	if strings.Contains(out, "↓") {
+		t.Errorf("ahead-only branch must show no pull marker, got %q", out)
+	}
+}
+
 // open_diff_popup floats a whole-window tmux popup running the full-file diff
 // for the clicked path, piped through less. It builds the popup command; the
 // actual rendering is tmux's job (mocked here).
@@ -2082,37 +2118,6 @@ func TestLedgerHint_marked_shows_count(t *testing.T) {
 	clean := ansiRE.ReplaceAllString(out, "")
 	if !strings.Contains(clean, "2") || !strings.Contains(clean, "d discard") {
 		t.Errorf("hint with marked files should show the count and discard key: got %q", clean)
-	}
-}
-
-// ledger_footer combines the scroll position indicator with the mark/discard
-// hint on ONE reserved row, so hovering an overflowing list keeps the scroll
-// data visible AND advertises the keys — the hint no longer REPLACES the scroll
-// position (see the reserved-footer render in compact_view).
-func TestLedgerFooter_shows_scroll_and_hint(t *testing.T) {
-	// scroll=10, avail=24, total=34 -> "11-34/34"; 0 files marked.
-	out, code := cvFuncArgv(t, "ledger_footer", "10", "24", "34", "0")
-	assertExitCode(t, code, 0)
-	clean := ansiRE.ReplaceAllString(out, "")
-	if !strings.Contains(clean, "11-34/34") {
-		t.Errorf("footer must keep the scroll position data: got %q", clean)
-	}
-	if !strings.Contains(clean, "x mark") || !strings.Contains(clean, "d discard") {
-		t.Errorf("footer must also advertise the mark/discard keys: got %q", clean)
-	}
-}
-
-// With files marked, the footer still shows the scroll data and now reports the
-// marked count alongside the keys.
-func TestLedgerFooter_shows_scroll_and_marked_count(t *testing.T) {
-	out, code := cvFuncArgv(t, "ledger_footer", "10", "24", "34", "2")
-	assertExitCode(t, code, 0)
-	clean := ansiRE.ReplaceAllString(out, "")
-	if !strings.Contains(clean, "11-34/34") {
-		t.Errorf("footer must keep the scroll position data: got %q", clean)
-	}
-	if !strings.Contains(clean, "2") || !strings.Contains(clean, "d discard") {
-		t.Errorf("footer must report the marked count and discard key: got %q", clean)
 	}
 }
 

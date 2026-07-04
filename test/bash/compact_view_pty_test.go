@@ -832,11 +832,126 @@ func TestCompactView_shows_hover_hint(t *testing.T) {
 	}
 }
 
+// The branch name and its push/pull commit counts must show at the BOTTOM of the
+// file-list view (below the listed files), not only in the pinned top heading.
+// Drives the real loop under zsh with an upstream two commits ahead, and asserts
+// the last content line is a branch bar reading "main ... ↑2", sitting below the
+// a.txt file row.
+func TestCompactView_shows_branch_at_bottom_with_push_pull(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not available")
+	}
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+
+	dir := t.TempDir()
+	gitEnv := append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	gitIn := func(wd string, args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", wd}, args...)...)
+		c.Env = gitEnv
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git := func(args ...string) { gitIn(dir, args...) }
+
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "a.txt", "base\n")
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "init")
+	// Upstream via a bare remote so @{u} resolves; push at the init commit, set
+	// upstream, then add two local commits so the branch is ahead by 2 (to push).
+	bare := filepath.Join(t.TempDir(), "r.git")
+	c := exec.Command("git", "init", "--bare", "-q", bare)
+	c.Env = gitEnv
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v\n%s", err, out)
+	}
+	git("remote", "add", "origin", bare)
+	git("push", "-q", "origin", "main")
+	git("branch", "--set-upstream-to=origin/main", "main")
+	git("commit", "-q", "--allow-empty", "-m", "ahead1")
+	git("commit", "-q", "--allow-empty", "-m", "ahead2")
+	// Dirty a.txt so the ledger lists a file above the bottom bar.
+	writeTempFile(t, dir, "a.txt", "base\nDIRTY\n")
+
+	cmd := exec.Command(zsh, "-c", "source "+module+" && compact_view "+dir)
+	env := []string{}
+	for _, e := range os.Environ() {
+		if len(e) >= 5 && e[:5] == "TMUX=" {
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=5", "TERM=xterm")
+
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 12, Cols: 60})
+	if err != nil {
+		t.Fatalf("start pty: %v", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	var mu sync.Mutex
+	var out bytes.Buffer
+	go func() {
+		b := make([]byte, 4096)
+		for {
+			n, err := ptmx.Read(b)
+			if n > 0 {
+				mu.Lock()
+				out.Write(b[:n])
+				mu.Unlock()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	time.Sleep(800 * time.Millisecond) // first frame
+	_, _ = ptmx.Write([]byte{0x03})    // Ctrl-C
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	frame := lastFrame(out.String())
+	mu.Unlock()
+
+	// Non-empty, trailing-space-trimmed content lines, top to bottom.
+	var lines []string
+	for _, ln := range strings.Split(frame, "\n") {
+		if s := strings.TrimRight(ln, " "); strings.TrimSpace(s) != "" {
+			lines = append(lines, s)
+		}
+	}
+	if len(lines) == 0 {
+		t.Fatalf("no content rendered; frame:\n%q", frame)
+	}
+	bottom := lines[len(lines)-1]
+	if !strings.Contains(bottom, "main") || !strings.Contains(bottom, "↑2") {
+		t.Errorf("bottom line must be the branch bar with push count (\"main ... ↑2\"); got %q\nframe:\n%s", bottom, frame)
+	}
+	// The bottom bar must sit BELOW the file list: a.txt appears on an earlier line.
+	fileRow := -1
+	for i, ln := range lines {
+		if strings.Contains(ln, "a.txt") {
+			fileRow = i
+			break
+		}
+	}
+	if fileRow < 0 || fileRow >= len(lines)-1 {
+		t.Errorf("a.txt (the file list) must appear above the bottom branch bar; lines:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
 // Regression: on an OVERFLOWING list, hovering a file row must show the scroll
-// position indicator AND the mark/discard hint on the same reserved row — the
-// hint no longer replaces the scroll data (see ledger_footer). Drives the real
-// loop under zsh with enough modified files to overflow a short pane, hovers a
-// row, and asserts both the "N-M/T" scroll data and "d discard" are present.
+// position indicator AND the mark/discard hint on the same reserved bottom row
+// (alongside the branch bar) — the hint does not replace the scroll data. Drives
+// the real loop under zsh with enough modified files to overflow a short pane,
+// hovers a row, and asserts both the "N-M/T" scroll data and "d discard" show.
 func TestCompactView_overflow_hover_keeps_scroll_and_hint(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
