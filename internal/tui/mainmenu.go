@@ -1257,12 +1257,11 @@ func (m *MainMenuModel) CurrentClaudeAccountDir() string {
 	return m.claudeAccounts[m.selectedAccount-1].Dir
 }
 
-// accountFocusable reports whether the LOGIN/account row is a reachable focus
-// stop. It is shown — and thus focusable — only once the user has a managed
-// account beyond the implicit Default login. Adding the first account is done
-// with the always-available 'L' key, since the row is hidden until then.
+// accountFocusable is always false: the top-of-page account switcher was removed
+// from the header, so its LOGIN row is never a focus stop. Account switching
+// lives in Settings › Account, the 'L' key, and the ledger pill instead.
 func (m *MainMenuModel) accountFocusable() bool {
-	return len(m.claudeAccounts) > 0
+	return false
 }
 
 // CycleAccount moves through [Default, accounts...] and persists the choice.

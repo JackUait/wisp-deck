@@ -36,29 +36,25 @@ func TestAccountRow_hiddenWhenOnlyDefault(t *testing.T) {
 	}
 }
 
-// Once a managed account exists the LOGIN row appears at the very top — above
-// the AGENT row — with cycle chevrons and as a reachable focus stop.
-func TestAccountRow_shownAtTopWhenAccountsExist(t *testing.T) {
+// The top-of-page account switcher is removed: even with managed accounts the
+// LOGIN switcher row never renders in the header (account switching lives in
+// Settings › Account, the 'L' key, and the mid-session ledger pill instead). The
+// AGENT row still renders and now hosts the wordmark.
+func TestAccountRow_notShownEvenWithAccounts(t *testing.T) {
 	m := acctTestMenu("claude")
 	m.SetClaudeAccounts([]ClaudeAccount{{Label: "Work", Dir: "work"}})
-	if got := m.accountRowCount(); got != 1 {
-		t.Fatalf("accountRowCount with 1 account: got %d, want 1", got)
+	if got := m.accountRowCount(); got != 0 {
+		t.Fatalf("accountRowCount must be 0 (header switcher removed), got %d", got)
 	}
-	if !m.accountFocusable() {
-		t.Errorf("LOGIN row should be focusable with a managed account")
+	if m.accountFocusable() {
+		t.Errorf("LOGIN header row must not be focusable (switcher removed)")
 	}
 	out := stripAnsi(m.renderMenuBox())
-	loginIdx := strings.Index(out, iconLogin)
-	agentIdx := strings.Index(out, iconAgent)
-	if loginIdx < 0 || agentIdx < 0 {
-		t.Fatalf("LOGIN/AGENT rows missing:\n%s", out)
+	if strings.Contains(out, iconLogin) {
+		t.Errorf("LOGIN switcher must not render in the header:\n%s", out)
 	}
-	if !(loginIdx < agentIdx) {
-		t.Errorf("LOGIN row must be above AGENT row (login=%d agent=%d)", loginIdx, agentIdx)
-	}
-	row := stripAnsi(m.renderAccountRow("│", "│"))
-	if !strings.Contains(row, "Default") || !strings.Contains(row, iconChevronLeft) || !strings.Contains(row, iconChevronRight) {
-		t.Errorf("expected Default with chevrons: %q", row)
+	if !strings.Contains(out, iconAgent) {
+		t.Errorf("AGENT row should still render:\n%s", out)
 	}
 }
 
@@ -73,18 +69,6 @@ func TestAccount_LKeyOpensInlineInput(t *testing.T) {
 	}
 	if r := m.Result(); r != nil {
 		t.Fatalf("'L' should not set a result, got %+v", r)
-	}
-}
-
-// Enter on the focused LOGIN row opens the login-management panel (adding a
-// login now happens from inside that panel, not on this keystroke).
-func TestAccountRow_enterOpensPanel(t *testing.T) {
-	m := acctTestMenu("claude")
-	m.SetClaudeAccounts([]ClaudeAccount{{Label: "Work", Dir: "work"}})
-	m.focus = FocusAccount
-	m.focusEnter()
-	if !m.accountMenuOpen {
-		t.Fatalf("Enter on LOGIN row should open the login panel")
 	}
 }
 
@@ -108,19 +92,22 @@ func TestAccount_setActiveByDir_andLabels(t *testing.T) {
 	}
 }
 
-func TestAccount_focusableOnlyWithAccounts(t *testing.T) {
+// The header account switcher is removed, so its LOGIN row is never a reachable
+// focus stop — not even with managed accounts.
+func TestAccount_neverFocusableInHeader(t *testing.T) {
 	m := acctTestMenu("claude")
 	if m.accountFocusable() {
 		t.Errorf("should not be focusable with only Default")
 	}
 	m.SetClaudeAccounts([]ClaudeAccount{{Label: "Work", Dir: "work"}})
-	if !m.accountFocusable() {
-		t.Errorf("should be focusable with one managed account (Default + Work)")
+	if m.accountFocusable() {
+		t.Errorf("header LOGIN switcher removed: must never be focusable, even with accounts")
 	}
 }
 
-// Up from the AI switcher reaches FocusAccount only when the row is shown.
-func TestAccount_focusUpReachesAccountOnlyWhenShown(t *testing.T) {
+// Up from the AI switcher never reaches an account row (the header switcher was
+// removed), so focus stays at FocusAI even with managed accounts.
+func TestAccount_focusUpFromAIStaysAtAI(t *testing.T) {
 	m := acctTestMenu("claude")
 	m.SetFocus(FocusAI)
 	m.Update(tea.KeyMsg{Type: tea.KeyUp})
@@ -131,8 +118,8 @@ func TestAccount_focusUpReachesAccountOnlyWhenShown(t *testing.T) {
 	m.SetClaudeAccounts([]ClaudeAccount{{Label: "Work", Dir: "work"}})
 	m.SetFocus(FocusAI)
 	m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	if m.Focus() != FocusAccount {
-		t.Errorf("Up from AI with an account should reach FocusAccount, got %v", m.Focus())
+	if m.Focus() != FocusAI {
+		t.Errorf("Up from AI must stay at FocusAI even with an account (header switcher removed), got %v", m.Focus())
 	}
 }
 
@@ -215,13 +202,17 @@ func TestSettingsLoginRow_cyclesAccount(t *testing.T) {
 // When the LOGIN row is shown it sits above the title and shifts the body down
 // by one: top, LOGIN, title, subscription, switcher-gap, tab bar, separator,
 // leading blank (8) → first project at row 8.
-func TestMapRowToItem_accountRowShiftsBody(t *testing.T) {
+// With the header account switcher removed, managed accounts no longer shift the
+// body down — the row-to-item mapping is identical with or without them.
+func TestMapRowToItem_accountsDoNotShiftBody(t *testing.T) {
 	m := acctTestMenu("claude")
+	base7 := m.MapRowToItem(7)
+	base8 := m.MapRowToItem(8)
 	m.SetClaudeAccounts([]ClaudeAccount{{Label: "Work", Dir: "work"}})
-	if got := m.MapRowToItem(7); got != -1 {
-		t.Errorf("row 7 should be the leading blank (-1) with the LOGIN row present, got %d", got)
+	if got := m.MapRowToItem(7); got != base7 {
+		t.Errorf("account must not shift row 7 mapping: got %d, want %d", got, base7)
 	}
-	if got := m.MapRowToItem(8); got != 0 {
-		t.Errorf("first project should be at row 8 with the LOGIN row, got %d", got)
+	if got := m.MapRowToItem(8); got != base8 {
+		t.Errorf("account must not shift row 8 mapping: got %d, want %d", got, base8)
 	}
 }

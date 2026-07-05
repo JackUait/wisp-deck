@@ -135,15 +135,12 @@ func (m *MainMenuModel) subscriptionRowCount() int {
 	return 0
 }
 
-// accountRowCount returns 1 when the LOGIN/account line is shown, else 0. The
-// row appears only once the user has a real choice — i.e. at least one managed
-// account beyond the implicit Default login — so a single-account user sees no
-// extra row. When shown it renders in every tab's header chrome, so all layout
-// math (height, scroll header, click mapping) adds it to keep body rows aligned.
+// accountRowCount is always 0: the top-of-page account switcher was removed from
+// the header. Account switching now lives only in Settings › Account, the
+// always-available 'L' key, and the mid-session ledger pill — so the header no
+// longer carries a LOGIN row. Kept as a function (rather than deleting every
+// caller) so all the header layout math still reads a single source of truth.
 func (m *MainMenuModel) accountRowCount() int {
-	if len(m.claudeAccounts) > 0 {
-		return 1
-	}
 	return 0
 }
 
