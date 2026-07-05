@@ -162,8 +162,12 @@ gt_proxy_active_dir() {
 # The 256-color indices a Claude account's identity can wear. Kept in lock-step
 # with claudeaccount.Palette in Go (internal/claudeaccount/colors.go) so the
 # statusline and the TUI menu paint an account the same color. A spread of
-# distinct, readable-on-dark hues.
-GT_ACCOUNT_PALETTE="39 208 170 78 203 141 43 220 205 75 156 214"
+# distinct, readable-on-dark hues. A real array (not a space-separated string) so
+# the pill path — account_current -> gt_account_color runs under the pane's ZSH,
+# which does NOT word-split an unquoted scalar — iterates the members rather than
+# treating the whole string as one entry (which assigned an empty color and
+# poisoned the shared colors file the bash statusline reads back).
+GT_ACCOUNT_PALETTE=(39 208 170 78 203 141 43 220 205 75 156 214)
 
 # Return the persisted 256-color index for a Claude account dir, assigning a new
 # one and appending it to the colors file if the dir has none yet. The new color
@@ -183,23 +187,30 @@ gt_account_color() {
     done < "$file"
   fi
   # Collect indices already handed out, then split the palette into the full set
-  # and the entries still free. Build both arrays via += in the loop so the
-  # space-separated palette is split deliberately without an unquoted assignment.
+  # and the entries still free. Iterate the quoted palette array so this works the
+  # same under bash and zsh (the pill path runs under the pane's zsh).
   local used=" " pal=() avail=() n
   if [ -f "$file" ]; then
     while IFS=: read -r k v; do
       [ -n "$v" ] && used="$used$v "
     done < "$file"
   fi
-  for n in $GT_ACCOUNT_PALETTE; do
+  for n in "${GT_ACCOUNT_PALETTE[@]}"; do
     pal+=("$n")
     case "$used" in *" $n "*) ;; *) avail+=("$n") ;; esac
   done
   # Prefer an unused color (keeps accounts distinct); once the palette is
-  # exhausted, reuse a random one rather than fail.
+  # exhausted, reuse a random one rather than fail. Select the random member by
+  # COUNTING through "${pool[@]}" rather than indexing pool[$n] directly: bash
+  # arrays are 0-indexed but zsh's are 1-indexed, so a bare numeric index would
+  # land off-by-one (an empty color) under the pane's zsh.
   local pool=("${avail[@]}")
   [ "${#pool[@]}" -eq 0 ] && pool=("${pal[@]}")
-  local pick="${pool[$((RANDOM % ${#pool[@]}))]}"
+  local target=$((RANDOM % ${#pool[@]})) i=0 pick="" c
+  for c in "${pool[@]}"; do
+    [ "$i" -eq "$target" ] && { pick="$c"; break; }
+    i=$((i + 1))
+  done
   mkdir -p "$(dirname "$file")" 2>/dev/null
   printf '%s:%s\n' "$dir" "$pick" >> "$file"
   printf '%s\n' "$pick"

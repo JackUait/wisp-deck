@@ -446,3 +446,36 @@ printf '%%s\n' "$*" >> %q`, rec))
 	assertContains(t, logOut, "respawn-pane")
 	assertContains(t, logOut, filepath.Join(dir, "claude-accounts", "work"))
 }
+
+// TestAccountColor_assigns_palette_member_under_zsh reproduces the compact-view
+// pill's real runtime: account_current -> gt_account_color runs under the pane's
+// $SHELL (zsh). zsh does not word-split an unquoted $GT_ACCOUNT_PALETTE and its
+// arrays are 1-indexed, so a bash-only impl assigns an EMPTY color and persists a
+// poisoned "work:" entry into the SHARED colors file. The bash statusline then
+// reads that empty value back and loses the account's profile color — so the
+// status line can no longer signal which account is active. Assigning a new
+// account's color under zsh must yield a real palette member and never persist an
+// empty value.
+func TestAccountColor_assigns_palette_member_under_zsh(t *testing.T) {
+	if _, err := exec.LookPath("zsh"); err != nil {
+		t.Skip("zsh not available")
+	}
+	root := projectRoot(t)
+	dir := t.TempDir()
+	colors := filepath.Join(dir, "claude-account-colors")
+	script := fmt.Sprintf(`source %q; gt_account_color %q work`,
+		filepath.Join(root, "lib", "statusline.sh"), colors)
+	cmd := exec.Command("zsh", "-c", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("zsh run failed: %v: %s", err, out)
+	}
+	got := strings.TrimSpace(string(out))
+	if !accountPalette[got] {
+		t.Fatalf("under zsh, gt_account_color returned %q, not a palette member (poisons the shared colors file the statusline reads)", got)
+	}
+	data, _ := os.ReadFile(colors)
+	if !strings.Contains(string(data), "work:"+got) {
+		t.Fatalf("under zsh, gt_account_color must persist work:%s, file was:\n%s", got, string(data))
+	}
+}
