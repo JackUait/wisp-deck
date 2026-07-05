@@ -269,26 +269,9 @@ gt_usage_bar() {
   printf '%s%s\n' "$full" "$rest"
 }
 
-# Map a usage percentage to the bold SGR color the bar wears, so the pill grades
-# from calm to alarming as the quota fills: green under half, amber through the
-# 70s, red once it crosses 80. Returns just the SGR parameters (no ESC), so the
-# caller wraps them as \033[<params>m. A non-numeric or empty pct reads as 0.
-# Usage: gt_usage_color 90  =>  "01;31"
-gt_usage_color() {
-  local pct="$1"
-  pct=$(printf '%s\n' "$pct" | LC_ALL=C awk '{ gsub(/,/, "."); printf "%d\n", $0 + 0 }')
-  if [ "$pct" -ge 80 ]; then
-    printf '01;31\n'   # red — near the weekly ceiling
-  elif [ "$pct" -ge 50 ]; then
-    printf '01;33\n'   # amber — past halfway
-  else
-    printf '01;32\n'   # green — plenty left
-  fi
-}
-
 # Pull the subscriber's 7-day (weekly) usage out of the statusline JSON as a
 # rounded whole-number percentage — the raw figure the wrapper turns into a bar
-# (gt_usage_bar) and a color (gt_usage_color). Claude Code embeds this under
+# (gt_usage_bar). Claude Code embeds this under
 # rate_limits.seven_day for Pro/Max logins, but only after the session's first
 # API response, and it omits a window that has no data yet. So an absent
 # rate_limits, an absent seven_day, or a seven_day carrying only five_hour's

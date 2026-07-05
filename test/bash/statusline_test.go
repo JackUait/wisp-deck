@@ -2083,45 +2083,11 @@ func TestStatusline_usage_bar_clamps_above_hundred(t *testing.T) {
 	}
 }
 
-// --- gt_usage_color ---
-// Maps a usage percentage to the SGR color the bar wears, so the pill grades
-// from calm to alarming as the quota fills: green below half, amber through the
-// 70s, red once it crosses 80.
-
-func TestStatusline_usage_color_green_below_fifty(t *testing.T) {
-	for _, pct := range []string{"0", "10", "49"} {
-		out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_color", []string{pct}, nil)
-		assertExitCode(t, code, 0)
-		if strings.TrimSpace(out) != "01;32" {
-			t.Fatalf("%s%% should be green (01;32), got %q", pct, strings.TrimSpace(out))
-		}
-	}
-}
-
-func TestStatusline_usage_color_amber_fifty_to_seventy_nine(t *testing.T) {
-	for _, pct := range []string{"50", "65", "79"} {
-		out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_color", []string{pct}, nil)
-		assertExitCode(t, code, 0)
-		if strings.TrimSpace(out) != "01;33" {
-			t.Fatalf("%s%% should be amber (01;33), got %q", pct, strings.TrimSpace(out))
-		}
-	}
-}
-
-func TestStatusline_usage_color_red_from_eighty(t *testing.T) {
-	for _, pct := range []string{"80", "95", "100"} {
-		out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_color", []string{pct}, nil)
-		assertExitCode(t, code, 0)
-		if strings.TrimSpace(out) != "01;31" {
-			t.Fatalf("%s%% should be red (01;31), got %q", pct, strings.TrimSpace(out))
-		}
-	}
-}
-
 // --- gt_weekly_used_pct ---
 // Pulls the 7-day (weekly) window's used_percentage out of the statusline JSON
 // as a rounded whole number, or nothing when that window is absent. The wrapper
-// feeds it to gt_usage_bar (shape) and gt_usage_color (grade).
+// feeds it to gt_usage_bar for the pill shape; the pill wears the account's
+// profile color (not a severity grade).
 
 func TestStatusline_weekly_used_pct_extracts_seven_day_percentage(t *testing.T) {
 	input := `{"rate_limits":{"five_hour":{"used_percentage":10,"resets_at":1},"seven_day":{"used_percentage":42,"resets_at":2}}}`
@@ -2177,20 +2143,23 @@ func TestStatusline_weekly_used_pct_empty_when_only_five_hour(t *testing.T) {
 }
 
 // The wrapper renders the weekly limit inside the account segment, immediately
-// to the right of the account label, so a user with 2+ accounts sees which
-// login this tab uses AND how much of that login's weekly quota is spent.
-func TestStatusline_wrapper_shows_weekly_limit_right_of_account(t *testing.T) {
+// to the right of the account label, and the pill wears the SAME account profile
+// color as the label — not a severity grade — so the whole segment reads as one
+// account's identity.
+func TestStatusline_wrapper_weekly_bar_wears_account_color(t *testing.T) {
 	env := setupWrapperTest(t)
 	// Force the Keychain Default login so the label is deterministic even when
 	// the test host itself runs under an isolated CLAUDE_CONFIG_DIR.
 	env = append(env, "CLAUDE_CONFIG_DIR=")
 	fakeHome := wrapperHome(env)
-	writeTempFile(t, filepath.Join(fakeHome, ".config", "wisp-deck"),
-		"claude-accounts.list", "Personal:personal\n")
+	cfg := filepath.Join(fakeHome, ".config", "wisp-deck")
+	writeTempFile(t, cfg, "claude-accounts.list", "Personal:personal\n")
+	// Seed Default's color so both the label and the pill are predictable.
+	writeTempFile(t, cfg, "claude-account-colors", "default:141\n")
 
 	root := projectRoot(t)
 	wrapperPath := filepath.Join(root, "templates", "statusline-wrapper.sh")
-	// 90% weekly usage → a 7-of-8 filled pill bar, graded red.
+	// 90% weekly usage → a 7-of-8 filled pill bar.
 	stdinData := `{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"rate_limits":{"seven_day":{"used_percentage":90,"resets_at":2}},"workspace":{"current_dir":"/tmp"}}`
 	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, wrapperPath)
 
@@ -2198,11 +2167,10 @@ func TestStatusline_wrapper_shows_weekly_limit_right_of_account(t *testing.T) {
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "Default")
 	assertContains(t, out, "7d")
-	assertContains(t, out, bar(7))
-	// The bar carries its own severity color: red once usage crosses 80%. The
-	// account label wears a 256-color palette slot (\x1b[01;38;5;Nm), so the bare
-	// red code \x1b[01;31m can only be the graded bar.
-	assertContains(t, out, "\x1b[01;31m")
+	// The pill wears the account's profile color (141), the same as the label.
+	// (Severity codes like 01;33 aren't asserted-against here because unrelated
+	// segments — the context icon, CPU — legitimately use them.)
+	assertContains(t, out, "\x1b[38;5;141m"+bar(7))
 	// The weekly bar sits to the right of the account label.
 	if strings.Index(out, "Default") > strings.Index(out, bar(7)) {
 		t.Fatalf("weekly limit must render right of the account label, got %q", out)

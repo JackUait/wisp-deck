@@ -55,15 +55,14 @@ fi
 
 # Weekly (7-day) usage of the active login, shown right of the account label so
 # the user sees how much of that account's rolling quota is spent. Rendered as a
-# color-graded pill bar (green→amber→red as it fills). Only present for
-# subscribers after the first API response, so it stays empty otherwise.
+# pill bar painted in the account's own profile color (the fill vs. empty cells
+# carry the amount; the color ties it to the login). Only present for subscribers
+# after the first API response, so it stays empty otherwise.
 weekly_bar=""
-weekly_color=""
 if [ -n "$account_label" ] && type gt_weekly_used_pct &>/dev/null; then
   weekly_pct=$(gt_weekly_used_pct "$input")
   if [ -n "$weekly_pct" ]; then
     weekly_bar=$(gt_usage_bar "$weekly_pct")
-    weekly_color=$(gt_usage_color "$weekly_pct")
   fi
 fi
 
@@ -141,17 +140,19 @@ if [ -n "$account_label" ]; then
   # The account glyph + label wear this account's own persistent color (each
   # login gets a distinct one, shared with the TUI menu) so a glance tells you
   # which login this tab talks to. Falls back to bold green if no color resolved.
-  # The weekly pill rides just to the right so both read as one "which login /
-  # how much" unit; the "7d" tag is dimmed so focus lands on the login name and
-  # the graded bar, and the bar keeps its own severity color (green→amber→red),
-  # a usage signal independent of the account's identity color.
+  # The weekly pill rides just to the right, painted in the SAME profile color so
+  # the whole segment reads as one login's identity; the "7d" tag is a dimmed
+  # shade of that color. The fill vs. empty cells still carry the usage amount.
   if [ -n "$account_color" ]; then
     line="$line$(printf ' | \033[01;38;5;%sm󰀄 %s\033[00m' "$account_color" "$account_label")"
+    if [ -n "$weekly_bar" ]; then
+      line="$line$(printf '  \033[02;38;5;%sm7d\033[00m \033[38;5;%sm%s\033[00m' "$account_color" "$account_color" "$weekly_bar")"
+    fi
   else
     line="$line$(printf ' | \033[01;32m󰀄 %s\033[00m' "$account_label")"
-  fi
-  if [ -n "$weekly_bar" ]; then
-    line="$line$(printf '  \033[02;37m7d\033[00m \033[%sm%s\033[00m' "$weekly_color" "$weekly_bar")"
+    if [ -n "$weekly_bar" ]; then
+      line="$line$(printf '  \033[02;37m7d\033[00m \033[01;32m%s\033[00m' "$weekly_bar")"
+    fi
   fi
 fi
 printf '%s' "$line"
