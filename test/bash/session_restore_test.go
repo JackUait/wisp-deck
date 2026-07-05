@@ -242,6 +242,127 @@ func TestRestoreQueuePop_tolerates_boottime_drift(t *testing.T) {
 	}
 }
 
+// A snapshot must never yield two queue entries for the same conversation:
+// whatever upstream failure duplicates a snapshot line (heartbeat race, a
+// re-merged store), restoring the same sid twice opens duplicate tabs.
+func TestMaybeRestore_dedupes_duplicate_sids(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	writeTranscript(t, home, "/p/app", "sid-a", 1*time.Hour)
+	writeTempFile(t, dir, "last-session",
+		"111|app|/p/app|claude|ghostty|sid-a|\n"+
+			"111|app|/p/app|claude|ghostty|sid-a|\n")
+	_, code := runMaybeRestoreHome(t, dir, "222", home)
+	assertExitCode(t, code, 0)
+	queue, err := os.ReadFile(filepath.Join(dir, "restore-queue"))
+	if err != nil {
+		t.Fatalf("restore-queue not written: %v", err)
+	}
+	got := strings.TrimSpace(string(queue))
+	want := "222|/p/app|claude|sid-a|"
+	if got != want {
+		t.Errorf("queue:\n got %q\nwant %q", got, want)
+	}
+}
+
+// If a claim file from THIS boot exists under a different id form (a legacy
+// numeric claim left by a pre-uuid wrapper, or a drifted boottime id), the
+// queue was already built this boot. Rebuilding it would resurrect entries
+// other tabs already popped — duplicate tabs. The claim must gate regardless
+// of which id form stamped it.
+func TestMaybeRestore_blocked_by_current_boot_claim_of_other_id_form(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	writeTempFile(t, dir, "last-session", "1783091438|web|/p/web|claude|ghostty||\n")
+	writeTempFile(t, dir, "last-restore-boot.1783268852", "")
+	env := buildEnv(t, []string{mockSysctl(t, dir, "1783268853")}, "HOME="+home)
+	_, code := runMaybeRestoreEnv(t, dir, "996F1E8F-46BF-4D0A-8D21-FD8D13555B47", env)
+	assertExitCode(t, code, 0)
+	if _, err := os.Stat(filepath.Join(dir, "restore-queue")); err == nil {
+		t.Error("queue rebuilt despite an existing current-boot claim (other id form)")
+	}
+}
+
+// A prior-boot claim must still be swept so it can never block a real new
+// boot's restore.
+func TestMaybeRestore_sweeps_prior_boot_claims(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	writeTempFile(t, dir, "last-session", "1783091438|web|/p/web|claude|ghostty||\n")
+	writeTempFile(t, dir, "last-restore-boot.1783091440", "") // prior boot's claim
+	env := buildEnv(t, []string{mockSysctl(t, dir, "1783268853")}, "HOME="+home)
+	_, code := runMaybeRestoreEnv(t, dir, "996F1E8F-46BF-4D0A-8D21-FD8D13555B47", env)
+	assertExitCode(t, code, 0)
+	if _, err := os.Stat(filepath.Join(dir, "last-restore-boot.1783091440")); err == nil {
+		t.Error("prior-boot claim not swept")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "restore-queue")); err != nil {
+		t.Error("queue must be built after sweeping a prior-boot claim")
+	}
+}
+
+// Last-line duplicate defense: an entry whose conversation is already open in
+// an alive Wisp Deck session must be refused, no matter how it got queued.
+func TestRestoreEntryWanted_refuses_sid_already_open(t *testing.T) {
+	dir := t.TempDir()
+	projDir := t.TempDir()
+	tmuxBody := `
+case "$1" in
+  list-sessions) echo "dev-app-1" ;;
+  show-environment)
+    printf 'WISP_DECK=1\nWISP_DECK_CLAUDE_SESSION=sid-open\n' ;;
+esac
+`
+	binDir := mockCommand(t, dir, "tmux", tmuxBody)
+	env := buildEnv(t, []string{binDir})
+
+	_, code := runBashFunc(t, "lib/session-restore.sh", "restore_entry_wanted",
+		[]string{"tmux", projDir + "|claude|sid-open|"}, env)
+	if code == 0 {
+		t.Error("entry with an already-open sid must be refused")
+	}
+	_, code = runBashFunc(t, "lib/session-restore.sh", "restore_entry_wanted",
+		[]string{"tmux", projDir + "|claude|sid-fresh|"}, env)
+	if code != 0 {
+		t.Error("entry with a fresh sid must be accepted")
+	}
+	// Empty sid carries no identity — must not be refused (legit multi-tab
+	// projects on old snapshots would otherwise be dropped).
+	_, code = runBashFunc(t, "lib/session-restore.sh", "restore_entry_wanted",
+		[]string{"tmux", projDir + "|claude||"}, env)
+	if code != 0 {
+		t.Error("entry with an empty sid must be accepted")
+	}
+	// Missing project directory is still refused.
+	_, code = runBashFunc(t, "lib/session-restore.sh", "restore_entry_wanted",
+		[]string{"tmux", "/nonexistent/gone|claude|sid-fresh|"}, env)
+	if code == 0 {
+		t.Error("entry with a missing project dir must be refused")
+	}
+}
+
+// Restore decisions must be reconstructable after the fact: queue builds and
+// pops append to restore.log.
+func TestRestoreLog_records_build_and_pop(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	writeTempFile(t, dir, "last-session", "111|web|/p/web|claude|ghostty||\n")
+	_, code := runMaybeRestoreHome(t, dir, "222", home)
+	assertExitCode(t, code, 0)
+	out, code := runBashFunc(t, "lib/session-restore.sh", "restore_queue_pop",
+		[]string{dir, "222"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) == "" {
+		t.Fatal("pop returned nothing")
+	}
+	log, err := os.ReadFile(filepath.Join(dir, "restore.log"))
+	if err != nil {
+		t.Fatalf("restore.log not written: %v", err)
+	}
+	assertContains(t, string(log), "queue-built")
+	assertContains(t, string(log), "popped")
+}
+
 // runMaybeRestoreEnv runs maybe_restore_session with a caller-built env
 // (mocked sysctl in PATH, HOME override).
 func runMaybeRestoreEnv(t *testing.T, configDir, curBoot string, env []string) (string, int) {
@@ -914,27 +1035,28 @@ func TestRestoreAdvance_noop_when_queue_missing(t *testing.T) {
 	}
 }
 
-func TestRestoreAdvance_falls_back_to_plain_windows_when_trigger_fails(t *testing.T) {
+func TestRestoreAdvance_falls_back_to_single_window_when_trigger_fails(t *testing.T) {
 	// osascript needs the Accessibility permission; when it fails, restore
-	// degrades to one plain window per remaining entry. The windows run the
-	// wrapper via Ghostty's configured command and pop the queue themselves,
-	// so the queue must survive.
+	// degrades to exactly ONE plain window. That window runs the wrapper via
+	// Ghostty's configured command, pops the next entry, and advances the
+	// chain itself — spawning one window per remaining entry here multiplied
+	// with each window's own advance call and opened surplus empty windows.
 	dir := t.TempDir()
 	writeTempFile(t, dir, "restore-queue",
-		"222|/p/app|claude\n222|/p/web|opencode\n")
+		"222|/p/app|claude\n222|/p/web|opencode\n222|/p/api|claude\n")
 	trig := filepath.Join(dir, "trig")
 	win := filepath.Join(dir, "win")
 	_, code := runRestoreAdvance(t, dir, trig, win, 1)
 	assertExitCode(t, code, 0)
 	data, err := os.ReadFile(win)
 	if err != nil {
-		t.Fatalf("fallback windows not spawned: %v", err)
+		t.Fatalf("fallback window not spawned: %v", err)
 	}
-	if got := strings.Count(string(data), "window"); got != 2 {
-		t.Errorf("spawned %d windows, want 2 (one per queue entry)", got)
+	if got := strings.Count(string(data), "window"); got != 1 {
+		t.Errorf("spawned %d windows, want exactly 1 (the chain continues itself)", got)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "restore-queue")); err != nil {
-		t.Error("queue must survive for fallback windows to pop")
+		t.Error("queue must survive for the fallback window to pop")
 	}
 }
 

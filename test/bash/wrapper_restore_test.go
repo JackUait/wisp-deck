@@ -184,3 +184,80 @@ func TestWrapperRestore_skips_layout_when_empty(t *testing.T) {
 		t.Error("select-layout must not run for an entry without a layout field")
 	}
 }
+
+// TestWrapperRestore_skips_entry_whose_conversation_is_already_open is the
+// last-line duplicate defense at the wrapper level: even if the queue somehow
+// carries an entry for a conversation that is ALREADY running in an alive
+// Wisp Deck session (a rebuilt queue, a duplicated snapshot line — any
+// upstream failure), the wrapper must refuse it and take the next entry.
+// It also verifies the restored sid is stamped into the session environment
+// at creation (new-session -e), which is what makes this defense work for
+// tabs restored moments ago whose statusline hasn't stamped the sid yet.
+func TestWrapperRestore_skips_entry_whose_conversation_is_already_open(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+
+	recPath := filepath.Join(home, "rec")
+	tmuxMock := `#!/bin/bash
+case "$1" in
+  new-session) printf '%s\n' "$*" > "$GT_REC"; exit 0 ;;
+  list-sessions) echo "dev-open-1"; exit 0 ;;
+  show-environment) printf 'WISP_DECK=1\nWISP_DECK_CLAUDE_SESSION=sid-42\n'; exit 0 ;;
+esac
+exit 0
+`
+	mocks := map[string]string{
+		"tmux":          tmuxMock,
+		"claude":        "#!/bin/bash\nexit 0\n",
+		"lazygit":       "#!/bin/bash\nexit 0\n",
+		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
+		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
+		"osascript":     "#!/bin/bash\nexit 1\n",
+		"open":          "#!/bin/bash\nexit 0\n",
+	}
+	for name, body := range mocks {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(body), 0755); err != nil {
+			t.Fatalf("write mock %s: %v", name, err)
+		}
+	}
+
+	projDir := filepath.Join(home, "proj")
+	if err := os.MkdirAll(projDir, 0755); err != nil {
+		t.Fatalf("mkdir proj: %v", err)
+	}
+	confDir := filepath.Join(home, ".config", "wisp-deck")
+	if err := os.MkdirAll(confDir, 0755); err != nil {
+		t.Fatalf("mkdir conf: %v", err)
+	}
+	// Entry 1's conversation (sid-42) is already open per the tmux mock;
+	// entry 2 (sid-43) is fresh and must be the one restored.
+	if err := os.WriteFile(filepath.Join(confDir, "restore-queue"),
+		[]byte("12345|"+projDir+"|claude|sid-42|\n12345|"+projDir+"|claude|sid-43|\n"), 0644); err != nil {
+		t.Fatalf("write queue: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(confDir, "last-restore-boot"),
+		[]byte("12345\n"), 0644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	env := buildEnv(t, nil, "HOME="+home, "GT_REC="+recPath)
+	_, code := runBashScript(t, "wrapper.sh", nil, env)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(recPath)
+	if err != nil {
+		t.Fatalf("new-session was never invoked: %v", err)
+	}
+	got := string(data)
+	assertContains(t, got, "claude --resume sid-43")
+	assertNotContains(t, got, "sid-42")
+	// The restored sid must be stamped into the session env at creation.
+	assertContains(t, got, "WISP_DECK_CLAUDE_SESSION=sid-43")
+
+	if _, err := os.Stat(filepath.Join(confDir, "restore-queue")); err == nil {
+		t.Error("both entries must be consumed (one refused, one restored)")
+	}
+}

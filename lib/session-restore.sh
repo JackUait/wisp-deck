@@ -46,6 +46,16 @@ boot_id_is_current() {
   [ "${d#-}" -le 10 ]
 }
 
+# Append one timestamped line to the restore decision log. The log exists so
+# a future restore incident can be reconstructed from facts instead of file
+# mtimes; it is trimmed to its last 500 lines on each queue build.
+# Usage: restore_log <config_dir> <message...>
+restore_log() {
+  local config_dir="$1"
+  shift
+  echo "$(date '+%Y-%m-%dT%H:%M:%S') $*" >> "$config_dir/restore.log" 2>/dev/null || true
+}
+
 # Re-derive the live snapshot from alive Wisp Deck tmux sessions.
 # Usage: write_session_snapshot <tmux_cmd> <snapshot_file>
 # A session is "ours" iff its session environment contains WISP_DECK=1.
@@ -131,11 +141,19 @@ maybe_restore_session() {
   # Atomic once-per-boot claim. Several wrappers can start simultaneously at
   # login (macOS window reopening); only the noclobber winner may build the
   # queue — a rebuild would resurrect entries another wrapper already popped,
-  # duplicating tabs. Claims from previous boots are cleaned up first.
+  # duplicating tabs. A claim from THIS boot under ANY id form (a legacy
+  # numeric id from a pre-uuid wrapper, or a drifted boottime id) gates just
+  # as hard — deleting it and reclaiming under the new form was exactly the
+  # double-build path. Only claims from previous boots are swept.
   local claim="$marker.$cur_boot" old
   for old in "$marker".*; do
     [ -e "$old" ] || continue
-    [ "$old" = "$claim" ] || rm -f "$old"
+    [ "$old" = "$claim" ] && continue
+    if boot_id_is_current "${old##*.}" "$cur_boot"; then
+      restore_log "$config_dir" "queue-build blocked: current-boot claim ${old##*/} already exists (cur=$cur_boot)"
+      return 0
+    fi
+    rm -f "$old"
   done
   if ! (set -o noclobber; : > "$claim") 2>/dev/null; then
     return 0
@@ -154,6 +172,10 @@ maybe_restore_session() {
   # the unstamped-duplicate dedup pass (which rewrites entries[] to path|tool|sid)
   # never has to carry it.
   local layouts=()
+  # Non-empty sids queued so far. A snapshot must never yield two entries for
+  # one conversation — whatever upstream failure duplicates a line, restoring
+  # the same sid twice would open duplicate tabs.
+  local queued_sids=$'\n'
   while IFS='|' read -r b proj path tool term sid layout; do
     [ -n "$b" ] || continue
     # Skip sessions of the current boot — they are alive right now, restoring
@@ -169,6 +191,15 @@ maybe_restore_session() {
     if [ "$tool" = "claude" ] && [ -n "$sid" ] \
       && ! claude_transcript_resumable "$path" "$sid"; then
       sid=""
+    fi
+    if [ -n "$sid" ]; then
+      case "$queued_sids" in
+        *$'\n'"$sid"$'\n'*)
+          restore_log "$config_dir" "queue-build dropped duplicate sid $sid ($path)"
+          continue
+          ;;
+      esac
+      queued_sids="${queued_sids}${sid}"$'\n'
     fi
     entries+=("${path}|${tool}|${sid}")
     layouts+=("$layout")
@@ -205,6 +236,12 @@ maybe_restore_session() {
   if [ "$queued" -eq 1 ]; then
     echo "$cur_boot" > "$marker"
     mv "$tmp" "$queue"
+    # Trim the decision log so it can't grow unbounded, then record the build.
+    if [ -f "$config_dir/restore.log" ]; then
+      tail -n 500 "$config_dir/restore.log" > "$config_dir/restore.log.tmp.$$" 2>/dev/null \
+        && mv "$config_dir/restore.log.tmp.$$" "$config_dir/restore.log"
+    fi
+    restore_log "$config_dir" "queue-built $n entries (boot $cur_boot)"
   else
     rm -f "$tmp"
   fi
@@ -226,6 +263,7 @@ restore_queue_pop() {
   now="$(date +%s)"
   mtime="$(stat -f %m "$queue" 2>/dev/null || echo 0)"
   if [ $((now - mtime)) -gt 300 ]; then
+    restore_log "$config_dir" "pop discarded stale queue (age $((now - mtime))s)"
     rm -f "$queue"
     return 0
   fi
@@ -245,6 +283,7 @@ restore_queue_pop() {
   # Drift-tolerant: a queue built with a pre-NTP-step boottime id must stay
   # consumable by tabs that computed the post-step id (same boot).
   if [ -z "$line" ] || ! boot_id_is_current "$b" "$cur_boot"; then
+    restore_log "$config_dir" "pop discarded queue: head boot '$b' is not current (cur=$cur_boot)"
     rm -f "$queue"
     rmdir "$lock" 2>/dev/null
     return 0
@@ -255,7 +294,42 @@ restore_queue_pop() {
     tail -n +2 "$queue" > "$queue.tmp.$$" && mv "$queue.tmp.$$" "$queue"
   fi
   rmdir "$lock" 2>/dev/null
+  restore_log "$config_dir" "popped ${line#*|}"
   echo "${line#*|}"
+}
+
+# True iff an alive Wisp Deck tmux session is already running conversation
+# <sid>. The wrapper stamps WISP_DECK_CLAUDE_SESSION at session creation for
+# restored tabs and the statusline keeps it current afterwards.
+# Usage: restore_sid_already_open <tmux_cmd> <sid>
+restore_sid_already_open() {
+  local tmux_cmd="$1" sid="$2"
+  [ -n "$sid" ] || return 1
+  local sessions s env
+  sessions="$("$tmux_cmd" list-sessions -F '#{session_name}' 2>/dev/null)" || return 1
+  while IFS= read -r s; do
+    [ -n "$s" ] || continue
+    env="$("$tmux_cmd" show-environment -t "$s" 2>/dev/null)" || continue
+    echo "$env" | grep -q '^WISP_DECK=1$' || continue
+    echo "$env" | grep -qxF "WISP_DECK_CLAUDE_SESSION=$sid" && return 0
+  done <<< "$sessions"
+  return 1
+}
+
+# True iff a popped queue entry should actually be restored in this window:
+# its project directory must still exist AND its conversation must not already
+# be open in an alive session. The second check is the last line of defense
+# against duplicate tabs — whatever upstream failure re-queues an
+# already-restored session, the tab that pops it refuses the entry. An empty
+# sid carries no identity and is never refused on those grounds (legit
+# multi-tab projects from old snapshots must still restore).
+# Usage: restore_entry_wanted <tmux_cmd> <entry>   entry = path|tool|sid|layout
+restore_entry_wanted() {
+  local tmux_cmd="$1" entry="$2" path sid
+  path="${entry%%|*}"
+  sid="$(echo "$entry" | cut -d'|' -f3)"
+  [ -d "$path" ] || return 1
+  ! restore_sid_already_open "$tmux_cmd" "$sid"
 }
 
 # Claude's per-project transcript directory: the project path with every
@@ -300,9 +374,11 @@ claude_pick_transcript() {
 # Continue the restore chain: when entries remain, open the next tab of this
 # window (the new tab runs the wrapper, pops the next entry, and calls this
 # again). When the Cmd+T keystroke fails (Accessibility permission not
-# granted), degrade to one plain Ghostty window per remaining entry; each
-# window runs the configured wrapper command and pops the queue itself, so
-# the queue must be left in place.
+# granted), degrade to exactly ONE plain Ghostty window: it runs the
+# configured wrapper command, pops the next entry, and advances the chain
+# itself, so the queue must be left in place. One-per-remaining-entry here
+# would multiply with each spawned window's own advance call and open surplus
+# empty windows.
 # Usage: restore_advance <config_dir>
 restore_advance() {
   local config_dir="$1"
@@ -311,12 +387,7 @@ restore_advance() {
   if restore_trigger_tab; then
     return 0
   fi
-  local n i=0
-  n="$(wc -l < "$queue" | tr -d '[:space:]')"
-  while [ "$i" -lt "$n" ]; do
-    terminal_launch_window
-    i=$((i + 1))
-  done
+  terminal_launch_window
   return 0
 }
 

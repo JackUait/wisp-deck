@@ -111,8 +111,10 @@ else
   # back as ordered tabs of this window instead of separate windows.
   maybe_restore_session "$SHARE_DIR" "$WISP_DECK_BOOT_ID"
   _queue_entry="$(restore_queue_pop "$SHARE_DIR" "$WISP_DECK_BOOT_ID")"
-  # Skip entries whose project directory no longer exists.
-  while [ -n "$_queue_entry" ] && [ ! -d "${_queue_entry%%|*}" ]; do
+  # Skip entries whose project directory no longer exists, and — last line of
+  # defense against duplicate tabs — entries whose conversation is already
+  # open in an alive session (a re-queued entry from any upstream failure).
+  while [ -n "$_queue_entry" ] && ! restore_entry_wanted "$TMUX_CMD" "$_queue_entry"; do
     _queue_entry="$(restore_queue_pop "$SHARE_DIR" "$WISP_DECK_BOOT_ID")"
   done
   if [ -n "$_queue_entry" ]; then
@@ -278,6 +280,19 @@ trap cleanup EXIT HUP TERM INT
 
 if [ "$RESTORE_MODE" -eq 1 ]; then
   export WISP_DECK_RESUME=1
+elif [ "$SELECTED_AI_TOOL" = "claude" ]; then
+  # Opening a project (picker or a direct path) continues its most-recent
+  # resumable conversation instead of starting fresh — the same "pick up where
+  # I left off" behavior reboot-restore gives, now on every open. Resolve the
+  # id from the shared transcript store (validated to have a model turn, so
+  # `--resume` can't drop the pane to a bare shell); build_ai_launch_cmd chains
+  # `--resume <id>` -> `-c` -> plain claude. No resumable conversation yet
+  # leaves RESUME unset, so a brand-new project still starts fresh.
+  _gt_open_sid="$(claude_pick_transcript "$PROJECT_DIR" "")"
+  if [ -n "$_gt_open_sid" ]; then
+    export WISP_DECK_RESUME=1
+    export WISP_DECK_RESUME_SESSION="$_gt_open_sid"
+  fi
 fi
 
 # Resolve active Claude config (settings file) and export for build_ai_launch_cmd.
@@ -460,7 +475,7 @@ _spare_zdotdir="$(spare_prompt_zdotdir "$SHARE_DIR" "$SESSION_NAME" "$SHELL" "${
 _spare_cmd="$(spare_tabs_launch_cmd "$_spare_label" "$_spare_conf" "$PROJECT_DIR" "$_spare_zdotdir")"
 _spare_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/spare-tabs.sh\" && spare_tabs_close_current \"$_spare_label\"'"
 
-"$TMUX_CMD" new-session -s "$SESSION_NAME" -e "PATH=$PATH" -e "WISP_DECK_MARKER_FILE=$WISP_DECK_MARKER_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$WISP_DECK_RELAUNCH_FILE" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
+"$TMUX_CMD" new-session -s "$SESSION_NAME" -e "PATH=$PATH" -e "WISP_DECK_MARKER_FILE=$WISP_DECK_MARKER_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=${WISP_DECK_RESUME_SESSION:-}" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$WISP_DECK_RELAUNCH_FILE" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
   "$_pane0_cmd" \; \
   set-option status-left " ⬡ ${PROJECT_NAME} " \; \
   set-option status-left-style "fg=white,bg=colour236,bold" \; \
