@@ -44,6 +44,14 @@ if type gt_claude_account_label &>/dev/null \
   account_label=$(gt_claude_account_label "$account_dir" "$accounts_list" "$default_label_file")
 fi
 
+# Weekly (7-day) usage of the active login, shown right of the account label so
+# the user sees how much of that account's rolling quota is spent. Only present
+# for subscribers after the first API response, so it stays empty otherwise.
+weekly_label=""
+if [ -n "$account_label" ] && type gt_weekly_limit_label &>/dev/null; then
+  weekly_label=$(gt_weekly_limit_label "$input")
+fi
+
 # Find parent Claude Code process and get total tree memory + CPU usage
 pid=$PPID
 mem_label=""
@@ -115,6 +123,12 @@ fi
 # embedded directly: this runs under macOS bash 3.2 (--posix), whose printf has
 # no \u/\U escape support.
 if [ -n "$account_label" ]; then
-  line="$line$(printf ' | \033[01;32m󰀄 %s\033[00m' "$account_label")"
+  # The weekly usage (7d N%) rides along inside the account segment, just to the
+  # right of the label, so both read as one "which login / how much left" unit.
+  account_seg="󰀄 $account_label"
+  if [ -n "$weekly_label" ]; then
+    account_seg="$account_seg  7d $weekly_label"
+  fi
+  line="$line$(printf ' | \033[01;32m%s\033[00m' "$account_seg")"
 fi
 printf '%s' "$line"

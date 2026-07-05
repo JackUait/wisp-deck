@@ -370,6 +370,17 @@ if [[ "$*" == *"comm="* ]]; then echo "sh"; else echo "1"; fi
 	return buildEnv(t, []string{binDir}, "HOME="+fakeHome)
 }
 
+// wrapperHome recovers the fake HOME that setupWrapperTest baked into the env so
+// a test can seed files (e.g. the accounts list) under it.
+func wrapperHome(env []string) string {
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "HOME=") {
+			return strings.TrimPrefix(kv, "HOME=")
+		}
+	}
+	return ""
+}
+
 // setupWrapperMemTest creates a hermetic env for the wrapper where the parent
 // process walk resolves to a process whose `comm` is claudeComm. Both footprint
 // and RSS report memMB megabytes (no children), so the rendered memory segment
@@ -1929,4 +1940,105 @@ func TestStatusline_multiple_accounts_ignores_comments_blanks_and_malformed(t *t
 	_, code := runBashFunc(t, "lib/statusline.sh", "gt_multiple_claude_accounts",
 		[]string{list}, nil)
 	assertExitCode(t, code, 0)
+}
+
+// --- gt_weekly_limit_label ---
+// The statusline JSON carries the subscriber's rolling limits under
+// rate_limits. gt_weekly_limit_label pulls the 7-day (weekly) window's
+// used_percentage out of that payload and formats it as a compact "N%" so the
+// wrapper can show how much of the weekly quota is spent, next to the account.
+
+func TestStatusline_weekly_limit_label_extracts_seven_day_percentage(t *testing.T) {
+	input := `{"rate_limits":{"five_hour":{"used_percentage":10,"resets_at":1},"seven_day":{"used_percentage":42,"resets_at":2}}}`
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_limit_label",
+		[]string{input}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "42%" {
+		t.Fatalf("expected %q, got %q", "42%", strings.TrimSpace(out))
+	}
+}
+
+func TestStatusline_weekly_limit_label_rounds_decimal_percentage(t *testing.T) {
+	input := `{"rate_limits":{"seven_day":{"used_percentage":42.7,"resets_at":2}}}`
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_limit_label",
+		[]string{input}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "43%" {
+		t.Fatalf("expected %q, got %q", "43%", strings.TrimSpace(out))
+	}
+}
+
+func TestStatusline_weekly_limit_label_zero_percentage(t *testing.T) {
+	input := `{"rate_limits":{"seven_day":{"used_percentage":0,"resets_at":2}}}`
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_limit_label",
+		[]string{input}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "0%" {
+		t.Fatalf("expected %q, got %q", "0%", strings.TrimSpace(out))
+	}
+}
+
+func TestStatusline_weekly_limit_label_empty_when_rate_limits_absent(t *testing.T) {
+	input := `{"model":{"display_name":"Fable 5"}}`
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_limit_label",
+		[]string{input}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("expected empty output, got %q", strings.TrimSpace(out))
+	}
+}
+
+// seven_day may be missing even when five_hour is present (the API omits a
+// window that has no data yet). The weekly label must not fall through to the
+// 5-hour number in that case.
+func TestStatusline_weekly_limit_label_empty_when_only_five_hour(t *testing.T) {
+	input := `{"rate_limits":{"five_hour":{"used_percentage":88,"resets_at":1}}}`
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_limit_label",
+		[]string{input}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("expected empty output, got %q", strings.TrimSpace(out))
+	}
+}
+
+// The wrapper renders the weekly limit inside the account segment, immediately
+// to the right of the account label, so a user with 2+ accounts sees which
+// login this tab uses AND how much of that login's weekly quota is spent.
+func TestStatusline_wrapper_shows_weekly_limit_right_of_account(t *testing.T) {
+	env := setupWrapperTest(t)
+	// Force the Keychain Default login so the label is deterministic even when
+	// the test host itself runs under an isolated CLAUDE_CONFIG_DIR.
+	env = append(env, "CLAUDE_CONFIG_DIR=")
+	fakeHome := wrapperHome(env)
+	writeTempFile(t, filepath.Join(fakeHome, ".config", "wisp-deck"),
+		"claude-accounts.list", "Personal:personal\n")
+
+	root := projectRoot(t)
+	wrapperPath := filepath.Join(root, "templates", "statusline-wrapper.sh")
+	stdinData := `{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"rate_limits":{"seven_day":{"used_percentage":42,"resets_at":2}},"workspace":{"current_dir":"/tmp"}}`
+	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, wrapperPath)
+
+	out, code := runBashSnippet(t, script, env)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "Default")
+	assertContains(t, out, "7d 42%")
+	// The weekly figure sits to the right of the account label.
+	if strings.Index(out, "Default") > strings.Index(out, "7d 42%") {
+		t.Fatalf("weekly limit must render right of the account label, got %q", out)
+	}
+}
+
+// With only one login there is no account segment, so there is nothing to hang
+// the weekly figure off of — it stays hidden to avoid clutter for solo users.
+func TestStatusline_wrapper_omits_weekly_limit_without_account_segment(t *testing.T) {
+	env := setupWrapperTest(t)
+
+	root := projectRoot(t)
+	wrapperPath := filepath.Join(root, "templates", "statusline-wrapper.sh")
+	stdinData := `{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"rate_limits":{"seven_day":{"used_percentage":42,"resets_at":2}},"workspace":{"current_dir":"/tmp"}}`
+	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, wrapperPath)
+
+	out, code := runBashSnippet(t, script, env)
+	assertExitCode(t, code, 0)
+	assertNotContains(t, out, "7d 42%")
 }
