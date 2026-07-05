@@ -1025,6 +1025,10 @@ compact_view() {
                   # floats the whole-file diff over the window.
                   if [ "$mterm" = M ] && [ -n "$account_pill_str" ] \
                      && [ "$mrow" = "$h" ] && [ "$mcol" -le "$account_pill_cols" ]; then
+                    # Re-read the switcher lib from disk so edits to the popup
+                    # (size, flags) go live without restarting this long-running
+                    # ledger — otherwise the resident function lags behind the file.
+                    reload_switcher_lib "$_cv_lib_dir"
                     open_account_switcher tmux "$_rc_relaunch"
                     enter_ui_mode "$interactive"   # re-assert alt-screen + mouse
                     need_build=1                   # redraw + refresh the pill

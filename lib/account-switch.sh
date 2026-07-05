@@ -11,6 +11,17 @@
 # claude-accounts.sh (pointer helpers), tmux-session.sh (build_ai_launch_cmd),
 # and — for the relaunch's shared-state sync — claude-shared-settings.sh.
 
+# reload_switcher_lib <lib_dir> — re-source THIS module from disk so a
+# long-running ledger picks up on-disk edits to the switcher (popup dimensions,
+# flags, backdrop) without the whole pane having to restart. Called right before
+# opening the switcher. No-op when the file is missing (keeps the resident copy).
+reload_switcher_lib() {
+  local lib_dir="$1"
+  [ -n "$lib_dir" ] && [ -f "$lib_dir/account-switch.sh" ] || return 0
+  # shellcheck source=/dev/null
+  source "$lib_dir/account-switch.sh"
+}
+
 # account_pill_enabled <relaunch_file> <list_file> — exit 0 when the ledger should
 # show the switch pill. The tool/proxy eligibility gate lives in wrapper.sh, which
 # only writes the relaunch-context file for a claude session with the rotation

@@ -165,6 +165,35 @@ func TestOpenAccountSwitcher_launches_fullscreen_borderless_popup(t *testing.T) 
 	assertContains(t, logOut, "claude-account-switch")
 }
 
+// The ledger is a long-running process that sources account-switch.sh once at
+// startup, so edits to open_account_switcher (e.g. the popup dimensions) don't
+// take effect until the whole pane restarts. reload_switcher_lib re-sources the
+// module from disk so a single restart is the last one ever needed: after it,
+// every open re-reads the current file. This guards that re-source behavior.
+func TestReloadSwitcherLib_picks_up_ondisk_edits(t *testing.T) {
+	dir := t.TempDir()
+	root := projectRoot(t)
+	src, err := os.ReadFile(filepath.Join(root, "lib", "account-switch.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	libcopy := filepath.Join(dir, "account-switch.sh")
+	if err := os.WriteFile(libcopy, src, 0644); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`
+source %q
+type probe_marker >/dev/null 2>&1 && echo BEFORE-DEFINED || echo BEFORE-MISSING
+printf '\nprobe_marker() { echo RELOADED; }\n' >> %q
+reload_switcher_lib %q
+probe_marker
+`, libcopy, libcopy, dir)
+	out, code := runBashSnippet(t, body, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "BEFORE-MISSING") // the edit isn't visible until reload
+	assertContains(t, out, "RELOADED")       // reload_switcher_lib re-read the file
+}
+
 func TestFindAIPane_picks_marked_pane(t *testing.T) {
 	dir := t.TempDir()
 	// Mock tmux: list-panes emits "pane_id gt_ai" lines; the AI pane carries 1.
