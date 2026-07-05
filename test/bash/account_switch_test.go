@@ -131,6 +131,36 @@ func TestAccountCurrent_default_when_no_pointer(t *testing.T) {
 	}
 }
 
+// The switcher popup is drawn as a self-styled rounded card by the Go TUI, so the
+// tmux popup itself must be borderless (-B) and large enough to leave a clickable
+// margin around the card (clicking the margin cancels). This guards the flags the
+// popup is launched with.
+func TestOpenAccountSwitcher_launches_borderless_popup(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	// Mock tmux: log every invocation; the popup itself is a no-op so the pointer
+	// is unchanged (before == after) and no relaunch is attempted.
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`printf '%%s\n' "$*" >> %q`, rec))
+	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
+		"tool=claude", "claude_cmd=claude", "opencode_cmd=opencode",
+		"settings=/cfg/settings.json", "filter=", "project_dir=/proj",
+		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
+		"pointer=" + filepath.Join(dir, "claude-account"),
+		"list=" + filepath.Join(dir, "claude-accounts.list"),
+		"colors=" + filepath.Join(dir, "claude-account-colors"),
+		"default_label=" + filepath.Join(dir, "claude-account-default-label"),
+		"",
+	}, "\n"))
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "display-popup")
+	assertContains(t, logOut, "-B") // borderless: the Go card draws its own rounded border
+	assertContains(t, logOut, "claude-account-switch")
+}
+
 func TestFindAIPane_picks_marked_pane(t *testing.T) {
 	dir := t.TempDir()
 	// Mock tmux: list-panes emits "pane_id gt_ai" lines; the AI pane carries 1.

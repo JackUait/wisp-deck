@@ -192,7 +192,7 @@ open_account_switcher() {
 
   local before after
   before="$(get_active_claude_account "$_rc_pointer")"
-  "$tmux_cmd" display-popup -E -w 44 -h 14 \
+  "$tmux_cmd" display-popup -E -B -w 52 -h 18 \
     "wisp-deck-tui claude-account-switch --list $(printf '%q' "$_rc_list") \
 --accounts-dir $(printf '%q' "$_rc_accounts_dir") \
 --pointer $(printf '%q' "$_rc_pointer") \

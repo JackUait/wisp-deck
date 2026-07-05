@@ -5,7 +5,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
+
+func isQuitCmd(t *testing.T, cmd tea.Cmd) bool {
+	t.Helper()
+	if cmd == nil {
+		return false
+	}
+	_, ok := cmd().(tea.QuitMsg)
+	return ok
+}
 
 func TestClaudeAccountSwitchCmd_Registered(t *testing.T) {
 	cmd, _, err := rootCmd.Find([]string{"claude-account-switch"})
@@ -121,6 +132,76 @@ func TestAccountSwitch_loadSwitchRows_defaultActiveCursorZero(t *testing.T) {
 	}
 	if cursor != 0 {
 		t.Fatalf("cursor = %d, want 0 (Default active)", cursor)
+	}
+}
+
+func TestAccountSwitchLayout_centersAndLocatesFirstRow(t *testing.T) {
+	// contentW=20, 3 rows, in a 48x18 terminal:
+	//   cardWidth  = 20 + 2*3(pad) + 2*1(border) = 28
+	//   cardHeight = (2 header + 3 rows + 2 footer) + 2*1(pad) + 2*1(border) = 11
+	//   cardLeft   = (48-28)/2 = 10 ; cardTop = (18-11)/2 = 3
+	//   firstRowY  = cardTop + border + padY + header = 3 + 1 + 1 + 2 = 7
+	firstRowY, cardLeft, cardWidth := accountSwitchLayout(48, 18, 3, 20)
+	if cardWidth != 28 {
+		t.Errorf("cardWidth = %d, want 28", cardWidth)
+	}
+	if cardLeft != 10 {
+		t.Errorf("cardLeft = %d, want 10", cardLeft)
+	}
+	if firstRowY != 7 {
+		t.Errorf("firstRowY = %d, want 7", firstRowY)
+	}
+}
+
+func TestAccountSwitchModel_clickOnRowSelectsAndQuits(t *testing.T) {
+	rows := []switchRow{{Label: "Default"}, {Label: "Work", Dir: "work"}, {Label: "Personal", Dir: "personal"}}
+	m := newAccountSwitchModel(rows, 0, "")
+	sized, _ := m.Update(tea.WindowSizeMsg{Width: 48, Height: 18})
+	m = sized.(accountSwitchModel)
+
+	firstRowY, cardLeft, _ := accountSwitchLayout(m.width, m.height, len(rows), m.contentWidth())
+	click := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: cardLeft + 2, Y: firstRowY + 2}
+	out, cmd := m.Update(click)
+	mm := out.(accountSwitchModel)
+	if !mm.chosen {
+		t.Fatalf("expected click on a row to choose it")
+	}
+	if mm.cursor != 2 {
+		t.Errorf("cursor = %d, want 2", mm.cursor)
+	}
+	if !isQuitCmd(t, cmd) {
+		t.Errorf("expected Quit cmd after selecting a row")
+	}
+}
+
+func TestAccountSwitchModel_clickOutsideCardCancels(t *testing.T) {
+	rows := []switchRow{{Label: "Default"}, {Label: "Work", Dir: "work"}}
+	m := newAccountSwitchModel(rows, 0, "")
+	sized, _ := m.Update(tea.WindowSizeMsg{Width: 48, Height: 18})
+	m = sized.(accountSwitchModel)
+
+	// Top-left corner is inside the popup but outside the centered card.
+	click := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 0, Y: 0}
+	out, cmd := m.Update(click)
+	mm := out.(accountSwitchModel)
+	if mm.chosen {
+		t.Fatalf("clicking outside the card must cancel, not choose")
+	}
+	if !isQuitCmd(t, cmd) {
+		t.Errorf("expected Quit cmd when clicking outside the card")
+	}
+}
+
+func TestAccountSwitchModel_viewHasRoundedCorners(t *testing.T) {
+	rows := []switchRow{{Label: "Default"}, {Label: "Work", Dir: "work"}}
+	m := newAccountSwitchModel(rows, 0, "")
+	sized, _ := m.Update(tea.WindowSizeMsg{Width: 48, Height: 18})
+	m = sized.(accountSwitchModel)
+	view := m.View()
+	for _, corner := range []string{"╭", "╮", "╰", "╯"} {
+		if !strings.Contains(view, corner) {
+			t.Errorf("view missing rounded corner %q", corner)
+		}
 	}
 }
 

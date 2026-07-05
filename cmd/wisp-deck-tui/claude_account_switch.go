@@ -124,23 +124,32 @@ func runClaudeAccountSwitch(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// accountSwitchModel is the thin Bubbletea shell: it only tracks the cursor and
-// whether a row was chosen; all persistence lives in the pure helpers above.
+// accountSwitchModel is the thin Bubbletea shell: it tracks the cursor, the
+// terminal size (for centering + mouse mapping), which row is the active login,
+// and whether a row was chosen; all persistence lives in the pure helpers above.
 type accountSwitchModel struct {
 	rows       []switchRow
 	cursor     int
+	active     int
 	colorsFile string
 	chosen     bool
+	width      int
+	height     int
 }
 
 func newAccountSwitchModel(rows []switchRow, cursor int, colorsFile string) accountSwitchModel {
-	return accountSwitchModel{rows: rows, cursor: cursor, colorsFile: colorsFile}
+	// The switcher opens with the cursor on the active login, so the initial
+	// cursor is also the active-row marker.
+	return accountSwitchModel{rows: rows, cursor: cursor, active: cursor, colorsFile: colorsFile}
 }
 
 func (m accountSwitchModel) Init() tea.Cmd { return nil }
 
 func (m accountSwitchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc", "q", "ctrl+c":
@@ -159,54 +168,106 @@ func (m accountSwitchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			// Rows are rendered one per line starting at the row after the title
-			// and its blank line (title at y=0, blank at y=1, first row at y=2).
-			idx := msg.Y - accountSwitchFirstRowY
-			if idx >= 0 && idx < len(m.rows) {
+			firstRowY, cardLeft, cardWidth := accountSwitchLayout(m.width, m.height, len(m.rows), m.contentWidth())
+			idx := msg.Y - firstRowY
+			onCard := msg.X >= cardLeft && msg.X < cardLeft+cardWidth
+			if onCard && idx >= 0 && idx < len(m.rows) {
 				m.cursor = idx
 				m.chosen = true
 				return m, tea.Quit
 			}
+			// A click anywhere else — the margin around the card — closes the popup
+			// without switching, i.e. clicking outside the menu dismisses it.
+			m.chosen = false
+			return m, tea.Quit
 		}
 	}
 	return m, nil
 }
 
-// accountSwitchFirstRowY is the screen row of the first login (title line + one
-// blank line precede it), used to map a mouse click back to a row index.
-const accountSwitchFirstRowY = 2
+// accountSwitch card geometry (kept in sync with the lipgloss styles in View):
+// the rounded border is 1 cell, the padding is 1 row / 3 cols, and the content
+// block is a title line, a blank line, one line per login, a blank line, and a
+// help line.
+const (
+	accountSwitchPadX   = 3
+	accountSwitchPadY   = 1
+	accountSwitchBorder = 1
+	accountSwitchHeader = 2 // title + blank line above the rows
+	accountSwitchFooter = 2 // blank line + help below the rows
+)
 
-func (m accountSwitchModel) View() string {
-	titleStyle := lipgloss.NewStyle().Bold(true)
-	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+// accountSwitchLayout maps the centered card onto screen coordinates so a mouse
+// click can be resolved to a login row. contentW is the widest inner line. It
+// returns the screen Y of the first login row and the card's left column + width.
+func accountSwitchLayout(termW, termH, numRows, contentW int) (firstRowY, cardLeft, cardWidth int) {
+	cardWidth = contentW + 2*accountSwitchPadX + 2*accountSwitchBorder
+	innerH := accountSwitchHeader + numRows + accountSwitchFooter
+	cardHeight := innerH + 2*accountSwitchPadY + 2*accountSwitchBorder
+	cardLeft = (termW - cardWidth) / 2
+	if cardLeft < 0 {
+		cardLeft = 0
+	}
+	cardTop := (termH - cardHeight) / 2
+	if cardTop < 0 {
+		cardTop = 0
+	}
+	firstRowY = cardTop + accountSwitchBorder + accountSwitchPadY + accountSwitchHeader
+	return firstRowY, cardLeft, cardWidth
+}
 
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("Switch Claude login"))
-	b.WriteString("\n\n")
+// innerLines renders the card's content block (title, blank, rows, blank, help),
+// shared by View and contentWidth so their geometry can never drift apart.
+func (m accountSwitchModel) innerLines() []string {
+	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	activeDot := lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Render("●")
+
+	lines := []string{titleStyle.Render("Switch Claude login"), ""}
 
 	for i, r := range m.rows {
 		color := claudeaccount.ColorFor(m.colorsFile, r.Dir)
 		labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(color)))
 
-		cursor := "  "
-		if i == m.cursor {
-			cursor = lipgloss.NewStyle().Bold(true).Render("▌ ")
-		}
+		marker := "  "
 		label := labelStyle.Render("󰀄 " + r.Label)
 		if i == m.cursor {
+			marker = lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(color))).Bold(true).Render("▌ ")
 			label = labelStyle.Bold(true).Render("󰀄 " + r.Label)
 		}
-		line := cursor + label
-		if i == m.cursor {
-			line += "   " + lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Render("●")
+		line := marker + label
+		if i == m.active {
+			line += "  " + activeDot
 		}
-		b.WriteString(line)
-		b.WriteString("\n")
+		lines = append(lines, line)
 	}
 
-	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("↑↓ move · ⏎ switch · esc cancel"))
-	return b.String()
+	lines = append(lines, "", dimStyle.Render("↑↓ move · ⏎ switch · esc cancel"))
+	return lines
+}
+
+// contentWidth is the width of the widest inner line, used to size and center the
+// card and to bound mouse clicks horizontally.
+func (m accountSwitchModel) contentWidth() int {
+	w := 0
+	for _, l := range m.innerLines() {
+		if lw := lipgloss.Width(l); lw > w {
+			w = lw
+		}
+	}
+	return w
+}
+
+func (m accountSwitchModel) View() string {
+	card := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Padding(accountSwitchPadY, accountSwitchPadX).
+		Render(strings.Join(m.innerLines(), "\n"))
+	if m.width == 0 || m.height == 0 {
+		return card
+	}
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
 }
 
 func init() {
