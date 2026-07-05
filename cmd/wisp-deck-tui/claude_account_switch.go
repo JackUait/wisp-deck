@@ -277,9 +277,14 @@ func (m accountSwitchModel) contentWidth() int {
 	return w
 }
 
-// accountSwitchDim renders the captured backdrop faint/gray so it recedes behind
-// the card (mirrors the diff pager's backdrop dimming).
-var accountSwitchDim = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("240"))
+// accountSwitchDim renders the close area (everything outside the card) as a
+// half-transparent backdrop: a dim dark background tint (the scrim) with the
+// captured screen behind it drawn faint/gray, so the session shows through
+// darkened rather than as a solid opaque block.
+var accountSwitchDim = lipgloss.NewStyle().
+	Faint(true).
+	Foreground(lipgloss.Color("240")).
+	Background(lipgloss.Color("#14141b"))
 
 func (m accountSwitchModel) View() string {
 	card := lipgloss.NewStyle().

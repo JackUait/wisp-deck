@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 func isQuitCmd(t *testing.T, cmd tea.Cmd) bool {
@@ -221,6 +223,25 @@ func TestAccountSwitchModel_viewCompositesDimmedBackdrop(t *testing.T) {
 	// The rounded card is still drawn on top.
 	if !strings.Contains(view, "╭") {
 		t.Errorf("view missing the rounded card over the backdrop")
+	}
+}
+
+func TestAccountSwitchModel_closeAreaIsDimScrim(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	rows := []switchRow{{Label: "Default"}, {Label: "Work", Dir: "work"}}
+	m := newAccountSwitchModel(rows, 0, "").withBackdrop([]string{"session behind"})
+	sized, _ := m.Update(tea.WindowSizeMsg{Width: 48, Height: 18})
+	m = sized.(accountSwitchModel)
+
+	view := m.View()
+	// The close area (everything outside the card) is darkened into a scrim — a dim
+	// background tint — so it reads as a half-transparent backdrop over the session
+	// rather than a solid opaque block.
+	if !strings.Contains(view, "48;2;20;20;27") {
+		t.Errorf("close-area margin is not rendered as a dim scrim background:\n%s", view)
 	}
 }
 
