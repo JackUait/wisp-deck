@@ -162,21 +162,30 @@ fi
 # the fill vs. empty cells carry the amount. Falls back to bold green when no
 # color resolved. The 5h pill leads (shorter window first), then 7d, under a
 # single " | " so both read as one usage group. Which windows appear is the
-# usage_bars preference resolved above; each is still gated on its own bar being
-# present (2+ account setup with that window's figure).
+# usage_bars preference resolved above.
+#
+# A window is shown as soon as the account is eligible ($account_label set: 2+
+# logins) — NOT gated on its figure being present. Before the first API response
+# supplies rate_limits (e.g. the instant after a mid-session account switch
+# relaunches claude), the figure is absent, so a "…" placeholder stands in for the
+# bar — still painted in the account color, so the switched-to login is visible
+# INSTANTLY rather than after the first response lands. Once the figure arrives the
+# placeholder upgrades to the real bar in place.
 _usage_seg=""
-if [ "$show_5h" = 1 ] && [ -n "$five_hour_bar" ]; then
+if [ "$show_5h" = 1 ] && [ -n "$account_label" ]; then
+  _seg="$five_hour_bar"; [ -z "$_seg" ] && _seg="…"
   if [ -n "$account_color" ]; then
-    _usage_seg="$_usage_seg$(printf ' \033[02;38;5;%sm5h\033[00m \033[38;5;%sm%s\033[00m' "$account_color" "$account_color" "$five_hour_bar")"
+    _usage_seg="$_usage_seg$(printf ' \033[02;38;5;%sm5h\033[00m \033[38;5;%sm%s\033[00m' "$account_color" "$account_color" "$_seg")"
   else
-    _usage_seg="$_usage_seg$(printf ' \033[02;37m5h\033[00m \033[01;32m%s\033[00m' "$five_hour_bar")"
+    _usage_seg="$_usage_seg$(printf ' \033[02;37m5h\033[00m \033[01;32m%s\033[00m' "$_seg")"
   fi
 fi
-if [ "$show_7d" = 1 ] && [ -n "$weekly_bar" ]; then
+if [ "$show_7d" = 1 ] && [ -n "$account_label" ]; then
+  _seg="$weekly_bar"; [ -z "$_seg" ] && _seg="…"
   if [ -n "$account_color" ]; then
-    _usage_seg="$_usage_seg$(printf ' \033[02;38;5;%sm7d\033[00m \033[38;5;%sm%s\033[00m' "$account_color" "$account_color" "$weekly_bar")"
+    _usage_seg="$_usage_seg$(printf ' \033[02;38;5;%sm7d\033[00m \033[38;5;%sm%s\033[00m' "$account_color" "$account_color" "$_seg")"
   else
-    _usage_seg="$_usage_seg$(printf ' \033[02;37m7d\033[00m \033[01;32m%s\033[00m' "$weekly_bar")"
+    _usage_seg="$_usage_seg$(printf ' \033[02;37m7d\033[00m \033[01;32m%s\033[00m' "$_seg")"
   fi
 fi
 # One " | " prefix for the whole group (the segments above each begin with a

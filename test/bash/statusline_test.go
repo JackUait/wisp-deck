@@ -2382,3 +2382,51 @@ func TestStatusline_usage_bars_default_is_7d(t *testing.T) {
 	assertContains(t, out, bar(9))
 	assertNotContains(t, out, "5h")
 }
+
+// Right after a mid-session account switch the relaunched claude has no
+// rate_limits yet (they arrive with the first API response), so the usage bar —
+// the ONLY thing that carries the account's color — would be hidden and the
+// switch would show no account identity until the first response lands. To make
+// the switch instantly visible, when the account is eligible but a window's usage
+// figure isn't available yet, the wrapper renders that window's tag with a "…"
+// placeholder painted in the account color, upgrading to the real bar once usage
+// arrives. No profile glyph/label is reintroduced.
+func TestStatusline_wrapper_colored_placeholder_before_usage_data(t *testing.T) {
+	env := setupWrapperTest(t)
+	env = append(env, "CLAUDE_CONFIG_DIR=")
+	fakeHome := wrapperHome(env)
+	cfg := filepath.Join(fakeHome, ".config", "wisp-deck")
+	writeTempFile(t, cfg, "claude-accounts.list", "Personal:personal\n")
+	writeTempFile(t, cfg, "claude-account-colors", "default:141\n")
+
+	root := projectRoot(t)
+	wrapperPath := filepath.Join(root, "templates", "statusline-wrapper.sh")
+	// No rate_limits: exactly the JSON right after the switch/resume.
+	stdinData := `{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"workspace":{"current_dir":"/tmp"}}`
+	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, wrapperPath)
+
+	out, code := runBashSnippet(t, script, env)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "7d")
+	// The account color (141) is shown INSTANTLY via the "…" placeholder.
+	assertContains(t, out, "\x1b[38;5;141m…")
+	// No profile reintroduced.
+	assertNotContains(t, out, "\U000f0004") // account glyph 󰀄
+	assertNotContains(t, out, "Default")
+}
+
+// The placeholder is gated on account eligibility (2+ logins). A solo user with a
+// single login must still see NOTHING — no bar, no placeholder, no clutter.
+func TestStatusline_wrapper_no_placeholder_for_single_login(t *testing.T) {
+	env := setupWrapperTest(t) // setupWrapperTest seeds a single-login setup
+	root := projectRoot(t)
+	wrapperPath := filepath.Join(root, "templates", "statusline-wrapper.sh")
+	stdinData := `{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"workspace":{"current_dir":"/tmp"}}`
+	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, wrapperPath)
+
+	out, code := runBashSnippet(t, script, env)
+	assertExitCode(t, code, 0)
+	assertNotContains(t, out, "7d")
+	assertNotContains(t, out, "5h")
+	assertNotContains(t, out, "…")
+}
