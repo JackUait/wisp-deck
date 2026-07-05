@@ -1942,10 +1942,73 @@ func TestStatusline_multiple_accounts_ignores_comments_blanks_and_malformed(t *t
 	assertExitCode(t, code, 0)
 }
 
+// --- gt_usage_bar ---
+// Renders a percentage (0-100) as an 8-cell block bar: filled cells (█) for the
+// used share, light cells (░) for what's left. The cell count is rounded, so the
+// bar reads at a glance without a number. Out-of-range input clamps to empty/full.
+
+const (
+	barFull  = "█" // █
+	barEmpty = "░" // ░
+)
+
+func bar(filled int) string {
+	return strings.Repeat(barFull, filled) + strings.Repeat(barEmpty, 8-filled)
+}
+
+func TestStatusline_usage_bar_zero_is_all_empty(t *testing.T) {
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"0", "8"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != bar(0) {
+		t.Fatalf("expected %q, got %q", bar(0), strings.TrimSpace(out))
+	}
+}
+
+func TestStatusline_usage_bar_hundred_is_all_full(t *testing.T) {
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"100", "8"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != bar(8) {
+		t.Fatalf("expected %q, got %q", bar(8), strings.TrimSpace(out))
+	}
+}
+
+func TestStatusline_usage_bar_half_fills_four_cells(t *testing.T) {
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"50", "8"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != bar(4) {
+		t.Fatalf("expected %q, got %q", bar(4), strings.TrimSpace(out))
+	}
+}
+
+// 44% of 8 cells is 3.52 — the fill count rounds to nearest (4), not truncates.
+func TestStatusline_usage_bar_rounds_cell_count(t *testing.T) {
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"44", "8"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != bar(4) {
+		t.Fatalf("expected %q, got %q", bar(4), strings.TrimSpace(out))
+	}
+}
+
+func TestStatusline_usage_bar_defaults_to_width_eight(t *testing.T) {
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"100"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != bar(8) {
+		t.Fatalf("expected %q, got %q", bar(8), strings.TrimSpace(out))
+	}
+}
+
+func TestStatusline_usage_bar_clamps_above_hundred(t *testing.T) {
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"150", "8"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != bar(8) {
+		t.Fatalf("expected %q, got %q", bar(8), strings.TrimSpace(out))
+	}
+}
+
 // --- gt_weekly_limit_label ---
 // The statusline JSON carries the subscriber's rolling limits under
 // rate_limits. gt_weekly_limit_label pulls the 7-day (weekly) window's
-// used_percentage out of that payload and formats it as a compact "N%" so the
+// used_percentage out of that payload and renders it as an 8-cell bar so the
 // wrapper can show how much of the weekly quota is spent, next to the account.
 
 func TestStatusline_weekly_limit_label_extracts_seven_day_percentage(t *testing.T) {
@@ -1953,18 +2016,20 @@ func TestStatusline_weekly_limit_label_extracts_seven_day_percentage(t *testing.
 	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_limit_label",
 		[]string{input}, nil)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "42%" {
-		t.Fatalf("expected %q, got %q", "42%", strings.TrimSpace(out))
+	// 42% of 8 cells = 3.36 → 3 filled.
+	if strings.TrimSpace(out) != bar(3) {
+		t.Fatalf("expected %q, got %q", bar(3), strings.TrimSpace(out))
 	}
 }
 
-func TestStatusline_weekly_limit_label_rounds_decimal_percentage(t *testing.T) {
+func TestStatusline_weekly_limit_label_handles_decimal_percentage(t *testing.T) {
 	input := `{"rate_limits":{"seven_day":{"used_percentage":42.7,"resets_at":2}}}`
 	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_limit_label",
 		[]string{input}, nil)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "43%" {
-		t.Fatalf("expected %q, got %q", "43%", strings.TrimSpace(out))
+	// 42.7% of 8 cells = 3.42 → 3 filled.
+	if strings.TrimSpace(out) != bar(3) {
+		t.Fatalf("expected %q, got %q", bar(3), strings.TrimSpace(out))
 	}
 }
 
@@ -1973,8 +2038,8 @@ func TestStatusline_weekly_limit_label_zero_percentage(t *testing.T) {
 	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_limit_label",
 		[]string{input}, nil)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "0%" {
-		t.Fatalf("expected %q, got %q", "0%", strings.TrimSpace(out))
+	if strings.TrimSpace(out) != bar(0) {
+		t.Fatalf("expected %q, got %q", bar(0), strings.TrimSpace(out))
 	}
 }
 
@@ -2021,9 +2086,11 @@ func TestStatusline_wrapper_shows_weekly_limit_right_of_account(t *testing.T) {
 	out, code := runBashSnippet(t, script, env)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "Default")
-	assertContains(t, out, "7d 42%")
-	// The weekly figure sits to the right of the account label.
-	if strings.Index(out, "Default") > strings.Index(out, "7d 42%") {
+	// 42% weekly usage → a 3-of-8 filled bar, prefixed "7d ".
+	weekly := "7d " + bar(3)
+	assertContains(t, out, weekly)
+	// The weekly bar sits to the right of the account label.
+	if strings.Index(out, "Default") > strings.Index(out, weekly) {
 		t.Fatalf("weekly limit must render right of the account label, got %q", out)
 	}
 }
@@ -2040,5 +2107,5 @@ func TestStatusline_wrapper_omits_weekly_limit_without_account_segment(t *testin
 
 	out, code := runBashSnippet(t, script, env)
 	assertExitCode(t, code, 0)
-	assertNotContains(t, out, "7d 42%")
+	assertNotContains(t, out, "7d ")
 }

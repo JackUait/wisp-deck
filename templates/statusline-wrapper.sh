@@ -123,8 +123,8 @@ fi
 # embedded directly: this runs under macOS bash 3.2 (--posix), whose printf has
 # no \u/\U escape support.
 if [ -n "$account_label" ]; then
-  # The weekly usage (7d N%) rides along inside the account segment, just to the
-  # right of the label, so both read as one "which login / how much left" unit.
+  # The weekly usage bar (7d ███░░░░░) rides along inside the account segment,
+  # just right of the label, so both read as one "which login / how much" unit.
   account_seg="󰀄 $account_label"
   if [ -n "$weekly_label" ]; then
     account_seg="$account_seg  7d $weekly_label"

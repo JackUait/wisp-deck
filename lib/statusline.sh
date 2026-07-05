@@ -194,24 +194,49 @@ gt_claude_account_label() {
   printf '%s\n' "$default_label"
 }
 
+# Render a percentage (0-100) as a fixed-width block bar: filled cells (█) for
+# the used share, light cells (░) for what remains — so usage reads at a glance
+# without a number. The fill count is rounded to the nearest cell and clamped to
+# 0..width, so out-of-range input never overflows. Width defaults to 8. The math
+# runs locale-independently (macOS awk would read a comma decimal as a truncated
+# integer otherwise). The cells are laid down with `printf FMT arg-per-cell`
+# rather than appending in a loop: macOS bash 3.2 corrupts a multibyte character
+# appended to a variable ("$out█") under a UTF-8 locale, but repeating it through
+# a printf format and joining via command substitution is byte-safe. Literal
+# UTF-8 blocks are embedded directly (bash 3.2 printf has no \u/\U escapes).
+# Usage: gt_usage_bar 42 [8]  =>  "███░░░░░"
+gt_usage_bar() {
+  local pct="$1" width="${2:-8}" filled empty full="" rest=""
+  filled=$(printf '%s %s\n' "$pct" "$width" | LC_ALL=C awk '
+    { p = $1; w = $2; gsub(/,/, ".", p)
+      n = int(p / 100 * w + 0.5)
+      if (n < 0) n = 0; if (n > w) n = w
+      print n }')
+  empty=$((width - filled))
+  # seq feeds one arg per cell so printf stamps the glyph exactly that many
+  # times; unquoted on purpose (word splitting is what supplies the args).
+  # shellcheck disable=SC2046
+  [ "$filled" -gt 0 ] && full=$(printf '█%.0s' $(seq 1 "$filled"))
+  # shellcheck disable=SC2046
+  [ "$empty" -gt 0 ] && rest=$(printf '░%.0s' $(seq 1 "$empty"))
+  printf '%s%s\n' "$full" "$rest"
+}
+
 # Pull the subscriber's 7-day (weekly) usage out of the statusline JSON and
-# format it as a compact "N%" — how much of the weekly limit is already spent.
+# render it as a block bar — how much of the weekly limit is already spent.
 # Claude Code embeds this in the payload under rate_limits.seven_day for Pro/Max
 # logins, but only after the session's first API response, and it omits a window
 # that has no data yet. So an absent rate_limits, an absent seven_day, or a
 # seven_day carrying only five_hour's number must all yield nothing (the segment
 # hides) — hence the regex is anchored inside the seven_day object's own braces
-# ([^}]* never crosses into a sibling window). The percentage is rounded to a
-# whole number, locale-independently (macOS awk would read a comma decimal as a
-# truncated integer otherwise).
-# Usage: gt_weekly_limit_label "$statusline_json"  =>  "42%"
+# ([^}]* never crosses into a sibling window).
+# Usage: gt_weekly_limit_label "$statusline_json"  =>  "███░░░░░"
 gt_weekly_limit_label() {
   local input="$1" pct
   pct=$(printf '%s' "$input" \
     | sed -n 's/.*"seven_day":{[^}]*"used_percentage":\([0-9][0-9.]*\).*/\1/p')
   [ -n "$pct" ] || return 0
-  pct=$(printf '%s\n' "$pct" | LC_ALL=C awk '{ gsub(/,/, "."); printf "%d\n", $0 + 0.5 }')
-  printf '%s%%\n' "$pct"
+  gt_usage_bar "$pct"
 }
 
 gt_stamp_claude_session() {
