@@ -46,7 +46,7 @@ if [ ! -d "$_WRAPPER_DIR/lib" ]; then
   exit 1
 fi
 
-_gt_libs=(theme ai-tools projects process input tui menu-tui project-actions tmux-session settings-json notification-setup tab-title-watcher terminals/ghostty session-restore claude-configs claude-accounts claude-shared-settings auto-switch compact-view screenshot spare-tabs)
+_gt_libs=(theme ai-tools projects process input tui menu-tui project-actions tmux-session settings-json notification-setup tab-title-watcher terminals/ghostty session-restore claude-configs claude-accounts claude-shared-settings auto-switch account-switch compact-view screenshot spare-tabs)
 for _gt_lib in "${_gt_libs[@]}"; do
   if [ ! -f "$_WRAPPER_DIR/lib/${_gt_lib}.sh" ]; then
     printf '\033[31mError:\033[0m Missing library %s/lib/%s.sh\n' "$_WRAPPER_DIR" "$_gt_lib" >&2
@@ -271,6 +271,7 @@ cleanup() {
   rm -f "$SHARE_DIR/spare-${SESSION_NAME}.conf"
   rm -f "$SHARE_DIR/proxy-${SESSION_NAME}.log"
   rm -f "$SHARE_DIR/proxy-account-${SESSION_NAME}"
+  rm -f "$SHARE_DIR/relaunch-${SESSION_NAME}"
   rm -rf "$SHARE_DIR/spare-zdotdir-${SESSION_NAME}"
 }
 trap cleanup EXIT HUP TERM INT
@@ -388,6 +389,20 @@ case "$SELECTED_AI_TOOL" in
     ;;
 esac
 
+# Mid-session account switch: for a plain claude session (rotation proxy OFF),
+# persist the launch context so the compact-view ledger's account pill can
+# relaunch the AI pane under a newly chosen login (continue mode). The pill's own
+# 2+-logins gate lives in the ledger; here we only skip opencode and proxy
+# sessions (the proxy owns account rotation). Cleared by cleanup() on window close.
+WISP_DECK_RELAUNCH_FILE=""
+if [ "$SELECTED_AI_TOOL" = "claude" ] && [ -z "$WISP_DECK_PROXY_PORT" ]; then
+  WISP_DECK_RELAUNCH_FILE="$SHARE_DIR/relaunch-${SESSION_NAME}"
+  write_relaunch_context "$WISP_DECK_RELAUNCH_FILE" "$SELECTED_AI_TOOL" \
+    "$CLAUDE_CMD" "$OPENCODE_CMD" "$WISP_DECK_CLAUDE_SETTINGS" \
+    "$WISP_DECK_CLAUDE_FILTER" "$PROJECT_DIR" "$_gt_cfg_root"
+fi
+export WISP_DECK_RELAUNCH_FILE
+
 # Start tab title watcher before tmux (which blocks until session ends)
 start_tab_title_watcher "$SESSION_NAME" "$SELECTED_AI_TOOL" "$PROJECT_NAME" "$_tab_title_setting" "$TMUX_CMD" "$WISP_DECK_MARKER_FILE" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
 
@@ -445,7 +460,7 @@ _spare_zdotdir="$(spare_prompt_zdotdir "$SHARE_DIR" "$SESSION_NAME" "$SHELL" "${
 _spare_cmd="$(spare_tabs_launch_cmd "$_spare_label" "$_spare_conf" "$PROJECT_DIR" "$_spare_zdotdir")"
 _spare_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/spare-tabs.sh\" && spare_tabs_close_current \"$_spare_label\"'"
 
-"$TMUX_CMD" new-session -s "$SESSION_NAME" -e "PATH=$PATH" -e "WISP_DECK_MARKER_FILE=$WISP_DECK_MARKER_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -c "$PROJECT_DIR" \
+"$TMUX_CMD" new-session -s "$SESSION_NAME" -e "PATH=$PATH" -e "WISP_DECK_MARKER_FILE=$WISP_DECK_MARKER_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$WISP_DECK_RELAUNCH_FILE" -c "$PROJECT_DIR" \
   "$_pane0_cmd" \; \
   set-option status-left " ⬡ ${PROJECT_NAME} " \; \
   set-option status-left-style "fg=white,bg=colour236,bold" \; \

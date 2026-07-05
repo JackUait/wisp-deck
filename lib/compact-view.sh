@@ -6,6 +6,19 @@
 # space/b (page), g/G (top/bottom) when the list overflows. Ctrl-C to exit.
 # Hover a file row and press 'x' to mark it (✓); press 'd' to discard the marked
 # files (or, with none marked, the hovered file) after a y/n confirm.
+# Click the account pill in the bottom bar (when 2+ Claude logins exist) to switch
+# the active account mid-session; the AI pane relaunches under the new login.
+
+# Mid-session account-switch helpers (the ledger's account pill + the AI-pane
+# relaunch behind it) and their deps, sourced relative to THIS file so the pane's
+# fresh shell — which sources only this script — has them. Guarded so a bare
+# unit-test source missing a sibling still loads the ledger.
+_cv_lib_dir="${BASH_SOURCE[0]%/*}"
+for _cv_dep in statusline claude-accounts tmux-session claude-shared-settings account-switch; do
+  # shellcheck source=/dev/null
+  [ -f "$_cv_lib_dir/$_cv_dep.sh" ] && source "$_cv_lib_dir/$_cv_dep.sh"
+done
+unset _cv_dep
 
 # format_file shows the file BASENAME only (the path is dropped), truncating
 # with an ellipsis when it exceeds max width.
@@ -839,6 +852,26 @@ compact_view() {
   local need_build=1
   local need_draw=1
   local hover_line=0
+  # Account pill (mid-session login switcher). Recomputed each build tick from the
+  # relaunch-context file wrapper.sh writes for an eligible claude session (2+
+  # logins, no rotation proxy). account_pill_str is the drawable pill for the
+  # bottom bar; account_pill_cols is its click width. Both empty/0 when no pill.
+  local account_pill_str="" account_pill_cols=0
+  # Per-build pill scratch — declared ONCE here, never with an in-loop `local`
+  # (under zsh, the pane's shell, `local NAME` without assignment on an already-set
+  # var is a *display* command that leaks "NAME=value" onto the frame; see the
+  # branch/ab_counts NOTE above).
+  local _pill_label _pill_color _pill
+  local _rc_relaunch="${WISP_DECK_RELAUNCH_FILE:-}"
+  local _rc_pointer="" _rc_list="" _rc_colors="" _rc_default_label=""
+  if [ -n "$_rc_relaunch" ] && [ -f "$_rc_relaunch" ] \
+     && command -v _read_relaunch_ctx >/dev/null 2>&1; then
+    # The account file paths live in the relaunch context, so the pill needs only
+    # WISP_DECK_RELAUNCH_FILE in the pane env. (The unused _rc_* vars are set too.)
+    local _rc_tool="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_settings="" \
+      _rc_filter="" _rc_project_dir="" _rc_accounts_dir=""
+    _read_relaunch_ctx "$_rc_relaunch"
+  fi
   # SGR background for the hovered file row (a subtle selection bar).
   local hover_style='48;5;238'
   local interval="${COMPACT_VIEW_INTERVAL:-2}"
@@ -981,10 +1014,16 @@ compact_view() {
                   set_hover_from_row "$mrow" "$mcol"
                   ;;
                 0)
-                  # Left-click: map the report's row (the 3rd ";"-field of
-                  # "btn;col;row") to a body line, then to a path, and float the
-                  # whole-file diff over the window.
-                  if [ "$mterm" = M ]; then
+                  # Left-click: the account pill (bottom bar, row h) opens the
+                  # login switcher; anything else maps the report's row (the 3rd
+                  # ";"-field of "btn;col;row") to a body line, then to a path, and
+                  # floats the whole-file diff over the window.
+                  if [ "$mterm" = M ] && [ -n "$account_pill_str" ] \
+                     && [ "$mrow" = "$h" ] && [ "$mcol" -le "$account_pill_cols" ]; then
+                    open_account_switcher tmux "$_rc_relaunch"
+                    enter_ui_mode "$interactive"   # re-assert alt-screen + mouse
+                    need_build=1                   # redraw + refresh the pill
+                  elif [ "$mterm" = M ]; then
                     bl=$(body_line_for_click "$mrow" "$scroll" "$avail" "$body_total" "$header_rows" "$mcol" "$w")
                     if [ "$bl" != 0 ]; then
                       nth_line "$body_map" "$bl"; cpath="$NTH_LINE"
@@ -1169,6 +1208,19 @@ compact_view() {
     # carries one path per body line (empty on header/blank rows), which is the
     # valid-path set. Runs on the build tick only, never on the hover hot path.
     SELECTED=$(prune_selection "$SELECTED" "$body_map")
+
+    # Account pill: recompute from the (possibly just-switched) pointer so the
+    # bottom bar reflects the active login. Empty when the session is ineligible
+    # (no relaunch context, <2 logins, or the helpers aren't loaded).
+    account_pill_str=""; account_pill_cols=0
+    if [ -n "$_rc_relaunch" ] && command -v account_pill_enabled >/dev/null 2>&1 \
+       && account_pill_enabled "$_rc_relaunch" "$_rc_list"; then
+      IFS=$'\t' read -r _pill_label _pill_color \
+        < <(account_current "$_rc_pointer" "$_rc_list" "$_rc_default_label" "$_rc_colors")
+      _pill="$(account_pill "$_pill_label" "$_pill_color")"
+      account_pill_str="${_pill%$'\n'*}"
+      account_pill_cols="${_pill##*$'\n'}"
+    fi
     fi
 
     local body_rows=$((h - header_rows))
@@ -1217,6 +1269,13 @@ compact_view() {
         if [ "$discard_armed" = 1 ]; then
           discard_prompt "$(selection_count "$discard_set")"
         else
+          # Account pill leads the bottom bar (leftmost = a fixed, clickable
+          # column span), dot-separated from the branch. Emitted as real bytes
+          # (%s) — account_pill already interpreted its ANSI escapes.
+          if [ -n "$account_pill_str" ]; then
+            printf '%s' "$account_pill_str"
+            printf ' \033[90m·\033[0m'
+          fi
           branch_status "$branch" "$ahead" "$behind"
           if [ "$body_total" -gt "$avail" ]; then
             printf ' \033[90m·\033[0m'
