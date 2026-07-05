@@ -31,6 +31,8 @@ var (
 	casColors       string
 	casDefaultLabel string
 	casBackdrop     string
+	casActive       string
+	casResultFile   string
 )
 
 // switchRow is one selectable login in the switcher. Dir is "" for the implicit
@@ -40,15 +42,18 @@ type switchRow struct {
 	Dir   string
 }
 
-// loadSwitchRows builds the ordered row list — Default first, then each managed
-// login from the list file — and resolves the initial cursor to the currently
-// active row (0 when Default is active or the pointer is absent).
-func loadSwitchRows(listFile, defaultLabelFile, pointerFile string) ([]switchRow, int) {
+// switchRowsForActive builds the ordered row list — Default first, then each
+// managed login from the list file — and resolves the initial cursor to the row
+// whose dir is active ("" = the Default row). active is the account THIS pane
+// runs (bash passes it via --active from the tmux session env): the global
+// pointer can't serve here, because a switch in another session (or the
+// launcher) flips it without changing what this pane runs — the popup would
+// mark the wrong login and read as the account having "switched back".
+func switchRowsForActive(listFile, defaultLabelFile, active string) ([]switchRow, int) {
 	rows := []switchRow{{Label: claudeaccount.GetDefaultLabel(defaultLabelFile), Dir: ""}}
 	for _, acc := range claudeaccount.Load(listFile) {
 		rows = append(rows, switchRow{Label: acc.Label, Dir: acc.Dir})
 	}
-	active := claudeaccount.GetActive(pointerFile)
 	cursor := 0
 	for i, r := range rows {
 		if r.Dir == active {
@@ -57,6 +62,25 @@ func loadSwitchRows(listFile, defaultLabelFile, pointerFile string) ([]switchRow
 		}
 	}
 	return rows, cursor
+}
+
+// loadSwitchRows is switchRowsForActive keyed on the global pointer — the
+// fallback when the caller didn't say which account the pane runs (--active
+// absent, e.g. an older bash lib driving a newer binary).
+func loadSwitchRows(listFile, defaultLabelFile, pointerFile string) ([]switchRow, int) {
+	return switchRowsForActive(listFile, defaultLabelFile, claudeaccount.GetActive(pointerFile))
+}
+
+// writeSwitchResult reports the chosen dir ("" = Default) through the result
+// file the bash side passed via --result-file. display-popup swallows the
+// popup's stdout, and the global pointer can't distinguish "picked the account
+// the pointer already names" from "cancelled" — the file's very existence is
+// the selection signal. An empty path (flag not passed) is a no-op.
+func writeSwitchResult(path, dir string) error {
+	if path == "" {
+		return nil
+	}
+	return os.WriteFile(path, []byte(dir+"\n"), 0644)
 }
 
 // selectResultJSON persists the chosen dir as the active account and returns the
@@ -97,7 +121,14 @@ func runClaudeAccountSwitch(cmd *cobra.Command, args []string) error {
 	if casList == "" || casPointer == "" {
 		return fmt.Errorf("--list and --pointer are required")
 	}
-	rows, cursor := loadSwitchRows(casList, casDefaultLabel, casPointer)
+	// The active row is the account THIS pane runs (--active, from the tmux
+	// session env). Only when the caller didn't say (older bash lib) fall back
+	// to the global pointer.
+	active := claudeaccount.GetActive(casPointer)
+	if cmd.Flags().Changed("active") {
+		active = casActive
+	}
+	rows, cursor := switchRowsForActive(casList, casDefaultLabel, active)
 	prevActive := claudeaccount.GetActive(casPointer)
 
 	model := newAccountSwitchModel(rows, cursor, casColors)
@@ -128,6 +159,9 @@ func runClaudeAccountSwitch(cmd *cobra.Command, args []string) error {
 	}
 	out, err := selectResultJSON(casPointer, rows[m.cursor].Dir, prevActive)
 	if err != nil {
+		return err
+	}
+	if err := writeSwitchResult(casResultFile, rows[m.cursor].Dir); err != nil {
 		return err
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), out)
@@ -358,5 +392,7 @@ func init() {
 	claudeAccountSwitchCmd.Flags().StringVar(&casColors, "colors", "", "Path to account colors file")
 	claudeAccountSwitchCmd.Flags().StringVar(&casDefaultLabel, "default-label", "", "Path to the Default login's label file")
 	claudeAccountSwitchCmd.Flags().StringVar(&casBackdrop, "backdrop-file", "", "File with a serialized screen capture shown dimmed behind the popup")
+	claudeAccountSwitchCmd.Flags().StringVar(&casActive, "active", "", "Dir of the account THIS pane is running (empty = Default); marks the active row")
+	claudeAccountSwitchCmd.Flags().StringVar(&casResultFile, "result-file", "", "File to write the chosen dir to on selection (absent on cancel)")
 	rootCmd.AddCommand(claudeAccountSwitchCmd)
 }

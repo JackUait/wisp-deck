@@ -270,3 +270,65 @@ func TestAccountSwitch_loadSwitchRows_customDefaultLabel(t *testing.T) {
 		t.Fatalf("row0 label = %q, want My Keychain", rows[0].Label)
 	}
 }
+
+// The switcher marks the account THIS pane runs (passed by bash via --active),
+// not the global pointer: after another session flips the pointer, the popup
+// would otherwise show the wrong login as active — the visual "switch back".
+func TestAccountSwitch_switchRowsForActive_marksSessionAccount(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "claude-accounts.list")
+	defLabel := filepath.Join(dir, "claude-account-default-label")
+	if err := os.WriteFile(list, []byte("Work Max:work-max\nPersonal:personal\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, cursor := switchRowsForActive(list, defLabel, "personal")
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want 3", len(rows))
+	}
+	if cursor != 2 {
+		t.Fatalf("cursor = %d, want 2 (the session's running account)", cursor)
+	}
+	if rows2, cursor2 := switchRowsForActive(list, defLabel, ""); len(rows2) != 3 || cursor2 != 0 {
+		t.Fatalf("active=\"\" must select the Default row, got cursor %d", cursor2)
+	}
+}
+
+// The user's choice is reported through a result file (display-popup swallows
+// stdout): the chosen dir on select, and NO file at all on cancel — so the bash
+// side can tell "picked the same account" apart from "cancelled".
+func TestAccountSwitch_writeSwitchResult(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "result")
+	if err := writeSwitchResult(path, "personal"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "personal\n" {
+		t.Fatalf("result = %q, want personal\\n", data)
+	}
+	if err := writeSwitchResult(path, ""); err != nil { // Default: empty but present
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(path)
+	if string(data) != "\n" {
+		t.Fatalf("Default result = %q, want a bare newline", data)
+	}
+	if err := writeSwitchResult("", "personal"); err != nil { // no file requested: no-op
+		t.Fatal(err)
+	}
+}
+
+// The bash switcher passes --active (the session's running account) and
+// --result-file (where to report the choice); both must be registered flags.
+func TestAccountSwitch_activeAndResultFileFlagsRegistered(t *testing.T) {
+	if claudeAccountSwitchCmd.Flags().Lookup("active") == nil {
+		t.Fatal("claude-account-switch must register --active")
+	}
+	if claudeAccountSwitchCmd.Flags().Lookup("result-file") == nil {
+		t.Fatal("claude-account-switch must register --result-file")
+	}
+}

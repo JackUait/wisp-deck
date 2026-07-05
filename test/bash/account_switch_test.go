@@ -479,3 +479,261 @@ func TestAccountColor_assigns_palette_member_under_zsh(t *testing.T) {
 		t.Fatalf("under zsh, gt_account_color must persist work:%s, file was:\n%s", got, string(data))
 	}
 }
+
+// The active-account POINTER is global, but a mid-session switch changes only THIS
+// pane's running claude. The session's own running account is therefore stamped
+// into the tmux session env (WISP_DECK_CLAUDE_ACCOUNT) and read back here.
+func TestCurrentSessionAccount_reads_stamped_env(t *testing.T) {
+	dir := t.TempDir()
+	bin := mockCommand(t, dir, "tmux", `
+if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_ACCOUNT" ]; then
+  printf 'WISP_DECK_CLAUDE_ACCOUNT=personal\n'; exit 0
+fi`)
+	env := buildEnv(t, []string{bin})
+	pointer := writeTempFile(t, dir, "claude-account", "work\n") // must NOT win
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("current_session_account tmux %q", pointer)), env)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "personal" {
+		t.Fatalf("expected session account 'personal', got %q", out)
+	}
+}
+
+// A session launched before the stamp existed has no WISP_DECK_CLAUDE_ACCOUNT in
+// its tmux env (tmux prints `-NAME`); the pointer is the best remaining guess.
+func TestCurrentSessionAccount_falls_back_to_pointer_when_unstamped(t *testing.T) {
+	dir := t.TempDir()
+	bin := mockCommand(t, dir, "tmux", `
+if [ "$1" = "show-environment" ]; then printf -- '-WISP_DECK_CLAUDE_ACCOUNT\n'; exit 0; fi`)
+	env := buildEnv(t, []string{bin})
+	pointer := writeTempFile(t, dir, "claude-account", "work\n")
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("current_session_account tmux %q", pointer)), env)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "work" {
+		t.Fatalf("expected pointer fallback 'work', got %q", out)
+	}
+}
+
+// A stamped Default (empty value) must NOT fall back to the pointer: the pane
+// really runs the Default login even if the global pointer names another account.
+func TestCurrentSessionAccount_stamped_default_beats_pointer(t *testing.T) {
+	dir := t.TempDir()
+	bin := mockCommand(t, dir, "tmux", `
+if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_ACCOUNT" ]; then
+  printf 'WISP_DECK_CLAUDE_ACCOUNT=\n'; exit 0
+fi`)
+	env := buildEnv(t, []string{bin})
+	pointer := writeTempFile(t, dir, "claude-account", "work\n")
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("current_session_account tmux %q", pointer)), env)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("expected stamped Default (empty), got %q", out)
+	}
+}
+
+// switcherRelaunchCtx writes a relaunch-context file for the switcher tests.
+func switcherRelaunchCtx(t *testing.T, dir string) string {
+	t.Helper()
+	return writeTempFile(t, dir, "relaunch", strings.Join([]string{
+		"tool=claude", "claude_cmd=claude", "opencode_cmd=opencode",
+		"settings=", "filter=", "project_dir=/proj",
+		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
+		"pointer=" + filepath.Join(dir, "claude-account"),
+		"list=" + filepath.Join(dir, "claude-accounts.list"),
+		"colors=" + filepath.Join(dir, "claude-account-colors"),
+		"default_label=" + filepath.Join(dir, "claude-account-default-label"),
+		"",
+	}, "\n"))
+}
+
+// switcherMockTmux builds a tmux mock for the full open_account_switcher flow.
+// display-popup simulates the user's popup interaction: chosen is the dir the
+// user picks ("" = Default) — written to the --result-file the popup command
+// carries and to the pointer (what the real Go popup does); chosen == "CANCEL"
+// simulates esc/outside-click (no result file, no pointer write). sessionAcct is
+// what the tmux session env says this pane is running.
+func switcherMockTmux(t *testing.T, dir, pointer, sessionAcct, chosen, rec string) string {
+	t.Helper()
+	return mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_ACCOUNT" ]; then
+  printf 'WISP_DECK_CLAUDE_ACCOUNT=%s\n'; exit 0
+fi
+if [ "$1" = "show-environment" ]; then printf -- '-WISP_DECK_CLAUDE_SESSION\n'; exit 0; fi
+if [ "$1" = "list-panes" ]; then printf '%%s\n' "%%1 1"; exit 0; fi
+if [ "$1" = "display-popup" ]; then
+  [ "%s" = "CANCEL" ] && exit 0
+  rf=$(printf '%%s' "$*" | sed -n 's/.*--result-file \([^ ]*\).*/\1/p')
+  [ -n "$rf" ] && printf '%s\n' > "$rf"
+  if [ -z "%s" ]; then rm -f %q; else printf '%s\n' > %q; fi
+  exit 0
+fi
+printf '%%s\n' "$*" >> %q`,
+		sessionAcct, chosen, chosen, chosen, pointer, chosen, pointer, rec))
+}
+
+// THE mid-session revert bug: the pane runs "personal", but the GLOBAL pointer was
+// already flipped to Default by a switch in another session (or the launcher). The
+// user opens the switcher here and picks Default — the account this pane should
+// now run. The old code compared the pointer before/after the popup (unchanged:
+// Default == Default) and silently skipped the relaunch, so the pane kept running
+// "personal" and the account appeared to "switch back". The relaunch decision must
+// compare the popup's choice against the SESSION's running account instead.
+func TestOpenAccountSwitcher_relaunches_when_pointer_already_matches_choice(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "claude-accounts.list", "Personal:personal\n")
+	writeTempFile(t, filepath.Join(dir, "claude-accounts", "personal"), ".keep", "")
+	pointer := filepath.Join(dir, "claude-account") // absent = Default already
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherMockTmux(t, dir, pointer, "personal", "", rec)
+	relaunch := switcherRelaunchCtx(t, dir)
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "respawn-pane")
+}
+
+// Picking the account the pane ALREADY runs must not relaunch — even when that
+// choice rewrites a stale global pointer. Relaunching would kill the running
+// claude for nothing.
+func TestOpenAccountSwitcher_skips_relaunch_when_choice_matches_running_account(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "claude-accounts.list", "Personal:personal\n")
+	writeTempFile(t, filepath.Join(dir, "claude-accounts", "personal"), ".keep", "")
+	pointer := filepath.Join(dir, "claude-account") // absent: global pointer says Default
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherMockTmux(t, dir, pointer, "personal", "personal", rec)
+	relaunch := switcherRelaunchCtx(t, dir)
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q 2>/dev/null || true", rec), nil)
+	assertNotContains(t, logOut, "respawn-pane")
+}
+
+// Cancelling the popup (esc / click outside) must never relaunch, even when the
+// global pointer disagrees with the pane's running account.
+func TestOpenAccountSwitcher_skips_relaunch_on_cancel(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "claude-accounts.list", "Personal:personal\n")
+	pointer := filepath.Join(dir, "claude-account") // absent while the pane runs personal
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherMockTmux(t, dir, pointer, "personal", "CANCEL", rec)
+	relaunch := switcherRelaunchCtx(t, dir)
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q 2>/dev/null || true", rec), nil)
+	assertNotContains(t, logOut, "respawn-pane")
+}
+
+// The switcher popup must be told which account THIS pane runs (--active) and
+// where to report the user's choice (--result-file) — the pointer can't carry
+// either: it is global and display-popup swallows the popup's stdout.
+func TestOpenAccountSwitcher_passes_active_and_result_file(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "claude-accounts.list", "Personal:personal\n")
+	pointer := filepath.Join(dir, "claude-account")
+	rec := filepath.Join(dir, "popup.log")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_ACCOUNT" ]; then
+  printf 'WISP_DECK_CLAUDE_ACCOUNT=personal\n'; exit 0
+fi
+if [ "$1" = "display-popup" ]; then printf '%%s\n' "$*" >> %q; exit 0; fi
+exit 0`, rec))
+	relaunch := switcherRelaunchCtx(t, dir)
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "--active personal")
+	assertContains(t, logOut, "--result-file")
+	_ = pointer
+}
+
+// After a relaunch the pane runs a new account — the stamp in the tmux session
+// env must follow, or the next pill render / switch decision reads a stale value.
+func TestRelaunchAIPane_stamps_session_account_env(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "claude-account", "work\n")
+	writeTempFile(t, filepath.Join(dir, "claude-accounts", "work"), ".keep", "")
+	relaunch := switcherRelaunchCtx(t, dir)
+	rec := filepath.Join(dir, "tmux.log")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "list-panes" ]; then printf '%%s\n' "%%1 1"; exit 0; fi
+if [ "$1" = "show-environment" ]; then printf -- '-WISP_DECK_CLAUDE_SESSION\n'; exit 0; fi
+printf '%%s\n' "$*" >> %q`, rec))
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("relaunch_ai_pane tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "set-environment WISP_DECK_CLAUDE_ACCOUNT work")
+}
+
+// Relaunching under the Default login stamps an EMPTY value (set, not unset), so
+// readers see "this pane runs Default" instead of falling back to the pointer.
+func TestRelaunchAIPane_stamps_empty_for_default(t *testing.T) {
+	dir := t.TempDir()
+	// pointer absent = Default chosen
+	relaunch := switcherRelaunchCtx(t, dir)
+	rec := filepath.Join(dir, "tmux.log")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "list-panes" ]; then printf '%%s\n' "%%1 1"; exit 0; fi
+if [ "$1" = "show-environment" ]; then printf -- '-WISP_DECK_CLAUDE_SESSION\n'; exit 0; fi
+printf '%%s\n' "$*" >> %q`, rec))
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("relaunch_ai_pane tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "set-environment WISP_DECK_CLAUDE_ACCOUNT \n")
+}
+
+// The ledger pill must show the account THIS pane runs, not the global pointer:
+// after a switch in another session flips the pointer, this pane's pill would
+// otherwise "switch back" to an account this pane never changed to.
+func TestAccountCurrent_prefers_session_account_over_pointer(t *testing.T) {
+	dir := t.TempDir()
+	pointer := writeTempFile(t, dir, "claude-account", "work\n") // global: work
+	list := writeTempFile(t, dir, "claude-accounts.list", "Work:work\nPersonal:personal\n")
+	colors := writeTempFile(t, dir, "claude-account-colors", "work:170\npersonal:39\n")
+	defLabel := filepath.Join(dir, "claude-account-default-label")
+	bin := mockCommand(t, dir, "tmux", `
+if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_ACCOUNT" ]; then
+  printf 'WISP_DECK_CLAUDE_ACCOUNT=personal\n'; exit 0
+fi`)
+	env := buildEnv(t, []string{bin})
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("account_current %q %q %q %q tmux", pointer, list, defLabel, colors)), env)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "Personal\t39" {
+		t.Fatalf("expected the SESSION's account 'Personal\\t39', got %q", out)
+	}
+}
+
+// wrapper.sh must stamp the launch account into the tmux session env so the
+// pill/switcher can know what this session runs (WISP_DECK_CLAUDE_ACCOUNT).
+func TestWrapper_stamps_session_account_on_new_session(t *testing.T) {
+	root := projectRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "wrapper.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, "new-session") && strings.Contains(line, "WISP_DECK_CLAUDE_ACCOUNT=") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("wrapper.sh must pass WISP_DECK_CLAUDE_ACCOUNT to tmux new-session via -e")
+	}
+}

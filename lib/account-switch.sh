@@ -43,15 +43,41 @@ account_pill() {
   printf '%s\n' "$((3 + ${#label}))"
 }
 
-# account_current <pointer_file> <list_file> <default_label_file> <colors_file> —
-# print "<label>\t<color>" for the active account, for account_pill. The active
-# dir comes from the pointer (empty = Default); the label mirrors the statusline
-# (gt_claude_account_label reads the dir off the tail of its first arg, so the bare
-# dir name works), and the color is the persisted per-account hue.
+# current_session_account <tmux_cmd> <pointer_file> — print the account dir name
+# THIS session's AI pane is running. The active-account POINTER is global (any
+# session's switch or the launcher rewrites it), so a mid-session switch stamps
+# the pane's own account into the tmux session env (WISP_DECK_CLAUDE_ACCOUNT,
+# set at launch by wrapper.sh and updated by relaunch_ai_pane). A stamped empty
+# value means the Default login and must NOT fall back; only an UNSTAMPED
+# session (pre-stamp launch: tmux prints `-NAME`) falls back to the pointer.
+current_session_account() {
+  local tmux_cmd="$1" pointer_file="$2" line
+  line="$("$tmux_cmd" show-environment WISP_DECK_CLAUDE_ACCOUNT 2>/dev/null)" || line=""
+  case "$line" in
+    WISP_DECK_CLAUDE_ACCOUNT=*)
+      printf '%s\n' "${line#WISP_DECK_CLAUDE_ACCOUNT=}"
+      return 0
+      ;;
+  esac
+  get_active_claude_account "$pointer_file"
+}
+
+# account_current <pointer_file> <list_file> <default_label_file> <colors_file> \
+#   [tmux_cmd] — print "<label>\t<color>" for the account to show on the pill.
+# With tmux_cmd, that is the account THIS session's pane is running (see
+# current_session_account) — the global pointer alone would make the pill
+# "switch back" whenever another session or the launcher rewrites it. Without
+# tmux_cmd (legacy callers), the pointer is used. The label mirrors the
+# statusline (gt_claude_account_label reads the dir off the tail of its first
+# arg, so the bare dir name works); the color is the persisted per-account hue.
 account_current() {
-  local pointer_file="$1" list_file="$2" default_label_file="$3" colors_file="$4"
+  local pointer_file="$1" list_file="$2" default_label_file="$3" colors_file="$4" tmux_cmd="${5:-}"
   local dir label color
-  dir="$(get_active_claude_account "$pointer_file")"
+  if [ -n "$tmux_cmd" ]; then
+    dir="$(current_session_account "$tmux_cmd" "$pointer_file")"
+  else
+    dir="$(get_active_claude_account "$pointer_file")"
+  fi
   label="$(gt_claude_account_label "$dir" "$list_file" "$default_label_file")"
   color="$(gt_account_color "$colors_file" "$dir")"
   printf '%s\t%s\n' "$label" "$color"
@@ -186,13 +212,25 @@ relaunch_ai_pane() {
     "$_rc_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir" "$sid")"
 
   "$tmux_cmd" respawn-pane -k -t "$pane" -c "$_rc_project_dir" "$cmd; exec bash"
+
+  # Stamp what this session's pane NOW runs into the tmux session env, so the
+  # pill and the next switch decision read this pane's actual account rather
+  # than the global pointer. Default stamps an EMPTY value (set, not unset) —
+  # an unset var means "pre-stamp session" and falls back to the pointer.
+  "$tmux_cmd" set-environment WISP_DECK_CLAUDE_ACCOUNT "${new_dir##*/}" 2>/dev/null
+  return 0
 }
 
 # open_account_switcher <tmux_cmd> <relaunch_file> — the click handler entry point.
-# Float the account switcher popup (which writes the pointer on select), then
-# relaunch the AI pane only if the active account actually changed. Reading the
-# pointer before/after is the source of truth, so a cancelled popup is a clean
-# no-op without parsing the popup's stdout.
+# Float the account switcher popup (which writes the global pointer on select),
+# then relaunch the AI pane only if the choice differs from the account THIS
+# pane is running. The popup reports the choice through a result file (its
+# stdout is swallowed by display-popup); no file = cancelled. Comparing against
+# the SESSION's account — not the pointer before/after — is what makes the
+# switch stick: the pointer is global, so another session's switch (or the
+# launcher) can already have flipped it to the login the user now picks here,
+# and a pointer-diff would silently skip the relaunch, leaving this pane on the
+# old login (the account appeared to "switch back").
 open_account_switcher() {
   local tmux_cmd="$1" relaunch_file="$2"
   local _rc_tool="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_settings="" \
@@ -200,6 +238,15 @@ open_account_switcher() {
     _rc_list="" _rc_colors="" _rc_default_label=""
   [ -f "$relaunch_file" ] || return 0
   _read_relaunch_ctx "$relaunch_file"
+
+  # The account this pane runs (stamped in the tmux session env), and the file
+  # the popup reports the user's choice through. The result path is minted but
+  # NOT created — its existence after the popup is the "user picked something"
+  # signal.
+  local session_acct result_file
+  session_acct="$(current_session_account "$tmux_cmd" "$_rc_pointer")"
+  result_file=$(mktemp "${TMPDIR:-/tmp}/gtswitchsel.XXXXXX" 2>/dev/null) || result_file=""
+  [ -n "$result_file" ] && rm -f "$result_file"
 
   # Snapshot the screen behind the popup so the switcher can show it DIMMED in the
   # margin around the card. tmux freezes the panes under a popup, so this snapshot
@@ -222,8 +269,6 @@ open_account_switcher() {
     backdrop_arg="--backdrop-file $(printf '%q' "$backdrop")"
   fi
 
-  local before after
-  before="$(get_active_claude_account "$_rc_pointer")"
   # Full-screen (-w/-h 100%) and borderless (-B) so the switcher owns the whole
   # window: it draws its own rounded card over the dimmed snapshot and closes when
   # a click lands outside the card (tmux ignores clicks outside a smaller popup).
@@ -233,10 +278,18 @@ open_account_switcher() {
 --pointer $(printf '%q' "$_rc_pointer") \
 --colors $(printf '%q' "$_rc_colors") \
 --default-label $(printf '%q' "$_rc_default_label") \
+--active $(printf '%q' "$session_acct") \
+--result-file $(printf '%q' "$result_file") \
 ${backdrop_arg}" 2>/dev/null || true
   [ -n "$backdrop" ] && rm -f "$backdrop"
-  after="$(get_active_claude_account "$_rc_pointer")"
 
-  [ "$before" != "$after" ] && relaunch_ai_pane "$tmux_cmd" "$relaunch_file"
+  # No result file = the popup was cancelled (or never ran) — a clean no-op.
+  # Otherwise relaunch iff the chosen login differs from what this pane runs.
+  local chosen
+  if [ -n "$result_file" ] && [ -f "$result_file" ]; then
+    IFS= read -r chosen < "$result_file" || chosen=""
+    rm -f "$result_file"
+    [ "$chosen" != "$session_acct" ] && relaunch_ai_pane "$tmux_cmd" "$relaunch_file"
+  fi
   return 0
 }
