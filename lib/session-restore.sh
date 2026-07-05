@@ -6,12 +6,44 @@
 # Depends on: terminals/ghostty.sh (terminal_launch_window) for the
 # no-Accessibility-permission fallback.
 
-# Print the current macOS boot id (the kern.boottime sec value).
-# Stable for one uptime; changes on every reboot. Empty on failure.
+# Print the current macOS boot id. Stable for one uptime; changes on every
+# reboot. Empty on failure.
+# kern.bootsessionuuid is the source of truth: it is minted once per boot and
+# never moves. kern.boottime is only a fallback for macOS versions without the
+# uuid — it is computed as now-minus-uptime, so an NTP clock step right after
+# login SHIFTS it (observed drifting 1s between two wrapper launches of one
+# boot), which made the once-per-boot restore gate fire twice and duplicate
+# restored tabs.
 current_boot_id() {
   local out
+  out="$(sysctl -n kern.bootsessionuuid 2>/dev/null | tr -d '[:space:]')"
+  if [ -n "$out" ]; then
+    echo "$out"
+    return 0
+  fi
   out="$(sysctl -n kern.boottime 2>/dev/null)" || return 0
   echo "$out" | sed -n 's/.*[^u]sec = \([0-9][0-9]*\).*/\1/p'
+}
+
+# True iff <boot_id> identifies the CURRENT boot, given <cur_boot> (this
+# launch's current_boot_id). Exact match, plus a ±10s window around
+# kern.boottime's sec for purely numeric ids: those are legacy
+# boottime-derived ids (stamped by pre-uuid wrappers this boot, or computed on
+# macOS without the uuid), and boottime shifts under an NTP clock step — a
+# drifted id must not make the same boot look like a new one. 10s is far below
+# any real reboot cycle, so a genuinely previous boot can never fall inside
+# the window.
+# Usage: boot_id_is_current <boot_id> <cur_boot>
+boot_id_is_current() {
+  local b="$1" cur="$2" out sec d
+  [ -n "$b" ] || return 1
+  [ "$b" = "$cur" ] && return 0
+  case "$b" in *[!0-9]*) return 1 ;; esac
+  out="$(sysctl -n kern.boottime 2>/dev/null)" || return 1
+  sec="$(echo "$out" | sed -n 's/.*[^u]sec = \([0-9][0-9]*\).*/\1/p')"
+  [ -n "$sec" ] || return 1
+  d=$((b - sec))
+  [ "${d#-}" -le 10 ]
 }
 
 # Re-derive the live snapshot from alive Wisp Deck tmux sessions.
@@ -92,7 +124,9 @@ maybe_restore_session() {
 
   local last_boot=""
   [ -f "$marker" ] && last_boot="$(tr -d '[:space:]' < "$marker" 2>/dev/null)"
-  [ "$cur_boot" = "$last_boot" ] && return 0
+  # Drift-tolerant: a marker stamped with a boottime-derived id of THIS boot
+  # (pre-NTP-step, or by a pre-uuid wrapper) must still hold the gate.
+  boot_id_is_current "$last_boot" "$cur_boot" && return 0
 
   # Atomic once-per-boot claim. Several wrappers can start simultaneously at
   # login (macOS window reopening); only the noclobber winner may build the
@@ -122,7 +156,10 @@ maybe_restore_session() {
   local layouts=()
   while IFS='|' read -r b proj path tool term sid layout; do
     [ -n "$b" ] || continue
-    [ "$b" = "$cur_boot" ] && continue
+    # Skip sessions of the current boot — they are alive right now, restoring
+    # them would duplicate their tabs. Drift-tolerant so entries stamped with
+    # a shifted boottime-derived id of THIS boot are also recognized.
+    boot_id_is_current "$b" "$cur_boot" && continue
     # A stamped id is only trustworthy if its transcript is actually
     # resumable — the statusline may have stamped a brand-new session that
     # never got a transcript (or a model turn) before the reboot, and
@@ -205,7 +242,9 @@ restore_queue_pop() {
   local line b
   line="$(head -n 1 "$queue" 2>/dev/null)"
   b="${line%%|*}"
-  if [ -z "$line" ] || [ "$b" != "$cur_boot" ]; then
+  # Drift-tolerant: a queue built with a pre-NTP-step boottime id must stay
+  # consumable by tabs that computed the post-step id (same boot).
+  if [ -z "$line" ] || ! boot_id_is_current "$b" "$cur_boot"; then
     rm -f "$queue"
     rmdir "$lock" 2>/dev/null
     return 0

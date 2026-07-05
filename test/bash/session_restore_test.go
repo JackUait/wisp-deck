@@ -96,10 +96,63 @@ func TestMaybeRestore_carries_layout_into_queue(t *testing.T) {
 	}
 }
 
-func TestCurrentBootId_parses_sec_value(t *testing.T) {
+func TestCurrentBootId_uses_bootsessionuuid(t *testing.T) {
 	dir := t.TempDir()
-	// macOS sysctl prints: { sec = 1700000000, usec = 123456 } Thu ...
-	binDir := mockCommand(t, dir, "sysctl", `echo "{ sec = 1700000000, usec = 123456 } Thu Jan  1 00:00:00 2024"`)
+	binDir := mockCommand(t, dir, "sysctl", `
+case "$*" in
+  *kern.bootsessionuuid*) echo "996F1E8F-46BF-4D0A-8D21-FD8D13555B47" ;;
+  *kern.boottime*) echo "{ sec = 1700000000, usec = 123456 } Thu Jan  1 00:00:00 2024" ;;
+  *) exit 1 ;;
+esac`)
+	env := buildEnv(t, []string{binDir})
+	out, code := runBashFunc(t, "lib/session-restore.sh", "current_boot_id", nil, env)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "996F1E8F-46BF-4D0A-8D21-FD8D13555B47" {
+		t.Errorf("got %q, want bootsessionuuid", strings.TrimSpace(out))
+	}
+}
+
+// Regression: kern.boottime is now-minus-uptime, so an NTP clock step right
+// after login shifts it (observed drifting 1s between two wrapper launches of
+// the same boot). A boottime-derived id made the second wrapper treat the same
+// boot as a NEW boot: it rebuilt the restore queue from the snapshot and
+// re-restored sessions the first chain had already opened — duplicate tabs.
+// The id must come from kern.bootsessionuuid, which never moves within a boot.
+func TestCurrentBootId_stable_when_boottime_drifts(t *testing.T) {
+	dir := t.TempDir()
+	counter := filepath.Join(dir, "calls")
+	binDir := mockCommand(t, dir, "sysctl", `
+case "$*" in
+  *kern.bootsessionuuid*) echo "996F1E8F-46BF-4D0A-8D21-FD8D13555B47" ;;
+  *kern.boottime*)
+    n=$(cat `+quote(counter)+` 2>/dev/null || echo 0)
+    echo $((n + 1)) > `+quote(counter)+`
+    echo "{ sec = $((1783268852 + n)), usec = 135586 } Sun Jul  5 19:27:33 2026" ;;
+  *) exit 1 ;;
+esac`)
+	env := buildEnv(t, []string{binDir})
+	first, code := runBashFunc(t, "lib/session-restore.sh", "current_boot_id", nil, env)
+	assertExitCode(t, code, 0)
+	second, code := runBashFunc(t, "lib/session-restore.sh", "current_boot_id", nil, env)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(first) == "" {
+		t.Fatal("boot id is empty")
+	}
+	if strings.TrimSpace(first) != strings.TrimSpace(second) {
+		t.Errorf("boot id changed within one boot: %q then %q",
+			strings.TrimSpace(first), strings.TrimSpace(second))
+	}
+}
+
+func TestCurrentBootId_falls_back_to_boottime_sec(t *testing.T) {
+	dir := t.TempDir()
+	// Older macOS without kern.bootsessionuuid: only kern.boottime answers.
+	binDir := mockCommand(t, dir, "sysctl", `
+case "$*" in
+  *kern.bootsessionuuid*) exit 1 ;;
+  *kern.boottime*) echo "{ sec = 1700000000, usec = 123456 } Thu Jan  1 00:00:00 2024" ;;
+  *) exit 1 ;;
+esac`)
 	env := buildEnv(t, []string{binDir})
 	out, code := runBashFunc(t, "lib/session-restore.sh", "current_boot_id", nil, env)
 	assertExitCode(t, code, 0)
@@ -116,6 +169,90 @@ func TestCurrentBootId_empty_when_sysctl_fails(t *testing.T) {
 	if strings.TrimSpace(out) != "" {
 		t.Errorf("expected empty, got %q", strings.TrimSpace(out))
 	}
+}
+
+// A sysctl mock for drift scenarios: bootsessionuuid answers with a fixed
+// uuid, boottime with the given sec value.
+func mockSysctl(t *testing.T, dir string, boottimeSec string) string {
+	t.Helper()
+	return mockCommand(t, dir, "sysctl", `
+case "$*" in
+  *kern.bootsessionuuid*) echo "996F1E8F-46BF-4D0A-8D21-FD8D13555B47" ;;
+  *kern.boottime*) echo "{ sec = `+boottimeSec+`, usec = 135586 } Sun Jul  5 19:27:33 2026" ;;
+  *) exit 1 ;;
+esac`)
+}
+
+// Upgrade transition: sessions started before the uuid-based boot id shipped
+// carry a NUMERIC WISP_DECK_BOOT from the CURRENT boot (kern.boottime sec,
+// possibly drifted by an NTP step). Such entries must not be queued — they are
+// alive right now, and restoring them duplicates their tabs.
+func TestMaybeRestore_skips_legacy_numeric_ids_of_current_boot(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	writeTempFile(t, dir, "last-session",
+		"1783268852|app|/p/app|claude|ghostty||\n"+ // this boot, drifted legacy id
+			"1783091438|web|/p/web|claude|ghostty||\n") // genuinely previous boot
+	env := buildEnv(t, []string{mockSysctl(t, dir, "1783268853")}, "HOME="+home)
+	_, code := runMaybeRestoreEnv(t, dir, "996F1E8F-46BF-4D0A-8D21-FD8D13555B47", env)
+	assertExitCode(t, code, 0)
+	queue, err := os.ReadFile(filepath.Join(dir, "restore-queue"))
+	if err != nil {
+		t.Fatalf("restore-queue not written: %v", err)
+	}
+	got := strings.TrimSpace(string(queue))
+	want := "996F1E8F-46BF-4D0A-8D21-FD8D13555B47|/p/web|claude||"
+	if got != want {
+		t.Errorf("queue:\n got %q\nwant %q", got, want)
+	}
+}
+
+// Legacy fallback systems (no kern.bootsessionuuid) still derive the id from
+// kern.boottime, which an NTP clock step shifts. A marker stamped with the
+// pre-step value must still gate the post-step launch of the SAME boot —
+// rebuilding the queue here re-restored already-open sessions (duplicate tabs).
+func TestMaybeRestore_marker_gate_tolerates_boottime_drift(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	writeTempFile(t, dir, "last-session", "1783091438|web|/p/web|claude|ghostty||\n")
+	writeTempFile(t, dir, "last-restore-boot", "1783268852\n")
+	env := buildEnv(t, []string{mockSysctl(t, dir, "1783268853")}, "HOME="+home)
+	_, code := runMaybeRestoreEnv(t, dir, "1783268853", env)
+	assertExitCode(t, code, 0)
+	if _, err := os.Stat(filepath.Join(dir, "restore-queue")); err == nil {
+		t.Error("queue was rebuilt within the same boot (marker gate failed on drift)")
+	}
+}
+
+// Same drift on legacy systems mid-chain: a queue built with the pre-step id
+// must still be consumable by a tab that computed the post-step id, instead of
+// being discarded as another boot's queue (which broke the restore chain).
+func TestRestoreQueuePop_tolerates_boottime_drift(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "restore-queue", "1783268852|/p/app|claude|sid-a|\n")
+	env := buildEnv(t, []string{mockSysctl(t, dir, "1783268853")})
+	out, code := runBashFunc(t, "lib/session-restore.sh", "restore_queue_pop",
+		[]string{dir, "1783268853"}, env)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "/p/app|claude|sid-a|" {
+		t.Errorf("got %q, want popped entry", strings.TrimSpace(out))
+	}
+	if _, err := os.Stat(filepath.Join(dir, "restore-queue")); err == nil {
+		t.Error("single-entry queue should be removed after pop")
+	}
+}
+
+// runMaybeRestoreEnv runs maybe_restore_session with a caller-built env
+// (mocked sysctl in PATH, HOME override).
+func runMaybeRestoreEnv(t *testing.T, configDir, curBoot string, env []string) (string, int) {
+	t.Helper()
+	root := projectRoot(t)
+	mod := filepath.Join(root, "lib", "session-restore.sh")
+	script := `
+source ` + quote(mod) + `
+maybe_restore_session ` + quote(configDir) + ` ` + quote(curBoot) + `
+`
+	return runBashSnippet(t, script, env)
 }
 
 // referenced by later tasks; keep import of filepath/os used
