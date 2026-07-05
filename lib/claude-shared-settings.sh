@@ -147,6 +147,13 @@ _wd_drain_state_aside() {
 # rm -rf'd: unmerged files survive in the aside path until a launch drains
 # them. Same guards as the settings sync.
 sync_claude_shared_state() {
+  # The compact-view pane runs this under ZSH (the user's $SHELL) via the
+  # mid-session account switch. In zsh an unmatched glob is a FATAL error by
+  # default (the `nomatch` option), so the `"$dest".migrating.*` loop below —
+  # which normally matches nothing — would abort the whole pane, killing the
+  # file-list view. `local_options` confines the change to this function; a
+  # no-op under bash (where the guard is false).
+  [ -n "${ZSH_VERSION:-}" ] && setopt local_options no_nomatch 2>/dev/null
   local source_dir="$1" account_dir="$2" item src dest aside aside_pid
   [ -n "$source_dir" ] && [ -n "$account_dir" ] || return 0
   [ -d "$source_dir" ] && [ -d "$account_dir" ] || return 0
@@ -215,6 +222,10 @@ sync_claude_shared_state() {
 # every transcript in the shared store — regardless of which login each
 # pre-reboot session ran under or which one is active now.
 sync_all_claude_accounts_state() {
+  # Same zsh nomatch guard as sync_claude_shared_state: the `"$accounts_dir"/*/`
+  # loop matches nothing before any account is registered, which would abort a
+  # zsh caller. local_options confines it; a no-op under bash.
+  [ -n "${ZSH_VERSION:-}" ] && setopt local_options no_nomatch 2>/dev/null
   local source_dir="$1" accounts_dir="$2" acc
   [ -d "$accounts_dir" ] || return 0
   # Registered accounts imply Claude is in use; make sure the shared store's

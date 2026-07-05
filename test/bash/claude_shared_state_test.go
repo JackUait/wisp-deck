@@ -3,6 +3,7 @@ package bash_test
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -363,5 +364,119 @@ func TestSyncAllAccountsState_merges_every_registered_account(t *testing.T) {
 		if fi, err := os.Lstat(filepath.Join(accounts, acc, "projects")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
 			t.Fatalf("account %s projects must be linked to the shared store", acc)
 		}
+	}
+}
+
+// runStateSyncUnderZsh sources claude-shared-settings.sh and calls
+// sync_claude_shared_state under ZSH — the shell the compact-view pane runs
+// under (the user's $SHELL). It prints a survival marker AFTER the call so the
+// test can tell "completed cleanly" from "the shell aborted mid-function".
+func runStateSyncUnderZsh(t *testing.T, source, account string) (string, int) {
+	t.Helper()
+	if _, err := exec.LookPath("zsh"); err != nil {
+		t.Skip("zsh not available")
+	}
+	root := projectRoot(t)
+	module := filepath.Join(root, "lib", "claude-shared-settings.sh")
+	script := fmt.Sprintf(
+		"source %q && sync_claude_shared_state %q %q && print DONE-SYNC-SURVIVED",
+		module, source, account)
+	cmd := exec.Command("zsh", "-c", script)
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			code = exitErr.ExitCode()
+		} else {
+			t.Fatalf("failed to run zsh: %v", err)
+		}
+	}
+	return string(out), code
+}
+
+// Regression: the compact-view ledger pane runs under ZSH (the user's $SHELL),
+// where an unmatched glob is a FATAL error by default (the `nomatch` option) —
+// not a literal pass-through as in bash. The mid-session account switch runs
+// sync_claude_shared_state FROM that pane's zsh (via relaunch_ai_pane); its
+// `for aside in "$dest".migrating.*` loop hit no `.migrating.*` files in the
+// normal case and aborted the whole pane, so the file-list view vanished
+// instead of restoring. Every other sync test runs under bash, which hid this.
+// The function must complete cleanly under zsh even when NO migration files
+// exist (the common case): the account item is migrated and linked, and the
+// shell survives to print the marker.
+func TestSyncSharedState_survives_under_zsh_pane_shell(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "standard")
+	account := filepath.Join(dir, "account")
+	// A real (unlinked) account item so the migration path runs, and NO
+	// `.migrating.*` files anywhere — exactly the state at a first switch.
+	writeSharedFile(t, filepath.Join(account, "projects", "-p", "sid-acc.jsonl"), `{"type":"assistant"}`)
+	writeSharedFile(t, filepath.Join(source, "projects", "-p", "sid-std.jsonl"), `{"type":"assistant"}`)
+
+	out, code := runStateSyncUnderZsh(t, source, account)
+	assertExitCode(t, code, 0)
+	if !strings.Contains(out, "DONE-SYNC-SURVIVED") {
+		t.Fatalf("sync aborted the zsh pane (no survival marker); output:\n%s", out)
+	}
+	// And it actually did its job: the account entry is linked to the store.
+	if target, err := os.Readlink(filepath.Join(account, "projects")); err != nil ||
+		target != filepath.Join(source, "projects") {
+		t.Fatalf("account projects must link to the shared store under zsh (got %q, err %v)",
+			target, err)
+	}
+}
+
+// Regression: the steady state (account item ALREADY linked to the store) must
+// also survive under zsh. This is the most common mid-session switch — nothing
+// to migrate — yet the fatal `.migrating.*` glob is evaluated BEFORE the
+// already-linked skip, so a second switch aborted the pane just like the first.
+func TestSyncSharedState_steady_state_survives_under_zsh(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "standard")
+	account := filepath.Join(dir, "account")
+	writeSharedFile(t, filepath.Join(source, "projects", "-p", "sid-std.jsonl"), `{"type":"assistant"}`)
+	// Pre-link the account entry to the store: the steady state a repeat switch
+	// lands in (no migration, no `.migrating.*` files).
+	if err := os.MkdirAll(account, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(source, "projects"), filepath.Join(account, "projects")); err != nil {
+		t.Fatal(err)
+	}
+
+	out, code := runStateSyncUnderZsh(t, source, account)
+	assertExitCode(t, code, 0)
+	if !strings.Contains(out, "DONE-SYNC-SURVIVED") {
+		t.Fatalf("steady-state sync aborted the zsh pane; output:\n%s", out)
+	}
+}
+
+// Defense-in-depth: sync_all_claude_accounts_state has the same fatal-glob
+// hazard (`for acc in "$accounts_dir"/*/`). It runs at boot under bash today,
+// but must be zsh-safe too so a future zsh caller can never reintroduce the
+// pane-killing abort. With an accounts dir that has no registered accounts yet,
+// the glob matches nothing — under unguarded zsh that aborts the shell.
+func TestSyncAllAccountsState_survives_under_zsh_when_empty(t *testing.T) {
+	if _, err := exec.LookPath("zsh"); err != nil {
+		t.Skip("zsh not available")
+	}
+	dir := t.TempDir()
+	source := filepath.Join(dir, "standard")
+	accounts := filepath.Join(dir, "claude-accounts")
+	if err := os.MkdirAll(accounts, 0o755); err != nil { // exists but empty
+		t.Fatal(err)
+	}
+	module := filepath.Join(projectRoot(t), "lib", "claude-shared-settings.sh")
+	script := fmt.Sprintf(
+		"source %q && sync_all_claude_accounts_state %q %q && print DONE-ALL-SURVIVED",
+		module, source, accounts)
+	out, err := exec.Command("zsh", "-c", script).CombinedOutput()
+	code := 0
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		code = exitErr.ExitCode()
+	}
+	assertExitCode(t, code, 0)
+	if !strings.Contains(string(out), "DONE-ALL-SURVIVED") {
+		t.Fatalf("sync_all aborted the zsh shell on an empty accounts dir; output:\n%s", out)
 	}
 }

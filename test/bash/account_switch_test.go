@@ -94,7 +94,7 @@ func TestAccountPill_renders_label_color_and_width(t *testing.T) {
 	}
 	assertContains(t, lines[0], "Personal")
 	assertContains(t, lines[0], "38;5;208") // account color escape
-	assertContains(t, lines[0], "󰀄")  // account glyph 󰀄
+	assertContains(t, lines[0], "󰀄")        // account glyph 󰀄
 	// visible width = leading space + glyph + space + len("Personal") = 3 + 8 = 11
 	if strings.TrimSpace(lines[1]) != "11" {
 		t.Fatalf("expected width 11, got %q", lines[1])
@@ -313,4 +313,73 @@ printf '%%s\n' "$*" >> %q`, rec))
 	assertContains(t, logOut, `CLAUDE_CONFIG_DIR="`+filepath.Join(dir, "claude-accounts", "work")+`"`)
 	assertContains(t, logOut, "claude -c")
 	_ = out
+}
+
+// Top-level regression guard for the mid-session account switch: relaunch_ai_pane
+// runs FROM the compact-view pane, whose shell is ZSH (the user's $SHELL). The
+// original bug was a bash-glob idiom in a helper it calls (sync_claude_shared_state's
+// `"$dest".migrating.*`) that, under zsh's default `nomatch`, aborted the whole pane
+// — so the file-list view was killed instead of restoring, and the AI pane never
+// even respawned. This drives the ENTIRE relaunch path under zsh with a real (empty)
+// HOME/.claude and account dir, so ANY fatal unmatched glob anywhere in the flow
+// (now or added later) fails this test. Success = the pane survived to run the tmux
+// respawn.
+func TestRelaunchAIPane_survives_full_path_under_zsh(t *testing.T) {
+	if _, err := exec.LookPath("zsh"); err != nil {
+		t.Skip("zsh not available")
+	}
+	root := projectRoot(t)
+	lib := filepath.Join(root, "lib")
+	dir := t.TempDir()
+
+	// The switcher already wrote the pointer to "work"; its config dir exists.
+	writeTempFile(t, dir, "claude-account", "work\n")
+	writeTempFile(t, filepath.Join(dir, "claude-accounts", "work"), ".keep", "")
+	// A real HOME/.claude so the shared-state/settings sync actually runs its
+	// glob loops (the abort site) rather than short-circuiting on a missing dir.
+	home := filepath.Join(dir, "home")
+	writeTempFile(t, filepath.Join(home, ".claude"), ".keep", "")
+
+	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
+		"tool=claude", "claude_cmd=claude", "opencode_cmd=opencode",
+		"settings=/cfg/settings.json", "filter=", "project_dir=/proj",
+		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
+		"pointer=" + filepath.Join(dir, "claude-account"),
+		"list=" + filepath.Join(dir, "claude-accounts.list"),
+		"colors=" + filepath.Join(dir, "claude-account-colors"),
+		"default_label=" + filepath.Join(dir, "claude-account-default-label"),
+		"",
+	}, "\n"))
+	rec := filepath.Join(dir, "tmux.log")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "list-panes" ]; then printf '%%s\n' "%%1 1"; exit 0; fi
+if [ "$1" = "show-environment" ]; then printf 'WISP_DECK_CLAUDE_SESSION=sess-1\n'; exit 0; fi
+printf '%%s\n' "$*" >> %q`, rec))
+
+	// Mirror the pane's real runtime: zsh sourcing the deps (account-switch.sh
+	// last — it defines relaunch_ai_pane and leans on the others), then the switch.
+	script := fmt.Sprintf(
+		"source %q && source %q && source %q && source %q && source %q && "+
+			"relaunch_ai_pane tmux %q && print DONE-RELAUNCH-SURVIVED",
+		filepath.Join(lib, "statusline.sh"),
+		filepath.Join(lib, "claude-accounts.sh"),
+		filepath.Join(lib, "tmux-session.sh"),
+		filepath.Join(lib, "claude-shared-settings.sh"),
+		filepath.Join(lib, "account-switch.sh"),
+		relaunch)
+	cmd := exec.Command("zsh", "-c", script)
+	cmd.Env = append(buildEnv(t, []string{bin}), "HOME="+home)
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		code = exitErr.ExitCode()
+	}
+	assertExitCode(t, code, 0)
+	if !strings.Contains(string(out), "DONE-RELAUNCH-SURVIVED") {
+		t.Fatalf("the mid-session switch aborted the zsh pane (file-list view would vanish); output:\n%s", out)
+	}
+	// And the pane actually got respawned under the new account — the switch's point.
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "respawn-pane")
+	assertContains(t, logOut, filepath.Join(dir, "claude-accounts", "work"))
 }
