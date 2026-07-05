@@ -163,6 +163,74 @@ func TestBuildSwitchLaunchCmd_default_account_leaves_config_dir_unset(t *testing
 	assertContains(t, out, "claude -c")
 }
 
+func TestBuildSwitchLaunchCmd_resumes_exact_session_when_stamped(t *testing.T) {
+	// A stamped session id must produce `--resume <id>` (the exact conversation),
+	// with `-c` only as the fallback step — not the other way round. This keeps
+	// the switched pane on ITS conversation in a multi-tab/window project, where
+	// bare `-c` (most-recent-in-cwd) could grab a sibling tab's conversation.
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		`build_switch_launch_cmd claude claude opencode "/cfg/settings.json" "" "/proj" "/cfg/claude-accounts/work" "sess-xyz-1"`), nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "--resume sess-xyz-1")
+}
+
+func TestCurrentAISession_reads_stamped_env(t *testing.T) {
+	dir := t.TempDir()
+	bin := mockCommand(t, dir, "tmux", `
+if [ "$1" = "show-environment" ]; then printf 'WISP_DECK_CLAUDE_SESSION=abc-42\n'; exit 0; fi`)
+	env := buildEnv(t, []string{bin})
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, "current_ai_session tmux"), env)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "abc-42" {
+		t.Fatalf("expected stamped session 'abc-42', got %q", out)
+	}
+}
+
+func TestCurrentAISession_empty_when_unset(t *testing.T) {
+	dir := t.TempDir()
+	// tmux prints `-NAME` (with a leading dash) for an unset variable.
+	bin := mockCommand(t, dir, "tmux", `
+if [ "$1" = "show-environment" ]; then printf -- '-WISP_DECK_CLAUDE_SESSION\n'; exit 0; fi`)
+	env := buildEnv(t, []string{bin})
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, "current_ai_session tmux"), env)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("expected empty session when unset, got %q", out)
+	}
+}
+
+func TestRelaunchAIPane_resumes_exact_stamped_conversation(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "claude-account", "work\n")
+	acctDir := filepath.Join(dir, "claude-accounts", "work")
+	writeTempFile(t, acctDir, ".keep", "")
+	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
+		"tool=claude",
+		"claude_cmd=claude",
+		"opencode_cmd=opencode",
+		"settings=/cfg/settings.json",
+		"filter=",
+		"project_dir=/proj",
+		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
+		"pointer=" + filepath.Join(dir, "claude-account"),
+		"list=" + filepath.Join(dir, "claude-accounts.list"),
+		"colors=" + filepath.Join(dir, "claude-account-colors"),
+		"default_label=" + filepath.Join(dir, "claude-account-default-label"),
+		"",
+	}, "\n"))
+	rec := filepath.Join(dir, "tmux.log")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "list-panes" ]; then printf '%%s\n' "%%1 1"; exit 0; fi
+if [ "$1" = "show-environment" ]; then printf 'WISP_DECK_CLAUDE_SESSION=sess-abc-123\n'; exit 0; fi
+printf '%%s\n' "$*" >> %q`, rec))
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("relaunch_ai_pane tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "--resume sess-abc-123")
+}
+
 func TestWriteRelaunchContext_writes_all_keys(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "relaunch")

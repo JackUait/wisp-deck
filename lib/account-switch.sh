@@ -57,17 +57,33 @@ find_ai_pane() {
   return 0
 }
 
+# current_ai_session <tmux_cmd> — print the resume-validated conversation id the
+# statusline stamped into the session env (gt_stamp_claude_session sets
+# WISP_DECK_CLAUDE_SESSION only once the transcript is durable). tmux prints
+# `NAME=value` when set, or `-NAME` (leading dash) when unset — only the former
+# yields an id. Empty when unstamped, so the relaunch falls back to `-c`.
+current_ai_session() {
+  local tmux_cmd="$1" line
+  line="$("$tmux_cmd" show-environment WISP_DECK_CLAUDE_SESSION 2>/dev/null)" || return 0
+  case "$line" in
+    WISP_DECK_CLAUDE_SESSION=*) printf '%s\n' "${line#WISP_DECK_CLAUDE_SESSION=}" ;;
+  esac
+  return 0
+}
+
 # build_switch_launch_cmd <tool> <claude_cmd> <opencode_cmd> <settings> <filter> \
-#   <project_dir> <new_account_dir> — build the launch command that respawns the AI
-# pane under new_account_dir. Reuses build_ai_launch_cmd in continue mode
-# (WISP_DECK_RESUME=1 with no captured session id -> `claude -c`, falling back to a
-# plain `claude` if the continue fails at startup). new_account_dir empty = the
+#   <project_dir> <new_account_dir> [resume_session] — build the launch command that
+# respawns the AI pane under new_account_dir. Reuses build_ai_launch_cmd in resume
+# mode: with resume_session it re-opens THAT exact conversation (`--resume <id>`,
+# falling back to `-c` then plain `claude`); without it, `-c` (most-recent-in-cwd).
+# Passing the stamped id keeps a multi-tab/window project's pane on ITS own
+# conversation, which bare `-c` could not guarantee. new_account_dir empty = the
 # Default (Keychain) login, so CLAUDE_CONFIG_DIR is left unset.
 build_switch_launch_cmd() {
   local tool="$1" claude_cmd="$2" opencode_cmd="$3" settings="$4" filter="$5" \
-    project_dir="$6" new_account_dir="$7"
+    project_dir="$6" new_account_dir="$7" resume_session="${8:-}"
   WISP_DECK_RESUME=1 \
-  WISP_DECK_RESUME_SESSION="" \
+  WISP_DECK_RESUME_SESSION="$resume_session" \
   WISP_DECK_CLAUDE_ACCOUNT_DIR="$new_account_dir" \
   WISP_DECK_CLAUDE_SETTINGS="$settings" \
   WISP_DECK_CLAUDE_FILTER="$filter" \
@@ -151,8 +167,12 @@ relaunch_ai_pane() {
   pane="$(find_ai_pane "$tmux_cmd")"
   [ -n "$pane" ] || return 0
 
+  # Resume the exact conversation this pane was on (the statusline stamped its id),
+  # so the switch carries over THIS session rather than the cwd's most-recent one.
+  local sid
+  sid="$(current_ai_session "$tmux_cmd")"
   cmd="$(build_switch_launch_cmd "$_rc_tool" "$_rc_claude_cmd" "$_rc_opencode_cmd" \
-    "$_rc_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir")"
+    "$_rc_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir" "$sid")"
 
   "$tmux_cmd" respawn-pane -k -t "$pane" -c "$_rc_project_dir" "$cmd; exec bash"
 }
