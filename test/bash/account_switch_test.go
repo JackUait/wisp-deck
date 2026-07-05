@@ -718,6 +718,60 @@ fi`)
 	}
 }
 
+// Skew guard: the lib is installed as a live symlink while the wisp-deck-tui
+// binary is a copy, so a newer lib can face an older binary that rejects
+// --active/--result-file (cobra errors out before the UI runs) — the switcher
+// would silently stop switching at all. When the binary's help shows the
+// claude-account-switch command but not --result-file, the switcher must omit
+// the new flags and fall back to the legacy pointer-diff relaunch decision.
+func TestOpenAccountSwitcher_legacy_binary_falls_back_to_pointer_diff(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "claude-accounts.list", "Personal:personal\n")
+	writeTempFile(t, filepath.Join(dir, "claude-accounts", "personal"), ".keep", "")
+	pointer := filepath.Join(dir, "claude-account") // absent: Default active
+	rec := filepath.Join(dir, "tmux.log")
+	popupLog := filepath.Join(dir, "popup.log")
+	// An OLD binary: its help lists the command's flags without --result-file.
+	tuiBin := mockCommand(t, dir, "wisp-deck-tui", `
+printf 'Usage:\n  wisp-deck-tui claude-account-switch [flags]\n\nFlags:\n      --backdrop-file string\n      --pointer string\n'`)
+	// tmux: the popup "runs the old binary" — the user picks personal, so the
+	// pointer changes; no result file exists (the old binary can't write one).
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "show-environment" ]; then printf -- '-WISP_DECK_CLAUDE_ACCOUNT\n'; exit 0; fi
+if [ "$1" = "list-panes" ]; then printf '%%s\n' "%%1 1"; exit 0; fi
+if [ "$1" = "display-popup" ]; then
+  printf '%%s\n' "$*" >> %q
+  printf 'personal\n' > %q
+  exit 0
+fi
+printf '%%s\n' "$*" >> %q`, popupLog, pointer, rec))
+	relaunch := switcherRelaunchCtx(t, dir)
+	env := buildEnv(t, []string{bin, tuiBin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	popupOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", popupLog), nil)
+	assertNotContains(t, popupOut, "--result-file") // old binary would reject it
+	assertNotContains(t, popupOut, "--active")
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "respawn-pane") // legacy pointer-diff still switches
+}
+
+// A missing binary (or unparseable help) must NOT trigger the legacy path: the
+// current binary is the norm, and the new flags are what make the switch stick.
+func TestSwitcherSupportsSessionFlags_missing_binary_counts_as_supported(t *testing.T) {
+	dir := t.TempDir()
+	// PATH holds only an empty dir: wisp-deck-tui is nowhere to be found.
+	empty := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(empty, 0755); err != nil {
+		t.Fatal(err)
+	}
+	env := buildEnv(t, []string{empty})
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		"switcher_supports_session_flags"), env)
+	assertExitCode(t, code, 0)
+}
+
 // wrapper.sh must stamp the launch account into the tmux session env so the
 // pill/switcher can know what this session runs (WISP_DECK_CLAUDE_ACCOUNT).
 func TestWrapper_stamps_session_account_on_new_session(t *testing.T) {

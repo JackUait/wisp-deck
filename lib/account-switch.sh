@@ -22,6 +22,30 @@ reload_switcher_lib() {
   source "$lib_dir/account-switch.sh"
 }
 
+# switcher_supports_session_flags — exit 0 when the installed wisp-deck-tui
+# accepts --active/--result-file on claude-account-switch. The lib is installed
+# as a live symlink while the binary is a copy, so a newer lib can face an older
+# binary that would REJECT the new flags (cobra errors out before the UI runs)
+# and the switcher would silently stop switching. Legacy is only assumed when
+# the help output positively shows the command WITHOUT --result-file; a missing
+# binary or unreadable help counts as supported (the popup can't run either
+# way, and the current binary is the norm). Cached per process ($$-keyed would
+# be overkill: reload_switcher_lib re-sources this file, so keep the cache in a
+# var this file does not reset).
+switcher_supports_session_flags() {
+  if [ -z "${_GT_SWITCHER_FLAGS_PROBE:-}" ]; then
+    local help
+    help="$(wisp-deck-tui claude-account-switch --help 2>&1)" || help=""
+    if printf '%s' "$help" | grep -q 'claude-account-switch' \
+       && ! printf '%s' "$help" | grep -q -- '--result-file'; then
+      _GT_SWITCHER_FLAGS_PROBE=legacy
+    else
+      _GT_SWITCHER_FLAGS_PROBE=ok
+    fi
+  fi
+  [ "$_GT_SWITCHER_FLAGS_PROBE" = ok ]
+}
+
 # account_pill_enabled <relaunch_file> <list_file> — exit 0 when the ledger should
 # show the switch pill. The tool/proxy eligibility gate lives in wrapper.sh, which
 # only writes the relaunch-context file for a claude session with the rotation
@@ -242,11 +266,17 @@ open_account_switcher() {
   # The account this pane runs (stamped in the tmux session env), and the file
   # the popup reports the user's choice through. The result path is minted but
   # NOT created — its existence after the popup is the "user picked something"
-  # signal.
-  local session_acct result_file
+  # signal. An older binary rejects the new flags (see
+  # switcher_supports_session_flags); it gets the legacy pointer-diff flow.
+  local session_acct result_file session_flags=""
   session_acct="$(current_session_account "$tmux_cmd" "$_rc_pointer")"
-  result_file=$(mktemp "${TMPDIR:-/tmp}/gtswitchsel.XXXXXX" 2>/dev/null) || result_file=""
-  [ -n "$result_file" ] && rm -f "$result_file"
+  result_file=""
+  if switcher_supports_session_flags; then
+    result_file=$(mktemp "${TMPDIR:-/tmp}/gtswitchsel.XXXXXX" 2>/dev/null) || result_file=""
+    [ -n "$result_file" ] && rm -f "$result_file"
+    [ -n "$result_file" ] && session_flags="--active $(printf '%q' "$session_acct") \
+--result-file $(printf '%q' "$result_file") "
+  fi
 
   # Snapshot the screen behind the popup so the switcher can show it DIMMED in the
   # margin around the card. tmux freezes the panes under a popup, so this snapshot
@@ -272,24 +302,32 @@ open_account_switcher() {
   # Full-screen (-w/-h 100%) and borderless (-B) so the switcher owns the whole
   # window: it draws its own rounded card over the dimmed snapshot and closes when
   # a click lands outside the card (tmux ignores clicks outside a smaller popup).
+  local before
+  before="$(get_active_claude_account "$_rc_pointer")"
   "$tmux_cmd" display-popup -E -B -w 100% -h 100% \
     "wisp-deck-tui claude-account-switch --list $(printf '%q' "$_rc_list") \
 --accounts-dir $(printf '%q' "$_rc_accounts_dir") \
 --pointer $(printf '%q' "$_rc_pointer") \
 --colors $(printf '%q' "$_rc_colors") \
 --default-label $(printf '%q' "$_rc_default_label") \
---active $(printf '%q' "$session_acct") \
---result-file $(printf '%q' "$result_file") \
-${backdrop_arg}" 2>/dev/null || true
+${session_flags}${backdrop_arg}" 2>/dev/null || true
   [ -n "$backdrop" ] && rm -f "$backdrop"
 
   # No result file = the popup was cancelled (or never ran) — a clean no-op.
   # Otherwise relaunch iff the chosen login differs from what this pane runs.
-  local chosen
-  if [ -n "$result_file" ] && [ -f "$result_file" ]; then
-    IFS= read -r chosen < "$result_file" || chosen=""
-    rm -f "$result_file"
-    [ "$chosen" != "$session_acct" ] && relaunch_ai_pane "$tmux_cmd" "$relaunch_file"
+  local chosen after
+  if [ -n "$result_file" ]; then
+    if [ -f "$result_file" ]; then
+      IFS= read -r chosen < "$result_file" || chosen=""
+      rm -f "$result_file"
+      [ "$chosen" != "$session_acct" ] && relaunch_ai_pane "$tmux_cmd" "$relaunch_file"
+    fi
+  else
+    # Legacy binary (no result-file contract): fall back to the pointer-diff
+    # decision — it can't fix a pointer that already matches the choice, but it
+    # keeps the switcher working until the binary is updated.
+    after="$(get_active_claude_account "$_rc_pointer")"
+    [ "$before" != "$after" ] && relaunch_ai_pane "$tmux_cmd" "$relaunch_file"
   fi
   return 0
 }
