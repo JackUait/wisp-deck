@@ -131,11 +131,13 @@ func TestAccountCurrent_default_when_no_pointer(t *testing.T) {
 	}
 }
 
-// The switcher popup is drawn as a self-styled rounded card by the Go TUI, so the
-// tmux popup itself must be borderless (-B) and large enough to leave a clickable
-// margin around the card (clicking the margin cancels). This guards the flags the
-// popup is launched with.
-func TestOpenAccountSwitcher_launches_borderless_popup(t *testing.T) {
+// The switcher popup is drawn as a self-styled rounded card by the Go TUI. tmux
+// only delivers clicks that land inside a popup, so to close on a click OUTSIDE
+// the card the popup must be full-screen (-w/-h 100%) and borderless (-B); the Go
+// side then treats any click off the card as cancel. A dimmed capture of the
+// screen behind is passed via --backdrop-file so the full-screen popup isn't a
+// blank void. This guards the flags the popup is launched with.
+func TestOpenAccountSwitcher_launches_fullscreen_borderless_popup(t *testing.T) {
 	dir := t.TempDir()
 	rec := filepath.Join(dir, "tmux.log")
 	// Mock tmux: log every invocation; the popup itself is a no-op so the pointer
@@ -157,7 +159,9 @@ func TestOpenAccountSwitcher_launches_borderless_popup(t *testing.T) {
 	assertExitCode(t, code, 0)
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
 	assertContains(t, logOut, "display-popup")
-	assertContains(t, logOut, "-B") // borderless: the Go card draws its own rounded border
+	assertContains(t, logOut, "-B")   // borderless: the Go card draws its own rounded border
+	assertContains(t, logOut, "100%") // full-screen so tmux delivers clicks outside the card
+	assertContains(t, logOut, "--backdrop-file")
 	assertContains(t, logOut, "claude-account-switch")
 }
 

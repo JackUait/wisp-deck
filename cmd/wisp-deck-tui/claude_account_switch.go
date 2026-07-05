@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jackuait/wisp-deck/internal/claudeaccount"
+	"github.com/jackuait/wisp-deck/internal/tui"
 	"github.com/jackuait/wisp-deck/internal/util"
 )
 
@@ -28,6 +30,7 @@ var (
 	casPointer      string
 	casColors       string
 	casDefaultLabel string
+	casBackdrop     string
 )
 
 // switchRow is one selectable login in the switcher. Dir is "" for the implicit
@@ -98,6 +101,13 @@ func runClaudeAccountSwitch(cmd *cobra.Command, args []string) error {
 	prevActive := claudeaccount.GetActive(casPointer)
 
 	model := newAccountSwitchModel(rows, cursor, casColors)
+	// Show the screen behind the (full-screen) popup dimmed around the card. Best
+	// effort: an unreadable/missing backdrop file just leaves the margin blank.
+	if casBackdrop != "" {
+		if raw, err := os.ReadFile(casBackdrop); err == nil {
+			model = model.withBackdrop(tui.ParseBackdrop(string(raw)))
+		}
+	}
 
 	ttyOpts, cleanup, err := util.TUITeaOptions()
 	if err != nil {
@@ -135,12 +145,21 @@ type accountSwitchModel struct {
 	chosen     bool
 	width      int
 	height     int
+	backdrop   []string
 }
 
 func newAccountSwitchModel(rows []switchRow, cursor int, colorsFile string) accountSwitchModel {
 	// The switcher opens with the cursor on the active login, so the initial
 	// cursor is also the active-row marker.
 	return accountSwitchModel{rows: rows, cursor: cursor, active: cursor, colorsFile: colorsFile}
+}
+
+// withBackdrop attaches a captured screen (rows of plain text) shown dimmed
+// behind the card, so the full-screen popup reads as a modal over the session
+// rather than a blank void.
+func (m accountSwitchModel) withBackdrop(rows []string) accountSwitchModel {
+	m.backdrop = rows
+	return m
 }
 
 func (m accountSwitchModel) Init() tea.Cmd { return nil }
@@ -258,6 +277,10 @@ func (m accountSwitchModel) contentWidth() int {
 	return w
 }
 
+// accountSwitchDim renders the captured backdrop faint/gray so it recedes behind
+// the card (mirrors the diff pager's backdrop dimming).
+var accountSwitchDim = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("240"))
+
 func (m accountSwitchModel) View() string {
 	card := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -267,7 +290,57 @@ func (m accountSwitchModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return card
 	}
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+	firstRowY, cardLeft, cardWidth := accountSwitchLayout(m.width, m.height, len(m.rows), m.contentWidth())
+	cardTop := firstRowY - accountSwitchBorder - accountSwitchPadY - accountSwitchHeader
+	return m.composite(card, cardLeft, cardTop, cardWidth)
+}
+
+// composite lays the card over the dimmed backdrop at (cardLeft, cardTop). Rows
+// not covered by the card show the dimmed capture full-width; covered rows show
+// the dimmed capture in the left/right margins with the card line in between. An
+// empty backdrop yields blank (space) margins, so the standalone popup still works.
+func (m accountSwitchModel) composite(card string, cardLeft, cardTop, cardWidth int) string {
+	cardLines := strings.Split(card, "\n")
+	if cardLeft < 0 {
+		cardLeft = 0
+	}
+	right := cardLeft + cardWidth
+	if right > m.width {
+		right = m.width
+	}
+	bgRow := func(y int) []rune {
+		row := make([]rune, m.width)
+		for i := range row {
+			row[i] = ' '
+		}
+		if y < len(m.backdrop) {
+			for i, r := range []rune(m.backdrop[y]) {
+				if i >= m.width {
+					break
+				}
+				row[i] = r
+			}
+		}
+		return row
+	}
+	var b strings.Builder
+	for y := 0; y < m.height; y++ {
+		row := bgRow(y)
+		ci := y - cardTop
+		if ci >= 0 && ci < len(cardLines) {
+			b.WriteString(accountSwitchDim.Render(string(row[:cardLeft])))
+			b.WriteString(cardLines[ci])
+			if right < m.width {
+				b.WriteString(accountSwitchDim.Render(string(row[right:])))
+			}
+		} else {
+			b.WriteString(accountSwitchDim.Render(string(row)))
+		}
+		if y < m.height-1 {
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
 }
 
 func init() {
@@ -276,5 +349,6 @@ func init() {
 	claudeAccountSwitchCmd.Flags().StringVar(&casPointer, "pointer", "", "Path to active account pointer file")
 	claudeAccountSwitchCmd.Flags().StringVar(&casColors, "colors", "", "Path to account colors file")
 	claudeAccountSwitchCmd.Flags().StringVar(&casDefaultLabel, "default-label", "", "Path to the Default login's label file")
+	claudeAccountSwitchCmd.Flags().StringVar(&casBackdrop, "backdrop-file", "", "File with a serialized screen capture shown dimmed behind the popup")
 	rootCmd.AddCommand(claudeAccountSwitchCmd)
 }

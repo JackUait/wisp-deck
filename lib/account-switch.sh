@@ -190,14 +190,40 @@ open_account_switcher() {
   [ -f "$relaunch_file" ] || return 0
   _read_relaunch_ctx "$relaunch_file"
 
+  # Snapshot the screen behind the popup so the switcher can show it DIMMED in the
+  # margin around the card. tmux freezes the panes under a popup, so this snapshot
+  # (taken just before opening it) matches what's behind. Serialized as a "W H"
+  # header then one "PANE <left> <top>" + captured-lines + "ENDPANE" block per
+  # pane; ParseBackdrop composites it. Best-effort: any failure yields a blank
+  # margin. This mirrors the diff pager's backdrop (lib/compact-view.sh).
+  local backdrop backdrop_arg=""
+  backdrop=$(mktemp "${TMPDIR:-/tmp}/gtswitch.XXXXXX" 2>/dev/null) || backdrop=""
+  if [ -n "$backdrop" ]; then
+    {
+      "$tmux_cmd" display-message -p -t "${TMUX_PANE:-}" '#{client_width} #{client_height}'
+      "$tmux_cmd" list-panes -t "${TMUX_PANE:-}" -F '#{pane_id} #{pane_left} #{pane_top}' 2>/dev/null |
+        while read -r pid pleft ptop; do
+          printf 'PANE %s %s\n' "$pleft" "$ptop"
+          "$tmux_cmd" capture-pane -p -t "$pid" 2>/dev/null
+          printf 'ENDPANE\n'
+        done
+    } >"$backdrop" 2>/dev/null
+    backdrop_arg="--backdrop-file $(printf '%q' "$backdrop")"
+  fi
+
   local before after
   before="$(get_active_claude_account "$_rc_pointer")"
-  "$tmux_cmd" display-popup -E -B -w 52 -h 18 \
+  # Full-screen (-w/-h 100%) and borderless (-B) so the switcher owns the whole
+  # window: it draws its own rounded card over the dimmed snapshot and closes when
+  # a click lands outside the card (tmux ignores clicks outside a smaller popup).
+  "$tmux_cmd" display-popup -E -B -w 100% -h 100% \
     "wisp-deck-tui claude-account-switch --list $(printf '%q' "$_rc_list") \
 --accounts-dir $(printf '%q' "$_rc_accounts_dir") \
 --pointer $(printf '%q' "$_rc_pointer") \
 --colors $(printf '%q' "$_rc_colors") \
---default-label $(printf '%q' "$_rc_default_label")" 2>/dev/null || true
+--default-label $(printf '%q' "$_rc_default_label") \
+${backdrop_arg}" 2>/dev/null || true
+  [ -n "$backdrop" ] && rm -f "$backdrop"
   after="$(get_active_claude_account "$_rc_pointer")"
 
   [ "$before" != "$after" ] && relaunch_ai_pane "$tmux_cmd" "$relaunch_file"

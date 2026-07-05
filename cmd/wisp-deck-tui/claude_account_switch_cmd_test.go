@@ -205,6 +205,25 @@ func TestAccountSwitchModel_viewHasRoundedCorners(t *testing.T) {
 	}
 }
 
+func TestAccountSwitchModel_viewCompositesDimmedBackdrop(t *testing.T) {
+	rows := []switchRow{{Label: "Default"}, {Label: "Work", Dir: "work"}}
+	m := newAccountSwitchModel(rows, 0, "").withBackdrop([]string{"HELLO-BACKDROP-ROW"})
+	sized, _ := m.Update(tea.WindowSizeMsg{Width: 48, Height: 18})
+	m = sized.(accountSwitchModel)
+
+	view := m.View()
+	// The captured screen behind the popup shows through (dimmed) in the margin,
+	// so a full-screen popup isn't a blank void. Row 0 isn't overlapped by the
+	// centered card, so its text survives intact.
+	if !strings.Contains(view, "HELLO-BACKDROP-ROW") {
+		t.Errorf("view does not composite the backdrop behind the card:\n%s", view)
+	}
+	// The rounded card is still drawn on top.
+	if !strings.Contains(view, "╭") {
+		t.Errorf("view missing the rounded card over the backdrop")
+	}
+}
+
 func TestAccountSwitch_loadSwitchRows_customDefaultLabel(t *testing.T) {
 	dir := t.TempDir()
 	list := filepath.Join(dir, "claude-accounts.list")
