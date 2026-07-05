@@ -32,7 +32,7 @@ func newPanelMenu(t *testing.T) (*MainMenuModel, string, string) {
 	m.SetClaudeConfigs(LoadClaudeConfigsList(list))
 	m.SetActiveClaudeConfig("")
 	m.EnterSettings()
-	m.settingsSelected = 6
+	m.settingsSelected = 7
 	return m, list, ptr
 }
 
@@ -211,8 +211,8 @@ func TestUpdate_clickPlanSettingsRow_opensModelMap(t *testing.T) {
 	m.CycleClaudeConfig("next") // select Work (a custom config)
 	m.width, m.height = 100, 60
 	_ = m.View()
-	// Plan is settings item 6 (after the Theme row was inserted at 4).
-	row := m.firstSettingsItemRow() + 6
+	// Plan is settings item 7 (Usage bars was inserted at 6, after Projects folder).
+	row := m.firstSettingsItemRow() + 7
 	msg := tea.MouseMsg{X: m.menuOriginX + 5, Y: m.menuOriginY + row, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
 	upd, _ := m.Update(msg)
 	got := upd.(*MainMenuModel)
@@ -315,7 +315,7 @@ func TestModelMap_ShowsMappedIndicator(t *testing.T) {
 	m.SetClaudeConfigs(LoadClaudeConfigsList(list))
 	m.SetActiveClaudeConfig("work.json")
 	m.EnterSettings()
-	m.settingsSelected = 6
+	m.settingsSelected = 7
 
 	view := m.View()
 	if !strings.Contains(view, "1 mapped") {
@@ -326,7 +326,7 @@ func TestModelMap_ShowsMappedIndicator(t *testing.T) {
 func TestModelMap_ShowsUnmappedIndicator(t *testing.T) {
 	m, _, _ := newPanelMenu(t)
 	m.SetActiveClaudeConfig("work.json")
-	m.settingsSelected = 6
+	m.settingsSelected = 7
 	view := m.View()
 	if !strings.Contains(view, "unmapped") {
 		t.Fatalf("config row should show 'unmapped' indicator:\n%s", view)
@@ -419,7 +419,7 @@ func TestModelMap_APIKeyInput_ShowsInPanel(t *testing.T) {
 	m.SetClaudeConfigs(LoadClaudeConfigsList(list))
 	m.SetActiveClaudeConfig("work.json")
 	m.EnterSettings()
-	m.settingsSelected = 6
+	m.settingsSelected = 7
 	m = key(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	view := m.View()
 	if !strings.Contains(view, "API Key") {

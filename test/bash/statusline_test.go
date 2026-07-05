@@ -2192,6 +2192,54 @@ func TestStatusline_weekly_used_pct_empty_when_only_five_hour(t *testing.T) {
 	}
 }
 
+// --- gt_five_hour_used_pct ---
+// Mirror of gt_weekly_used_pct for the 5-hour window: pulls
+// rate_limits.five_hour.used_percentage out of the statusline JSON as a rounded
+// whole number, anchored inside the five_hour object so it never crosses into
+// seven_day, and yields nothing when the window is absent.
+
+func TestStatusline_five_hour_used_pct_extracts_five_hour_percentage(t *testing.T) {
+	input := `{"rate_limits":{"five_hour":{"used_percentage":25,"resets_at":1},"seven_day":{"used_percentage":42,"resets_at":2}}}`
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_five_hour_used_pct",
+		[]string{input}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "25" {
+		t.Fatalf("expected %q, got %q", "25", strings.TrimSpace(out))
+	}
+}
+
+func TestStatusline_five_hour_used_pct_rounds_decimal_percentage(t *testing.T) {
+	input := `{"rate_limits":{"five_hour":{"used_percentage":88.6,"resets_at":1}}}`
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_five_hour_used_pct",
+		[]string{input}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "89" {
+		t.Fatalf("expected %q, got %q", "89", strings.TrimSpace(out))
+	}
+}
+
+func TestStatusline_five_hour_used_pct_empty_when_rate_limits_absent(t *testing.T) {
+	input := `{"model":{"display_name":"Fable 5"}}`
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_five_hour_used_pct",
+		[]string{input}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("expected empty output, got %q", strings.TrimSpace(out))
+	}
+}
+
+// five_hour must not fall through to seven_day's number when only seven_day is
+// present (the API omits a window with no data yet).
+func TestStatusline_five_hour_used_pct_empty_when_only_seven_day(t *testing.T) {
+	input := `{"rate_limits":{"seven_day":{"used_percentage":42,"resets_at":2}}}`
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_five_hour_used_pct",
+		[]string{input}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("expected empty output, got %q", strings.TrimSpace(out))
+	}
+}
+
 // The wrapper renders the weekly (7-day) usage pill but NOT the account profile
 // itself: no account glyph, no account label. The pill still wears the account's
 // profile color (its only remaining tie to the login), painted from the palette
@@ -2270,4 +2318,67 @@ func TestStatusline_wrapper_omits_weekly_limit_without_account_segment(t *testin
 	out, code := runBashSnippet(t, script, env)
 	assertExitCode(t, code, 0)
 	assertNotContains(t, out, "7d ")
+}
+
+// --- usage-bars mode (7d / 5h / both / none) ---
+// The `usage_bars` preference in ~/.config/wisp-deck/settings chooses which
+// usage pills the statusline renders. runUsageBarsWrapper drives the wrapper with
+// a 2-account setup (so the bars are eligible), 5h usage 30% (→ 3-cell bar) and
+// 7d usage 90% (→ 9-cell bar), both in the Default login's color (141).
+func runUsageBarsWrapper(t *testing.T, mode string) string {
+	t.Helper()
+	env := setupWrapperTest(t)
+	env = append(env, "CLAUDE_CONFIG_DIR=")
+	fakeHome := wrapperHome(env)
+	cfg := filepath.Join(fakeHome, ".config", "wisp-deck")
+	writeTempFile(t, cfg, "claude-accounts.list", "Personal:personal\n")
+	writeTempFile(t, cfg, "claude-account-colors", "default:141\n")
+	if mode != "" {
+		writeTempFile(t, cfg, "settings", "usage_bars="+mode+"\n")
+	}
+	root := projectRoot(t)
+	wrapperPath := filepath.Join(root, "templates", "statusline-wrapper.sh")
+	stdinData := `{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"rate_limits":{"five_hour":{"used_percentage":30,"resets_at":1},"seven_day":{"used_percentage":90,"resets_at":2}},"workspace":{"current_dir":"/tmp"}}`
+	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, wrapperPath)
+	out, code := runBashSnippet(t, script, env)
+	assertExitCode(t, code, 0)
+	return out
+}
+
+func TestStatusline_usage_bars_mode_7d_only(t *testing.T) {
+	out := runUsageBarsWrapper(t, "7d")
+	assertContains(t, out, "7d")
+	assertContains(t, out, bar(9)) // seven_day 90%
+	assertNotContains(t, out, "5h")
+	assertNotContains(t, out, bar(3)) // five_hour bar absent
+}
+
+func TestStatusline_usage_bars_mode_5h_only(t *testing.T) {
+	out := runUsageBarsWrapper(t, "5h")
+	assertContains(t, out, "5h")
+	assertContains(t, out, bar(3)) // five_hour 30%
+	assertNotContains(t, out, "7d")
+	assertNotContains(t, out, bar(9)) // seven_day bar absent
+}
+
+func TestStatusline_usage_bars_mode_both(t *testing.T) {
+	out := runUsageBarsWrapper(t, "both")
+	assertContains(t, out, "7d")
+	assertContains(t, out, "5h")
+	assertContains(t, out, bar(9)) // seven_day 90%
+	assertContains(t, out, bar(3)) // five_hour 30%
+}
+
+func TestStatusline_usage_bars_mode_none(t *testing.T) {
+	out := runUsageBarsWrapper(t, "none")
+	assertNotContains(t, out, "7d")
+	assertNotContains(t, out, "5h")
+}
+
+// An unset preference preserves today's behavior: the 7d bar only.
+func TestStatusline_usage_bars_default_is_7d(t *testing.T) {
+	out := runUsageBarsWrapper(t, "")
+	assertContains(t, out, "7d")
+	assertContains(t, out, bar(9))
+	assertNotContains(t, out, "5h")
 }

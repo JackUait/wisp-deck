@@ -16,6 +16,7 @@ select_project_interactive() {
   # Read preferences from settings file
   local ghost_display="animated"
   local panel_mode="compact"
+  local usage_bars="7d"
   local tab_title="full"
   local settings_file="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings"
   if [ -f "$settings_file" ]; then
@@ -28,6 +29,11 @@ select_project_interactive() {
     saved_panel_mode=$(grep '^panel_mode=' "$settings_file" 2>/dev/null | cut -d= -f2)
     if [ -n "$saved_panel_mode" ]; then
       panel_mode="$saved_panel_mode"
+    fi
+    local saved_usage_bars
+    saved_usage_bars=$(grep '^usage_bars=' "$settings_file" 2>/dev/null | cut -d= -f2)
+    if [ -n "$saved_usage_bars" ]; then
+      usage_bars="$saved_usage_bars"
     fi
     local saved_tab_title
     saved_tab_title=$(grep '^tab_title=' "$settings_file" 2>/dev/null | cut -d= -f2)
@@ -57,6 +63,7 @@ select_project_interactive() {
   cmd_args+=("--ai-tool-file" "$ai_tool_file")
   cmd_args+=("--ghost-display" "$ghost_display")
   cmd_args+=("--panel-mode" "$panel_mode")
+  cmd_args+=("--usage-bars" "$usage_bars")
   cmd_args+=("--tab-title" "$tab_title")
   cmd_args+=("--settings-file" "$settings_file")
   local sound_file="$gt_config_dir/${SELECTED_AI_TOOL:-claude}-features.json"

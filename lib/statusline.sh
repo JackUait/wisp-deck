@@ -292,6 +292,21 @@ gt_weekly_used_pct() {
   printf '%s\n' "$pct" | LC_ALL=C awk '{ gsub(/,/, "."); printf "%d\n", $0 + 0.5 }'
 }
 
+# Pull the subscriber's 5-hour (rolling session) usage out of the statusline JSON
+# as a rounded whole-number percentage — the 5h analog of gt_weekly_used_pct. The
+# regex is anchored inside the five_hour object's own braces ([^}]* never crosses
+# into seven_day), so an absent rate_limits, an absent five_hour, or a payload
+# carrying only seven_day's number all yield nothing (the segment hides). The
+# round is locale-independent (a comma decimal would truncate).
+# Usage: gt_five_hour_used_pct "$statusline_json"  =>  "25"
+gt_five_hour_used_pct() {
+  local input="$1" pct
+  pct=$(printf '%s' "$input" \
+    | sed -n 's/.*"five_hour":{[^}]*"used_percentage":\([0-9][0-9.]*\).*/\1/p')
+  [ -n "$pct" ] || return 0
+  printf '%s\n' "$pct" | LC_ALL=C awk '{ gsub(/,/, "."); printf "%d\n", $0 + 0.5 }'
+}
+
 gt_stamp_claude_session() {
   [ -n "${TMUX:-}" ] || return 0
   local sid transcript

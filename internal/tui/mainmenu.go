@@ -214,6 +214,9 @@ type MainMenuModel struct {
 	panelMode           string // "lazygit" or "compact"
 	initialPanelMode    string
 	panelModeChanged    bool
+	usageBars           string // "7d", "5h", "both", or "none" — which statusline usage pills show
+	initialUsageBars    string
+	usageBarsChanged    bool
 	themePref           string // "auto" (follow tool) or a preset name
 	initialThemePref    string
 	themePrefChanged    bool
@@ -391,6 +394,8 @@ func NewMainMenu(projects []models.Project, aiTools []string, currentAI string, 
 		initialGhostDisplay:       ghostDisplay,
 		panelMode:                 "compact",
 		initialPanelMode:          "compact",
+		usageBars:                 "7d",
+		initialUsageBars:          "7d",
 		themePref:                 "auto",
 		initialThemePref:          "auto",
 		theme:                     ThemeForTool(currentAI),
@@ -832,6 +837,55 @@ func (m *MainMenuModel) CyclePanelMode() {
 func (m *MainMenuModel) CyclePanelModeReverse() {
 	m.CyclePanelMode() // binary toggle — same either direction
 }
+
+// usageBarsOrder is the forward cycle order for the Usage bars setting; the
+// statusline reads the persisted value (usage_bars=) to decide which usage pills
+// to draw.
+var usageBarsOrder = []string{"7d", "5h", "both", "none"}
+
+// UsageBars returns the usage-bars mode ("7d", "5h", "both", or "none").
+func (m *MainMenuModel) UsageBars() string { return m.usageBars }
+
+// SetUsageBars sets the usage-bars mode and records it as the initial value.
+func (m *MainMenuModel) SetUsageBars(mode string) {
+	if !isValidUsageBars(mode) {
+		mode = "7d"
+	}
+	m.usageBars = mode
+	m.initialUsageBars = mode
+}
+
+func isValidUsageBars(mode string) bool {
+	for _, v := range usageBarsOrder {
+		if v == mode {
+			return true
+		}
+	}
+	return false
+}
+
+// stepUsageBars advances the usage-bars mode by delta through usageBarsOrder
+// (wrapping) and persists the new value.
+func (m *MainMenuModel) stepUsageBars(delta int) {
+	n := len(usageBarsOrder)
+	idx := 0
+	for i, v := range usageBarsOrder {
+		if v == m.usageBars {
+			idx = i
+			break
+		}
+	}
+	idx = (idx + delta%n + n) % n
+	m.usageBars = usageBarsOrder[idx]
+	m.usageBarsChanged = m.usageBars != m.initialUsageBars
+	m.persistSetting("usage_bars", m.usageBars)
+}
+
+// CycleUsageBars advances the usage-bars mode: 7d -> 5h -> both -> none -> 7d.
+func (m *MainMenuModel) CycleUsageBars() { m.stepUsageBars(1) }
+
+// CycleUsageBarsReverse steps the usage-bars mode backwards.
+func (m *MainMenuModel) CycleUsageBarsReverse() { m.stepUsageBars(-1) }
 
 // CycleTabTitle cycles through tab title modes: full -> project -> model -> full.
 // "model" leaves the AI tool's own title (the one the model set) showing.
@@ -1298,11 +1352,11 @@ func (m *MainMenuModel) CycleTab(direction string) {
 	}
 }
 
-// settingsItemCount returns the number of settings rows: 6 base (Ghost, Tab,
-// Sound, Panel, Theme, Dir) + the Plan row when the Claude config control is
-// visible + the always-present Login row + the Auto-switch toggle.
+// settingsItemCount returns the number of settings rows: 7 base (Ghost, Tab,
+// Sound, Panel, Theme, Dir, Usage bars) + the Plan row when the Claude config
+// control is visible + the always-present Login row + the Auto-switch toggle.
 func (m *MainMenuModel) settingsItemCount() int {
-	n := 6
+	n := 7
 	if m.ClaudeConfigVisible() {
 		n++ // Plan
 	}
@@ -2489,10 +2543,12 @@ func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 		m.settingsInputErr = nil
 		return m, textinput.Blink
 	case 6:
+		m.CycleUsageBars()
+	case 7:
 		if m.selectedConfig > 0 {
 			m.openModelMap()
 		}
-	case 7:
+	case 8:
 		// Open the login-management panel (switch / add / remove logins).
 		m.openAccountMenu()
 		return m, nil
@@ -2516,8 +2572,10 @@ func (m *MainMenuModel) settingsValueRight() {
 	case 4:
 		m.CycleTheme()
 	case 6:
-		m.CycleClaudeConfig("next")
+		m.CycleUsageBars()
 	case 7:
+		m.CycleClaudeConfig("next")
+	case 8:
 		m.CycleAccount("next")
 	case m.autoSwitchRowIndex():
 		m.CycleAutoSwitch()
@@ -2538,8 +2596,10 @@ func (m *MainMenuModel) settingsValueLeft() {
 	case 4:
 		m.CycleThemeReverse()
 	case 6:
-		m.CycleClaudeConfig("prev")
+		m.CycleUsageBarsReverse()
 	case 7:
+		m.CycleClaudeConfig("prev")
+	case 8:
 		m.CycleAccount("prev")
 	case m.autoSwitchRowIndex():
 		m.CycleAutoSwitch()
@@ -3168,6 +3228,21 @@ func panelModeLabel(mode string) string {
 		return "Compact"
 	default:
 		return mode
+	}
+}
+
+// usageBarsLabel returns the display label for a usage-bars mode: "7d", "5h" stay
+// as-is; "both"/"none" are capitalized to match the other settings values.
+func usageBarsLabel(mode string) string {
+	switch mode {
+	case "5h":
+		return "5h"
+	case "both":
+		return "Both"
+	case "none":
+		return "None"
+	default:
+		return "7d"
 	}
 }
 

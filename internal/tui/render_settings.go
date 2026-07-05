@@ -185,6 +185,18 @@ func (m *MainMenuModel) renderSettingsBox() string {
 		lines = append(lines, m.renderSettingsItem(5, "Projects folder", rootState, rootStyle, primaryBoldStyle, leftBorder, rightBorder))
 	}
 
+	// Usage bars item — which statusline usage pills show (7d / 5h / both / none).
+	// Green when a bar is shown, gray when off (none), mirroring the other rows.
+	var usageColor lipgloss.Color
+	if m.usageBars == "none" {
+		usageColor = lipgloss.Color("241") // gray (off)
+	} else {
+		usageColor = lipgloss.Color("114") // green
+	}
+	usageStyle := lipgloss.NewStyle().Foreground(usageColor)
+	usageState := "[" + usageBarsLabel(m.usageBars) + "]"
+	lines = append(lines, m.renderSettingsItem(6, "Usage bars", usageState, usageStyle, primaryBoldStyle, leftBorder, rightBorder))
+
 	// Claude Config item (only for the claude tool)
 	if m.ClaudeConfigVisible() {
 		cfgName := m.CurrentClaudeConfigName()
@@ -202,7 +214,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 			dimIndicator := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(" " + indicator)
 			state = state + dimIndicator
 		}
-		lines = append(lines, m.renderSettingsItem(6, "Subscription", state, cfgStyle, primaryBoldStyle, leftBorder, rightBorder))
+		lines = append(lines, m.renderSettingsItem(7, "Subscription", state, cfgStyle, primaryBoldStyle, leftBorder, rightBorder))
 	}
 
 	// Login item: the active native Claude account (manage logins here — ←→
@@ -248,7 +260,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	switch {
 	case m.settingsSelected == 5:
 		cycleOrEdit = helpStyle.Render("⏎ edit")
-	case m.settingsSelected == 6 && m.ClaudeConfigVisible():
+	case m.settingsSelected == 7 && m.ClaudeConfigVisible():
 		if m.selectedConfig > 0 {
 			cycleOrEdit = helpStyle.Render("←→ cycle") + sep + helpStyle.Render("⏎ map models")
 		} else {

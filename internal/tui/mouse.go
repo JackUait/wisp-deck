@@ -389,7 +389,7 @@ func (m *MainMenuModel) clickSettings(idx int) (tea.Model, tea.Cmd) {
 		return m.settingsEnter()
 	case idx == m.loginRowIndex(): // Login → account management
 		return m.settingsEnter()
-	case idx == 6 && m.ClaudeConfigVisible() && m.selectedConfig > 0:
+	case idx == 7 && m.ClaudeConfigVisible() && m.selectedConfig > 0:
 		// Plan row on a custom config → open the model map (its ⏎ action). Cycling
 		// the plan stays available via the top PLAN switcher row.
 		return m.settingsEnter()

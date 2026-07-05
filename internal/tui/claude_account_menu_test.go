@@ -25,11 +25,11 @@ func TestAccountMenu_enterOnLoginRowOpensPanel(t *testing.T) {
 	}
 }
 
-// Enter on the Settings Login row (index 6) opens the same panel.
+// Enter on the Settings Login row opens the same panel.
 func TestAccountMenu_settingsEnterOpensPanel(t *testing.T) {
 	m := acctTestMenu("claude")
 	m.SetActiveTab(TabSettings)
-	m.settingsSelected = 7
+	m.settingsSelected = m.loginRowIndex()
 	m.settingsEnter()
 	if !m.accountMenuOpen {
 		t.Fatalf("Enter on Settings Login row should open the login panel")

@@ -185,11 +185,11 @@ func TestSettingsLoginRow_shown(t *testing.T) {
 	}
 }
 
-// Enter on the Settings Login row (index 6) opens the login-management panel.
+// Enter on the Settings Login row opens the login-management panel.
 func TestSettingsLoginRow_enterOpensPanel(t *testing.T) {
 	m := acctTestMenu("claude")
 	m.SetActiveTab(TabSettings)
-	m.settingsSelected = 7
+	m.settingsSelected = m.loginRowIndex()
 	m.settingsEnter()
 	if !m.accountMenuOpen {
 		t.Fatalf("Enter on Login settings row should open the login panel")
@@ -201,7 +201,7 @@ func TestSettingsLoginRow_cyclesAccount(t *testing.T) {
 	m := acctTestMenu("claude")
 	m.SetClaudeAccounts([]ClaudeAccount{{Label: "Work", Dir: "work"}})
 	m.SetActiveTab(TabSettings)
-	m.settingsSelected = 7
+	m.settingsSelected = m.loginRowIndex()
 	m.settingsValueRight()
 	if m.CurrentClaudeAccountDir() != "work" {
 		t.Errorf("→ on Login row should switch to work, got %q", m.CurrentClaudeAccountDir())

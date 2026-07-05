@@ -53,18 +53,41 @@ if type gt_claude_account_label &>/dev/null \
   fi
 fi
 
-# Weekly (7-day) usage of the active login, shown right of the account label so
-# the user sees how much of that account's rolling quota is spent. Rendered as a
-# pill bar painted in the account's own profile color (the fill vs. empty cells
-# carry the amount; the color ties it to the login). Only present for subscribers
-# after the first API response, so it stays empty otherwise.
+# Usage pills for the active login: the 7-day (weekly) and 5-hour (rolling
+# session) windows, each a bar painted in the account's own profile color (the
+# fill vs. empty cells carry the amount; the color ties it to the login). Only
+# present for subscribers after the first API response, so they stay empty
+# otherwise, and only while the account segment is eligible (2+ logins).
 weekly_bar=""
-if [ -n "$account_label" ] && type gt_weekly_used_pct &>/dev/null; then
-  weekly_pct=$(gt_weekly_used_pct "$input")
-  if [ -n "$weekly_pct" ]; then
-    weekly_bar=$(gt_usage_bar "$weekly_pct")
+five_hour_bar=""
+if [ -n "$account_label" ]; then
+  if type gt_weekly_used_pct &>/dev/null; then
+    weekly_pct=$(gt_weekly_used_pct "$input")
+    [ -n "$weekly_pct" ] && weekly_bar=$(gt_usage_bar "$weekly_pct")
+  fi
+  if type gt_five_hour_used_pct &>/dev/null; then
+    five_hour_pct=$(gt_five_hour_used_pct "$input")
+    [ -n "$five_hour_pct" ] && five_hour_bar=$(gt_usage_bar "$five_hour_pct")
   fi
 fi
+
+# Which usage pills to show is a user preference (Settings › Usage bars), stored
+# as usage_bars=7d|5h|both|none in the wisp-deck settings file. Default is 7d
+# (what the statusline showed before the 5h bar existed). Derive per-window show
+# flags from it.
+usage_bars_mode=$(sed -n 's/^usage_bars=//p' \
+  "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" 2>/dev/null \
+  | tr -d '[:space:]' | tail -n 1)
+[ -n "$usage_bars_mode" ] || usage_bars_mode="7d"
+show_7d=0
+show_5h=0
+case "$usage_bars_mode" in
+  7d) show_7d=1 ;;
+  5h) show_5h=1 ;;
+  both) show_7d=1; show_5h=1 ;;
+  none) ;;
+  *) show_7d=1 ;;   # unknown value -> safe default (7d)
+esac
 
 # Find parent Claude Code process and get total tree memory + CPU usage
 pid=$PPID
@@ -132,19 +155,33 @@ fi
 if [ -n "$model_name" ]; then
   line="$line$(printf ' | \033[01;34m%s\033[00m' "$model_name")"
 fi
-# The active login's WEEKLY (7-day) usage pill. The account profile itself — its
-# glyph (󰀄) and label — is deliberately NOT rendered here; only its usage is. The
-# pill still wears the login's own persistent color (each login gets a distinct
-# one, shared with the account menu) so the color quietly ties the usage to a
-# login; the dim "7d" tag names the window and the fill vs. empty cells carry the
-# amount. Falls back to bold green when no color resolved. Gated on the weekly bar
-# — itself only computed for a 2+ account setup that has a weekly figure — so solo
-# users get nothing.
-if [ -n "$weekly_bar" ]; then
+# The active login's usage pills. The account profile itself — its glyph (󰀄) and
+# label — is deliberately NOT rendered; only its usage is. Each shown pill wears
+# the login's own persistent color (shared with the account menu) so the color
+# quietly ties the usage to a login; a dim tag ("5h" / "7d") names the window and
+# the fill vs. empty cells carry the amount. Falls back to bold green when no
+# color resolved. The 5h pill leads (shorter window first), then 7d, under a
+# single " | " so both read as one usage group. Which windows appear is the
+# usage_bars preference resolved above; each is still gated on its own bar being
+# present (2+ account setup with that window's figure).
+_usage_seg=""
+if [ "$show_5h" = 1 ] && [ -n "$five_hour_bar" ]; then
   if [ -n "$account_color" ]; then
-    line="$line$(printf ' | \033[02;38;5;%sm7d\033[00m \033[38;5;%sm%s\033[00m' "$account_color" "$account_color" "$weekly_bar")"
+    _usage_seg="$_usage_seg$(printf ' \033[02;38;5;%sm5h\033[00m \033[38;5;%sm%s\033[00m' "$account_color" "$account_color" "$five_hour_bar")"
   else
-    line="$line$(printf ' | \033[02;37m7d\033[00m \033[01;32m%s\033[00m' "$weekly_bar")"
+    _usage_seg="$_usage_seg$(printf ' \033[02;37m5h\033[00m \033[01;32m%s\033[00m' "$five_hour_bar")"
   fi
+fi
+if [ "$show_7d" = 1 ] && [ -n "$weekly_bar" ]; then
+  if [ -n "$account_color" ]; then
+    _usage_seg="$_usage_seg$(printf ' \033[02;38;5;%sm7d\033[00m \033[38;5;%sm%s\033[00m' "$account_color" "$account_color" "$weekly_bar")"
+  else
+    _usage_seg="$_usage_seg$(printf ' \033[02;37m7d\033[00m \033[01;32m%s\033[00m' "$weekly_bar")"
+  fi
+fi
+# One " | " prefix for the whole group (the segments above each begin with a
+# space, so trimming the leading space keeps the "| 5h … 7d …" spacing uniform).
+if [ -n "$_usage_seg" ]; then
+  line="$line$(printf ' |%s' "$_usage_seg")"
 fi
 printf '%s' "$line"
