@@ -1943,13 +1943,14 @@ func TestStatusline_multiple_accounts_ignores_comments_blanks_and_malformed(t *t
 }
 
 // --- gt_usage_bar ---
-// Renders a percentage (0-100) as an 8-cell block bar: filled cells (█) for the
-// used share, light cells (░) for what's left. The cell count is rounded, so the
-// bar reads at a glance without a number. Out-of-range input clamps to empty/full.
+// Renders a percentage (0-100) as an 8-cell segmented pill bar: filled squares
+// (▰) for the used share, empty squares (▱) for what's left. The cell count is
+// rounded, so the bar reads at a glance without a number. Out-of-range input
+// clamps to empty/full.
 
 const (
-	barFull  = "█" // █
-	barEmpty = "░" // ░
+	barFull  = "▰" // ▰
+	barEmpty = "▱" // ▱
 )
 
 func bar(filled int) string {
@@ -2005,47 +2006,79 @@ func TestStatusline_usage_bar_clamps_above_hundred(t *testing.T) {
 	}
 }
 
-// --- gt_weekly_limit_label ---
-// The statusline JSON carries the subscriber's rolling limits under
-// rate_limits. gt_weekly_limit_label pulls the 7-day (weekly) window's
-// used_percentage out of that payload and renders it as an 8-cell bar so the
-// wrapper can show how much of the weekly quota is spent, next to the account.
+// --- gt_usage_color ---
+// Maps a usage percentage to the SGR color the bar wears, so the pill grades
+// from calm to alarming as the quota fills: green below half, amber through the
+// 70s, red once it crosses 80.
 
-func TestStatusline_weekly_limit_label_extracts_seven_day_percentage(t *testing.T) {
+func TestStatusline_usage_color_green_below_fifty(t *testing.T) {
+	for _, pct := range []string{"0", "10", "49"} {
+		out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_color", []string{pct}, nil)
+		assertExitCode(t, code, 0)
+		if strings.TrimSpace(out) != "01;32" {
+			t.Fatalf("%s%% should be green (01;32), got %q", pct, strings.TrimSpace(out))
+		}
+	}
+}
+
+func TestStatusline_usage_color_amber_fifty_to_seventy_nine(t *testing.T) {
+	for _, pct := range []string{"50", "65", "79"} {
+		out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_color", []string{pct}, nil)
+		assertExitCode(t, code, 0)
+		if strings.TrimSpace(out) != "01;33" {
+			t.Fatalf("%s%% should be amber (01;33), got %q", pct, strings.TrimSpace(out))
+		}
+	}
+}
+
+func TestStatusline_usage_color_red_from_eighty(t *testing.T) {
+	for _, pct := range []string{"80", "95", "100"} {
+		out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_color", []string{pct}, nil)
+		assertExitCode(t, code, 0)
+		if strings.TrimSpace(out) != "01;31" {
+			t.Fatalf("%s%% should be red (01;31), got %q", pct, strings.TrimSpace(out))
+		}
+	}
+}
+
+// --- gt_weekly_used_pct ---
+// Pulls the 7-day (weekly) window's used_percentage out of the statusline JSON
+// as a rounded whole number, or nothing when that window is absent. The wrapper
+// feeds it to gt_usage_bar (shape) and gt_usage_color (grade).
+
+func TestStatusline_weekly_used_pct_extracts_seven_day_percentage(t *testing.T) {
 	input := `{"rate_limits":{"five_hour":{"used_percentage":10,"resets_at":1},"seven_day":{"used_percentage":42,"resets_at":2}}}`
-	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_limit_label",
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_used_pct",
 		[]string{input}, nil)
 	assertExitCode(t, code, 0)
-	// 42% of 8 cells = 3.36 → 3 filled.
-	if strings.TrimSpace(out) != bar(3) {
-		t.Fatalf("expected %q, got %q", bar(3), strings.TrimSpace(out))
+	if strings.TrimSpace(out) != "42" {
+		t.Fatalf("expected %q, got %q", "42", strings.TrimSpace(out))
 	}
 }
 
-func TestStatusline_weekly_limit_label_handles_decimal_percentage(t *testing.T) {
+func TestStatusline_weekly_used_pct_rounds_decimal_percentage(t *testing.T) {
 	input := `{"rate_limits":{"seven_day":{"used_percentage":42.7,"resets_at":2}}}`
-	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_limit_label",
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_used_pct",
 		[]string{input}, nil)
 	assertExitCode(t, code, 0)
-	// 42.7% of 8 cells = 3.42 → 3 filled.
-	if strings.TrimSpace(out) != bar(3) {
-		t.Fatalf("expected %q, got %q", bar(3), strings.TrimSpace(out))
+	if strings.TrimSpace(out) != "43" {
+		t.Fatalf("expected %q, got %q", "43", strings.TrimSpace(out))
 	}
 }
 
-func TestStatusline_weekly_limit_label_zero_percentage(t *testing.T) {
+func TestStatusline_weekly_used_pct_zero_percentage(t *testing.T) {
 	input := `{"rate_limits":{"seven_day":{"used_percentage":0,"resets_at":2}}}`
-	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_limit_label",
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_used_pct",
 		[]string{input}, nil)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != bar(0) {
-		t.Fatalf("expected %q, got %q", bar(0), strings.TrimSpace(out))
+	if strings.TrimSpace(out) != "0" {
+		t.Fatalf("expected %q, got %q", "0", strings.TrimSpace(out))
 	}
 }
 
-func TestStatusline_weekly_limit_label_empty_when_rate_limits_absent(t *testing.T) {
+func TestStatusline_weekly_used_pct_empty_when_rate_limits_absent(t *testing.T) {
 	input := `{"model":{"display_name":"Fable 5"}}`
-	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_limit_label",
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_used_pct",
 		[]string{input}, nil)
 	assertExitCode(t, code, 0)
 	if strings.TrimSpace(out) != "" {
@@ -2054,11 +2087,11 @@ func TestStatusline_weekly_limit_label_empty_when_rate_limits_absent(t *testing.
 }
 
 // seven_day may be missing even when five_hour is present (the API omits a
-// window that has no data yet). The weekly label must not fall through to the
+// window that has no data yet). The weekly figure must not fall through to the
 // 5-hour number in that case.
-func TestStatusline_weekly_limit_label_empty_when_only_five_hour(t *testing.T) {
+func TestStatusline_weekly_used_pct_empty_when_only_five_hour(t *testing.T) {
 	input := `{"rate_limits":{"five_hour":{"used_percentage":88,"resets_at":1}}}`
-	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_limit_label",
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_weekly_used_pct",
 		[]string{input}, nil)
 	assertExitCode(t, code, 0)
 	if strings.TrimSpace(out) != "" {
@@ -2080,17 +2113,20 @@ func TestStatusline_wrapper_shows_weekly_limit_right_of_account(t *testing.T) {
 
 	root := projectRoot(t)
 	wrapperPath := filepath.Join(root, "templates", "statusline-wrapper.sh")
-	stdinData := `{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"rate_limits":{"seven_day":{"used_percentage":42,"resets_at":2}},"workspace":{"current_dir":"/tmp"}}`
+	// 90% weekly usage → a 7-of-8 filled pill bar, graded red.
+	stdinData := `{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"rate_limits":{"seven_day":{"used_percentage":90,"resets_at":2}},"workspace":{"current_dir":"/tmp"}}`
 	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, wrapperPath)
 
 	out, code := runBashSnippet(t, script, env)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "Default")
-	// 42% weekly usage → a 3-of-8 filled bar, prefixed "7d ".
-	weekly := "7d " + bar(3)
-	assertContains(t, out, weekly)
+	assertContains(t, out, "7d")
+	assertContains(t, out, bar(7))
+	// The bar carries its own severity color: red once usage crosses 80%. The
+	// account label is green (01;32), so the red code proves the bar is graded.
+	assertContains(t, out, "\x1b[01;31m")
 	// The weekly bar sits to the right of the account label.
-	if strings.Index(out, "Default") > strings.Index(out, weekly) {
+	if strings.Index(out, "Default") > strings.Index(out, bar(7)) {
 		t.Fatalf("weekly limit must render right of the account label, got %q", out)
 	}
 }

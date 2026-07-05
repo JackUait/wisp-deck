@@ -45,11 +45,17 @@ if type gt_claude_account_label &>/dev/null \
 fi
 
 # Weekly (7-day) usage of the active login, shown right of the account label so
-# the user sees how much of that account's rolling quota is spent. Only present
-# for subscribers after the first API response, so it stays empty otherwise.
-weekly_label=""
-if [ -n "$account_label" ] && type gt_weekly_limit_label &>/dev/null; then
-  weekly_label=$(gt_weekly_limit_label "$input")
+# the user sees how much of that account's rolling quota is spent. Rendered as a
+# color-graded pill bar (green→amber→red as it fills). Only present for
+# subscribers after the first API response, so it stays empty otherwise.
+weekly_bar=""
+weekly_color=""
+if [ -n "$account_label" ] && type gt_weekly_used_pct &>/dev/null; then
+  weekly_pct=$(gt_weekly_used_pct "$input")
+  if [ -n "$weekly_pct" ]; then
+    weekly_bar=$(gt_usage_bar "$weekly_pct")
+    weekly_color=$(gt_usage_color "$weekly_pct")
+  fi
 fi
 
 # Find parent Claude Code process and get total tree memory + CPU usage
@@ -123,12 +129,13 @@ fi
 # embedded directly: this runs under macOS bash 3.2 (--posix), whose printf has
 # no \u/\U escape support.
 if [ -n "$account_label" ]; then
-  # The weekly usage bar (7d ███░░░░░) rides along inside the account segment,
-  # just right of the label, so both read as one "which login / how much" unit.
-  account_seg="󰀄 $account_label"
-  if [ -n "$weekly_label" ]; then
-    account_seg="$account_seg  7d $weekly_label"
+  # The account glyph + label stay bold green; the weekly pill rides just to the
+  # right so both read as one "which login / how much" unit. The "7d" tag is
+  # dimmed so focus lands on the login name and the graded bar, and the bar wears
+  # its own severity color (green→amber→red) independent of the green label.
+  line="$line$(printf ' | \033[01;32m󰀄 %s\033[00m' "$account_label")"
+  if [ -n "$weekly_bar" ]; then
+    line="$line$(printf '  \033[02;37m7d\033[00m \033[%sm%s\033[00m' "$weekly_color" "$weekly_bar")"
   fi
-  line="$line$(printf ' | \033[01;32m%s\033[00m' "$account_seg")"
 fi
 printf '%s' "$line"

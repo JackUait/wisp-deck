@@ -194,17 +194,18 @@ gt_claude_account_label() {
   printf '%s\n' "$default_label"
 }
 
-# Render a percentage (0-100) as a fixed-width block bar: filled cells (█) for
-# the used share, light cells (░) for what remains — so usage reads at a glance
-# without a number. The fill count is rounded to the nearest cell and clamped to
-# 0..width, so out-of-range input never overflows. Width defaults to 8. The math
-# runs locale-independently (macOS awk would read a comma decimal as a truncated
-# integer otherwise). The cells are laid down with `printf FMT arg-per-cell`
-# rather than appending in a loop: macOS bash 3.2 corrupts a multibyte character
-# appended to a variable ("$out█") under a UTF-8 locale, but repeating it through
-# a printf format and joining via command substitution is byte-safe. Literal
-# UTF-8 blocks are embedded directly (bash 3.2 printf has no \u/\U escapes).
-# Usage: gt_usage_bar 42 [8]  =>  "███░░░░░"
+# Render a percentage (0-100) as a fixed-width segmented pill bar: filled squares
+# (▰) for the used share, empty squares (▱) for what remains — so usage reads at
+# a glance without a number. The fill count is rounded to the nearest cell and
+# clamped to 0..width, so out-of-range input never overflows. Width defaults to
+# 8. The math runs locale-independently (macOS awk would read a comma decimal as
+# a truncated integer otherwise). The cells are laid down with `printf FMT
+# arg-per-cell` rather than appending in a loop: macOS bash 3.2 corrupts a
+# multibyte character appended to a variable ("$out▰") under a UTF-8 locale, but
+# repeating it through a printf format and joining via command substitution is
+# byte-safe. Literal UTF-8 squares are embedded directly (bash 3.2 printf has no
+# \u/\U escapes).
+# Usage: gt_usage_bar 42 [8]  =>  "▰▰▰▱▱▱▱▱"
 gt_usage_bar() {
   local pct="$1" width="${2:-8}" filled empty full="" rest=""
   filled=$(printf '%s %s\n' "$pct" "$width" | LC_ALL=C awk '
@@ -216,27 +217,45 @@ gt_usage_bar() {
   # seq feeds one arg per cell so printf stamps the glyph exactly that many
   # times; unquoted on purpose (word splitting is what supplies the args).
   # shellcheck disable=SC2046
-  [ "$filled" -gt 0 ] && full=$(printf '█%.0s' $(seq 1 "$filled"))
+  [ "$filled" -gt 0 ] && full=$(printf '▰%.0s' $(seq 1 "$filled"))
   # shellcheck disable=SC2046
-  [ "$empty" -gt 0 ] && rest=$(printf '░%.0s' $(seq 1 "$empty"))
+  [ "$empty" -gt 0 ] && rest=$(printf '▱%.0s' $(seq 1 "$empty"))
   printf '%s%s\n' "$full" "$rest"
 }
 
-# Pull the subscriber's 7-day (weekly) usage out of the statusline JSON and
-# render it as a block bar — how much of the weekly limit is already spent.
-# Claude Code embeds this in the payload under rate_limits.seven_day for Pro/Max
-# logins, but only after the session's first API response, and it omits a window
-# that has no data yet. So an absent rate_limits, an absent seven_day, or a
-# seven_day carrying only five_hour's number must all yield nothing (the segment
-# hides) — hence the regex is anchored inside the seven_day object's own braces
-# ([^}]* never crosses into a sibling window).
-# Usage: gt_weekly_limit_label "$statusline_json"  =>  "███░░░░░"
-gt_weekly_limit_label() {
+# Map a usage percentage to the bold SGR color the bar wears, so the pill grades
+# from calm to alarming as the quota fills: green under half, amber through the
+# 70s, red once it crosses 80. Returns just the SGR parameters (no ESC), so the
+# caller wraps them as \033[<params>m. A non-numeric or empty pct reads as 0.
+# Usage: gt_usage_color 90  =>  "01;31"
+gt_usage_color() {
+  local pct="$1"
+  pct=$(printf '%s\n' "$pct" | LC_ALL=C awk '{ gsub(/,/, "."); printf "%d\n", $0 + 0 }')
+  if [ "$pct" -ge 80 ]; then
+    printf '01;31\n'   # red — near the weekly ceiling
+  elif [ "$pct" -ge 50 ]; then
+    printf '01;33\n'   # amber — past halfway
+  else
+    printf '01;32\n'   # green — plenty left
+  fi
+}
+
+# Pull the subscriber's 7-day (weekly) usage out of the statusline JSON as a
+# rounded whole-number percentage — the raw figure the wrapper turns into a bar
+# (gt_usage_bar) and a color (gt_usage_color). Claude Code embeds this under
+# rate_limits.seven_day for Pro/Max logins, but only after the session's first
+# API response, and it omits a window that has no data yet. So an absent
+# rate_limits, an absent seven_day, or a seven_day carrying only five_hour's
+# number must all yield nothing (the segment hides) — hence the regex is anchored
+# inside the seven_day object's own braces ([^}]* never crosses into a sibling
+# window). The round is locale-independent (a comma decimal would truncate).
+# Usage: gt_weekly_used_pct "$statusline_json"  =>  "42"
+gt_weekly_used_pct() {
   local input="$1" pct
   pct=$(printf '%s' "$input" \
     | sed -n 's/.*"seven_day":{[^}]*"used_percentage":\([0-9][0-9.]*\).*/\1/p')
   [ -n "$pct" ] || return 0
-  gt_usage_bar "$pct"
+  printf '%s\n' "$pct" | LC_ALL=C awk '{ gsub(/,/, "."); printf "%d\n", $0 + 0.5 }'
 }
 
 gt_stamp_claude_session() {
