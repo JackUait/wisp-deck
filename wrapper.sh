@@ -280,19 +280,6 @@ trap cleanup EXIT HUP TERM INT
 
 if [ "$RESTORE_MODE" -eq 1 ]; then
   export WISP_DECK_RESUME=1
-elif [ "$SELECTED_AI_TOOL" = "claude" ]; then
-  # Opening a project (picker or a direct path) continues its most-recent
-  # resumable conversation instead of starting fresh — the same "pick up where
-  # I left off" behavior reboot-restore gives, now on every open. Resolve the
-  # id from the shared transcript store (validated to have a model turn, so
-  # `--resume` can't drop the pane to a bare shell); build_ai_launch_cmd chains
-  # `--resume <id>` -> `-c` -> plain claude. No resumable conversation yet
-  # leaves RESUME unset, so a brand-new project still starts fresh.
-  _gt_open_sid="$(claude_pick_transcript "$PROJECT_DIR" "")"
-  if [ -n "$_gt_open_sid" ]; then
-    export WISP_DECK_RESUME=1
-    export WISP_DECK_RESUME_SESSION="$_gt_open_sid"
-  fi
 fi
 
 # Resolve active Claude config (settings file) and export for build_ai_launch_cmd.

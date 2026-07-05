@@ -39,12 +39,12 @@ func wrapperOpenMocks(t *testing.T, binDir string) {
 	}
 }
 
-// TestWrapperOpen_continues_last_conversation: opening a project directly (not a
-// restore) must continue that project's most-recent resumable conversation
-// instead of starting a fresh claude. The wrapper resolves the id from the
-// shared transcript store and launches `claude --resume <id>` (which chains to
-// `-c` then plain claude as a safety fallback).
-func TestWrapperOpen_continues_last_conversation(t *testing.T) {
+// TestWrapperOpen_starts_fresh_even_with_prior_conversation: starting a session
+// for a project (not a restore) must always start a FRESH claude, even when the
+// project has resumable conversations. Resuming a prior conversation on open
+// belongs to reboot-restore only — a plain open is a new session. So the launch
+// must carry neither `--resume` nor a `-c` continue flag.
+func TestWrapperOpen_starts_fresh_even_with_prior_conversation(t *testing.T) {
 	home := t.TempDir()
 	binDir := filepath.Join(home, ".local", "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
@@ -78,7 +78,9 @@ func TestWrapperOpen_continues_last_conversation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new-session was never invoked: %v", err)
 	}
-	assertContains(t, string(data), "claude --resume conv-99")
+	got := string(data)
+	assertNotContains(t, got, "--resume")
+	assertNotContains(t, got, "claude -c")
 }
 
 // TestWrapperOpen_fresh_when_no_resumable_conversation: with no resumable
