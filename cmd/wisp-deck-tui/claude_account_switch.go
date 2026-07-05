@@ -287,14 +287,17 @@ var accountSwitchDim = lipgloss.NewStyle().
 	Background(lipgloss.Color("#14141b"))
 
 func (m accountSwitchModel) View() string {
+	// Paint nothing until the popup's size arrives: bubbletea's first real frame
+	// is then already the full-screen composite, not a small partial card that
+	// would leave the popup's edge rows stale (mirrors the diff modal's !ready gate).
+	if m.width == 0 || m.height == 0 {
+		return ""
+	}
 	card := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("240")).
 		Padding(accountSwitchPadY, accountSwitchPadX).
 		Render(strings.Join(m.innerLines(), "\n"))
-	if m.width == 0 || m.height == 0 {
-		return card
-	}
 	firstRowY, cardLeft, cardWidth := accountSwitchLayout(m.width, m.height, len(m.rows), m.contentWidth())
 	cardTop := firstRowY - accountSwitchBorder - accountSwitchPadY - accountSwitchHeader
 	return m.composite(card, cardLeft, cardTop, cardWidth)

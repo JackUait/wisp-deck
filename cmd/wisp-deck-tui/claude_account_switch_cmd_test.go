@@ -194,6 +194,17 @@ func TestAccountSwitchModel_clickOutsideCardCancels(t *testing.T) {
 	}
 }
 
+func TestAccountSwitchModel_viewEmptyBeforeSize(t *testing.T) {
+	// Before the first WindowSizeMsg the switcher must paint nothing (like the diff
+	// modal's !ready guard), so bubbletea's first real frame is already full-screen
+	// rather than a small partial card that leaves edge rows stale in the popup.
+	rows := []switchRow{{Label: "Default"}, {Label: "Work", Dir: "work"}}
+	m := newAccountSwitchModel(rows, 0, "")
+	if v := m.View(); v != "" {
+		t.Errorf("expected empty view before size, got %q", v)
+	}
+}
+
 func TestAccountSwitchModel_viewHasRoundedCorners(t *testing.T) {
 	rows := []switchRow{{Label: "Default"}, {Label: "Work", Dir: "work"}}
 	m := newAccountSwitchModel(rows, 0, "")
