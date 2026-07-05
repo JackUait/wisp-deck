@@ -25,6 +25,7 @@ fi
 # 2+ accounts connected (the accounts list holds at least two entries), so users
 # with a single login get no extra clutter.
 account_label=""
+account_color=""
 _gt_accounts_root="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
 accounts_list="$_gt_accounts_root/claude-accounts.list"
 # The Default login can be renamed via the account menu; its custom label lives
@@ -42,6 +43,14 @@ if type gt_claude_account_label &>/dev/null \
     [ -n "$proxy_dir" ] && account_dir="$proxy_dir"
   fi
   account_label=$(gt_claude_account_label "$account_dir" "$accounts_list" "$default_label_file")
+  # Each account wears its own persistent color (assigned once, shared with the
+  # TUI menu via the colors file). Key by the stable dir basename; the implicit
+  # Default login has no config dir, so it keys under "default".
+  if type gt_account_color &>/dev/null; then
+    account_key="${account_dir##*/}"
+    [ -z "$account_key" ] && account_key="default"
+    account_color=$(gt_account_color "$_gt_accounts_root/claude-account-colors" "$account_key")
+  fi
 fi
 
 # Weekly (7-day) usage of the active login, shown right of the account label so
@@ -129,11 +138,18 @@ fi
 # embedded directly: this runs under macOS bash 3.2 (--posix), whose printf has
 # no \u/\U escape support.
 if [ -n "$account_label" ]; then
-  # The account glyph + label stay bold green; the weekly pill rides just to the
-  # right so both read as one "which login / how much" unit. The "7d" tag is
-  # dimmed so focus lands on the login name and the graded bar, and the bar wears
-  # its own severity color (green→amber→red) independent of the green label.
-  line="$line$(printf ' | \033[01;32m󰀄 %s\033[00m' "$account_label")"
+  # The account glyph + label wear this account's own persistent color (each
+  # login gets a distinct one, shared with the TUI menu) so a glance tells you
+  # which login this tab talks to. Falls back to bold green if no color resolved.
+  # The weekly pill rides just to the right so both read as one "which login /
+  # how much" unit; the "7d" tag is dimmed so focus lands on the login name and
+  # the graded bar, and the bar keeps its own severity color (green→amber→red),
+  # a usage signal independent of the account's identity color.
+  if [ -n "$account_color" ]; then
+    line="$line$(printf ' | \033[01;38;5;%sm󰀄 %s\033[00m' "$account_color" "$account_label")"
+  else
+    line="$line$(printf ' | \033[01;32m󰀄 %s\033[00m' "$account_label")"
+  fi
   if [ -n "$weekly_bar" ]; then
     line="$line$(printf '  \033[02;37m7d\033[00m \033[%sm%s\033[00m' "$weekly_color" "$weekly_bar")"
   fi

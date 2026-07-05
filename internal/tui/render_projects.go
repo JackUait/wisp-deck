@@ -153,15 +153,20 @@ func (m *MainMenuModel) accountRowCount() int {
 // rows below, so the chevrons line up vertically.
 func (m *MainMenuModel) renderAccountRow(leftBorder, rightBorder string) string {
 	label := m.CurrentClaudeAccountLabel()
-	var valColor lipgloss.Color
-	if m.CurrentClaudeAccountDir() != "" {
-		valColor = lipgloss.Color("114") // green when a non-Default account is active
+	// The active login's name wears its own persistent account color (shared with
+	// the statusline and the login panel). Without a color assigned we fall back
+	// to the prior green/Default-primary convention. Focus/hover bolds the name
+	// but keeps its identity color so you still see which login this is.
+	var nameStyle lipgloss.Style
+	if c, ok := m.accountColor(m.CurrentClaudeAccountDir()); ok {
+		nameStyle = lipgloss.NewStyle().Foreground(c)
+	} else if m.CurrentClaudeAccountDir() != "" {
+		nameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green for non-Default
 	} else {
-		valColor = m.theme.Primary // orange for Default, mirroring the AGENT value
+		nameStyle = lipgloss.NewStyle().Foreground(m.theme.Primary) // orange for Default
 	}
-	nameStyle := lipgloss.NewStyle().Foreground(valColor)
 	if m.focus == FocusAccount || m.isHovered(regionAccount) {
-		nameStyle = lipgloss.NewStyle().Foreground(m.theme.Bright).Bold(true)
+		nameStyle = nameStyle.Bold(true)
 	}
 
 	acctLabel := m.settingsCaption(iconLogin, m.focus == FocusAccount || m.isHovered(regionAccount))

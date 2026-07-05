@@ -309,23 +309,41 @@ func (m *MainMenuModel) renderAccountMenuPanel() string {
 	// marker; a hovered-but-not-cursor row shows a faint ▌ so the pointer target
 	// reads as distinct, and it clears the moment the pointer leaves the row.
 	loginRow := func(cursorOn, hoverOn, active bool, label, dirName string) string {
+		// Each login's label wears its own persistent account color (shared with
+		// the statusline). The keyboard cursor still bolds its row; without a color
+		// assigned (no colors file) we fall back to the prior primary/green scheme.
+		accColor, hasColor := m.accountColor(dirName)
+		labelStyle := lipgloss.NewStyle()
+		if hasColor {
+			labelStyle = labelStyle.Foreground(accColor)
+		}
 		var prefix, labelRendered string
 		switch {
 		case cursorOn:
 			prefix = " " + primaryBoldStyle.Render("▌")
-			labelRendered = primaryBoldStyle.Render(label)
+			if hasColor {
+				labelRendered = labelStyle.Bold(true).Render(label)
+			} else {
+				labelRendered = primaryBoldStyle.Render(label)
+			}
 		case hoverOn:
 			prefix = " " + faintStyle.Render("▌")
-			if active {
+			switch {
+			case hasColor:
+				labelRendered = labelStyle.Render(label)
+			case active:
 				labelRendered = greenStyle.Render(label)
-			} else {
+			default:
 				labelRendered = label
 			}
 		default:
 			prefix = "    "
-			if active {
+			switch {
+			case hasColor:
+				labelRendered = labelStyle.Render(label)
+			case active:
 				labelRendered = greenStyle.Render(label)
-			} else {
+			default:
 				labelRendered = label
 			}
 		}

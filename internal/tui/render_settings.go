@@ -209,13 +209,17 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	// switches, ⏎ adds one). Always shown as the account-management entry point,
 	// even when the top LOGIN switcher row is hidden (single login).
 	loginLabel := m.CurrentClaudeAccountLabel()
-	var loginColor lipgloss.Color
-	if m.CurrentClaudeAccountDir() != "" {
-		loginColor = lipgloss.Color("114") // green when a non-Default login is active
+	// The active login's value wears its own persistent account color (shared with
+	// the statusline and the login panel), falling back to the prior green/gray
+	// convention when no color is assigned.
+	var loginStyle lipgloss.Style
+	if c, ok := m.accountColor(m.CurrentClaudeAccountDir()); ok {
+		loginStyle = lipgloss.NewStyle().Foreground(c)
+	} else if m.CurrentClaudeAccountDir() != "" {
+		loginStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green for non-Default
 	} else {
-		loginColor = lipgloss.Color("241") // gray for Default
+		loginStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241")) // gray for Default
 	}
-	loginStyle := lipgloss.NewStyle().Foreground(loginColor)
 	lines = append(lines, m.renderSettingsItem(m.loginRowIndex(), "Account", "["+loginLabel+"]", loginStyle, primaryBoldStyle, leftBorder, rightBorder))
 
 	// Auto-switch accounts item: toggles the automatic account-rotation proxy

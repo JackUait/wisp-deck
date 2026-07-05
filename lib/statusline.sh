@@ -159,6 +159,52 @@ gt_proxy_active_dir() {
   printf '%s\n' "$dir"
 }
 
+# The 256-color indices a Claude account's identity can wear. Kept in lock-step
+# with claudeaccount.Palette in Go (internal/claudeaccount/colors.go) so the
+# statusline and the TUI menu paint an account the same color. A spread of
+# distinct, readable-on-dark hues.
+GT_ACCOUNT_PALETTE="39 208 170 78 203 141 43 220 205 75 156 214"
+
+# Return the persisted 256-color index for a Claude account dir, assigning a new
+# one and appending it to the colors file if the dir has none yet. The new color
+# is picked at random ($RANDOM) from palette entries not already used by another
+# account, so distinct accounts stay distinct ("non-repeating") until the palette
+# is exhausted, then it falls back to a random palette member. The empty dir (the
+# implicit Default login) is keyed under "default", matching Go. The file is the
+# source of truth — once assigned the color is stable and shared with the menu.
+# Usage: gt_account_color <colors_file> <dir>  =>  "141"
+gt_account_color() {
+  local file="$1" dir="$2" k v
+  [ -z "$dir" ] && dir="default"
+  # Already assigned? Return the first match (first writer wins on any race).
+  if [ -f "$file" ]; then
+    while IFS=: read -r k v; do
+      [ "$k" = "$dir" ] && { printf '%s\n' "$v"; return 0; }
+    done < "$file"
+  fi
+  # Collect indices already handed out, then split the palette into the full set
+  # and the entries still free. Build both arrays via += in the loop so the
+  # space-separated palette is split deliberately without an unquoted assignment.
+  local used=" " pal=() avail=() n
+  if [ -f "$file" ]; then
+    while IFS=: read -r k v; do
+      [ -n "$v" ] && used="$used$v "
+    done < "$file"
+  fi
+  for n in $GT_ACCOUNT_PALETTE; do
+    pal+=("$n")
+    case "$used" in *" $n "*) ;; *) avail+=("$n") ;; esac
+  done
+  # Prefer an unused color (keeps accounts distinct); once the palette is
+  # exhausted, reuse a random one rather than fail.
+  local pool=("${avail[@]}")
+  [ "${#pool[@]}" -eq 0 ] && pool=("${pal[@]}")
+  local pick="${pool[$((RANDOM % ${#pool[@]}))]}"
+  mkdir -p "$(dirname "$file")" 2>/dev/null
+  printf '%s:%s\n' "$dir" "$pick" >> "$file"
+  printf '%s\n' "$pick"
+}
+
 # Map an account's isolated CLAUDE_CONFIG_DIR to its display label, so the
 # statusline can show which native Claude account this tab is using. The
 # statusline runs as a child of `claude`, which wrapper.sh launches with the

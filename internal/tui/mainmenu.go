@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -318,6 +319,7 @@ type MainMenuModel struct {
 	claudeAccountsDir      string          // directory holding the per-account config dirs
 	defaultAccountLabel    string          // display label for the implicit Default login
 	claudeDefaultLabelFile string          // file persisting the Default login's label
+	accountColors          map[string]int  // dir → 256-color index (Default under "default")
 
 	// Automatic account switching (rotation proxy) toggle. Stored in its own
 	// on/off flag file, shared with wrapper.sh and lib/auto-switch.sh.
@@ -1091,12 +1093,65 @@ func (m *MainMenuModel) persistClaudeConfig() {
 func (m *MainMenuModel) SetClaudeAccountFile(path string) { m.claudeAccountFile = path }
 
 // SetClaudeAccounts stores the managed account list (excluding the implicit Default).
-func (m *MainMenuModel) SetClaudeAccounts(accounts []ClaudeAccount) { m.claudeAccounts = accounts }
+func (m *MainMenuModel) SetClaudeAccounts(accounts []ClaudeAccount) {
+	m.claudeAccounts = accounts
+	m.ensureAccountColors()
+}
 
 // SetClaudeAccountPaths records the list file and config-dir root for mutations.
 func (m *MainMenuModel) SetClaudeAccountPaths(listFile, dir string) {
 	m.claudeAccountsList = listFile
 	m.claudeAccountsDir = dir
+	m.ensureAccountColors()
+}
+
+// accountColorsFile is the sibling of the accounts list that persists each
+// login's color, keyed by dir. Empty when no list path is configured (so tests
+// and headless runs without account files simply skip coloring).
+func (m *MainMenuModel) accountColorsFile() string {
+	if m.claudeAccountsList == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(m.claudeAccountsList), "claude-account-colors")
+}
+
+// ensureAccountColors assigns (and persists) a distinct color for the implicit
+// Default login and every managed account that lacks one, then caches the whole
+// map. It is idempotent and safe to call whenever the account set or paths
+// change. The statusline assigns colors the same way into the same file, so an
+// account keeps one identity color across both surfaces.
+func (m *MainMenuModel) ensureAccountColors() {
+	file := m.accountColorsFile()
+	if file == "" {
+		return
+	}
+	if m.accountColors == nil {
+		m.accountColors = map[string]int{}
+	}
+	keys := []string{"default"}
+	for _, a := range m.claudeAccounts {
+		keys = append(keys, a.Dir)
+	}
+	for _, k := range keys {
+		if _, ok := m.accountColors[k]; ok {
+			continue
+		}
+		m.accountColors[k] = claudeaccount.ColorFor(file, k)
+	}
+}
+
+// accountColor returns the lipgloss color for an account dir (Default keys under
+// "default"), and whether one is assigned. Callers fall back to the prior
+// green/gray convention when false, so surfaces stay styled even without a
+// colors file.
+func (m *MainMenuModel) accountColor(dir string) (lipgloss.Color, bool) {
+	if dir == "" {
+		dir = "default"
+	}
+	if c, ok := m.accountColors[dir]; ok {
+		return lipgloss.Color(strconv.Itoa(c)), true
+	}
+	return "", false
 }
 
 // SetActiveClaudeAccount selects the entry matching dir ("" or no match = Default).

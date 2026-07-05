@@ -1942,6 +1942,83 @@ func TestStatusline_multiple_accounts_ignores_comments_blanks_and_malformed(t *t
 	assertExitCode(t, code, 0)
 }
 
+// --- gt_account_color ---
+// Assigns each Claude account a distinct 256-color index (random, non-repeating)
+// keyed by its dir, persisted in a colors file so the statusline and the TUI menu
+// agree. Must stay in lock-step with claudeaccount.Palette / ColorFor in Go.
+
+// accountPalette mirrors GT_ACCOUNT_PALETTE in lib/statusline.sh (and
+// claudeaccount.Palette in Go). A test failure here means the three drifted.
+var accountPalette = map[string]bool{
+	"39": true, "208": true, "170": true, "78": true, "203": true, "141": true,
+	"43": true, "220": true, "205": true, "75": true, "156": true, "214": true,
+}
+
+func TestStatusline_account_color_assigns_a_palette_member(t *testing.T) {
+	dir := t.TempDir()
+	colors := filepath.Join(dir, "claude-account-colors")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_account_color",
+		[]string{colors, "work"}, nil)
+	assertExitCode(t, code, 0)
+	if !accountPalette[strings.TrimSpace(out)] {
+		t.Fatalf("assigned color %q is not a palette member", strings.TrimSpace(out))
+	}
+}
+
+func TestStatusline_account_color_is_stable_across_calls(t *testing.T) {
+	dir := t.TempDir()
+	colors := filepath.Join(dir, "claude-account-colors")
+	first, code := runBashFunc(t, "lib/statusline.sh", "gt_account_color",
+		[]string{colors, "work"}, nil)
+	assertExitCode(t, code, 0)
+	again, code := runBashFunc(t, "lib/statusline.sh", "gt_account_color",
+		[]string{colors, "work"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(first) != strings.TrimSpace(again) {
+		t.Fatalf("color must be stable: first %q, again %q", strings.TrimSpace(first), strings.TrimSpace(again))
+	}
+}
+
+// Two accounts must never share a color while the palette still has room.
+func TestStatusline_account_color_distinct_accounts_distinct_colors(t *testing.T) {
+	dir := t.TempDir()
+	colors := filepath.Join(dir, "claude-account-colors")
+	work, _ := runBashFunc(t, "lib/statusline.sh", "gt_account_color", []string{colors, "work"}, nil)
+	personal, _ := runBashFunc(t, "lib/statusline.sh", "gt_account_color", []string{colors, "personal"}, nil)
+	if strings.TrimSpace(work) == strings.TrimSpace(personal) {
+		t.Fatalf("distinct accounts got the same color %q", strings.TrimSpace(work))
+	}
+}
+
+// An empty dir is the implicit Default login; it keys under "default" so bash and
+// Go land on the same slot.
+func TestStatusline_account_color_empty_dir_keys_as_default(t *testing.T) {
+	dir := t.TempDir()
+	colors := filepath.Join(dir, "claude-account-colors")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_account_color",
+		[]string{colors, ""}, nil)
+	assertExitCode(t, code, 0)
+	data, err := os.ReadFile(colors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "default:"+strings.TrimSpace(out)) {
+		t.Fatalf("empty dir should persist under \"default\", file:\n%s", string(data))
+	}
+}
+
+func TestStatusline_account_color_reads_existing_assignment(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "claude-account-colors", "work:141\n")
+	colors := filepath.Join(dir, "claude-account-colors")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_account_color",
+		[]string{colors, "work"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "141" {
+		t.Fatalf("should read persisted 141, got %q", strings.TrimSpace(out))
+	}
+}
+
 // --- gt_usage_bar ---
 // Renders a percentage (0-100) as an 8-cell segmented pill bar: filled squares
 // (▰) for the used share, empty squares (▱) for what's left. The cell count is
@@ -2123,11 +2200,50 @@ func TestStatusline_wrapper_shows_weekly_limit_right_of_account(t *testing.T) {
 	assertContains(t, out, "7d")
 	assertContains(t, out, bar(7))
 	// The bar carries its own severity color: red once usage crosses 80%. The
-	// account label is green (01;32), so the red code proves the bar is graded.
+	// account label wears a 256-color palette slot (\x1b[01;38;5;Nm), so the bare
+	// red code \x1b[01;31m can only be the graded bar.
 	assertContains(t, out, "\x1b[01;31m")
 	// The weekly bar sits to the right of the account label.
 	if strings.Index(out, "Default") > strings.Index(out, bar(7)) {
 		t.Fatalf("weekly limit must render right of the account label, got %q", out)
+	}
+}
+
+// Each account's glyph + label render in that account's own persistent palette
+// color, and that color is written to the shared colors file so the TUI menu
+// paints the same login identically.
+func TestStatusline_wrapper_colors_account_label_with_palette_color(t *testing.T) {
+	env := setupWrapperTest(t)
+	env = append(env, "CLAUDE_CONFIG_DIR=")
+	fakeHome := wrapperHome(env)
+	cfg := filepath.Join(fakeHome, ".config", "wisp-deck")
+	writeTempFile(t, cfg, "claude-accounts.list", "Personal:personal\n")
+
+	root := projectRoot(t)
+	wrapperPath := filepath.Join(root, "templates", "statusline-wrapper.sh")
+	stdinData := `{"model":{"id":"x","display_name":"Fable 5"},"workspace":{"current_dir":"/tmp"}}`
+	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, wrapperPath)
+
+	out, code := runBashSnippet(t, script, env)
+	assertExitCode(t, code, 0)
+	// The account glyph (󰀄, U+F0004) must be painted in one of the palette slots.
+	glyph := "\U000f0004"
+	matched := ""
+	for p := range accountPalette {
+		if strings.Contains(out, "\x1b[01;38;5;"+p+"m"+glyph) {
+			matched = p
+		}
+	}
+	if matched == "" {
+		t.Fatalf("account label not painted in a palette color, got %q", out)
+	}
+	// The Default login's color is persisted under "default" for the menu to reuse.
+	data, err := os.ReadFile(filepath.Join(cfg, "claude-account-colors"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "default:"+matched) {
+		t.Fatalf("Default color %s not persisted, file:\n%s", matched, string(data))
 	}
 }
 
