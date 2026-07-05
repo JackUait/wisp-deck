@@ -13,7 +13,12 @@
 # relaunch behind it) and their deps, sourced relative to THIS file so the pane's
 # fresh shell — which sources only this script — has them. Guarded so a bare
 # unit-test source missing a sibling still loads the ledger.
-_cv_lib_dir="${BASH_SOURCE[0]%/*}"
+#
+# The pane runs this under the user's $SHELL, which is ZSH — where BASH_SOURCE is
+# empty, so it can't self-locate. wrapper.sh exports WISP_DECK_LIB_DIR (the lib
+# path) into the pane env for exactly this; fall back to BASH_SOURCE when sourced
+# from bash (wrapper's own load, the test harness).
+_cv_lib_dir="${WISP_DECK_LIB_DIR:-${BASH_SOURCE[0]%/*}}"
 for _cv_dep in statusline claude-accounts tmux-session claude-shared-settings account-switch; do
   # shellcheck source=/dev/null
   [ -f "$_cv_lib_dir/$_cv_dep.sh" ] && source "$_cv_lib_dir/$_cv_dep.sh"

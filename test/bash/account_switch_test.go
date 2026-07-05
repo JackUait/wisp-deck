@@ -2,10 +2,37 @@ package bash_test
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// TestCompactViewLoadsAccountDeps_underZsh reproduces the pane's real runtime: the
+// compact-view ledger is launched via `zsh -c 'source compact-view.sh && ...'`
+// (the user's $SHELL), where BASH_SOURCE is empty. compact-view.sh must still load
+// its account-switch deps so the switcher pill can render. wrapper.sh exports
+// WISP_DECK_LIB_DIR for the pane; the script uses it to locate its siblings.
+func TestCompactViewLoadsAccountDeps_underZsh(t *testing.T) {
+	if _, err := exec.LookPath("zsh"); err != nil {
+		t.Skip("zsh not available")
+	}
+	root := projectRoot(t)
+	lib := filepath.Join(root, "lib")
+	script := fmt.Sprintf(
+		`source %q; type account_pill_enabled >/dev/null 2>&1 && echo DEFINED || echo MISSING`,
+		filepath.Join(lib, "compact-view.sh"))
+	cmd := exec.Command("zsh", "-c", script)
+	cmd.Env = append(os.Environ(), "WISP_DECK_LIB_DIR="+lib)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("zsh source failed: %v: %s", err, out)
+	}
+	if !strings.Contains(string(out), "DEFINED") {
+		t.Fatalf("compact-view.sh did not load account-switch deps under zsh (pill helpers missing): %s", out)
+	}
+}
 
 // sourceAccountSwitch builds a bash snippet that sources account-switch.sh and
 // its sibling deps from the repo's lib/ before running body. account-switch.sh
