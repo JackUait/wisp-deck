@@ -32,11 +32,27 @@ import (
 
 const ghosttyBinaryPath = "/Applications/Ghostty.app/Contents/MacOS/ghostty"
 
-// requireRealGhostty skips the test when Ghostty isn't installed (e.g. CI
-// without the app), rather than failing — this test verifies against the
-// real binary and has no meaningful substitute.
+// realLaunchOptedIn reports whether the developer explicitly asked for the
+// real-launch tests by setting WISP_DECK_REAL_LAUNCH=1. Exactly "1" — the
+// launches are a deliberate pre-release action, not something a stray
+// truthy-looking value should trigger.
+func realLaunchOptedIn() bool {
+	return os.Getenv("WISP_DECK_REAL_LAUNCH") == "1"
+}
+
+// requireRealGhostty skips the test unless it was explicitly opted into with
+// WISP_DECK_REAL_LAUNCH=1 AND Ghostty is installed. The opt-in gate exists
+// because each real launch starts a separate visible Ghostty instance whose
+// window flashes open and closed on the developer's screen — running that as
+// a side effect of every `./run-tests.sh` invocation is the "phantom Ghostty
+// opening and closing tabs" incident. Run before releases with:
+//
+//	WISP_DECK_REAL_LAUNCH=1 go test ./test/bash/... -run TestGhosttyRealLaunch -v
 func requireRealGhostty(t *testing.T) {
 	t.Helper()
+	if !realLaunchOptedIn() {
+		t.Skip("real-launch verification is opt-in — set WISP_DECK_REAL_LAUNCH=1 to run (opens visible Ghostty windows)")
+	}
 	if _, err := os.Stat(ghosttyBinaryPath); err != nil {
 		t.Skip("Ghostty.app not installed — skipping real-launch verification")
 	}
@@ -187,5 +203,29 @@ func TestGhosttyRealLaunch_application_support_path_is_not_read_by_default(t *te
 
 	if launchRealGhosttyAndAwaitMarker(t, sandboxHome, markerPath, 5*time.Second) {
 		t.Fatal("wrapper launched from Application Support config alone — Ghostty now reads that path; update terminal_get_config_path and its repair logic accordingly")
+	}
+}
+
+// The real-launch tests visibly hijack the developer's machine: each one
+// starts a real, separate Ghostty instance whose window flashes open and
+// closed — the "phantom Ghostty with tabs opening and closing" during normal
+// `./run-tests.sh` runs. They must therefore be explicitly opted into via
+// WISP_DECK_REAL_LAUNCH=1 (set by a human before a release), never run as a
+// side effect of the default suite.
+func TestRealLaunchOptedIn_requires_explicit_env_flag(t *testing.T) {
+	cases := []struct {
+		value string
+		want  bool
+	}{
+		{"", false},
+		{"0", false},
+		{"true", false},
+		{"1", true},
+	}
+	for _, c := range cases {
+		t.Setenv("WISP_DECK_REAL_LAUNCH", c.value)
+		if got := realLaunchOptedIn(); got != c.want {
+			t.Errorf("WISP_DECK_REAL_LAUNCH=%q: realLaunchOptedIn() = %v, want %v", c.value, got, c.want)
+		}
 	}
 }
