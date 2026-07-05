@@ -1370,6 +1370,74 @@ func (m *MainMenuModel) loginRowIndex() int { return m.settingsItemCount() - 2 }
 // autoSwitchRowIndex is the index of the Auto-switch toggle (last row).
 func (m *MainMenuModel) autoSwitchRowIndex() int { return m.settingsItemCount() - 1 }
 
+// settingsSectionTitle labels the section headers the settings items are grouped
+// under, in visual (top-to-bottom) order.
+type settingsSection struct {
+	title   string
+	indices []int
+}
+
+// settingsSections returns the settings items grouped under section headers, in
+// visual order. Item indices are the stable handler indices (see settingsEnter),
+// which do NOT match visual order: Idle sound (2) and Projects folder (5) move
+// out of the Appearance block into their own sections.
+func (m *MainMenuModel) settingsSections() []settingsSection {
+	appearance := []int{0, 1, 3, 4, 6} // Mascot, Tab title, Side panel, Theme, Usage bars
+	account := []int{}
+	if m.ClaudeConfigVisible() {
+		account = append(account, 7) // Subscription
+	}
+	account = append(account, m.loginRowIndex(), m.autoSwitchRowIndex())
+	return []settingsSection{
+		{title: "Appearance", indices: appearance},
+		{title: "Notifications", indices: []int{2}}, // Idle sound
+		{title: "Projects", indices: []int{5}},      // Projects folder
+		{title: "Account", indices: account},
+	}
+}
+
+// settingsItemOrder returns the settings item indices in visual (top-to-bottom)
+// order — the flattened section grouping used for keyboard/mouse navigation.
+func (m *MainMenuModel) settingsItemOrder() []int {
+	var order []int
+	for _, s := range m.settingsSections() {
+		order = append(order, s.indices...)
+	}
+	return order
+}
+
+// settingsVisualPos returns the position of a settings item index within the
+// visual order, or -1 when not present.
+func (m *MainMenuModel) settingsVisualPos(idx int) int {
+	for i, v := range m.settingsItemOrder() {
+		if v == idx {
+			return i
+		}
+	}
+	return -1
+}
+
+// settingsStep moves the settings selection by delta visual rows. wrap enables
+// wrap-around (vim j/k); without it the selection clamps at the ends.
+func (m *MainMenuModel) settingsStep(delta int, wrap bool) {
+	order := m.settingsItemOrder()
+	if len(order) == 0 {
+		return
+	}
+	pos := m.settingsVisualPos(m.settingsSelected)
+	if pos < 0 {
+		m.settingsSelected = order[0]
+		return
+	}
+	next := pos + delta
+	if wrap {
+		next = ((next % len(order)) + len(order)) % len(order)
+	} else if next < 0 || next >= len(order) {
+		return
+	}
+	m.settingsSelected = order[next]
+}
+
 // SetAutoSwitchFile records the on/off flag file and loads its current value.
 func (m *MainMenuModel) SetAutoSwitchFile(path string) {
 	m.autoSwitchFile = path
@@ -2198,10 +2266,10 @@ func (m *MainMenuModel) focusUp() tea.Cmd {
 	case FocusBody:
 		switch m.activeTab {
 		case TabSettings:
-			if m.settingsSelected <= 0 {
+			if m.settingsVisualPos(m.settingsSelected) <= 0 {
 				m.focus = FocusTabs
 			} else {
-				m.settingsSelected--
+				m.settingsStep(-1, false)
 			}
 		case TabStats:
 			if m.statsOffset <= 0 {
@@ -2241,9 +2309,7 @@ func (m *MainMenuModel) focusDown() tea.Cmd {
 	case FocusBody:
 		switch m.activeTab {
 		case TabSettings:
-			if m.settingsSelected < m.settingsItemCount()-1 {
-				m.settingsSelected++
-			}
+			m.settingsStep(1, false)
 		case TabStats:
 			m.statsScrollDown()
 		default: // projects
@@ -2493,7 +2559,7 @@ func (m *MainMenuModel) handleRune(r rune) (tea.Model, tea.Cmd) {
 func (m *MainMenuModel) runeMoveDown() {
 	switch m.activeTab {
 	case TabSettings:
-		m.settingsSelected = (m.settingsSelected + 1) % m.settingsItemCount()
+		m.settingsStep(1, true)
 	case TabStats:
 		m.statsScrollDown()
 	default:
@@ -2505,8 +2571,7 @@ func (m *MainMenuModel) runeMoveDown() {
 func (m *MainMenuModel) runeMoveUp() {
 	switch m.activeTab {
 	case TabSettings:
-		n := m.settingsItemCount()
-		m.settingsSelected = (m.settingsSelected - 1 + n) % n
+		m.settingsStep(-1, true)
 	case TabStats:
 		if m.statsOffset > 0 {
 			m.statsOffset--

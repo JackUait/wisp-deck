@@ -97,10 +97,16 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	emptyRow := leftBorder + strings.Repeat(" ", menuContentWidth) + rightBorder
 	lines = append(lines, emptyRow)
 
+	// Each settings row is rendered against its stable handler index, then emitted
+	// grouped under section headers (see settingsSections). itemLines holds the
+	// rendered line(s) for each index; a couple of rows (the projects-folder input)
+	// span more than one line, so the value is a slice.
+	itemLines := map[int][]string{}
+
 	// Ghost Display item
 	ghostLabel := "Mascot"
 	ghostState := "[" + ghostDisplayLabel(m.ghostDisplay) + "]"
-	lines = append(lines, m.renderSettingsItem(0, ghostLabel, ghostState, stateStyle, primaryBoldStyle, leftBorder, rightBorder))
+	itemLines[0] = []string{m.renderSettingsItem(0, ghostLabel, ghostState, stateStyle, primaryBoldStyle, leftBorder, rightBorder)}
 
 	// Tab Title item
 	var tabTitleColor lipgloss.Color
@@ -115,7 +121,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	tabTitleStyle := lipgloss.NewStyle().Foreground(tabTitleColor)
 	tabLabel := "Tab title"
 	tabState := "[" + tabTitleLabel(m.tabTitle) + "]"
-	lines = append(lines, m.renderSettingsItem(1, tabLabel, tabState, tabTitleStyle, primaryBoldStyle, leftBorder, rightBorder))
+	itemLines[1] = []string{m.renderSettingsItem(1, tabLabel, tabState, tabTitleStyle, primaryBoldStyle, leftBorder, rightBorder)}
 
 	// Sound Notifications item
 	var soundColor lipgloss.Color
@@ -130,7 +136,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	if m.soundName != "" {
 		soundState = "[" + m.soundName + "]"
 	}
-	lines = append(lines, m.renderSettingsItem(2, soundLabel, soundState, soundStyle, primaryBoldStyle, leftBorder, rightBorder))
+	itemLines[2] = []string{m.renderSettingsItem(2, soundLabel, soundState, soundStyle, primaryBoldStyle, leftBorder, rightBorder)}
 
 	// Panel item
 	var panelColor lipgloss.Color
@@ -142,13 +148,13 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	panelStyle := lipgloss.NewStyle().Foreground(panelColor)
 	panelLabel := "Side panel"
 	panelState := "[" + panelModeLabel(m.panelMode) + "]"
-	lines = append(lines, m.renderSettingsItem(3, panelLabel, panelState, panelStyle, primaryBoldStyle, leftBorder, rightBorder))
+	itemLines[3] = []string{m.renderSettingsItem(3, panelLabel, panelState, panelStyle, primaryBoldStyle, leftBorder, rightBorder)}
 
 	// Theme item — the state swatch is painted in the live (resolved) accent so
 	// the row previews the chosen palette's color.
 	themeStyle := lipgloss.NewStyle().Foreground(m.theme.Primary)
 	themeState := "[" + themeLabel(m.themePref) + "]"
-	lines = append(lines, m.renderSettingsItem(4, "Theme", themeState, themeStyle, primaryBoldStyle, leftBorder, rightBorder))
+	itemLines[4] = []string{m.renderSettingsItem(4, "Theme", themeState, themeStyle, primaryBoldStyle, leftBorder, rightBorder)}
 
 	// Default projects dir item
 	var rootState string
@@ -171,7 +177,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 			inputPadding = 0
 		}
 		inputRow := leftBorder + " " + inputView + strings.Repeat(" ", inputPadding) + rightBorder
-		lines = append(lines, inputRow)
+		rows := []string{inputRow}
 		if m.settingsInputErr != nil {
 			errText := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(m.settingsInputErr.Error())
 			errPadding := menuContentWidth - lipgloss.Width(errText) - 1
@@ -179,10 +185,11 @@ func (m *MainMenuModel) renderSettingsBox() string {
 				errPadding = 0
 			}
 			errRow := leftBorder + " " + errText + strings.Repeat(" ", errPadding) + rightBorder
-			lines = append(lines, errRow)
+			rows = append(rows, errRow)
 		}
+		itemLines[5] = rows
 	} else {
-		lines = append(lines, m.renderSettingsItem(5, "Projects folder", rootState, rootStyle, primaryBoldStyle, leftBorder, rightBorder))
+		itemLines[5] = []string{m.renderSettingsItem(5, "Projects folder", rootState, rootStyle, primaryBoldStyle, leftBorder, rightBorder)}
 	}
 
 	// Usage bars item — which statusline usage pills show (7d / 5h / both / none).
@@ -195,7 +202,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	}
 	usageStyle := lipgloss.NewStyle().Foreground(usageColor)
 	usageState := "[" + usageBarsLabel(m.usageBars) + "]"
-	lines = append(lines, m.renderSettingsItem(6, "Usage bars", usageState, usageStyle, primaryBoldStyle, leftBorder, rightBorder))
+	itemLines[6] = []string{m.renderSettingsItem(6, "Usage bars", usageState, usageStyle, primaryBoldStyle, leftBorder, rightBorder)}
 
 	// Claude Config item (only for the claude tool)
 	if m.ClaudeConfigVisible() {
@@ -214,7 +221,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 			dimIndicator := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(" " + indicator)
 			state = state + dimIndicator
 		}
-		lines = append(lines, m.renderSettingsItem(7, "Subscription", state, cfgStyle, primaryBoldStyle, leftBorder, rightBorder))
+		itemLines[7] = []string{m.renderSettingsItem(7, "Subscription", state, cfgStyle, primaryBoldStyle, leftBorder, rightBorder)}
 	}
 
 	// Login item: the active native Claude account (manage logins here — ←→
@@ -232,7 +239,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	} else {
 		loginStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241")) // gray for Default
 	}
-	lines = append(lines, m.renderSettingsItem(m.loginRowIndex(), "Account", "["+loginLabel+"]", loginStyle, primaryBoldStyle, leftBorder, rightBorder))
+	itemLines[m.loginRowIndex()] = []string{m.renderSettingsItem(m.loginRowIndex(), "Account", "["+loginLabel+"]", loginStyle, primaryBoldStyle, leftBorder, rightBorder)}
 
 	// Auto-switch accounts item: toggles the automatic account-rotation proxy
 	// (distinct from the Login row above, which switches the active login by hand).
@@ -245,7 +252,27 @@ func (m *MainMenuModel) renderSettingsBox() string {
 		autoColor = lipgloss.Color("241") // gray when off
 	}
 	autoStyle := lipgloss.NewStyle().Foreground(autoColor)
-	lines = append(lines, m.renderSettingsItem(m.autoSwitchRowIndex(), "Auto-switch accounts", autoState, autoStyle, primaryBoldStyle, leftBorder, rightBorder))
+	itemLines[m.autoSwitchRowIndex()] = []string{m.renderSettingsItem(m.autoSwitchRowIndex(), "Auto-switch accounts", autoState, autoStyle, primaryBoldStyle, leftBorder, rightBorder)}
+
+	// Emit each section: a header row (blank-separated from the prior section)
+	// followed by its item rows in visual order. The initial emptyRow above stands
+	// in for the blank before the first header.
+	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true)
+	for si, section := range m.settingsSections() {
+		if si > 0 {
+			lines = append(lines, emptyRow)
+		}
+		headerText := headerStyle.Render(strings.ToUpper(section.title))
+		headerPrefix := " " + headerText
+		headerGap := menuContentWidth - lipgloss.Width(headerPrefix)
+		if headerGap < 0 {
+			headerGap = 0
+		}
+		lines = append(lines, leftBorder+headerPrefix+strings.Repeat(" ", headerGap)+rightBorder)
+		for _, idx := range section.indices {
+			lines = append(lines, itemLines[idx]...)
+		}
+	}
 
 	// Empty row
 	lines = append(lines, emptyRow)

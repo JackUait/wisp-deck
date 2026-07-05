@@ -50,3 +50,87 @@ func TestRenderSettingsBox_preservesSettingsRows(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderSettingsBox_hasSectionHeadersInOrder(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabSettings)
+	out := m.renderSettingsBox()
+	headers := []string{"APPEARANCE", "NOTIFICATIONS", "PROJECTS", "ACCOUNT"}
+	last := -1
+	for _, h := range headers {
+		idx := strings.Index(out, h)
+		if idx < 0 {
+			t.Fatalf("settings box missing section header %q:\n%s", h, out)
+		}
+		if idx <= last {
+			t.Errorf("section header %q out of order:\n%s", h, out)
+		}
+		last = idx
+	}
+}
+
+func TestRenderSettingsBox_appearanceItemsGroupedAboveNotifications(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabSettings)
+	out := m.renderSettingsBox()
+	// Usage bars (an Appearance item) must render above Idle sound, which now
+	// lives under the Notifications header further down.
+	usage := strings.Index(out, "Usage bars")
+	notif := strings.Index(out, "NOTIFICATIONS")
+	idle := strings.Index(out, "Idle sound")
+	if !(usage < notif && notif < idle) {
+		t.Errorf("expected Usage bars < NOTIFICATIONS < Idle sound, got %d, %d, %d:\n%s",
+			usage, notif, idle, out)
+	}
+}
+
+func TestSettingsItemOrder_groupsAppearanceThenSections(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	got := m.settingsItemOrder()
+	want := []int{0, 1, 3, 4, 6, 2, 5, 7, 8, 9}
+	if len(got) != len(want) {
+		t.Fatalf("settingsItemOrder len=%d want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("settingsItemOrder=%v want %v", got, want)
+		}
+	}
+}
+
+func TestSettingsStep_movesInVisualOrder(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.settingsSelected = 6 // Usage bars — last Appearance item
+	m.settingsStep(1, false)
+	if m.settingsSelected != 2 {
+		t.Fatalf("down from Usage bars → %d, want 2 (Idle sound)", m.settingsSelected)
+	}
+	m.settingsStep(1, false)
+	if m.settingsSelected != 5 {
+		t.Fatalf("down from Idle sound → %d, want 5 (Projects folder)", m.settingsSelected)
+	}
+	m.settingsStep(-1, false)
+	if m.settingsSelected != 2 {
+		t.Fatalf("up from Projects folder → %d, want 2 (Idle sound)", m.settingsSelected)
+	}
+}
+
+func TestSettingsStep_clampsAndWraps(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	// Clamp at the last visual item (Auto-switch, index 9).
+	m.settingsSelected = 9
+	m.settingsStep(1, false)
+	if m.settingsSelected != 9 {
+		t.Fatalf("down past last clamped to %d, want 9", m.settingsSelected)
+	}
+	// Wrap from last back to first (Mascot, index 0).
+	m.settingsStep(1, true)
+	if m.settingsSelected != 0 {
+		t.Fatalf("wrap down from last → %d, want 0", m.settingsSelected)
+	}
+	// Wrap from first back to last.
+	m.settingsStep(-1, true)
+	if m.settingsSelected != 9 {
+		t.Fatalf("wrap up from first → %d, want 9", m.settingsSelected)
+	}
+}

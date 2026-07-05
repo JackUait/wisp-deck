@@ -211,8 +211,20 @@ func TestUpdate_clickPlanSettingsRow_opensModelMap(t *testing.T) {
 	m.CycleClaudeConfig("next") // select Work (a custom config)
 	m.width, m.height = 100, 60
 	_ = m.View()
-	// Plan is settings item 7 (Usage bars was inserted at 6, after Projects folder).
-	row := m.firstSettingsItemRow() + 7
+	// Plan (Subscription, item index 7) sits under the Account section header.
+	// Find its body row from the same layout the renderer/mouse mapping use.
+	bodyRows := m.settingsBodyRowIndices()
+	rowOffset := -1
+	for i, idx := range bodyRows {
+		if idx == 7 {
+			rowOffset = i
+			break
+		}
+	}
+	if rowOffset < 0 {
+		t.Fatal("Subscription (index 7) not found in settings body rows")
+	}
+	row := m.firstSettingsItemRow() + rowOffset
 	msg := tea.MouseMsg{X: m.menuOriginX + 5, Y: m.menuOriginY + row, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
 	upd, _ := m.Update(msg)
 	got := upd.(*MainMenuModel)

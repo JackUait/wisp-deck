@@ -77,10 +77,27 @@ func (m *MainMenuModel) tabBarRowIndex() int {
 	return 3 + m.accountRowCount() + m.subscriptionRowCount()
 }
 
-// firstSettingsItemRow returns the box-relative row of settings item 0. After
-// the tab bar comes the separator, a blank row, then the items.
+// firstSettingsItemRow returns the box-relative row where the settings body
+// begins (the first section header). After the tab bar comes the separator, a
+// blank row, then the sectioned item rows.
 func (m *MainMenuModel) firstSettingsItemRow() int {
 	return m.tabBarRowIndex() + 3
+}
+
+// settingsBodyRowIndices maps each settings body row (starting at
+// firstSettingsItemRow) to the item index rendered there, or -1 for the section
+// header and blank-separator rows. It mirrors renderSettingsBox's emission order
+// so mouse hit-testing lands on the right row.
+func (m *MainMenuModel) settingsBodyRowIndices() []int {
+	var rows []int
+	for si, section := range m.settingsSections() {
+		if si > 0 {
+			rows = append(rows, -1) // blank separator before the header
+		}
+		rows = append(rows, -1) // section header
+		rows = append(rows, section.indices...)
+	}
+	return rows
 }
 
 // tabHitRanges returns the [start, end) box-relative column span of each tab
@@ -222,14 +239,15 @@ func (m *MainMenuModel) HitTest(boxX, boxY int) hitTarget {
 	return hitTarget{region: regionNone}
 }
 
-// mapRowToSettingsItem maps a box-relative row to a settings item index, or -1.
+// mapRowToSettingsItem maps a box-relative row to a settings item index, or -1
+// for header/blank rows and rows outside the body.
 func (m *MainMenuModel) mapRowToSettingsItem(boxY int) int {
-	first := m.firstSettingsItemRow()
-	idx := boxY - first
-	if idx >= 0 && idx < m.settingsItemCount() {
-		return idx
+	rows := m.settingsBodyRowIndices()
+	i := boxY - m.firstSettingsItemRow()
+	if i < 0 || i >= len(rows) {
+		return -1
 	}
-	return -1
+	return rows[i]
 }
 
 // handleMouse routes a mouse event to hover (motion), click (left press), or
@@ -414,11 +432,9 @@ func (m *MainMenuModel) scrollBody(delta int) {
 		}
 	case TabSettings:
 		if delta > 0 {
-			if m.settingsSelected < m.settingsItemCount()-1 {
-				m.settingsSelected++
-			}
-		} else if m.settingsSelected > 0 {
-			m.settingsSelected--
+			m.settingsStep(1, false)
+		} else {
+			m.settingsStep(-1, false)
 		}
 	case TabStats:
 		if delta > 0 {
