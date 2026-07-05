@@ -2020,22 +2020,23 @@ func TestStatusline_account_color_reads_existing_assignment(t *testing.T) {
 }
 
 // --- gt_usage_bar ---
-// Renders a percentage (0-100) as an 8-cell segmented pill bar: filled squares
-// (▰) for the used share, empty squares (▱) for what's left. The cell count is
-// rounded, so the bar reads at a glance without a number. Out-of-range input
-// clamps to empty/full.
+// Renders a percentage (0-100) as a 10-cell segmented pill bar — one cell per
+// 10% — filled squares (▰) for the used share, empty squares (▱) for what's
+// left. The cell count is rounded, so the bar reads at a glance without a
+// number. Out-of-range input clamps to empty/full.
 
 const (
 	barFull  = "▰" // ▰
 	barEmpty = "▱" // ▱
+	barWidth = 10  // one cell per 10%
 )
 
 func bar(filled int) string {
-	return strings.Repeat(barFull, filled) + strings.Repeat(barEmpty, 8-filled)
+	return strings.Repeat(barFull, filled) + strings.Repeat(barEmpty, barWidth-filled)
 }
 
 func TestStatusline_usage_bar_zero_is_all_empty(t *testing.T) {
-	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"0", "8"}, nil)
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"0", "10"}, nil)
 	assertExitCode(t, code, 0)
 	if strings.TrimSpace(out) != bar(0) {
 		t.Fatalf("expected %q, got %q", bar(0), strings.TrimSpace(out))
@@ -2043,43 +2044,52 @@ func TestStatusline_usage_bar_zero_is_all_empty(t *testing.T) {
 }
 
 func TestStatusline_usage_bar_hundred_is_all_full(t *testing.T) {
-	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"100", "8"}, nil)
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"100", "10"}, nil)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != bar(8) {
-		t.Fatalf("expected %q, got %q", bar(8), strings.TrimSpace(out))
+	if strings.TrimSpace(out) != bar(10) {
+		t.Fatalf("expected %q, got %q", bar(10), strings.TrimSpace(out))
 	}
 }
 
-func TestStatusline_usage_bar_half_fills_four_cells(t *testing.T) {
-	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"50", "8"}, nil)
+func TestStatusline_usage_bar_half_fills_five_cells(t *testing.T) {
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"50", "10"}, nil)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != bar(4) {
-		t.Fatalf("expected %q, got %q", bar(4), strings.TrimSpace(out))
+	if strings.TrimSpace(out) != bar(5) {
+		t.Fatalf("expected %q, got %q", bar(5), strings.TrimSpace(out))
 	}
 }
 
-// 44% of 8 cells is 3.52 — the fill count rounds to nearest (4), not truncates.
+// 46% of 10 cells is 4.6 — the fill count rounds to nearest (5), not truncates.
 func TestStatusline_usage_bar_rounds_cell_count(t *testing.T) {
-	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"44", "8"}, nil)
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"46", "10"}, nil)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != bar(4) {
-		t.Fatalf("expected %q, got %q", bar(4), strings.TrimSpace(out))
+	if strings.TrimSpace(out) != bar(5) {
+		t.Fatalf("expected %q, got %q", bar(5), strings.TrimSpace(out))
 	}
 }
 
-func TestStatusline_usage_bar_defaults_to_width_eight(t *testing.T) {
+func TestStatusline_usage_bar_defaults_to_width_ten(t *testing.T) {
 	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"100"}, nil)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != bar(8) {
-		t.Fatalf("expected %q, got %q", bar(8), strings.TrimSpace(out))
+	if strings.TrimSpace(out) != bar(10) {
+		t.Fatalf("expected %q, got %q", bar(10), strings.TrimSpace(out))
+	}
+}
+
+// The width stays a parameter — a caller can still ask for a different size.
+func TestStatusline_usage_bar_honors_custom_width(t *testing.T) {
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"100", "6"}, nil)
+	assertExitCode(t, code, 0)
+	if want := strings.Repeat(barFull, 6); strings.TrimSpace(out) != want {
+		t.Fatalf("expected %q, got %q", want, strings.TrimSpace(out))
 	}
 }
 
 func TestStatusline_usage_bar_clamps_above_hundred(t *testing.T) {
-	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"150", "8"}, nil)
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"150", "10"}, nil)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != bar(8) {
-		t.Fatalf("expected %q, got %q", bar(8), strings.TrimSpace(out))
+	if strings.TrimSpace(out) != bar(10) {
+		t.Fatalf("expected %q, got %q", bar(10), strings.TrimSpace(out))
 	}
 }
 
@@ -2159,7 +2169,7 @@ func TestStatusline_wrapper_weekly_bar_wears_account_color(t *testing.T) {
 
 	root := projectRoot(t)
 	wrapperPath := filepath.Join(root, "templates", "statusline-wrapper.sh")
-	// 90% weekly usage → a 7-of-8 filled pill bar.
+	// 90% weekly usage → a 9-of-10 filled pill bar (one cell per 10%).
 	stdinData := `{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"rate_limits":{"seven_day":{"used_percentage":90,"resets_at":2}},"workspace":{"current_dir":"/tmp"}}`
 	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, wrapperPath)
 
@@ -2170,9 +2180,9 @@ func TestStatusline_wrapper_weekly_bar_wears_account_color(t *testing.T) {
 	// The pill wears the account's profile color (141), the same as the label.
 	// (Severity codes like 01;33 aren't asserted-against here because unrelated
 	// segments — the context icon, CPU — legitimately use them.)
-	assertContains(t, out, "\x1b[38;5;141m"+bar(7))
+	assertContains(t, out, "\x1b[38;5;141m"+bar(9))
 	// The weekly bar sits to the right of the account label.
-	if strings.Index(out, "Default") > strings.Index(out, bar(7)) {
+	if strings.Index(out, "Default") > strings.Index(out, bar(9)) {
 		t.Fatalf("weekly limit must render right of the account label, got %q", out)
 	}
 }

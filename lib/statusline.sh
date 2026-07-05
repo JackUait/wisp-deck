@@ -244,16 +244,16 @@ gt_claude_account_label() {
 # (▰) for the used share, empty squares (▱) for what remains — so usage reads at
 # a glance without a number. The fill count is rounded to the nearest cell and
 # clamped to 0..width, so out-of-range input never overflows. Width defaults to
-# 8. The math runs locale-independently (macOS awk would read a comma decimal as
+# 10 (one cell per 10%). The math runs locale-independently (macOS awk reads a comma decimal as
 # a truncated integer otherwise). The cells are laid down with `printf FMT
 # arg-per-cell` rather than appending in a loop: macOS bash 3.2 corrupts a
 # multibyte character appended to a variable ("$out▰") under a UTF-8 locale, but
 # repeating it through a printf format and joining via command substitution is
 # byte-safe. Literal UTF-8 squares are embedded directly (bash 3.2 printf has no
 # \u/\U escapes).
-# Usage: gt_usage_bar 42 [8]  =>  "▰▰▰▱▱▱▱▱"
+# Usage: gt_usage_bar 40 [10]  =>  "▰▰▰▰▱▱▱▱▱▱"
 gt_usage_bar() {
-  local pct="$1" width="${2:-8}" filled empty full="" rest=""
+  local pct="$1" width="${2:-10}" filled empty full="" rest=""
   filled=$(printf '%s %s\n' "$pct" "$width" | LC_ALL=C awk '
     { p = $1; w = $2; gsub(/,/, ".", p)
       n = int(p / 100 * w + 0.5)
