@@ -2021,18 +2021,25 @@ func TestStatusline_account_color_reads_existing_assignment(t *testing.T) {
 
 // --- gt_usage_bar ---
 // Renders a percentage (0-100) as a 10-cell segmented pill bar — one cell per
-// 10% — filled squares (▰) for the used share, empty squares (▱) for what's
-// left. The cell count is rounded, so the bar reads at a glance without a
-// number. Out-of-range input clamps to empty/full.
+// 10% — as filled (◼), half (◧), or empty (◻) squares. The cell count rounds to
+// the nearest HALF, so the bar reads to 5% at a glance without a number.
+// Out-of-range input clamps to empty/full.
 
 const (
-	barFull  = "▰" // ▰
-	barEmpty = "▱" // ▱
+	barFull  = "◼" // ◼ full cell
+	barHalf  = "◧" // ◧ half cell (5%)
+	barEmpty = "◻" // ◻ empty cell
 	barWidth = 10  // one cell per 10%
 )
 
-func bar(filled int) string {
-	return strings.Repeat(barFull, filled) + strings.Repeat(barEmpty, barWidth-filled)
+// bar builds an expected pill of `full` filled squares then empties.
+func bar(full int) string {
+	return strings.Repeat(barFull, full) + strings.Repeat(barEmpty, barWidth-full)
+}
+
+// barH builds an expected pill of `full` filled squares, one half square, then empties.
+func barH(full int) string {
+	return strings.Repeat(barFull, full) + barHalf + strings.Repeat(barEmpty, barWidth-full-1)
 }
 
 func TestStatusline_usage_bar_zero_is_all_empty(t *testing.T) {
@@ -2059,12 +2066,45 @@ func TestStatusline_usage_bar_half_fills_five_cells(t *testing.T) {
 	}
 }
 
-// 46% of 10 cells is 4.6 — the fill count rounds to nearest (5), not truncates.
-func TestStatusline_usage_bar_rounds_cell_count(t *testing.T) {
-	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"46", "10"}, nil)
+// 5% is exactly half of one 10% cell → a lone half square leads the bar.
+func TestStatusline_usage_bar_five_percent_is_a_half_cell(t *testing.T) {
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"5", "10"}, nil)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != bar(5) {
-		t.Fatalf("expected %q, got %q", bar(5), strings.TrimSpace(out))
+	if strings.TrimSpace(out) != barH(0) {
+		t.Fatalf("expected %q, got %q", barH(0), strings.TrimSpace(out))
+	}
+}
+
+// 45% → four full cells and a half (4.5 cells).
+func TestStatusline_usage_bar_forty_five_is_four_and_a_half(t *testing.T) {
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"45", "10"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != barH(4) {
+		t.Fatalf("expected %q, got %q", barH(4), strings.TrimSpace(out))
+	}
+}
+
+// 95% → nine full cells and a half.
+func TestStatusline_usage_bar_ninety_five_is_nine_and_a_half(t *testing.T) {
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"95", "10"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != barH(9) {
+		t.Fatalf("expected %q, got %q", barH(9), strings.TrimSpace(out))
+	}
+}
+
+// Rounding is to the nearest half-cell (each cell is 10%, so the split sits at
+// 2.5% into a cell): 22% (4.4 halves) → 2 full; 23% (4.6) → 2½.
+func TestStatusline_usage_bar_rounds_to_nearest_half(t *testing.T) {
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"22", "10"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != bar(2) {
+		t.Fatalf("22%% should round to 2 full cells, expected %q, got %q", bar(2), strings.TrimSpace(out))
+	}
+	out, code = runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"23", "10"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != barH(2) {
+		t.Fatalf("23%% should round to 2½ cells, expected %q, got %q", barH(2), strings.TrimSpace(out))
 	}
 }
 
