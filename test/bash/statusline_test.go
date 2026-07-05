@@ -2192,19 +2192,19 @@ func TestStatusline_weekly_used_pct_empty_when_only_five_hour(t *testing.T) {
 	}
 }
 
-// The wrapper renders the weekly limit inside the account segment, immediately
-// to the right of the account label, and the pill wears the SAME account profile
-// color as the label — not a severity grade — so the whole segment reads as one
-// account's identity.
+// The wrapper renders the weekly (7-day) usage pill but NOT the account profile
+// itself: no account glyph, no account label. The pill still wears the account's
+// profile color (its only remaining tie to the login), painted from the palette
+// — not a severity grade.
 func TestStatusline_wrapper_weekly_bar_wears_account_color(t *testing.T) {
 	env := setupWrapperTest(t)
-	// Force the Keychain Default login so the label is deterministic even when
-	// the test host itself runs under an isolated CLAUDE_CONFIG_DIR.
+	// Force the Keychain Default login so the color key is deterministic even
+	// when the test host itself runs under an isolated CLAUDE_CONFIG_DIR.
 	env = append(env, "CLAUDE_CONFIG_DIR=")
 	fakeHome := wrapperHome(env)
 	cfg := filepath.Join(fakeHome, ".config", "wisp-deck")
 	writeTempFile(t, cfg, "claude-accounts.list", "Personal:personal\n")
-	// Seed Default's color so both the label and the pill are predictable.
+	// Seed Default's color so the pill color is predictable.
 	writeTempFile(t, cfg, "claude-account-colors", "default:141\n")
 
 	root := projectRoot(t)
@@ -2215,22 +2215,21 @@ func TestStatusline_wrapper_weekly_bar_wears_account_color(t *testing.T) {
 
 	out, code := runBashSnippet(t, script, env)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, "Default")
 	assertContains(t, out, "7d")
-	// The pill wears the account's profile color (141), the same as the label.
-	// (Severity codes like 01;33 aren't asserted-against here because unrelated
-	// segments — the context icon, CPU — legitimately use them.)
+	// The pill wears the account's profile color (141). (Severity codes like
+	// 01;33 aren't asserted-against here because unrelated segments — the context
+	// icon, CPU — legitimately use them.)
 	assertContains(t, out, "\x1b[38;5;141m"+bar(9))
-	// The weekly bar sits to the right of the account label.
-	if strings.Index(out, "Default") > strings.Index(out, bar(9)) {
-		t.Fatalf("weekly limit must render right of the account label, got %q", out)
-	}
+	// The profile itself is NOT rendered: no account glyph, no account label.
+	assertNotContains(t, out, "\U000f0004") // account glyph 󰀄
+	assertNotContains(t, out, "Default")    // the Default login's label
 }
 
-// Each account's glyph + label render in that account's own persistent palette
-// color, and that color is written to the shared colors file so the TUI menu
-// paints the same login identically.
-func TestStatusline_wrapper_colors_account_label_with_palette_color(t *testing.T) {
+// The account profile is no longer rendered in the statusline — no glyph, no
+// label — but the login's persistent palette color is STILL assigned and written
+// to the shared colors file, because the weekly pill and the TUI/ledger account
+// pill still paint the login in that color.
+func TestStatusline_wrapper_omits_profile_but_persists_account_color(t *testing.T) {
 	env := setupWrapperTest(t)
 	env = append(env, "CLAUDE_CONFIG_DIR=")
 	fakeHome := wrapperHome(env)
@@ -2244,24 +2243,17 @@ func TestStatusline_wrapper_colors_account_label_with_palette_color(t *testing.T
 
 	out, code := runBashSnippet(t, script, env)
 	assertExitCode(t, code, 0)
-	// The account glyph (󰀄, U+F0004) must be painted in one of the palette slots.
-	glyph := "\U000f0004"
-	matched := ""
-	for p := range accountPalette {
-		if strings.Contains(out, "\x1b[01;38;5;"+p+"m"+glyph) {
-			matched = p
-		}
-	}
-	if matched == "" {
-		t.Fatalf("account label not painted in a palette color, got %q", out)
-	}
-	// The Default login's color is persisted under "default" for the menu to reuse.
+	// The account profile must NOT be rendered: neither the glyph nor a label.
+	assertNotContains(t, out, "\U000f0004") // account glyph 󰀄
+	assertNotContains(t, out, "Default")
+	// But the Default login's palette color is still assigned and persisted under
+	// "default" so the weekly pill and the account menu paint it consistently.
 	data, err := os.ReadFile(filepath.Join(cfg, "claude-account-colors"))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("colors file must be written even without a rendered profile: %v", err)
 	}
-	if !strings.Contains(string(data), "default:"+matched) {
-		t.Fatalf("Default color %s not persisted, file:\n%s", matched, string(data))
+	if !strings.Contains(string(data), "default:") {
+		t.Fatalf("Default color not persisted, file:\n%s", string(data))
 	}
 }
 

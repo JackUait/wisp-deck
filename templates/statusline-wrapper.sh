@@ -132,27 +132,19 @@ fi
 if [ -n "$model_name" ]; then
   line="$line$(printf ' | \033[01;34m%s\033[00m' "$model_name")"
 fi
-# A Nerd Font account glyph (󰀄) precedes the active Claude account label so the
-# user can tell at a glance which login this tab is talking to. Literal UTF-8 is
-# embedded directly: this runs under macOS bash 3.2 (--posix), whose printf has
-# no \u/\U escape support.
-if [ -n "$account_label" ]; then
-  # The account glyph + label wear this account's own persistent color (each
-  # login gets a distinct one, shared with the TUI menu) so a glance tells you
-  # which login this tab talks to. Falls back to bold green if no color resolved.
-  # The weekly pill rides just to the right, painted in the SAME profile color so
-  # the whole segment reads as one login's identity; the "7d" tag is a dimmed
-  # shade of that color. The fill vs. empty cells still carry the usage amount.
+# The active login's WEEKLY (7-day) usage pill. The account profile itself — its
+# glyph (󰀄) and label — is deliberately NOT rendered here; only its usage is. The
+# pill still wears the login's own persistent color (each login gets a distinct
+# one, shared with the account menu) so the color quietly ties the usage to a
+# login; the dim "7d" tag names the window and the fill vs. empty cells carry the
+# amount. Falls back to bold green when no color resolved. Gated on the weekly bar
+# — itself only computed for a 2+ account setup that has a weekly figure — so solo
+# users get nothing.
+if [ -n "$weekly_bar" ]; then
   if [ -n "$account_color" ]; then
-    line="$line$(printf ' | \033[01;38;5;%sm󰀄 %s\033[00m' "$account_color" "$account_label")"
-    if [ -n "$weekly_bar" ]; then
-      line="$line$(printf '  \033[02;38;5;%sm7d\033[00m \033[38;5;%sm%s\033[00m' "$account_color" "$account_color" "$weekly_bar")"
-    fi
+    line="$line$(printf ' | \033[02;38;5;%sm7d\033[00m \033[38;5;%sm%s\033[00m' "$account_color" "$account_color" "$weekly_bar")"
   else
-    line="$line$(printf ' | \033[01;32m󰀄 %s\033[00m' "$account_label")"
-    if [ -n "$weekly_bar" ]; then
-      line="$line$(printf '  \033[02;37m7d\033[00m \033[01;32m%s\033[00m' "$weekly_bar")"
-    fi
+    line="$line$(printf ' | \033[02;37m7d\033[00m \033[01;32m%s\033[00m' "$weekly_bar")"
   fi
 fi
 printf '%s' "$line"
