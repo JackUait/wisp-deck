@@ -197,6 +197,63 @@ wait_ai_pane_ready() {
   return 1
 }
 
+# _draft_paste <tmux_cmd> <pane> <text> — bracketed-paste literal text into
+# the pane via a named tmux buffer. Bracketed (-p) is load-bearing twice
+# over: embedded newlines must not submit, and a pasted image PATH is only
+# re-attached as a live image chip when it arrives as a paste (the same
+# mechanism the screenshot drop uses). Best-effort: a failed paste degrades
+# to "draft stays in history".
+_draft_paste() {
+  local tmux_cmd="$1" pane="$2" text="$3"
+  printf '%s' "$text" | "$tmux_cmd" load-buffer -b wispdraft - 2>/dev/null || return 0
+  "$tmux_cmd" paste-buffer -p -b wispdraft -t "$pane" 2>/dev/null || true
+  return 0
+}
+
+# replay_ai_draft <tmux_cmd> <pane> <draft> <cache_root> <sid> — rebuild the
+# input field from the stashed draft text. Split at [Image #N] markers; text
+# segments paste verbatim, and each marker whose cached PNG exists
+# (<cache_root>/image-cache/<sid>/<N>.png, written by the OLD claude at paste
+# time) pastes as that absolute path — the new claude re-attaches it as a
+# live image. Missing file, unstamped sid, or a malformed marker degrade to
+# the literal marker text. [Pasted text #N] markers are never split on: their
+# bytes died with the old process (memory-only), so they ride along inside
+# text segments. Nothing here ever submits.
+replay_ai_draft() {
+  local tmux_cmd="$1" pane="$2" draft="$3" cache_root="$4" sid="$5"
+  local rest="$draft" pre marker n img
+  while [ -n "$rest" ]; do
+    pre="${rest%%\[Image #*}"
+    if [ "$pre" = "$rest" ]; then
+      _draft_paste "$tmux_cmd" "$pane" "$rest"
+      break
+    fi
+    [ -n "$pre" ] && _draft_paste "$tmux_cmd" "$pane" "$pre"
+    rest="${rest#"$pre"}"
+    if [ "${rest#*\]}" = "$rest" ]; then
+      # No closing bracket: not a real marker — paste the remainder literally.
+      _draft_paste "$tmux_cmd" "$pane" "$rest"
+      break
+    fi
+    marker="${rest%%\]*}]"
+    rest="${rest#*\]}"
+    n="${marker#\[Image #}"
+    n="${n%\]}"
+    img=""
+    case "$n" in
+      *[!0-9]* | '') ;; # non-numeric: leave img empty -> literal
+      *) [ -n "$sid" ] && img="$cache_root/image-cache/$sid/$n.png" ;;
+    esac
+    if [ -n "$img" ] && [ -f "$img" ]; then
+      _draft_paste "$tmux_cmd" "$pane" "$img"
+    else
+      _draft_paste "$tmux_cmd" "$pane" "$marker"
+    fi
+    sleep 0.3 # let the image chip render before the next segment lands
+  done
+  return 0
+}
+
 # build_switch_launch_cmd <tool> <claude_cmd> <opencode_cmd> <settings> <filter> \
 #   <project_dir> <new_account_dir> [resume_session] — build the launch command that
 # respawns the AI pane under new_account_dir.

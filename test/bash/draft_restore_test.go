@@ -123,6 +123,95 @@ if [ "$1" = "capture-pane" ]; then printf '%s\n' "❯ 2. No, exit"; fi`)
 	}
 }
 
+// The mock tmux records each paste's exact bytes: load-buffer receives the
+// segment on stdin (logged with a PASTE: prefix and % for embedded
+// newlines), paste-buffer is the delivery. This pins the whole replay
+// contract: split at [Image #N] only, cached markers become file paths (a
+// bracketed-pasted image path is re-attached by claude as a live chip — the
+// screenshot-drop mechanism), uncached/malformed markers and [Pasted text #N]
+// stay literal, newlines survive, and nothing is ever submitted.
+func TestReplayAIDraft_pastes_text_and_image_paths_in_order(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "load-buffer" ]; then
+  printf 'PASTE:%%s\n' "$(cat | tr '\n' '\001' | tr '\001' '%%')" >> %q
+else
+  printf '%%s\n' "$*" >> %q
+fi`, rec, rec))
+	sid := "aaaa-bbbb"
+	cache := filepath.Join(dir, "root", "image-cache", sid)
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "2.png"), []byte("png"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Real newline inside bash single quotes (Go %q would deliver a literal \n).
+	draft := "line one\nline two [Image #2] tail [Pasted text #3 +300 lines] [Image #9]"
+	env := buildEnv(t, []string{bin})
+	_, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+		"replay_ai_draft tmux %%1 '%s' %q %q", draft, filepath.Join(dir, "root"), sid)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := os.ReadFile(rec)
+	pastes := []string{}
+	for _, l := range strings.Split(string(logOut), "\n") {
+		if strings.HasPrefix(l, "PASTE:") {
+			pastes = append(pastes, strings.TrimPrefix(l, "PASTE:"))
+		}
+	}
+	want := []string{
+		"line one%line two ",
+		filepath.Join(dir, "root", "image-cache", sid, "2.png"),
+		" tail [Pasted text #3 +300 lines] ",
+		"[Image #9]", // no 9.png on disk -> literal marker
+	}
+	if strings.Join(pastes, "|") != strings.Join(want, "|") {
+		t.Fatalf("paste sequence mismatch:\n got %q\nwant %q", pastes, want)
+	}
+	assertContains(t, string(logOut), "paste-buffer -p") // bracketed: newlines must not submit
+	assertNotContains(t, string(logOut), "Enter")        // nothing is ever auto-submitted
+}
+
+// An unstamped session id means image markers cannot be mapped — every
+// segment degrades to literal text, and the function still succeeds.
+func TestReplayAIDraft_empty_sid_keeps_markers_literal(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "load-buffer" ]; then printf 'PASTE:%%s\n' "$(cat)" >> %q; fi`, rec))
+	env := buildEnv(t, []string{bin})
+	_, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+		"replay_ai_draft tmux %%1 %q %q %q", "hi [Image #1]", dir, "")), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := os.ReadFile(rec)
+	assertContains(t, string(logOut), "PASTE:[Image #1]")
+	assertNotContains(t, string(logOut), ".png")
+}
+
+// A malformed marker (no closing bracket) must not hang the split loop.
+func TestReplayAIDraft_unterminated_marker_does_not_hang(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "load-buffer" ]; then printf 'PASTE:%%s\n' "$(cat)" >> %q; fi`, rec))
+	env := buildEnv(t, []string{bin})
+	done := make(chan int, 1)
+	go func() {
+		_, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+			"replay_ai_draft tmux %%1 %q %q %q", "text [Image #5", dir, "sid")), env)
+		done <- code
+	}()
+	select {
+	case code := <-done:
+		assertExitCode(t, code, 0)
+	case <-time.After(15 * time.Second):
+		t.Fatal("replay_ai_draft hung on an unterminated [Image # marker")
+	}
+	logOut, _ := os.ReadFile(rec)
+	assertContains(t, string(logOut), "PASTE:[Image #5")
+}
+
 // A missing history file (fresh install) must behave like the empty-input
 // case, not crash.
 func TestStashAIDraft_missing_history_file_is_no_draft(t *testing.T) {
