@@ -875,11 +875,13 @@ func TestCompactView_multiselect_discards_selected_files(t *testing.T) {
 }
 
 // End-to-end, FULLY MOUSE-DRIVEN: click the checkbox to the left of two file rows
-// to mark them, click the "[ discard N ]" button that appears in the bottom bar to
-// arm the confirm, then click "[ yes ]" to run it — no keyboard at all. Asserts the
-// two clicked files reverted to HEAD while the unclicked one keeps its edit. This
-// exercises the new click wiring: checkbox-slot toggle, the discard button span,
-// and the yes/no confirm spans.
+// to mark them, click the "[ discard N ]" button that now sits at the TOP of the
+// file list — next to the first group header ("modified") — to arm the confirm,
+// then click "[ yes ]" to run it — no keyboard at all. Asserts the button and its
+// confirm render on the group-header row (not the bottom bar) and that the two
+// clicked files reverted to HEAD while the unclicked one keeps its edit. Exercises
+// the new click wiring: checkbox-slot toggle, the top discard button span, and the
+// yes/no confirm spans overlaid on the group title.
 func TestCompactView_mouse_marks_and_discards(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
@@ -910,9 +912,144 @@ func TestCompactView_mouse_marks_and_discards(t *testing.T) {
 	}
 
 	cmd := exec.Command(zsh, "-c", "source "+module+" && compact_view "+dir)
-	// Strip TMUX and the relaunch-context file so the bottom bar carries NO account
-	// pill — the pill's width is environment-dependent and would shift the discard
-	// button's columns; without it the bar is deterministic (" main · [ discard N ]").
+	// Strip TMUX and the relaunch-context file so NO account pill renders — the
+	// pill's width is environment-dependent and would shift the group header's
+	// (and thus the discard button's) columns.
+	env := []string{}
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "TMUX=") || strings.HasPrefix(e, "WISP_DECK_RELAUNCH_FILE=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=5", "TERM=xterm")
+
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 12, Cols: 60})
+	if err != nil {
+		t.Fatalf("start pty: %v", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	var mu sync.Mutex
+	var out bytes.Buffer
+	go func() {
+		b := make([]byte, 4096)
+		for {
+			n, err := ptmx.Read(b)
+			if n > 0 {
+				mu.Lock()
+				out.Write(b[:n])
+				mu.Unlock()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	frame := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return lastFrame(out.String())
+	}
+
+	// A left-PRESS SGR report (button 0, terminator M) at (col,row).
+	click := func(col, row int) {
+		_, _ = ptmx.Write([]byte(fmt.Sprintf("\x1b[<0;%d;%dM", col, row)))
+		time.Sleep(180 * time.Millisecond)
+	}
+
+	time.Sleep(700 * time.Millisecond) // first frame
+
+	// Body: row 3 = "modified" header, row 4 = a.txt, row 5 = b.txt, row 6 = c.txt.
+	// The checkbox lives in the left indent (cols 1-3), so a click at col 2 toggles
+	// the row's mark.
+	click(2, 4) // mark a.txt
+	click(2, 5) // mark b.txt
+
+	// The "[ discard 2 ]" button now rides the group-header row NEXT TO the title,
+	// not the bottom bar. Assert it renders on the SAME line as "modified".
+	headerLine := ""
+	for _, ln := range strings.Split(frame(), "\n") {
+		if strings.Contains(ln, "modified") {
+			headerLine = ln
+			break
+		}
+	}
+	if !strings.Contains(headerLine, "discard 2") {
+		t.Errorf("discard button should sit next to the group title; got header line %q\nframe:\n%s", headerLine, frame())
+	}
+
+	// The header " ● modified  (3)" is 16 cols; a 2-space gap then "[ discard 2 ]"
+	// (13 cols) spans cols 19-31 on row 3. Click inside it to arm the confirm.
+	click(25, 3)
+
+	// The confirm overlays the same row: "  Discard 2 files? [ yes ] [ no ]"; the
+	// "[ yes ]" button spans cols 36-42. Assert it landed on the group-header row.
+	confirmLine := ""
+	for _, ln := range strings.Split(frame(), "\n") {
+		if strings.Contains(ln, "Discard 2 files?") {
+			confirmLine = ln
+			break
+		}
+	}
+	if confirmLine == "" {
+		t.Errorf("arming should draw the confirm at the top of the list; frame:\n%s", frame())
+	}
+	click(39, 3) // click [ yes ]
+	time.Sleep(500 * time.Millisecond)
+
+	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
+	time.Sleep(300 * time.Millisecond)
+
+	read := func(f string) string {
+		b, _ := os.ReadFile(filepath.Join(dir, f))
+		return string(b)
+	}
+	if got := read("a.txt"); got != "base\n" {
+		t.Errorf("a.txt should be reverted after mouse discard: got %q, want %q", got, "base\n")
+	}
+	if got := read("b.txt"); got != "base\n" {
+		t.Errorf("b.txt should be reverted after mouse discard: got %q, want %q", got, "base\n")
+	}
+	if got := read("c.txt"); got != "base\nDIRTY\n" {
+		t.Errorf("unclicked c.txt must keep its edit: got %q", got)
+	}
+}
+
+// Uncheck: a marked file's checkbox toggles OFF on a second click, removing it from
+// the discard set. Marks a.txt, clicks its box AGAIN to unmark it, marks b.txt, then
+// discards — so only b.txt reverts while the unchecked a.txt keeps its edit. Fully
+// mouse-driven; proves the checkbox is a true toggle, not a one-way mark.
+func TestCompactView_mouse_uncheck_removes_mark(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not available")
+	}
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	for _, f := range []string{"a.txt", "b.txt", "c.txt"} {
+		writeTempFile(t, dir, f, "base\n")
+		git("add", f)
+	}
+	git("commit", "-q", "-m", "init")
+	for _, f := range []string{"a.txt", "b.txt", "c.txt"} {
+		writeTempFile(t, dir, f, "base\nDIRTY\n")
+	}
+
+	cmd := exec.Command(zsh, "-c", "source "+module+" && compact_view "+dir)
 	env := []string{}
 	for _, e := range os.Environ() {
 		if strings.HasPrefix(e, "TMUX=") || strings.HasPrefix(e, "WISP_DECK_RELAUNCH_FILE=") {
@@ -937,7 +1074,6 @@ func TestCompactView_mouse_marks_and_discards(t *testing.T) {
 		}
 	}()
 
-	// A left-PRESS SGR report (button 0, terminator M) at (col,row).
 	click := func(col, row int) {
 		_, _ = ptmx.Write([]byte(fmt.Sprintf("\x1b[<0;%d;%dM", col, row)))
 		time.Sleep(180 * time.Millisecond)
@@ -945,16 +1081,15 @@ func TestCompactView_mouse_marks_and_discards(t *testing.T) {
 
 	time.Sleep(700 * time.Millisecond) // first frame
 
-	// Body: row 3 = "modified" header, row 4 = a.txt, row 5 = b.txt, row 6 = c.txt.
-	// The checkbox lives in the left indent (cols 1-3), so a click at col 2 toggles
-	// the row's mark.
+	// Row 4 = a.txt, row 5 = b.txt. Mark a.txt, then click its box AGAIN to unmark,
+	// then mark b.txt — leaving ONLY b.txt in the discard set.
 	click(2, 4) // mark a.txt
+	click(2, 4) // UNMARK a.txt
 	click(2, 5) // mark b.txt
-	// With 2 files marked the bottom bar (row 12) reads " main · [ discard 2 ]"; the
-	// button spans cols 9-21. Click inside it to arm the confirm.
-	click(13, 12)
-	// The confirm reads "Discard 2 files? [ yes ] [ no ]"; [ yes ] spans cols 18-24.
-	click(21, 12) // confirm
+
+	// With one file marked the button spans cols 19-31 on row 3; arm and confirm.
+	click(25, 3) // [ discard 1 ]
+	click(39, 3) // [ yes ]  — pre "Discard 1 file? " is 16 cols, so yes spans 35-41
 	time.Sleep(500 * time.Millisecond)
 
 	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
@@ -964,14 +1099,14 @@ func TestCompactView_mouse_marks_and_discards(t *testing.T) {
 		b, _ := os.ReadFile(filepath.Join(dir, f))
 		return string(b)
 	}
-	if got := read("a.txt"); got != "base\n" {
-		t.Errorf("a.txt should be reverted after mouse discard: got %q, want %q", got, "base\n")
+	if got := read("a.txt"); got != "base\nDIRTY\n" {
+		t.Errorf("unchecked a.txt must keep its edit (not be discarded): got %q", got)
 	}
 	if got := read("b.txt"); got != "base\n" {
-		t.Errorf("b.txt should be reverted after mouse discard: got %q, want %q", got, "base\n")
+		t.Errorf("b.txt should be reverted after discard: got %q, want %q", got, "base\n")
 	}
 	if got := read("c.txt"); got != "base\nDIRTY\n" {
-		t.Errorf("unclicked c.txt must keep its edit: got %q", got)
+		t.Errorf("untouched c.txt must keep its edit: got %q", got)
 	}
 }
 

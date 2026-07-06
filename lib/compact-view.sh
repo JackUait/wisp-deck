@@ -5,9 +5,10 @@
 # Refreshes every 2 seconds. Scroll with the mouse wheel, arrows/j/k,
 # space/b (page), g/G (top/bottom) when the list overflows. Ctrl-C to exit.
 # Hover a file row to reveal a checkbox (☐) at its left edge; click the box to
-# mark the file (☑). With 1+ files marked a "[ discard N ]" button appears in the
-# bottom bar — click it, then click [ yes ] to discard them (or [ no ] to cancel).
-# The x/d/y/n keys still drive the same mark/discard flow.
+# mark the file (☑), or click a ☑ again to unmark it. With 1+ files marked a
+# "[ discard N ]" button appears at the TOP of the list, next to the first group
+# header (modified/new/…) — click it, then click [ yes ] to discard them (or [ no ]
+# to cancel). The x/d/y/n keys still drive the same mark/discard flow.
 # Click the account pill in the bottom bar (when 2+ Claude logins exist) to switch
 # the active account mid-session; the AI pane relaunches under the new login.
 
@@ -879,21 +880,11 @@ compact_view() {
   build_bottom_bar() {
     discard_btn_start=0; discard_btn_end=0
     confirm_yes_start=0; confirm_yes_end=0; confirm_no_start=0; confirm_no_end=0
+    discard_overlay=""
     local dot=$'\033[90m·\033[0m'
-    if [ "$discard_armed" = 1 ]; then
-      local dn
-      dn=$(selection_count "$discard_set")
-      bottom_bar=$(discard_prompt "$dn")
-      # The confirm is drawn from column 1. Its visible layout is a plain-ASCII
-      # prefix then two fixed-width buttons: "[ yes ]" (7 cols), a space, "[ no ]"
-      # (6 cols). Locate them off the prefix length (no ANSI in the prefix, so
-      # ${#} is its column width).
-      local unit="files"; [ "$dn" = 1 ] && unit="file"
-      local pre="Discard ${dn} ${unit}? "
-      confirm_yes_start=$(( ${#pre} + 1 )); confirm_yes_end=$(( ${#pre} + 7 ))
-      confirm_no_start=$(( ${#pre} + 9 )); confirm_no_end=$(( ${#pre} + 14 ))
-      return
-    fi
+    # Bottom bar: the account pill (when shown), the branch bar, and the scroll
+    # position (on overflow). The batch-discard button and its confirm no longer
+    # live here — they overlay the TOP group header (see $discard_overlay below).
     bottom_bar=""
     if [ -n "$account_pill_str" ]; then
       if [ "$pill_hover" = 1 ]; then
@@ -907,16 +898,38 @@ compact_view() {
     if [ "$body_total" -gt "$avail" ]; then
       bottom_bar="${bottom_bar} ${dot}$(scroll_status "$scroll" "$avail" "$body_total")"
     fi
-    local mcount
-    mcount=$(selection_count "$SELECTED")
-    if [ "$mcount" -gt 0 ]; then
-      bottom_bar="${bottom_bar} ${dot} "
-      local prefix_w btn btn_str btn_w
-      prefix_w=$(visible_width "$bottom_bar")
-      btn=$(discard_button "$mcount")
-      btn_str="${btn%$'\n'*}"; btn_w="${btn##*$'\n'}"
-      discard_btn_start=$(( prefix_w + 1 )); discard_btn_end=$(( prefix_w + btn_w ))
-      bottom_bar="${bottom_bar}${btn_str}"
+
+    # Top-of-list discard affordance: a string spliced onto the FIRST group header
+    # (body line 1) so it sits next to that title. While a discard is armed it is
+    # the inline confirm "Discard N file(s)? [ yes ] [ no ]"; otherwise, with 1+
+    # files marked, the "[ discard N ]" button. The recorded click spans are COLUMN
+    # spans on that line; the click handler gates them to screen row header_rows+1
+    # at scroll 0 (the only place body line 1 is shown). The header text carries no
+    # ANSI-free width surprise (visible_width strips its color), and a 2-space gap
+    # separates it from the button/confirm.
+    local w0
+    w0=$(visible_width "${body%%$'\n'*}")
+    if [ "$discard_armed" = 1 ]; then
+      local dn unit pre base
+      dn=$(selection_count "$discard_set")
+      unit="files"; [ "$dn" = 1 ] && unit="file"
+      pre="Discard ${dn} ${unit}? "
+      # "[ yes ]" (7 cols), a space, "[ no ]" (6 cols) follow the plain-ASCII prefix,
+      # which starts at column w0+3 (header width + the 2-space gap).
+      base=$(( w0 + 2 ))
+      confirm_yes_start=$(( base + ${#pre} + 1 )); confirm_yes_end=$(( base + ${#pre} + 7 ))
+      confirm_no_start=$(( base + ${#pre} + 9 )); confirm_no_end=$(( base + ${#pre} + 14 ))
+      discard_overlay="  $(discard_prompt "$dn")"
+    else
+      local mcount
+      mcount=$(selection_count "$SELECTED")
+      if [ "$mcount" -gt 0 ]; then
+        local btn btn_str btn_w
+        btn=$(discard_button "$mcount")
+        btn_str="${btn%$'\n'*}"; btn_w="${btn##*$'\n'}"
+        discard_btn_start=$(( w0 + 3 )); discard_btn_end=$(( w0 + 2 + btn_w ))
+        discard_overlay="  ${btn_str}"
+      fi
     fi
   }
 
@@ -955,7 +968,7 @@ compact_view() {
   # under zsh, where `local NAME` (no assignment) on an already-set variable is
   # a *display* command that prints "NAME=value" to stdout. Re-declaring `local
   # w` each iteration flashed "w=141" on screen until the next refresh.
-  local w h content header body body_total avail mbtn draw_body frame
+  local w h content header body body_total avail mbtn draw_body frame draw_first
   local header_rows=2
   local staged unstaged untracked body_map
   # branch/ahead/behind + ab_counts are (re)assigned every build tick below. They
@@ -977,10 +990,13 @@ compact_view() {
   # spans are known to the click handler. bar_dirty rebuilds it only when its
   # inputs change (branch/pill/scroll/selection/armed) — never on a hover-only
   # repaint, since the bar no longer carries a hover hint (the checkbox lives on
-  # the file row instead). discard_btn_* is the "[ discard N ]" click span (row h,
-  # cols start..end; 0 when unmarked); confirm_{yes,no}_* are the armed confirm's
-  # button spans. Declared ONCE (never an in-loop `local` — see the zsh NOTE).
-  local bottom_bar="" bar_dirty=1
+  # the file row instead). $discard_overlay is spliced onto the first group header
+  # (body line 1) at draw time — the "[ discard N ]" button, or the inline confirm
+  # while armed — so it rides the TOP of the list next to that title. discard_btn_*
+  # is that button's click span (COLS on screen row header_rows+1 at scroll 0; 0
+  # when unmarked); confirm_{yes,no}_* are the armed confirm's button spans (same
+  # row). Declared ONCE (never an in-loop `local` — see the zsh NOTE).
+  local bottom_bar="" bar_dirty=1 discard_overlay=""
   local discard_btn_start=0 discard_btn_end=0
   local confirm_yes_start=0 confirm_yes_end=0 confirm_no_start=0 confirm_no_end=0
   # Frame-erase helpers, built ONCE: $nl is a literal newline (the match), $rowend
@@ -1066,7 +1082,9 @@ compact_view() {
             nth_line "$body_map" "$hover_line"
             [ -n "$NTH_LINE" ] && discard_set="$NTH_LINE"
           fi
-          [ -n "$discard_set" ] && discard_armed=1
+          # The confirm rides the top group header (shown only at scroll 0), so snap
+          # back to the top when arming, so it's on screen no matter where we were.
+          [ -n "$discard_set" ] && { discard_armed=1; scroll=0; }
         fi
         state_dirty=1
         ;;
@@ -1167,23 +1185,26 @@ compact_view() {
                   set_pill_hover "$mrow" "$mcol"
                   ;;
                 0)
-                  # Left-PRESS handling (mterm M). While a discard is armed the
-                  # bottom row is the confirm, so a click there hits its [ yes ] /
-                  # [ no ] buttons and nothing else acts. Otherwise: the account
-                  # pill opens the login switcher; the right-hand "[ discard N ]"
-                  # button arms the confirm; a click in a file row's CHECKBOX slot
-                  # (cols 1-3, the left indent) toggles that file's mark; a click
-                  # anywhere else on a file row floats its whole-file diff.
+                  # Left-PRESS handling (mterm M). The discard affordance rides the
+                  # TOP group header — screen row header_rows+1, shown only at scroll
+                  # 0 — so its clicks are gated to that row. While a discard is armed
+                  # that row is the confirm, so a click there hits its [ yes ] / [ no ]
+                  # buttons and nothing else acts. Otherwise: the account pill (bottom
+                  # bar) opens the login switcher; the "[ discard N ]" button arms the
+                  # confirm; a click in a file row's CHECKBOX slot (cols 1-3, the left
+                  # indent) toggles that file's mark; a click anywhere else on a file
+                  # row floats its whole-file diff.
+                  local top_row=$(( header_rows + 1 ))
                   if [ "$mterm" != M ]; then
                     :   # release — ignore (open on press only)
                   elif [ "$discard_armed" = 1 ]; then
-                    if [ "$mrow" = "$h" ] && [ "$mcol" -ge "$confirm_yes_start" ] \
-                       && [ "$mcol" -le "$confirm_yes_end" ]; then
+                    if [ "$scroll" -eq 0 ] && [ "$mrow" -eq "$top_row" ] \
+                       && [ "$mcol" -ge "$confirm_yes_start" ] && [ "$mcol" -le "$confirm_yes_end" ]; then
                       # Click [ yes ]: run the batch discard (mirrors the 'y' key).
                       discard_worktree_files "$project_dir" "$discard_set"
                       SELECTED=""; discard_armed=0; discard_set=""; need_build=1
-                    elif [ "$mrow" = "$h" ] && [ "$mcol" -ge "$confirm_no_start" ] \
-                       && [ "$mcol" -le "$confirm_no_end" ]; then
+                    elif [ "$scroll" -eq 0 ] && [ "$mrow" -eq "$top_row" ] \
+                       && [ "$mcol" -ge "$confirm_no_start" ] && [ "$mcol" -le "$confirm_no_end" ]; then
                       # Click [ no ]: cancel the confirm (mirrors 'n'); selection kept.
                       discard_armed=0; state_dirty=1
                     fi
@@ -1196,7 +1217,8 @@ compact_view() {
                     open_account_switcher tmux "$_rc_relaunch"
                     enter_ui_mode "$interactive"   # re-assert alt-screen + mouse
                     need_build=1                   # redraw + refresh the pill
-                  elif [ "$discard_btn_start" -gt 0 ] && [ "$mrow" = "$h" ] \
+                  elif [ "$discard_btn_start" -gt 0 ] && [ "$scroll" -eq 0 ] \
+                     && [ "$mrow" -eq "$top_row" ] \
                      && [ "$mcol" -ge "$discard_btn_start" ] && [ "$mcol" -le "$discard_btn_end" ]; then
                     # Click [ discard N ]: arm the confirm over the marked set
                     # (mirrors the 'd' key).
@@ -1420,10 +1442,10 @@ compact_view() {
     [ "$body_rows" -lt 1 ] && body_rows=1
     # The bottom row is ALWAYS reserved for the branch bar (branch name + push/pull
     # commit counts), which sits at the bottom of the file-list view. That row also
-    # carries the scroll position (on overflow), the "[ discard N ]" button (when
-    # files are marked), and the yes/no confirm (while a discard is armed). A
-    # CONSTANT reserve also means the viewport height never changes, so the list
-    # never jitters.
+    # carries the scroll position (on overflow) and the account pill. (The
+    # "[ discard N ]" button and its yes/no confirm now overlay the TOP group
+    # header instead — see $discard_overlay.) A CONSTANT reserve also means the
+    # viewport height never changes, so the list never jitters.
     avail=$((body_rows - 1))
     [ "$avail" -lt 1 ] && avail=1
     scroll=$(clamp_scroll "$scroll" "$body_total" "$avail")
@@ -1448,7 +1470,20 @@ compact_view() {
       # Recompose the bottom bar only when its inputs changed (bar_dirty): the row
       # no longer depends on the hover, so a hover-only repaint reuses the cached
       # $bottom_bar and its click spans (no branch/scroll/pill forks per motion).
+      # The same rebuild composes $discard_overlay (the top button/confirm).
       [ "$bar_dirty" = 1 ] && { build_bottom_bar; bar_dirty=0; }
+      # Splice the discard affordance onto the FIRST body line (the topmost group
+      # header) so it sits next to that title. Fork-free string ops; only body line
+      # 1 is touched, and it is never a checkbox/hover target so the overlays above
+      # don't collide. Visible only at scroll 0 (the click handler gates on it).
+      if [ -n "$discard_overlay" ] && [ "$scroll" -eq 0 ]; then
+        draw_first="${draw_body%%$'\n'*}"
+        if [ "$draw_first" = "$draw_body" ]; then
+          draw_body="${draw_first}${discard_overlay}"
+        else
+          draw_body="${draw_first}${discard_overlay}"$'\n'"${draw_body#*$'\n'}"
+        fi
+      fi
       frame=$(
         printf '%s\n' "$header"
         printf '%s\n' "$draw_body" | viewport_slice "$scroll" "$avail"
