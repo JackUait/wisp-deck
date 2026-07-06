@@ -143,6 +143,23 @@ current_ai_session() {
   return 0
 }
 
+# _ai_input_line_empty <tmux_cmd> <pane> — exit 0 when the pane's input line is
+# EMPTY. The input box renders below the transcript, so the input line is the
+# LAST ❯-prefixed row of the frame (a bare ❯ higher up is transcript content;
+# dialog rows like "❯ 2. No, exit" carry text and read as non-empty). Same
+# empty-prompt heuristic wait_ai_pane_ready trusts, incl. the U+00A0 pad. A
+# frame with no ❯ at all is "can't tell" — exit 1 so the caller stays on the
+# slow, fail-open path.
+_ai_input_line_empty() {
+  local tmux_cmd="$1" pane="$2" nbsp line last=""
+  nbsp="$(printf '\302\240')"
+  while IFS= read -r line; do
+    case "$line" in "❯"*) last="$line" ;; esac
+  done < <("$tmux_cmd" capture-pane -p -t "$pane" 2>/dev/null)
+  [ -n "$last" ] || return 1
+  printf '%s\n' "$last" | grep -qE "^❯[ ${nbsp}]*$"
+}
+
 # stash_ai_draft <tmux_cmd> <pane> <history_file> [project_dir] — extract the
 # AI pane's unsent draft by making claude itself persist it: Esc Esc with a
 # non-empty input appends the draft (full text, newlines, [Image #N]/[Pasted
@@ -158,6 +175,12 @@ current_ai_session() {
 stash_ai_draft() {
   local tmux_cmd="$1" pane="$2" hist="$3" project="${4:-}"
   command -v python3 >/dev/null 2>&1 || return 1
+  # Fast path: an empty input box has nothing to stash — skip the Esc-Esc
+  # dance and its several-second no-growth poll entirely. This is the common
+  # case, so it is most of the mid-session switch's latency.
+  if _ai_input_line_empty "$tmux_cmd" "$pane"; then
+    return 1
+  fi
   local before=0 after out
   [ -f "$hist" ] && before="$(wc -l < "$hist")"
   "$tmux_cmd" send-keys -t "$pane" Escape 2>/dev/null || return 1

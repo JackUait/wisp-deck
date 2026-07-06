@@ -245,6 +245,7 @@ for a in "$@"; do
   prev="$a"
 done
 [ -n "$out" ] && printf 'work\n' > "$out"`)
+	respawned := filepath.Join(dir, "respawned")
 	tmuxBin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
 case "$1" in
 load-buffer) printf 'PASTE:%%s\n' "$(cat)" >> %q; exit 0 ;;
@@ -254,7 +255,12 @@ if [ "$1" = "send-keys" ] && [ "$4" = "Escape" ] && [ "$5" = "Escape" ]; then
   printf '%%s\n' '{"display":"draft [Image #1]","pastedContents":{},"project":"/proj"}' >> %q
 fi
 if [ "$1" = "list-panes" ]; then printf '%%s\n' "%%1 1"; fi
-if [ "$1" = "capture-pane" ]; then printf '%%s\n' "❯ "; fi
+if [ "$1" = "respawn-pane" ]; then touch %q; fi
+# Before the respawn the OLD claude shows the draft in its input line; after
+# it the NEW claude shows the empty ready prompt the replay waits for.
+if [ "$1" = "capture-pane" ]; then
+  if [ -e %q ]; then printf '%%s\n' "❯ "; else printf '%%s\n' "❯ draft [Image #1]"; fi
+fi
 if [ "$1" = "show-environment" ]; then
   case "$*" in
   *WISP_DECK_CLAUDE_SESSION*) echo "WISP_DECK_CLAUDE_SESSION=%s" ;;
@@ -264,7 +270,7 @@ fi
 if [ "$1" = "display-popup" ]; then
   # -E runs the popup command in a shell: this triggers the result-file write.
   eval "${@: -1}" >/dev/null 2>&1 || true
-fi`, rec, rec, hist, sid))
+fi`, rec, rec, hist, respawned, respawned, sid))
 	accountsDir := filepath.Join(dir, "claude-accounts")
 	if err := os.MkdirAll(filepath.Join(accountsDir, "work"), 0o755); err != nil {
 		t.Fatal(err)
@@ -387,6 +393,79 @@ fi`, hist))
 	if code == 0 {
 		t.Fatalf("expected rc 1 when only foreign entries landed, got 0: %q", out)
 	}
+}
+
+// An EMPTY input box means there is nothing to stash — the switch must not
+// pay the Esc-Esc history-poll timeout (~1.7s of every empty-input switch).
+// The pane frame is captured first: when the input line (the LAST ❯-prefixed
+// row — the input box renders below the transcript) is empty, stash_ai_draft
+// returns "no draft" immediately, sending NO keys at all.
+func TestStashAIDraft_empty_input_fast_fails_without_keys(t *testing.T) {
+	dir := t.TempDir()
+	hist := writeTempFile(t, dir, "history.jsonl", "")
+	rec := filepath.Join(dir, "tmux.log")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+printf '%%s\n' "$*" >> %q
+if [ "$1" = "capture-pane" ]; then printf 'banner\n\xe2\x9d\xaf\302\240\nstatusline\n'; fi`, rec))
+	env := buildEnv(t, []string{bin})
+	start := time.Now()
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("stash_ai_draft tmux %%1 %q", hist)), env)
+	if code == 0 {
+		t.Fatalf("expected nonzero exit for an empty input box, got 0: %q", out)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("expected no output, got %q", out)
+	}
+	// Pre-fix this path took ~6s (the full no-growth poll); post-fix it is one
+	// capture-pane (~0.3s incl. bash startup). 3s stays firmly between the two
+	// even when the suite runs under parallel load.
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("empty input did not fast-fail (took %v — paid the history poll?)", elapsed)
+	}
+	logOut, _ := os.ReadFile(rec)
+	assertNotContains(t, string(logOut), "Escape")
+}
+
+// A stray bare "❯" line in the TRANSCRIPT above a non-empty input line must
+// not be mistaken for an empty input box: only the LAST ❯-prefixed row is the
+// input line. The draft below it must still be stashed.
+func TestStashAIDraft_stray_prompt_above_draft_still_stashes(t *testing.T) {
+	dir := t.TempDir()
+	hist := writeTempFile(t, dir, "history.jsonl", "")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "capture-pane" ]; then
+  printf 'transcript\n\xe2\x9d\xaf\n\xe2\x9d\xaf my draft\n'
+fi
+if [ "$1" = "send-keys" ] && [ "$4" = "Escape" ] && [ "$5" = "Escape" ]; then
+  printf '%%s\n' '{"display":"my draft","pastedContents":{}}' >> %q
+fi`, hist))
+	env := buildEnv(t, []string{bin})
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("stash_ai_draft tmux %%1 %q", hist)), env)
+	assertExitCode(t, code, 0)
+	if out != "my draft" {
+		t.Fatalf("expected the draft to be stashed despite a stray bare ❯ above, got %q", out)
+	}
+}
+
+// A dialog frame ("❯ 2. No, exit" is the last ❯ row, non-empty) must NOT
+// fast-skip — it falls through to the Esc-Esc path exactly as today.
+func TestStashAIDraft_dialog_frame_falls_through_to_esc_path(t *testing.T) {
+	dir := t.TempDir()
+	hist := writeTempFile(t, dir, "history.jsonl", "")
+	rec := filepath.Join(dir, "tmux.log")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+printf '%%s\n' "$*" >> %q
+if [ "$1" = "capture-pane" ]; then printf 'Do you trust this folder?\n\xe2\x9d\xaf 2. No, exit\n'; fi`, rec))
+	env := buildEnv(t, []string{bin})
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("stash_ai_draft tmux %%1 %q", hist)), env)
+	if code == 0 {
+		t.Fatal("expected rc 1 (no history growth) on a dialog frame")
+	}
+	logOut, _ := os.ReadFile(rec)
+	assertContains(t, string(logOut), "Escape")
 }
 
 // A missing history file (fresh install) must behave like the empty-input
