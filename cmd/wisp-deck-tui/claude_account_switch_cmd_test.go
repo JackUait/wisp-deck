@@ -256,6 +256,34 @@ func TestAccountSwitchModel_closeAreaIsDimScrim(t *testing.T) {
 	}
 }
 
+func TestAccountSwitchModel_cardBlendsWithScrim(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	// The rounded border's corner cells must sit on the close-area scrim, not on
+	// the (lighter) panel fill. Otherwise the panel's rectangular block fills the
+	// corners with the lighter color and reads as a square-cornered "container"
+	// framing the rounded border — the card corners looked un-rounded.
+	card := accountSwitchCardStyle().Render("content")
+
+	var topBorder string
+	for _, l := range strings.Split(card, "\n") {
+		if strings.Contains(l, "╭") {
+			topBorder = l
+			break
+		}
+	}
+	if topBorder == "" {
+		t.Fatal("card rendered no top rounded-border line")
+	}
+	// The rounded corner cells specifically must sit on the scrim background so
+	// they blend into the backdrop instead of showing a lighter square notch.
+	if !strings.Contains(topBorder, "48;2;20;20;27") {
+		t.Errorf("rounded border does not sit on the dim scrim background (square container):\n%q", topBorder)
+	}
+}
+
 func TestAccountSwitch_loadSwitchRows_customDefaultLabel(t *testing.T) {
 	dir := t.TempDir()
 	list := filepath.Join(dir, "claude-accounts.list")

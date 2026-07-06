@@ -311,6 +311,17 @@ func (m accountSwitchModel) contentWidth() int {
 	return w
 }
 
+// accountSwitchScrim is the dim backdrop tint behind the popup, also used as the
+// card's border background so the rounded border's corner cells blend into the
+// darkened session instead of being filled by the (lighter) card panel — which
+// made the panel's rectangular block read as a square-cornered container around
+// the rounded border. accountSwitchCardBg is the panel's own slightly-elevated
+// fill, kept distinct so the card still pops as a modal over the dimmed session.
+const (
+	accountSwitchScrim  lipgloss.Color = "#14141b"
+	accountSwitchCardBg lipgloss.Color = "#292c33"
+)
+
 // accountSwitchDim renders the close area (everything outside the card) as a
 // half-transparent backdrop: a dim dark background tint (the scrim) with the
 // captured screen behind it drawn faint/gray, so the session shows through
@@ -318,7 +329,22 @@ func (m accountSwitchModel) contentWidth() int {
 var accountSwitchDim = lipgloss.NewStyle().
 	Faint(true).
 	Foreground(lipgloss.Color("240")).
-	Background(lipgloss.Color("#14141b"))
+	Background(accountSwitchScrim)
+
+// accountSwitchCardStyle is the rounded card chrome. The panel fill is elevated
+// (accountSwitchCardBg) so the modal pops over the dimmed session, but the
+// border sits on the scrim so its rounded corner cells blend into the darkened
+// backdrop. Without that, the border's corner cells inherited the lighter panel
+// fill, turning the panel's rectangular block into a square-cornered container
+// framing the rounded border — the corners read as un-rounded.
+func accountSwitchCardStyle() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		BorderBackground(accountSwitchScrim).
+		Background(accountSwitchCardBg).
+		Padding(accountSwitchPadY, accountSwitchPadX)
+}
 
 func (m accountSwitchModel) View() string {
 	// Paint nothing until the popup's size arrives: bubbletea's first real frame
@@ -327,11 +353,7 @@ func (m accountSwitchModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
 	}
-	card := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).
-		Padding(accountSwitchPadY, accountSwitchPadX).
-		Render(strings.Join(m.innerLines(), "\n"))
+	card := accountSwitchCardStyle().Render(strings.Join(m.innerLines(), "\n"))
 	firstRowY, cardLeft, cardWidth := accountSwitchLayout(m.width, m.height, len(m.rows), m.contentWidth())
 	cardTop := firstRowY - accountSwitchBorder - accountSwitchPadY - accountSwitchHeader
 	return m.composite(card, cardLeft, cardTop, cardWidth)
