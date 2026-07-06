@@ -57,14 +57,25 @@ account_pill_enabled() {
   gt_multiple_claude_accounts "$list_file"
 }
 
-# account_pill <label> <color> — render the account pill for the ledger bottom bar.
-# Line 1 is the drawable string (a leading space + the 󰀄 glyph + the label, all in
-# the account's 256-color); line 2 is its VISIBLE click width so the click handler
-# can bound the hit region. Width = leading space + glyph + space + label.
+# account_pill <label> <color> [hover] — render the account pill for the ledger
+# bottom bar. Line 1 is the drawable string (a pad space + the 󰀄 glyph + a space +
+# the label + a trailing pad space, the glyph/label in the account's 256-color);
+# line 2 is its VISIBLE click width so the click handler can bound the hit region.
+# Width = pad space + glyph + space + label + trailing pad space. When hover is 1
+# the pill gains a background bar (48;5;238, matching the file-row hover) so the
+# pointer target reads as pressable; the background+fg SGR open at the very start
+# and the reset closes after the trailing pad, so BOTH pad spaces are highlighted —
+# a small margin of breathing room on the left and right of the text. The two pad
+# spaces are reserved in the plain pill too, so the visible width is identical
+# either way and the bottom bar never shifts on hover.
 account_pill() {
-  local label="$1" color="$2"
-  printf ' \033[38;5;%sm\xF3\xB0\x80\x84 %s\033[0m\n' "$color" "$label"
-  printf '%s\n' "$((3 + ${#label}))"
+  local label="$1" color="$2" hover="${3:-0}"
+  if [ "$hover" = 1 ]; then
+    printf '\033[48;5;238;38;5;%sm \xF3\xB0\x80\x84 %s \033[0m\n' "$color" "$label"
+  else
+    printf ' \033[38;5;%sm\xF3\xB0\x80\x84 %s\033[0m \n' "$color" "$label"
+  fi
+  printf '%s\n' "$((4 + ${#label}))"
 }
 
 # current_session_account <tmux_cmd> <pointer_file> — print the account dir name

@@ -95,9 +95,61 @@ func TestAccountPill_renders_label_color_and_width(t *testing.T) {
 	assertContains(t, lines[0], "Personal")
 	assertContains(t, lines[0], "38;5;208") // account color escape
 	assertContains(t, lines[0], "󰀄")        // account glyph 󰀄
-	// visible width = leading space + glyph + space + len("Personal") = 3 + 8 = 11
-	if strings.TrimSpace(lines[1]) != "11" {
-		t.Fatalf("expected width 11, got %q", lines[1])
+	// visible width = leading pad space + glyph + space + len("Personal") + trailing
+	// pad space = 4 + 8 = 12. The left/right pad spaces give the hover highlight a
+	// little breathing room and are always reserved so the width never changes.
+	if strings.TrimSpace(lines[1]) != "12" {
+		t.Fatalf("expected width 12, got %q", lines[1])
+	}
+}
+
+// Hovering the account pill (the mid-session "switch account" button) must make
+// it visibly highlight so the pointer target reads as pressable. The hovered
+// variant adds a background bar (48;5;238) that the plain pill lacks, while
+// keeping the same visible click width so the hit region is unchanged. The
+// highlight carries a small pad SPACE on each side of the text — a highlighted
+// space before the glyph and after the label — so the button has breathing room
+// inside the bar. Both pad spaces are reserved in the plain pill too, so the
+// width is identical and the bottom bar never shifts on hover.
+func TestAccountPill_hover_highlights_and_keeps_width(t *testing.T) {
+	plainOut, code := runBashSnippet(t, accountSwitchSnippet(t,
+		`account_pill "Personal" "208"`), nil)
+	assertExitCode(t, code, 0)
+	hoverOut, code := runBashSnippet(t, accountSwitchSnippet(t,
+		`account_pill "Personal" "208" 1`), nil)
+	assertExitCode(t, code, 0)
+
+	plain := strings.Split(strings.TrimRight(plainOut, "\n"), "\n")
+	hover := strings.Split(strings.TrimRight(hoverOut, "\n"), "\n")
+	if len(hover) != 2 {
+		t.Fatalf("expected 2 lines (pill + width), got %d: %q", len(hover), hoverOut)
+	}
+	// The hovered pill must differ from the plain pill (a visible highlight)...
+	if hover[0] == plain[0] {
+		t.Fatalf("hovered pill should differ from plain pill, both were %q", hover[0])
+	}
+	// ...specifically by carrying a background-color SGR the plain pill lacks.
+	assertContains(t, hover[0], "48;5;238")
+	assertNotContains(t, plain[0], "48;5;238")
+	assertContains(t, hover[0], "Personal")
+
+	// LEFT pad: the background SGR opens, then a highlighted space, then the glyph —
+	// so the highlight has a space of breathing room before the text ("...238m 󰀄").
+	glyph := "\xF3\xB0\x80\x84" // 󰀄
+	if !strings.Contains(hover[0], "m "+glyph) {
+		t.Fatalf("highlight must open with a pad space before the glyph (\"m %s\"): %q",
+			glyph, hover[0])
+	}
+	// RIGHT pad: a highlighted space follows the label, then the reset closes the
+	// run ("Personal \x1b[0m") — breathing room after the text, still inside the bar.
+	if !strings.Contains(hover[0], "Personal \x1b[0m") {
+		t.Fatalf("highlight must carry a pad space after the label before the reset "+
+			"(\"Personal \\x1b[0m\"): %q", hover[0])
+	}
+
+	// The click width must be identical so the hit region does not move on hover.
+	if strings.TrimSpace(hover[1]) != strings.TrimSpace(plain[1]) {
+		t.Fatalf("hover width %q must equal plain width %q", hover[1], plain[1])
 	}
 }
 

@@ -794,6 +794,20 @@ compact_view() {
     if [ "$b" != 0 ] && [ -n "$NTH_LINE" ]; then hover_line="$b"; else hover_line=0; fi
   }
 
+  # set_pill_hover maps a mouse report's screen row/col to the account pill's click
+  # span — the bottom bar (row $h), cols 1..account_pill_cols — and lights the pill
+  # (pill_hover=1) while the pointer is over it, so the "switch account" button
+  # reads as pressable; 0 otherwise (and always 0 when no pill is shown). Mirrors
+  # the click test at the `0)` case; reads $h and the pill vars via dynamic scope.
+  set_pill_hover() {
+    if [ -n "$account_pill_str" ] && [ "$1" = "$h" ] \
+       && [ "$2" -ge 1 ] && [ "$2" -le "$account_pill_cols" ]; then
+      pill_hover=1
+    else
+      pill_hover=0
+    fi
+  }
+
   # ANSI helpers
   local dim="\033[90m"
   local bold="\033[1m"
@@ -839,6 +853,7 @@ compact_view() {
   # a raw `ab_counts=$'8\t0'` on every tick after the first (see the NOTE above).
   local branch ahead behind ab_counts
   local mterm mrest mcol mrow bl cpath prev_hover prev_scroll hover_keep
+  local prev_pill_hover pill_hover_keep
   # Multi-select batch discard: SELECTED is a newline-delimited set of marked
   # file PATHS (tracked by path so it survives the ledger's rebuild/scroll).
   # discard_armed shows the y/n confirm footer; discard_set is what a confirm
@@ -862,6 +877,13 @@ compact_view() {
   # logins, no rotation proxy). account_pill_str is the drawable pill for the
   # bottom bar; account_pill_cols is its click width. Both empty/0 when no pill.
   local account_pill_str="" account_pill_cols=0
+  # account_pill_hover_str is the same pill rendered with its hover highlight, drawn
+  # in place of account_pill_str while pill_hover=1 (the pointer is over the pill).
+  # Precomputed on the build tick so the hover hot path only picks between strings.
+  local account_pill_hover_str=""
+  # 1 while the pointer sits over the account pill's click span (bottom bar, row h,
+  # cols 1..account_pill_cols) — lights the pill so it reads as pressable.
+  local pill_hover=0
   # Per-build pill scratch — declared ONCE here, never with an in-loop `local`
   # (under zsh, the pane's shell, `local NAME` without assignment on an already-set
   # var is a *display* command that leaks "NAME=value" onto the frame; see the
@@ -990,6 +1012,7 @@ compact_view() {
               local mouse_re='^[0-9]+;[0-9]+;[0-9]+$'
               if [ -z "$mterm" ] || ! [[ "$mbtn" =~ $mouse_re ]]; then
                 hover_line="$hover_keep"
+                pill_hover="$pill_hover_keep"
               else
               # Cursor col+row from "btn;col;row" — every position-bearing report
               # (wheel and motion alike) carries both, so extract them once. The
@@ -1010,13 +1033,16 @@ compact_view() {
                   fi
                   scroll=$(clamp_scroll "$scroll" "$body_total" "$avail")
                   set_hover_from_row "$mrow" "$mcol"
+                  set_pill_hover "$mrow" "$mcol"
                   ;;
                 32|33|34|35)
                   # Mouse motion (hover/drag, SGR adds 32 to the button code):
-                  # highlight the file row under the cursor. The coalescing loop
-                  # repaints only if the SETTLED hover differs from what's on
-                  # screen, so same-row motion is a no-op without a per-event check.
+                  # highlight the file row under the cursor, and light the account
+                  # pill when the pointer is over it. The coalescing loop repaints
+                  # only if the SETTLED hover differs from what's on screen, so
+                  # same-row motion is a no-op without a per-event check.
                   set_hover_from_row "$mrow" "$mcol"
+                  set_pill_hover "$mrow" "$mcol"
                   ;;
                 0)
                   # Left-click: the account pill (bottom bar, row h) opens the
@@ -1223,7 +1249,7 @@ compact_view() {
     # pointer alone would flip the pill whenever another session or the
     # launcher rewrites it). Empty when the session is ineligible (no relaunch
     # context, <2 logins, or the helpers aren't loaded).
-    account_pill_str=""; account_pill_cols=0
+    account_pill_str=""; account_pill_cols=0; account_pill_hover_str=""
     if [ -n "$_rc_relaunch" ] && command -v account_pill_enabled >/dev/null 2>&1 \
        && account_pill_enabled "$_rc_relaunch" "$_rc_list"; then
       IFS=$'\t' read -r _pill_label _pill_color \
@@ -1231,6 +1257,9 @@ compact_view() {
       _pill="$(account_pill "$_pill_label" "$_pill_color")"
       account_pill_str="${_pill%$'\n'*}"
       account_pill_cols="${_pill##*$'\n'}"
+      # Hover variant (same width) drawn while the pointer is over the pill.
+      _pill="$(account_pill "$_pill_label" "$_pill_color" 1)"
+      account_pill_hover_str="${_pill%$'\n'*}"
     fi
     fi
 
@@ -1284,7 +1313,11 @@ compact_view() {
           # column span), dot-separated from the branch. Emitted as real bytes
           # (%s) — account_pill already interpreted its ANSI escapes.
           if [ -n "$account_pill_str" ]; then
-            printf '%s' "$account_pill_str"
+            if [ "$pill_hover" = 1 ]; then
+              printf '%s' "$account_pill_hover_str"
+            else
+              printf '%s' "$account_pill_str"
+            fi
             printf ' \033[90m·\033[0m'
           fi
           branch_status "$branch" "$ahead" "$behind"
@@ -1335,12 +1368,15 @@ compact_view() {
     # after. Without this the loop repainted the whole pane per report and the
     # highlight crawled a long backlog behind the cursor (it walked; now it flies).
     prev_hover="$hover_line"   # what's on screen now, for the post-drain compare
+    prev_pill_hover="$pill_hover"
     prev_scroll="$scroll"
     need_build=0
     state_dirty=0              # set by x/d/y/n when the selection or armed state changes
     while true; do
       hover_keep="$hover_line" # restored if this event is a malformed mouse report
       hover_line=0             # most keys clear the hover; mouse motion re-sets it
+      pill_hover_keep="$pill_hover"
+      pill_hover=0             # cleared like hover_line; motion re-sets it over the pill
       handle_key
       [ "$need_build" = 1 ] && break   # popup opened / rebuild -> stop draining
       read_key 0.006 || break          # no more buffered input -> flood settled
@@ -1349,7 +1385,7 @@ compact_view() {
     # Repaint once — and only when the settled state actually differs from what is
     # already on screen (a flood that ends where it began draws nothing), or a
     # rebuild is pending after a popup.
-    if [ "$need_build" = 1 ] || [ "$hover_line" != "$prev_hover" ] || [ "$scroll" != "$prev_scroll" ] || [ "$state_dirty" = 1 ]; then
+    if [ "$need_build" = 1 ] || [ "$hover_line" != "$prev_hover" ] || [ "$pill_hover" != "$prev_pill_hover" ] || [ "$scroll" != "$prev_scroll" ] || [ "$state_dirty" = 1 ]; then
       need_draw=1
     else
       need_draw=0

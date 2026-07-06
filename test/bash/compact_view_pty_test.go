@@ -1453,3 +1453,130 @@ func TestCompactView_idle_frames_are_stable_no_blink(t *testing.T) {
 		}
 	}
 }
+
+// Hovering the account pill (the mid-session "switch account" button) must make it
+// highlight so it reads as pressable, and the highlight must clear when the pointer
+// leaves the pill. Drives the real loop under zsh with a deterministic 2-account
+// relaunch context so the pill renders, then fires a motion report over the pill's
+// bottom-bar span and asserts the hover background (48;5;238) appears — and a
+// motion just past the pill (still on the bottom bar, so not a file-row hover)
+// clears it.
+func TestCompactView_hover_highlights_account_pill(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not available")
+	}
+	root := projectRoot(t)
+	lib := filepath.Join(root, "lib")
+	module := filepath.Join(lib, "compact-view.sh")
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "a.txt", "base\n")
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "a.txt", "base\nDIRTY\n") // a listed file above the bottom bar
+
+	// A 2-account config (one managed login + the implicit Default) so the pill is
+	// eligible to render, plus the relaunch context that points the ledger at it.
+	cfg := t.TempDir()
+	writeTempFile(t, cfg, "claude-accounts.list", "Work:work\n")
+	writeTempFile(t, cfg, "claude-account-colors", "default:78\nwork:170\n")
+	relaunch := filepath.Join(cfg, "relaunch.ctx")
+	writeTempFile(t, cfg, "relaunch.ctx", fmt.Sprintf(
+		"tool=claude\nproject_dir=%s\naccounts_dir=%s\npointer=%s\nlist=%s\ncolors=%s\ndefault_label=%s\n",
+		dir, filepath.Join(cfg, "claude-accounts"),
+		filepath.Join(cfg, "claude-account"),
+		filepath.Join(cfg, "claude-accounts.list"),
+		filepath.Join(cfg, "claude-account-colors"),
+		filepath.Join(cfg, "claude-account-default-label")))
+
+	cmd := exec.Command(zsh, "-c", "source "+module+" && compact_view "+dir)
+	env := []string{}
+	for _, e := range os.Environ() {
+		// Strip TMUX and any inherited relaunch file so the pill context is ours.
+		if strings.HasPrefix(e, "TMUX=") || strings.HasPrefix(e, "WISP_DECK_RELAUNCH_FILE=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=5", "TERM=xterm",
+		"WISP_DECK_LIB_DIR="+lib, "WISP_DECK_RELAUNCH_FILE="+relaunch)
+
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 12, Cols: 60})
+	if err != nil {
+		t.Fatalf("start pty: %v", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	var mu sync.Mutex
+	var out bytes.Buffer
+	go func() {
+		b := make([]byte, 4096)
+		for {
+			n, err := ptmx.Read(b)
+			if n > 0 {
+				mu.Lock()
+				out.Write(b[:n])
+				mu.Unlock()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	read := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		s := out.String()
+		out.Reset()
+		return s
+	}
+
+	time.Sleep(700 * time.Millisecond) // idle first frame
+	idle := read()
+	if !strings.Contains(idle, "\U000f0004") {
+		t.Fatalf("account pill (󰀄) never rendered — hover test cannot run; got:\n%q", idle)
+	}
+	if strings.Contains(idle, "48;5;238") {
+		t.Fatalf("the un-hovered pill must not carry the hover background (48;5;238); got:\n%q", idle)
+	}
+
+	// Motion over the pill: bottom bar is row 12 (pane height), pill starts at col 1.
+	_, _ = ptmx.Write([]byte("\x1b[<35;3;12M"))
+	time.Sleep(300 * time.Millisecond)
+	hovered := read()
+	if !strings.Contains(hovered, "48;5;238") {
+		t.Fatalf("hovering the account pill should light it with the hover background "+
+			"(48;5;238), but no frame did; got:\n%q", hovered)
+	}
+
+	// Motion just past the pill, still on the bottom bar (col 40, row 12) — not a
+	// file row, so no file-row hover. The pill highlight must clear.
+	_, _ = ptmx.Write([]byte("\x1b[<35;40;12M"))
+	time.Sleep(300 * time.Millisecond)
+	left := read()
+
+	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
+	time.Sleep(200 * time.Millisecond)
+
+	// The final settled frame in `left` must not carry the pill highlight anymore.
+	frames := strings.Split(left, "\x1b[H")
+	last := frames[len(frames)-1]
+	if strings.Contains(last, "48;5;238") {
+		t.Fatalf("moving off the pill should clear its hover highlight, but the settled "+
+			"frame still carried 48;5;238; got:\n%q", last)
+	}
+}
