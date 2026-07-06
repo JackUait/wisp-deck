@@ -60,6 +60,10 @@ for _gt_lib in "${_gt_libs[@]}"; do
 done
 unset _gt_libs _gt_lib
 
+# Pay the TUI binary's first-run Gatekeeper assessment now, in the background,
+# so the first modal open (file-list diff / account switcher) doesn't stall.
+warm_tui_binary
+
 TMUX_CMD="$(command -v tmux)"
 LAZYGIT_CMD="$(command -v lazygit)"
 CLAUDE_CMD="$(command -v claude)"

@@ -167,6 +167,9 @@ main() {
       codesign --sign - --force "$local_bin" && \
       echo "  ✓ Updated $local_bin" || \
       echo "  ⚠ Failed to update local binary (release still succeeded)"
+    # Re-signing resets the Gatekeeper first-run assessment (~1s stall on the
+    # next exec) — pay it here so the next modal open in a live session is warm.
+    "$local_bin" --version >/dev/null 2>&1 || true
   fi
 
   echo ""

@@ -20,6 +20,19 @@ error()   { echo -e "${_RED}✗${_NC} $1"; }
 info()    { echo -e "${_BLUE}→${_NC} $1"; }
 header()  { echo -e "\n${_BOLD}$1${_NC}"; }
 
+# Pre-warm the wisp-deck-tui binary so the FIRST modal open (file-list diff,
+# account switcher) doesn't stall. The first exec of a freshly built/installed
+# binary pays a macOS Gatekeeper/XProtect assessment (~1s idle, multi-second
+# under load) plus paging ~17MB in; every `make release` re-signs the local
+# binary, which resets that assessment. Running `--version` once in a disowned
+# background job pays it during session setup instead of on the user's click.
+# Silent no-op when the binary is missing (the wrapper errors on that itself).
+warm_tui_binary() {
+  command -v wisp-deck-tui >/dev/null 2>&1 || return 0
+  (wisp-deck-tui --version >/dev/null 2>&1 &) >/dev/null 2>&1
+  return 0
+}
+
 # Set terminal/tab title. With tool: "project · tool", without: "project"
 set_tab_title() {
   local project="$1"
