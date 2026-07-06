@@ -132,6 +132,40 @@ current_ai_session() {
   return 0
 }
 
+# stash_ai_draft <tmux_cmd> <pane> <history_file> — extract the AI pane's
+# unsent draft by making claude itself persist it: Esc Esc with a non-empty
+# input appends the draft (full text, newlines, [Image #N]/[Pasted text #N]
+# markers) to the shared prompt history. The lone Escape first interrupts a
+# streaming turn (no-op when idle). History growth within the poll window is
+# the "there WAS a draft" signal — an empty input appends nothing. Prints the
+# stashed draft text; exit 0 iff stashed. Fail-open: any miss just means the
+# switch behaves as before this feature.
+stash_ai_draft() {
+  local tmux_cmd="$1" pane="$2" hist="$3"
+  command -v python3 >/dev/null 2>&1 || return 1
+  local before=0 after
+  [ -f "$hist" ] && before="$(wc -l < "$hist")"
+  "$tmux_cmd" send-keys -t "$pane" Escape 2>/dev/null || return 1
+  sleep 0.2
+  "$tmux_cmd" send-keys -t "$pane" Escape Escape 2>/dev/null || return 1
+  for _ in $(seq 1 15); do
+    after=0
+    [ -f "$hist" ] && after="$(wc -l < "$hist")"
+    if [ "$after" -gt "$before" ]; then
+      python3 - "$hist" <<'PYEOF'
+import json, sys
+with open(sys.argv[1], "rb") as f:
+    lines = [l for l in f.read().splitlines() if l.strip()]
+if lines:
+    print(json.loads(lines[-1]).get("display", ""), end="")
+PYEOF
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
 # build_switch_launch_cmd <tool> <claude_cmd> <opencode_cmd> <settings> <filter> \
 #   <project_dir> <new_account_dir> [resume_session] — build the launch command that
 # respawns the AI pane under new_account_dir.

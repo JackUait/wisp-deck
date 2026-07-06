@@ -1,0 +1,77 @@
+package bash_test
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// stash_ai_draft extracts the pane's unsent draft by making claude itself
+// persist it: Esc Esc appends the draft to the shared prompt history
+// (verified behavior, see the 2026-07-06 spec). The mock tmux appends a
+// history entry when it sees the Escape pair, standing in for claude.
+func TestStashAIDraft_prints_display_when_history_grows(t *testing.T) {
+	dir := t.TempDir()
+	hist := writeTempFile(t, dir, "history.jsonl",
+		`{"display":"old entry","pastedContents":{}}`+"\n")
+	rec := filepath.Join(dir, "tmux.log")
+	// Log every call; on the Escape-pair send-keys, append the stashed draft
+	// (with an escaped newline, to prove multi-line JSON decoding).
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+printf '%%s\n' "$*" >> %q
+if [ "$1" = "send-keys" ] && [ "$4" = "Escape" ] && [ "$5" = "Escape" ]; then
+  printf '%%s\n' '{"display":"line one\nline two [Image #2]","pastedContents":{}}' >> %q
+fi`, rec, hist))
+	env := buildEnv(t, []string{bin})
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("stash_ai_draft tmux %%1 %q", hist)), env)
+	assertExitCode(t, code, 0)
+	if out != "line one\nline two [Image #2]" {
+		t.Fatalf("expected decoded display text, got %q", out)
+	}
+	logOut, _ := os.ReadFile(rec)
+	// The lone interrupt-Esc (stops a streaming turn) precedes the stash pair.
+	first := strings.Index(string(logOut), "send-keys -t %1 Escape\n")
+	pair := strings.Index(string(logOut), "send-keys -t %1 Escape Escape")
+	if first == -1 || pair == -1 || first > pair {
+		t.Fatalf("expected lone Escape then Escape pair, log:\n%s", logOut)
+	}
+}
+
+// An empty input appends nothing (Esc Esc opens the rewind menu instead), so
+// no growth within the timeout means "no draft": rc 1, empty output, and the
+// switch proceeds exactly as today.
+func TestStashAIDraft_fails_when_history_does_not_grow(t *testing.T) {
+	dir := t.TempDir()
+	hist := writeTempFile(t, dir, "history.jsonl", "")
+	bin := mockCommand(t, dir, "tmux", `exit 0`)
+	env := buildEnv(t, []string{bin})
+	start := time.Now()
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("stash_ai_draft tmux %%1 %q", hist)), env)
+	if code == 0 {
+		t.Fatalf("expected nonzero exit when history did not grow, got 0: %s", out)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("expected no output, got %q", out)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("poll did not time out promptly: %v", elapsed)
+	}
+}
+
+// A missing history file (fresh install) must behave like the empty-input
+// case, not crash.
+func TestStashAIDraft_missing_history_file_is_no_draft(t *testing.T) {
+	dir := t.TempDir()
+	bin := mockCommand(t, dir, "tmux", `exit 0`)
+	env := buildEnv(t, []string{bin})
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("stash_ai_draft tmux %%1 %q", filepath.Join(dir, "absent.jsonl"))), env)
+	if code == 0 {
+		t.Fatal("expected nonzero exit for missing history file")
+	}
+}
