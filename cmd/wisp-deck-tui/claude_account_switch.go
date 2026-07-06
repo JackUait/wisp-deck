@@ -311,12 +311,12 @@ func (m accountSwitchModel) contentWidth() int {
 	return w
 }
 
-// accountSwitchScrim is the dim backdrop tint behind the popup, also used as the
-// card's border background so the rounded border's corner cells blend into the
-// darkened session instead of being filled by the (lighter) card panel — which
-// made the panel's rectangular block read as a square-cornered container around
-// the rounded border. accountSwitchCardBg is the panel's own slightly-elevated
-// fill, kept distinct so the card still pops as a modal over the dimmed session.
+// accountSwitchScrim is the dim backdrop tint painted in the close area around
+// the card, so the darkened session shows through and the gray card floats above
+// it. accountSwitchCardBg is the card's gray fill; it also backs the border cells
+// so the gray fills the whole container edge to edge (matching the file-list diff
+// modal) rather than leaving the border ring — and its corners — showing the
+// darker scrim.
 const (
 	accountSwitchScrim  lipgloss.Color = "#14141b"
 	accountSwitchCardBg lipgloss.Color = "#292c33"
@@ -331,17 +331,16 @@ var accountSwitchDim = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("240")).
 	Background(accountSwitchScrim)
 
-// accountSwitchCardStyle is the rounded card chrome. The panel fill is elevated
-// (accountSwitchCardBg) so the modal pops over the dimmed session, but the
-// border sits on the scrim so its rounded corner cells blend into the darkened
-// backdrop. Without that, the border's corner cells inherited the lighter panel
-// fill, turning the panel's rectangular block into a square-cornered container
-// framing the rounded border — the corners read as un-rounded.
+// accountSwitchCardStyle is the rounded card chrome. The gray fill backs both the
+// panel and the border cells so the whole container is one gray block — the same
+// way the file-list diff modal fills edge to edge — rather than a gray panel
+// ringed by the darker scrim at its border and corners. The card floats over the
+// dimmed session because the close area around it (accountSwitchDim) is darker.
 func accountSwitchCardStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("240")).
-		BorderBackground(accountSwitchScrim).
+		BorderBackground(accountSwitchCardBg).
 		Background(accountSwitchCardBg).
 		Padding(accountSwitchPadY, accountSwitchPadX)
 }

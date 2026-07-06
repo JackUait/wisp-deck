@@ -256,15 +256,16 @@ func TestAccountSwitchModel_closeAreaIsDimScrim(t *testing.T) {
 	}
 }
 
-func TestAccountSwitchModel_cardBlendsWithScrim(t *testing.T) {
+func TestAccountSwitchModel_grayFillsWholeContainer(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	defer lipgloss.SetColorProfile(prev)
 
-	// The rounded border's corner cells must sit on the close-area scrim, not on
-	// the (lighter) panel fill. Otherwise the panel's rectangular block fills the
-	// corners with the lighter color and reads as a square-cornered "container"
-	// framing the rounded border — the card corners looked un-rounded.
+	// The card's gray fill must extend through the border/corner cells so the whole
+	// container is one gray block — matching the file-list (diff) modal, whose gray
+	// fills edge to edge. So the rounded border sits on the card background, not the
+	// dim scrim; otherwise the border ring shows the scrim and the corners read as
+	// dark notches carved out of the gray panel.
 	card := accountSwitchCardStyle().Render("content")
 
 	var topBorder string
@@ -277,10 +278,25 @@ func TestAccountSwitchModel_cardBlendsWithScrim(t *testing.T) {
 	if topBorder == "" {
 		t.Fatal("card rendered no top rounded-border line")
 	}
-	// The rounded corner cells specifically must sit on the scrim background so
-	// they blend into the backdrop instead of showing a lighter square notch.
-	if !strings.Contains(topBorder, "48;2;20;20;27") {
-		t.Errorf("rounded border does not sit on the dim scrim background (square container):\n%q", topBorder)
+	// Derive the exact background escapes lipgloss emits for each color so the test
+	// tracks the constants, not a hand-computed RGB triple.
+	bgSeq := func(c lipgloss.Color) string {
+		rendered := lipgloss.NewStyle().Background(c).Render(" ")
+		i := strings.Index(rendered, "48;2;")
+		if i < 0 {
+			t.Fatalf("no truecolor background in %q", rendered)
+		}
+		return rendered[i : i+strings.IndexByte(rendered[i:], 'm')]
+	}
+	cardBg := bgSeq(accountSwitchCardBg)
+	scrimBg := bgSeq(accountSwitchScrim)
+	// The card gray must fill the border row so the whole container is one block.
+	if !strings.Contains(topBorder, cardBg) {
+		t.Errorf("rounded border does not carry the card gray fill %q (gray must fill the whole container):\n%q", cardBg, topBorder)
+	}
+	// The border must NOT sit on the scrim (that leaves dark corner notches).
+	if strings.Contains(topBorder, scrimBg) {
+		t.Errorf("rounded border still sits on the dim scrim %q (gray does not fill the corners):\n%q", scrimBg, topBorder)
 	}
 }
 
