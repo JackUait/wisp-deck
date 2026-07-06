@@ -63,6 +63,28 @@ func TestStashAIDraft_fails_when_history_does_not_grow(t *testing.T) {
 	}
 }
 
+// The draft's pasted images live under the config root of the account the
+// pane WAS running (images are cached at paste time, before the switch).
+func TestDraftCacheRoot_default_login_uses_home_claude(t *testing.T) {
+	dir := t.TempDir()
+	env := buildEnv(t, nil, "HOME="+dir)
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		`draft_cache_root "/cfg/claude-accounts" ""`), env)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != dir+"/.claude" {
+		t.Fatalf("expected %s/.claude, got %q", dir, out)
+	}
+}
+
+func TestDraftCacheRoot_managed_login_uses_account_dir(t *testing.T) {
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		`draft_cache_root "/cfg/claude-accounts" "work"`), nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "/cfg/claude-accounts/work" {
+		t.Fatalf("expected /cfg/claude-accounts/work, got %q", out)
+	}
+}
+
 // A missing history file (fresh install) must behave like the empty-input
 // case, not crash.
 func TestStashAIDraft_missing_history_file_is_no_draft(t *testing.T) {

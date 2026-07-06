@@ -166,6 +166,20 @@ PYEOF
   return 1
 }
 
+# draft_cache_root <accounts_dir> <session_acct> — config root of the account
+# the pane WAS running before the switch: its image-cache/ holds the draft's
+# pasted images (written at paste time). Empty acct = the Default (Keychain)
+# login, whose root is ~/.claude. The NEW login only needs to READ this path,
+# so no cache sharing across accounts is required.
+draft_cache_root() {
+  local accounts_dir="$1" acct="$2"
+  if [ -n "$acct" ]; then
+    printf '%s/%s\n' "$accounts_dir" "$acct"
+  else
+    printf '%s/.claude\n' "$HOME"
+  fi
+}
+
 # build_switch_launch_cmd <tool> <claude_cmd> <opencode_cmd> <settings> <filter> \
 #   <project_dir> <new_account_dir> [resume_session] — build the launch command that
 # respawns the AI pane under new_account_dir.
