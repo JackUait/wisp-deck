@@ -132,18 +132,22 @@ current_ai_session() {
   return 0
 }
 
-# stash_ai_draft <tmux_cmd> <pane> <history_file> — extract the AI pane's
-# unsent draft by making claude itself persist it: Esc Esc with a non-empty
-# input appends the draft (full text, newlines, [Image #N]/[Pasted text #N]
-# markers) to the shared prompt history. The lone Escape first interrupts a
-# streaming turn (no-op when idle). History growth within the poll window is
-# the "there WAS a draft" signal — an empty input appends nothing. Prints the
-# stashed draft text; exit 0 iff stashed. Fail-open: any miss just means the
-# switch behaves as before this feature.
+# stash_ai_draft <tmux_cmd> <pane> <history_file> [project_dir] — extract the
+# AI pane's unsent draft by making claude itself persist it: Esc Esc with a
+# non-empty input appends the draft (full text, newlines, [Image #N]/[Pasted
+# text #N] markers) to the shared prompt history. The lone Escape first
+# interrupts a streaming turn (no-op when idle). History growth within the
+# poll window is the "there WAS a draft" signal — an empty input appends
+# nothing. The history is shared by EVERY live claude session, so a foreign
+# session's entry can land in the same window: with project_dir given, only
+# appended entries whose "project" matches count (never replay another
+# session's prompt into this pane). Prints the stashed draft text; exit 0 iff
+# stashed. Fail-open: any miss just means the switch behaves as before this
+# feature.
 stash_ai_draft() {
-  local tmux_cmd="$1" pane="$2" hist="$3"
+  local tmux_cmd="$1" pane="$2" hist="$3" project="${4:-}"
   command -v python3 >/dev/null 2>&1 || return 1
-  local before=0 after
+  local before=0 after out
   [ -f "$hist" ] && before="$(wc -l < "$hist")"
   "$tmux_cmd" send-keys -t "$pane" Escape 2>/dev/null || return 1
   sleep 0.2
@@ -152,14 +156,27 @@ stash_ai_draft() {
     after=0
     [ -f "$hist" ] && after="$(wc -l < "$hist")"
     if [ "$after" -gt "$before" ]; then
-      python3 - "$hist" <<'PYEOF'
+      out="$(python3 - "$hist" "$before" "$project" <<'PYEOF'
 import json, sys
-with open(sys.argv[1], "rb") as f:
-    lines = [l for l in f.read().splitlines() if l.strip()]
-if lines:
-    print(json.loads(lines[-1]).get("display", ""), end="")
+path, skip, project = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+with open(path, "rb") as f:
+    lines = [l for l in f.read().splitlines() if l.strip()][skip:]
+for line in reversed(lines):
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        continue
+    if project and entry.get("project") != project:
+        continue
+    print(entry.get("display", ""), end="")
+    break
 PYEOF
-      return 0
+)" || out=""
+      if [ -n "$out" ]; then
+        printf '%s' "$out"
+        return 0
+      fi
+      # Growth was only foreign sessions' entries — keep waiting for ours.
     fi
     sleep 0.1
   done
@@ -409,7 +426,8 @@ _relaunch_preserving_draft() {
     pane="$(find_ai_pane "$tmux_cmd")"
     if [ -n "$pane" ]; then
       draft="$(stash_ai_draft "$tmux_cmd" "$pane" \
-        "${WISP_DECK_HISTORY_FILE:-$HOME/.claude/history.jsonl}")" || draft=""
+        "${WISP_DECK_HISTORY_FILE:-$HOME/.claude/history.jsonl}" \
+        "$_rc_project_dir")" || draft=""
     fi
   fi
   relaunch_ai_pane "$tmux_cmd" "$relaunch_file"

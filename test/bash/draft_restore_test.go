@@ -251,7 +251,7 @@ load-buffer) printf 'PASTE:%%s\n' "$(cat)" >> %q; exit 0 ;;
 *) printf '%%s\n' "$*" >> %q ;;
 esac
 if [ "$1" = "send-keys" ] && [ "$4" = "Escape" ] && [ "$5" = "Escape" ]; then
-  printf '%%s\n' '{"display":"draft [Image #1]","pastedContents":{}}' >> %q
+  printf '%%s\n' '{"display":"draft [Image #1]","pastedContents":{},"project":"/proj"}' >> %q
 fi
 if [ "$1" = "list-panes" ]; then printf '%%s\n' "%%1 1"; fi
 if [ "$1" = "capture-pane" ]; then printf '%%s\n' "❯ "; fi
@@ -348,6 +348,45 @@ if [ "$1" = "display-popup" ]; then eval "${@: -1}" >/dev/null 2>&1 || true; fi`
 	logOut, _ := os.ReadFile(rec)
 	assertNotContains(t, string(logOut), "Escape")
 	assertContains(t, string(logOut), "respawn-pane")
+}
+
+// history.jsonl is shared by every live claude session, so another session's
+// entry can land AFTER our stash before we read the tail. The stash must pick
+// the newest appended entry whose project matches THIS pane's project dir —
+// never a foreign session's prompt (live e2e nearly pasted another session's
+// input into the relaunched pane).
+func TestStashAIDraft_skips_foreign_project_entries(t *testing.T) {
+	dir := t.TempDir()
+	hist := writeTempFile(t, dir, "history.jsonl", "")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "send-keys" ] && [ "$4" = "Escape" ] && [ "$5" = "Escape" ]; then
+  printf '%%s\n' '{"display":"our draft","pastedContents":{},"project":"/proj"}' >> %q
+  printf '%%s\n' '{"display":"foreign secret prompt","pastedContents":{},"project":"/elsewhere"}' >> %q
+fi`, hist, hist))
+	env := buildEnv(t, []string{bin})
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("stash_ai_draft tmux %%1 %q /proj", hist)), env)
+	assertExitCode(t, code, 0)
+	if out != "our draft" {
+		t.Fatalf("expected our project's entry, got %q", out)
+	}
+}
+
+// Growth made only of foreign-project entries is NOT our stash (our Esc-Esc
+// appended nothing — the input was empty): rc 1, nothing to replay.
+func TestStashAIDraft_only_foreign_growth_is_no_draft(t *testing.T) {
+	dir := t.TempDir()
+	hist := writeTempFile(t, dir, "history.jsonl", "")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "send-keys" ] && [ "$4" = "Escape" ] && [ "$5" = "Escape" ]; then
+  printf '%%s\n' '{"display":"foreign secret prompt","pastedContents":{},"project":"/elsewhere"}' >> %q
+fi`, hist))
+	env := buildEnv(t, []string{bin})
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("stash_ai_draft tmux %%1 %q /proj", hist)), env)
+	if code == 0 {
+		t.Fatalf("expected rc 1 when only foreign entries landed, got 0: %q", out)
+	}
 }
 
 // A missing history file (fresh install) must behave like the empty-input
