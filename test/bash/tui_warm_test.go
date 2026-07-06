@@ -94,6 +94,65 @@ func TestWrapper_warms_tui_binary_at_launch(t *testing.T) {
 	}
 }
 
+// ensure_wisp_deck_tui downloads a brand-new binary on install/update — it
+// must exec it once right after so the first-run assessment happens at
+// install time, not on the user's first modal click.
+func TestEnsureWispDeckTui_warms_freshly_installed_binary(t *testing.T) {
+	dir := t.TempDir()
+	fakeHome := filepath.Join(dir, "home")
+	if err := os.MkdirAll(filepath.Join(fakeHome, ".local", "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shareDir := t.TempDir()
+	writeTempFile(t, shareDir, "VERSION", "9.9.9")
+
+	// The "downloaded" binary logs every invocation, so we can see the warm-up.
+	warmLog := filepath.Join(dir, "warm.log")
+	binDir := mockCommand(t, dir, "curl", `
+if [ "$1" = "-fsSL" ]; then
+  cat > "$3" <<PAYLOAD
+#!/bin/bash
+echo "\$@" >> `+warmLog+`
+PAYLOAD
+  exit 0
+fi
+exit 0
+`)
+	mockCommand(t, dir, "uname", `echo "arm64"`)
+
+	snippet := installSnippet(t, `ensure_wisp_deck_tui "`+shareDir+`"`)
+	env := buildEnv(t, nil, "HOME="+fakeHome, "PATH="+binDir+":/usr/bin:/bin")
+	_, code := runBashSnippet(t, snippet, env)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(warmLog)
+	if err != nil {
+		t.Fatal("ensure_wisp_deck_tui never exec'd the freshly downloaded binary; it must run it once (--version) so the first-run Gatekeeper assessment happens at install time")
+	}
+	if !strings.Contains(string(data), "--version") {
+		t.Errorf("the install-time warm-up should use --version, got %q", string(data))
+	}
+}
+
+// The Makefile install target copies + re-signs the binary into ~/.local/bin,
+// which resets the Gatekeeper assessment — it must exec it once after.
+func TestMakefile_install_warms_binary(t *testing.T) {
+	root := projectRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "Makefile"))
+	if err != nil {
+		t.Fatalf("failed to read Makefile: %v", err)
+	}
+	s := string(data)
+	signIdx := strings.Index(s, "codesign --sign - --force $(HOME)/.local/bin/wisp-deck-tui")
+	warmIdx := strings.Index(s, "$(HOME)/.local/bin/wisp-deck-tui --version")
+	if warmIdx == -1 {
+		t.Fatal("Makefile install target should run the installed binary once (--version) after codesign, so the first-run Gatekeeper assessment doesn't land on the next modal open")
+	}
+	if signIdx != -1 && warmIdx < signIdx {
+		t.Error("the warm-up exec must come AFTER codesign (signing resets the assessment)")
+	}
+}
+
 // The release script re-signs the freshly built local binary, which resets the
 // Gatekeeper assessment — it must exec the binary once right after so the
 // developer's next modal open is warm.

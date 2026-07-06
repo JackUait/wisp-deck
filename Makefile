@@ -13,6 +13,9 @@ install: build
 	mkdir -p $(HOME)/.local/bin
 	cp bin/wisp-deck-tui $(HOME)/.local/bin/
 	@codesign --sign - --force $(HOME)/.local/bin/wisp-deck-tui
+	@# Re-signing resets the Gatekeeper first-run assessment — pay it now, not
+	@# on the next modal open in a live session.
+	@$(HOME)/.local/bin/wisp-deck-tui --version >/dev/null 2>&1 || true
 	@echo "✓ Installed wisp-deck-tui"
 
 # Run tests

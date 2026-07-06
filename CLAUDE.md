@@ -162,6 +162,8 @@ make release              # Interactive (with confirmation prompt)
 bash scripts/release.sh --yes  # Non-interactive (skip confirmation)
 ```
 
+**Gotcha (binary warm-up):** the FIRST exec of a freshly built, downloaded, or re-signed `wisp-deck-tui` pays a macOS Gatekeeper/XProtect assessment (~1s idle, multi-second under load). Both the file-list diff modal and the account switcher exec this binary, so a cold binary makes the first modal open stall. **Every code path that writes or re-signs `~/.local/bin/wisp-deck-tui` MUST exec it once afterwards** (`"$bin" --version >/dev/null 2>&1 || true`). Existing warm-up sites: `wrapper.sh` (session launch, via `warm_tui_binary` in `lib/tui.sh`), `scripts/release.sh`, `lib/install.sh` (`ensure_wisp_deck_tui`), and the Makefile `install` target — all guarded by `test/bash/tui_warm_test.go`.
+
 **Gotcha:** `gh release create FILE#LABEL` uses the file's **basename** as the download name (not the label). If you build to a mktemp path, users get assets named `tmp.XXXX`. The release script builds to a temp directory with correct filenames to avoid this.
 
 **Post-release verification (MANDATORY):**

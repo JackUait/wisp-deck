@@ -145,6 +145,9 @@ ensure_wisp_deck_tui() {
 
   mkdir -p "$HOME/.local/bin"
   install_binary "$url" "$HOME/.local/bin/wisp-deck-tui" "wisp-deck-tui" || return 1
+  # Exec the fresh binary once so its first-run Gatekeeper assessment (~1s,
+  # more under load) happens now — not on the first modal open in a session.
+  "$HOME/.local/bin/wisp-deck-tui" --version >/dev/null 2>&1 || true
 }
 
 # Install base CLI requirements.
