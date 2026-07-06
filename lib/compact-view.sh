@@ -154,19 +154,38 @@ numstat_path() {
 # gitignored (git ls-files --others --exclude-standard) — as `git --numstat`-
 # shaped rows, "<added>\t0\t<path>", so a brand-new file feeds the SAME ledger
 # render and click→path map as a tracked change. A new file is all additions, so
-# <added> is its line count: `git diff --no-index` against /dev/null yields git's
-# own count (honouring a missing trailing newline, and emitting "-" for binary,
-# exactly as numstat does elsewhere). The NUL-delimited ls-files keeps paths with
-# spaces or newlines intact; diff prints "/dev/null => <path>", so field 1 is the
-# added count and we re-emit the clean working-tree path as field 3.
+# <added> is its line count, matching git numstat's own semantics: a missing
+# trailing newline still counts the last line, and binary files (NUL byte in the
+# first 8000 bytes, git's buffer_is_binary heuristic) emit "-". The NUL-delimited
+# ls-files keeps paths with spaces or newlines intact.
+# This runs on EVERY ledger refresh tick, so counting is one perl pass over all
+# files — not a `git diff --no-index` per file, whose ~8ms spawn made the tick
+# cost scale with the number of new files.
 # Usage: untracked_numstat <project_dir>
 untracked_numstat() {
-  local dir="$1" file count
-  while IFS= read -r -d '' file; do
-    count=$(git -C "$dir" diff --no-index --numstat -- /dev/null "$file" 2>/dev/null | cut -f1)
-    [ -z "$count" ] && count=0
-    printf '%s\t0\t%s\n' "$count" "$file"
-  done < <(git -C "$dir" ls-files --others --exclude-standard -z 2>/dev/null)
+  local dir="$1"
+  git -C "$dir" ls-files --others --exclude-standard -z 2>/dev/null \
+    | (
+        cd "$dir" 2>/dev/null || exit 0
+        perl -0 -ne '
+          chomp;
+          my $f = $_;
+          my ($n, $bin, $last, $first) = (0, 0, "", 1);
+          if (open my $fh, "<", $f) {
+            binmode $fh;
+            my $chunk;
+            while (read($fh, $chunk, 65536)) {
+              $bin = 1 if $first && index(substr($chunk, 0, 8000), "\0") >= 0;
+              $first = 0;
+              $n += ($chunk =~ tr/\n//);
+              $last = substr($chunk, -1);
+            }
+            close $fh;
+            $n++ if !$bin && $last ne "" && $last ne "\n";
+          }
+          print(($bin ? "-" : $n), "\t0\t", $f, "\n");
+        ' 2>/dev/null
+      )
 }
 
 # body_path_map emits ONE line per rendered body line: the file's path on a file

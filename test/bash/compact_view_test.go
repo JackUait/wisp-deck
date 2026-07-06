@@ -2,6 +2,7 @@ package bash_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1832,6 +1833,71 @@ func TestUntrackedNumstat_lists_untracked_with_added_count(t *testing.T) {
 	// A tracked, unmodified file must NOT be reported as untracked.
 	if strings.Contains(out, "committed.txt") {
 		t.Errorf("tracked file should not appear in untracked_numstat:\n%q", out)
+	}
+}
+
+
+// untracked_numstat runs in the ledger's per-tick build path, so its cost must
+// not scale with the number of untracked files: one git spawn total (ls-files),
+// not one `git diff --no-index` per file (~8ms each, every refresh tick).
+func TestUntrackedNumstat_single_git_spawn_regardless_of_file_count(t *testing.T) {
+	dir := t.TempDir()
+	git := discardGitRepo(t, dir)
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "seed.txt", "x\n")
+	git("add", "seed.txt")
+	git("commit", "-q", "-m", "init")
+	for i := 0; i < 12; i++ {
+		writeTempFile(t, dir, fmt.Sprintf("new%02d.txt", i), "a\nb\n")
+	}
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shimDir := t.TempDir()
+	countFile := filepath.Join(shimDir, "count")
+	binDir := mockCommand(t, shimDir, "git", fmt.Sprintf(`echo x >> %q; exec %q "$@"`, countFile, realGit))
+	env := buildEnv(t, []string{binDir})
+
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+	out, code := runBashSnippet(t, fmt.Sprintf("source %q && untracked_numstat %q", module, dir), env)
+	assertExitCode(t, code, 0)
+	if !strings.Contains(out, "2\t0\tnew00.txt") {
+		t.Errorf("expected numstat row for new00.txt, got:\n%q", out)
+	}
+
+	data, _ := os.ReadFile(countFile)
+	if n := strings.Count(string(data), "x"); n > 2 {
+		t.Errorf("untracked_numstat spawned git %d times for 12 files; must be O(1), not O(files)", n)
+	}
+}
+
+// The single-spawn rewrite must keep git-numstat semantics: a file without a
+// trailing newline still counts its last line, and a binary file shows "-".
+func TestUntrackedNumstat_numstat_semantics_newline_and_binary(t *testing.T) {
+	dir := t.TempDir()
+	git := discardGitRepo(t, dir)
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "seed.txt", "x\n")
+	git("add", "seed.txt")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "noeol.txt", "a\nb")          // 2 lines, no trailing newline
+	writeTempFile(t, dir, "empty.txt", "")               // 0 lines
+	writeTempFile(t, dir, "bin.dat", "a\x00b\x00c\n") // binary (NUL bytes)
+
+	out, code := cvFuncArgv(t, "untracked_numstat", dir)
+	assertExitCode(t, code, 0)
+	if !strings.Contains(out, "2\t0\tnoeol.txt") {
+		t.Errorf("no-trailing-newline file must count its last line (want 2), got:\n%q", out)
+	}
+	if !strings.Contains(out, "0\t0\tempty.txt") {
+		t.Errorf("empty file must count 0, got:\n%q", out)
+	}
+	if !strings.Contains(out, "-\t0\tbin.dat") {
+		t.Errorf("binary file must show \"-\" like git numstat, got:\n%q", out)
 	}
 }
 
