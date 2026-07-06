@@ -244,8 +244,6 @@ WATCHER_PID=$!
 cleanup() {
   stop_tab_title_watcher "$WISP_DECK_MARKER_FILE"
   [ -n "${HEARTBEAT_PID:-}" ] && kill_tree "$HEARTBEAT_PID" TERM 2>/dev/null || true
-  # Stop the account-rotation proxy (session-tied lifecycle) if one was started.
-  [ -n "${PROXY_PID:-}" ] && kill_tree "$PROXY_PID" TERM 2>/dev/null || true
   # Remove waiting indicator hooks if no other Wisp Deck sessions are running
   if [ "$SELECTED_AI_TOOL" = "claude" ]; then
     # Clean up orphaned markers and cooldown files from dead sessions (e.g., after SIGKILL)
@@ -314,58 +312,13 @@ if [ "$SELECTED_AI_TOOL" = "claude" ]; then
     sync_claude_shared_state "$HOME/.claude" "$WISP_DECK_CLAUDE_ACCOUNT_DIR"
   fi
 fi
-# Account-rotation proxy: when the auto-switch setting is on and there are at
-# least two accounts to rotate between, start Wisp Deck's local rotation proxy
-# and route claude through it (ANTHROPIC_BASE_URL/API_KEY, set in
-# build_ai_launch_cmd). The proxy injects the currently-active pooled account's
-# OAuth token and switches accounts as quota is exhausted; claude keeps a single
-# config dir, so the conversation continues seamlessly across switches. The proxy
-# is a child of this wrapper and is torn down by cleanup() on window close.
-PROXY_PID=""
-WISP_DECK_PROXY_PORT=""
-WISP_DECK_PROXY_KEY=""
-WISP_DECK_PROXY_CA=""
-WISP_DECK_PROXY_ACCOUNT_FILE=""
-if [ "$SELECTED_AI_TOOL" = "claude" ] \
-   && is_auto_switch_enabled "$_gt_cfg_root/auto-switch-accounts" \
-   && auto_switch_eligible "$_gt_cfg_root/claude-accounts.list" \
-   && command -v wisp-deck-tui >/dev/null 2>&1; then
-  _proxy_log="$SHARE_DIR/proxy-${SESSION_NAME}.log"
-  : > "$_proxy_log"
-  # The proxy records its currently-serving account's dir here on each switch, so
-  # the status line can show which pooled account rotation has landed on. Cleared
-  # on window close by cleanup().
-  WISP_DECK_PROXY_ACCOUNT_FILE="$SHARE_DIR/proxy-account-${SESSION_NAME}"
-  rm -f "$WISP_DECK_PROXY_ACCOUNT_FILE"
-  wisp-deck-tui proxy \
-    --accounts-dir "$_gt_cfg_root/claude-accounts" \
-    --list "$_gt_cfg_root/claude-accounts.list" \
-    --active-account-file "$WISP_DECK_PROXY_ACCOUNT_FILE" \
-    >> "$_proxy_log" 2>&1 &
-  PROXY_PID=$!
-  # Wait briefly for the proxy to announce its port + key (first line of output).
-  _proxy_line=""
-  for _ in $(seq 1 30); do
-    _proxy_line="$(sed -n '1p' "$_proxy_log" 2>/dev/null)"
-    [ -n "$_proxy_line" ] && break
-    kill -0 "$PROXY_PID" 2>/dev/null || break
-    sleep 0.1
-  done
-  WISP_DECK_PROXY_PORT="$(proxy_startup_port "$_proxy_line")"
-  WISP_DECK_PROXY_KEY="$(proxy_startup_key "$_proxy_line")"
-  WISP_DECK_PROXY_CA="$(proxy_startup_ca "$_proxy_line")"
-  if [ -n "$WISP_DECK_PROXY_PORT" ] && [ -n "$WISP_DECK_PROXY_KEY" ]; then
-    # Rotation is upstream in the proxy, so claude uses its standard (Default)
-    # config dir rather than any single account's isolated dir.
-    WISP_DECK_CLAUDE_ACCOUNT_DIR=""
-  else
-    warn "Account-rotation proxy failed to start; launching with the selected account."
-    [ -n "$PROXY_PID" ] && kill_tree "$PROXY_PID" TERM 2>/dev/null || true
-    PROXY_PID=""
-    WISP_DECK_PROXY_ACCOUNT_FILE=""
-  fi
-fi
-export WISP_DECK_CLAUDE_ACCOUNT_DIR WISP_DECK_PROXY_PORT WISP_DECK_PROXY_KEY WISP_DECK_PROXY_CA WISP_DECK_PROXY_ACCOUNT_FILE
+# Auto-switch accounts is IN-PLACE rotation: the statusline watches this
+# session's quota usage and, at the threshold, relaunches the AI pane under the
+# next pooled account via the same mid-session switch the ledger pill drives
+# (see auto_switch_maybe_trigger in lib/auto-switch.sh and auto_switch_relaunch
+# in lib/account-switch.sh). Nothing to start here — the trigger reads the
+# relaunch-context file written below.
+export WISP_DECK_CLAUDE_ACCOUNT_DIR
 
 # Resolve the active subscription/plan display name for the compact-view ledger.
 # Subscriptions are shared across agents, so this is resolved for every tool.
@@ -396,13 +349,13 @@ case "$SELECTED_AI_TOOL" in
     ;;
 esac
 
-# Mid-session account switch: for a plain claude session (rotation proxy OFF),
-# persist the launch context so the compact-view ledger's account pill can
-# relaunch the AI pane under a newly chosen login (continue mode). The pill's own
-# 2+-logins gate lives in the ledger; here we only skip opencode and proxy
-# sessions (the proxy owns account rotation). Cleared by cleanup() on window close.
+# Mid-session account switch: for every claude session, persist the launch
+# context so the compact-view ledger's account pill — and the auto-switch
+# trigger — can relaunch the AI pane under another login (continue mode). The
+# pill's own 2+-logins gate lives in the ledger; here we only skip opencode.
+# Cleared by cleanup() on window close.
 WISP_DECK_RELAUNCH_FILE=""
-if [ "$SELECTED_AI_TOOL" = "claude" ] && [ -z "$WISP_DECK_PROXY_PORT" ]; then
+if [ "$SELECTED_AI_TOOL" = "claude" ]; then
   WISP_DECK_RELAUNCH_FILE="$SHARE_DIR/relaunch-${SESSION_NAME}"
   write_relaunch_context "$WISP_DECK_RELAUNCH_FILE" "$SELECTED_AI_TOOL" \
     "$CLAUDE_CMD" "$OPENCODE_CMD" "$WISP_DECK_CLAUDE_SETTINGS" \
@@ -420,12 +373,9 @@ start_tab_title_watcher "$SESSION_NAME" "$SELECTED_AI_TOOL" "$PROJECT_NAME" "$_t
 # kept for backward compatibility with restore.
 WISP_DECK_TERMINAL="ghostty"
 WISP_DECK_SNAPSHOT="$SHARE_DIR/last-session"
-(
-  while true; do
-    write_session_snapshot "$TMUX_CMD" "$WISP_DECK_SNAPSHOT"
-    sleep 10
-  done
-) &
+# Backgrounded lib function, not an inline loop: each tick re-sources the lib
+# in a throwaway bash, so snapshot fixes reach sessions already running.
+run_snapshot_heartbeat "$_WRAPPER_DIR" "$TMUX_CMD" "$WISP_DECK_SNAPSHOT" &
 HEARTBEAT_PID=$!
 
 # Build pane 0 command: the compact changeset-ledger view.

@@ -132,6 +132,25 @@ write_session_snapshot() {
   mv "$tmp" "$snap_file"
 }
 
+# run_snapshot_heartbeat <wrapper_dir> <tmux_cmd> <snapshot_file> [interval] —
+# rewrite the snapshot every interval (default 10s) until killed; the wrapper
+# backgrounds this for the life of the session. Each tick re-sources this lib
+# in a throwaway bash instead of calling the write_session_snapshot captured
+# at session launch: heartbeats live for days, so a launch-time copy freezes
+# the snapshot FORMAT until the session closes. That staleness class was real
+# — after the snapshot gained its account field, pre-fix heartbeats kept
+# writing account-less lines, so a reboot still flipped restored sessions
+# onto the global pointer's login. A broken tick (mid-edit lib save) is
+# skipped, not fatal; the next tick recovers.
+run_snapshot_heartbeat() {
+  local wrapper_dir="$1" tmux_cmd="$2" snapshot="$3" interval="${4:-10}"
+  while true; do
+    bash -c 'source "$1/lib/session-restore.sh" && write_session_snapshot "$2" "$3"' \
+      snapshot-tick "$wrapper_dir" "$tmux_cmd" "$snapshot" 2>/dev/null || true
+    sleep "$interval"
+  done
+}
+
 # Once-per-boot restore gate. Call only on interactive launch, before the
 # picker. Builds the restore queue (one
 # boot_id|path|tool|claude_session_id|window_layout|account line per
