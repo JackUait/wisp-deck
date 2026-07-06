@@ -212,6 +212,142 @@ if [ "$1" = "load-buffer" ]; then printf 'PASTE:%%s\n' "$(cat)" >> %q; fi`, rec)
 	assertContains(t, string(logOut), "PASTE:[Image #5")
 }
 
+// End-to-end wiring through open_account_switcher with a scripted popup
+// result: the stash keys go to the AI pane BEFORE respawn-pane kills it, and
+// the (backgrounded) replay pastes after. The mock tmux plays claude's part:
+// it appends the history entry on the Escape pair and reports a ready frame
+// on capture-pane. The replay is async, so the test polls the log briefly.
+func TestOpenAccountSwitcher_preserves_draft_across_relaunch(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	hist := writeTempFile(t, dir, "history.jsonl", "")
+	home := filepath.Join(dir, "home")
+	sid := "sid-1234"
+	cache := filepath.Join(home, ".claude", "image-cache", sid)
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "1.png"), []byte("png"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// wisp-deck-tui mock: the popup "selects" the managed login by writing the
+	// dir to the --result-file the switcher passes.
+	tuiBin := mockCommand(t, dir, "wisp-deck-tui", `
+if [ "$1" = "claude-account-switch" ] && [ "$2" = "--help" ]; then
+  echo "claude-account-switch --result-file"; exit 0
+fi
+out=""
+prev=""
+for a in "$@"; do
+  [ "$prev" = "--result-file" ] && out="$a"
+  prev="$a"
+done
+[ -n "$out" ] && printf 'work\n' > "$out"`)
+	tmuxBin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+case "$1" in
+load-buffer) printf 'PASTE:%%s\n' "$(cat)" >> %q; exit 0 ;;
+*) printf '%%s\n' "$*" >> %q ;;
+esac
+if [ "$1" = "send-keys" ] && [ "$4" = "Escape" ] && [ "$5" = "Escape" ]; then
+  printf '%%s\n' '{"display":"draft [Image #1]","pastedContents":{}}' >> %q
+fi
+if [ "$1" = "list-panes" ]; then printf '%%s\n' "%%1 1"; fi
+if [ "$1" = "capture-pane" ]; then printf '%%s\n' "❯ "; fi
+if [ "$1" = "show-environment" ]; then
+  case "$*" in
+  *WISP_DECK_CLAUDE_SESSION*) echo "WISP_DECK_CLAUDE_SESSION=%s" ;;
+  *WISP_DECK_CLAUDE_ACCOUNT*) echo "WISP_DECK_CLAUDE_ACCOUNT=" ;;
+  esac
+fi
+if [ "$1" = "display-popup" ]; then
+  # -E runs the popup command in a shell: this triggers the result-file write.
+  eval "${@: -1}" >/dev/null 2>&1 || true
+fi`, rec, rec, hist, sid))
+	accountsDir := filepath.Join(dir, "claude-accounts")
+	if err := os.MkdirAll(filepath.Join(accountsDir, "work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
+		"tool=claude", "claude_cmd=claude", "opencode_cmd=opencode",
+		"settings=", "filter=", "project_dir=/proj",
+		"accounts_dir=" + accountsDir,
+		"pointer=" + filepath.Join(dir, "claude-account"),
+		"list=" + filepath.Join(dir, "claude-accounts.list"),
+		"colors=" + filepath.Join(dir, "claude-account-colors"),
+		"default_label=" + filepath.Join(dir, "claude-account-default-label"),
+		"",
+	}, "\n"))
+	if err := os.WriteFile(filepath.Join(dir, "claude-accounts.list"), []byte("Work:work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := buildEnv(t, []string{tmuxBin, tuiBin},
+		"HOME="+home, "WISP_DECK_HISTORY_FILE="+hist)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q; wait", relaunch)), env)
+	assertExitCode(t, code, 0)
+
+	var logOut []byte
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		logOut, _ = os.ReadFile(rec)
+		if strings.Contains(string(logOut), "PASTE:"+filepath.Join(home, ".claude", "image-cache", sid, "1.png")) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	s := string(logOut)
+	esc := strings.Index(s, "send-keys -t %1 Escape Escape")
+	respawn := strings.Index(s, "respawn-pane")
+	if esc == -1 || respawn == -1 || esc > respawn {
+		t.Fatalf("expected stash keys before respawn, log:\n%s", s)
+	}
+	assertContains(t, s, "PASTE:draft ")
+	assertContains(t, s, "PASTE:"+filepath.Join(home, ".claude", "image-cache", sid, "1.png"))
+}
+
+// opencode has no Esc-Esc draft stash: a non-claude tool must switch exactly
+// as before, with no stray Escape keys sent to the pane.
+func TestOpenAccountSwitcher_no_stash_for_opencode(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	tuiBin := mockCommand(t, dir, "wisp-deck-tui", `
+if [ "$1" = "claude-account-switch" ] && [ "$2" = "--help" ]; then
+  echo "claude-account-switch --result-file"; exit 0
+fi
+out=""
+prev=""
+for a in "$@"; do
+  [ "$prev" = "--result-file" ] && out="$a"
+  prev="$a"
+done
+[ -n "$out" ] && printf 'work\n' > "$out"`)
+	tmuxBin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+printf '%%s\n' "$*" >> %q
+if [ "$1" = "list-panes" ]; then printf '%%s\n' "%%1 1"; fi
+if [ "$1" = "display-popup" ]; then eval "${@: -1}" >/dev/null 2>&1 || true; fi`, rec))
+	accountsDir := filepath.Join(dir, "claude-accounts")
+	if err := os.MkdirAll(filepath.Join(accountsDir, "work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
+		"tool=opencode", "claude_cmd=claude", "opencode_cmd=opencode",
+		"settings=", "filter=", "project_dir=/proj",
+		"accounts_dir=" + accountsDir,
+		"pointer=" + filepath.Join(dir, "claude-account"),
+		"list=" + filepath.Join(dir, "claude-accounts.list"),
+		"colors=" + filepath.Join(dir, "claude-account-colors"),
+		"default_label=" + filepath.Join(dir, "claude-account-default-label"),
+		"",
+	}, "\n"))
+	env := buildEnv(t, []string{tmuxBin, tuiBin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q; wait", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := os.ReadFile(rec)
+	assertNotContains(t, string(logOut), "Escape")
+	assertContains(t, string(logOut), "respawn-pane")
+}
+
 // A missing history file (fresh install) must behave like the empty-input
 // case, not crash.
 func TestStashAIDraft_missing_history_file_is_no_draft(t *testing.T) {

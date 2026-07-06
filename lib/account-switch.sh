@@ -388,6 +388,41 @@ relaunch_ai_pane() {
   return 0
 }
 
+# _relaunch_preserving_draft <tmux_cmd> <relaunch_file> <session_acct> — the
+# "switch is happening" path shared by the result-file and legacy flows:
+# stash the pane's unsent draft (claude only — opencode has no Esc-Esc
+# stash), relaunch under the new login, then hand the stashed text to a
+# DISOWNED background waiter that replays it once the new claude shows its
+# empty prompt. Reads _rc_tool/_rc_accounts_dir from the caller's scope (the
+# same dynamic-scoping contract _read_relaunch_ctx uses). Every step is
+# fail-open: a missed stash or a never-ready pane leaves the switch exactly
+# as it behaved before this feature (worst case the draft sits in prompt
+# history, one Up away).
+_relaunch_preserving_draft() {
+  local tmux_cmd="$1" relaunch_file="$2" session_acct="$3"
+  local draft="" sid="" pane
+  if [ "$_rc_tool" = "claude" ]; then
+    sid="$(current_ai_session "$tmux_cmd")"
+    pane="$(find_ai_pane "$tmux_cmd")"
+    if [ -n "$pane" ]; then
+      draft="$(stash_ai_draft "$tmux_cmd" "$pane" \
+        "${WISP_DECK_HISTORY_FILE:-$HOME/.claude/history.jsonl}")" || draft=""
+    fi
+  fi
+  relaunch_ai_pane "$tmux_cmd" "$relaunch_file"
+  [ -n "$draft" ] || return 0
+  local cache_root new_pane
+  cache_root="$(draft_cache_root "$_rc_accounts_dir" "$session_acct")"
+  new_pane="$(find_ai_pane "$tmux_cmd")"
+  [ -n "$new_pane" ] || return 0
+  (
+    wait_ai_pane_ready "$tmux_cmd" "$new_pane" \
+      && replay_ai_draft "$tmux_cmd" "$new_pane" "$draft" "$cache_root" "$sid"
+  ) >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+  return 0
+}
+
 # open_account_switcher <tmux_cmd> <relaunch_file> — the click handler entry point.
 # Float the account switcher popup (which writes the global pointer on select),
 # then relaunch the AI pane only if the choice differs from the account THIS
@@ -463,14 +498,14 @@ ${session_flags}${backdrop_arg}" 2>/dev/null || true
     if [ -f "$result_file" ]; then
       IFS= read -r chosen < "$result_file" || chosen=""
       rm -f "$result_file"
-      [ "$chosen" != "$session_acct" ] && relaunch_ai_pane "$tmux_cmd" "$relaunch_file"
+      [ "$chosen" != "$session_acct" ] && _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" "$session_acct"
     fi
   else
     # Legacy binary (no result-file contract): fall back to the pointer-diff
     # decision — it can't fix a pointer that already matches the choice, but it
     # keeps the switcher working until the binary is updated.
     after="$(get_active_claude_account "$_rc_pointer")"
-    [ "$before" != "$after" ] && relaunch_ai_pane "$tmux_cmd" "$relaunch_file"
+    [ "$before" != "$after" ] && _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" "$session_acct"
   fi
   return 0
 }
