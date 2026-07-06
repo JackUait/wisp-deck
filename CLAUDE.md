@@ -132,6 +132,7 @@ go test ./... -v -count=1              # Verbose with no caching
 shellcheck lib/*.sh lib/terminals/*.sh bin/wisp-deck wrapper.sh  # Lint all scripts
 ./bin/wisp-deck                         # Run main installer/setup
 make release                            # Create a new release
+WISP_DECK_LIVE_CLAUDE_E2E=1 go test ./test/bash/ -run TestLiveClaude -v  # After a claude upgrade: verify the real-claude behaviors draft preservation depends on
 ```
 
 ### Creating Releases

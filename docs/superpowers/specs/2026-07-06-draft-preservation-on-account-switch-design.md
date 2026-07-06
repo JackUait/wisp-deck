@@ -200,6 +200,22 @@ under the Default login → `_relaunch_preserving_draft` → pane resumed the sa
 conversation under the managed login with the draft restored and the image
 re-attached (`⎿ [Image #N]` attachment indicator on submit).
 
+## Regression guards (2026-07-06)
+
+Two guards keep the draft-loss bug from ever returning:
+
+- `TestDraftRestore_endToEnd_realTmux_draft_survives_switch` (always on) —
+  drives the REAL click flow through a real tmux server: stash keys, respawn,
+  ready-gate, disowned waiter, bracketed-paste replay with the image path.
+  Sensitivity proven: it fails when the wiring is reverted to the old bare
+  `relaunch_ai_pane`.
+- `TestLiveClaude_draft_assumptions` (gated) — pins the three real-claude
+  behaviors the feature rests on (Esc-Esc history stash, NBSP-padded empty
+  prompt via the production `wait_ai_pane_ready`, path-paste → image chip).
+  **Run it whenever the claude binary is upgraded:**
+  `WISP_DECK_LIVE_CLAUDE_E2E=1 go test ./test/bash/ -run TestLiveClaude -v`
+  (needs a logged-in claude; appends one throwaway entry to history.jsonl).
+
 ## Open risks
 
 - Esc-Esc-stashes-draft and path-paste-attaches are observed behaviors, not
