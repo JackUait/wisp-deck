@@ -251,6 +251,19 @@ wait_ai_pane_ready() {
   return 1
 }
 
+# send_continue_message <tmux_cmd> <pane> — type "continue" into the pane's
+# input and submit it. Used by the auto-switch relaunch so the conversation
+# picks up in the new login without the user re-prompting. The literal text
+# (-l) and the Enter are separate sends with a beat in between so claude
+# registers the text before the submit. Best-effort.
+send_continue_message() {
+  local tmux_cmd="$1" pane="$2"
+  "$tmux_cmd" send-keys -t "$pane" -l "continue" 2>/dev/null || return 0
+  sleep 0.2
+  "$tmux_cmd" send-keys -t "$pane" Enter 2>/dev/null || true
+  return 0
+}
+
 # _draft_paste <tmux_cmd> <pane> <text> — bracketed-paste literal text into
 # the pane via a named tmux buffer. Bracketed (-p) is load-bearing twice
 # over: embedded newlines must not submit, and a pasted image PATH is only
@@ -467,13 +480,16 @@ relaunch_ai_pane() {
 # else the pointer — see relaunch_ai_pane), then hand the stashed text to a
 # DISOWNED background waiter that replays it once the new claude shows its
 # empty prompt. Reads _rc_tool/_rc_accounts_dir from the caller's scope (the
-# same dynamic-scoping contract _read_relaunch_ctx uses). Every step is
-# fail-open: a missed stash or a never-ready pane leaves the switch exactly
-# as it behaved before this feature (worst case the draft sits in prompt
-# history, one Up away).
+# same dynamic-scoping contract _read_relaunch_ctx uses). When the caller
+# scope sets _gt_send_continue=1 (the auto-switch path), the waiter also
+# submits a "continue" message the moment the new claude is ready — BEFORE
+# the draft replay, so the continued turn streams while the unsent draft
+# lands back in the input box. Every step is fail-open: a missed stash or a
+# never-ready pane leaves the switch exactly as it behaved before this
+# feature (worst case the draft sits in prompt history, one Up away).
 _relaunch_preserving_draft() {
   local tmux_cmd="$1" relaunch_file="$2" session_acct="$3"
-  local draft="" sid="" pane
+  local draft="" sid="" pane send_continue="${_gt_send_continue:-}"
   if [ "$_rc_tool" = "claude" ]; then
     sid="$(current_ai_session "$tmux_cmd")"
     pane="$(find_ai_pane "$tmux_cmd")"
@@ -488,16 +504,41 @@ _relaunch_preserving_draft() {
   else
     relaunch_ai_pane "$tmux_cmd" "$relaunch_file"
   fi
-  [ -n "$draft" ] || return 0
+  [ -n "$draft" ] || [ -n "$send_continue" ] || return 0
   local cache_root new_pane
   cache_root="$(draft_cache_root "$_rc_accounts_dir" "$session_acct")"
   new_pane="$(find_ai_pane "$tmux_cmd")"
   [ -n "$new_pane" ] || return 0
   (
-    wait_ai_pane_ready "$tmux_cmd" "$new_pane" \
-      && replay_ai_draft "$tmux_cmd" "$new_pane" "$draft" "$cache_root" "$sid"
+    if wait_ai_pane_ready "$tmux_cmd" "$new_pane"; then
+      [ -n "$send_continue" ] && send_continue_message "$tmux_cmd" "$new_pane"
+      [ -n "$draft" ] && replay_ai_draft "$tmux_cmd" "$new_pane" "$draft" "$cache_root" "$sid"
+    fi
   ) >/dev/null 2>&1 &
   disown 2>/dev/null || true
+  return 0
+}
+
+# auto_switch_relaunch <tmux_cmd> <relaunch_file> <target> — the automatic
+# quota-rotation entry point (fired by auto_switch_maybe_trigger via `tmux
+# run-shell -b`). Reuses the exact mid-session switch the ledger pill drives —
+# stash the unsent draft, respawn the pane under the target login resuming the
+# same conversation — and additionally auto-submits "continue" once the new
+# claude is ready, so the interrupted turn picks up without the user typing.
+# No-op when the pane already runs the target (a stale trigger racing a manual
+# switch).
+auto_switch_relaunch() {
+  local tmux_cmd="$1" relaunch_file="$2" target="$3"
+  local _rc_tool="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_settings="" \
+    _rc_filter="" _rc_project_dir="" _rc_accounts_dir="" _rc_pointer="" \
+    _rc_list="" _rc_colors="" _rc_default_label=""
+  [ -f "$relaunch_file" ] || return 0
+  _read_relaunch_ctx "$relaunch_file"
+  local session_acct
+  session_acct="$(current_session_account "$tmux_cmd" "$_rc_pointer")"
+  [ "$target" = "$session_acct" ] && return 0
+  local _gt_send_continue=1
+  _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" "$session_acct" "$target"
   return 0
 }
 

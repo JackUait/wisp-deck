@@ -71,6 +71,18 @@ if [ -n "$account_label" ]; then
   fi
 fi
 
+# Auto-switch: when this session's quota usage reaches the threshold (98%),
+# rotate the pane to the next pooled account in place and auto-continue the
+# conversation there. The trigger lives in lib/auto-switch.sh, sourced from the
+# live lib dir wrapper.sh stamped into the pane env (absent outside a Wisp Deck
+# session — then this whole block is a no-op).
+if [ -n "${WISP_DECK_LIB_DIR:-}" ] && [ -f "${WISP_DECK_LIB_DIR}/auto-switch.sh" ]; then
+  # shellcheck source=../lib/auto-switch.sh
+  source "${WISP_DECK_LIB_DIR}/auto-switch.sh" 2>/dev/null || true
+  type auto_switch_maybe_trigger &>/dev/null \
+    && auto_switch_maybe_trigger "${five_hour_pct:-}" "${weekly_pct:-}"
+fi
+
 # Which usage pills to show is a user preference (Settings › Usage bars), stored
 # as usage_bars=7d|5h|both|none in the wisp-deck settings file. Default is 7d
 # (what the statusline showed before the 5h bar existed). Derive per-window show
