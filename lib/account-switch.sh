@@ -393,14 +393,25 @@ write_relaunch_context() {
   } > "$out"
 }
 
-# relaunch_ai_pane <tmux_cmd> <relaunch_file> — respawn the AI pane under whatever
-# account the pointer now names (the switcher popup wrote it just before). Resolves
-# the account's isolated config dir, brings its shared conversation state/settings
-# up to date (so a login not synced this boot still sees the shared history), builds
-# the continue-mode launch, and respawn-panes the tagged AI pane. No-op when the AI
-# pane can't be found.
+# relaunch_ai_pane <tmux_cmd> <relaunch_file> [chosen] — respawn the AI pane
+# under a new login. With the optional 3rd arg, that is the login the switcher
+# popup reported through its result file ("" or "default" = the Default login,
+# a dir name = that managed login, resolved only while its dir still exists).
+# Without it (legacy callers), the global pointer decides — but the pointer is
+# shared mutable state: between the popup's write and this respawn another
+# session's switch (or the launcher) can rewrite it, and resolving it here
+# would respawn THIS pane under a login the user never picked. Resolves the
+# account's isolated config dir, brings its shared conversation state/settings
+# up to date (so a login not synced this boot still sees the shared history),
+# builds the continue-mode launch, and respawn-panes the tagged AI pane. No-op
+# when the AI pane can't be found.
 relaunch_ai_pane() {
   local tmux_cmd="$1" relaunch_file="$2"
+  local have_chosen=0 chosen=""
+  if [ "$#" -ge 3 ]; then
+    have_chosen=1
+    chosen="$3"
+  fi
   local _rc_tool="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_settings="" \
     _rc_filter="" _rc_project_dir="" _rc_accounts_dir="" _rc_pointer="" \
     _rc_list="" _rc_colors="" _rc_default_label=""
@@ -408,7 +419,14 @@ relaunch_ai_pane() {
   _read_relaunch_ctx "$relaunch_file"
 
   local new_dir pane cmd
-  new_dir="$(resolve_claude_account_dir "$_rc_accounts_dir" "$_rc_pointer")"
+  if [ "$have_chosen" = 1 ]; then
+    new_dir=""
+    if [ -n "$chosen" ] && [ "$chosen" != "default" ] && [ -d "$_rc_accounts_dir/$chosen" ]; then
+      new_dir="$_rc_accounts_dir/$chosen"
+    fi
+  else
+    new_dir="$(resolve_claude_account_dir "$_rc_accounts_dir" "$_rc_pointer")"
+  fi
 
   # Bring the target login's shared conversation state + settings up to date, so
   # `claude -c` under it resumes the same history (mirrors wrapper.sh's per-account
@@ -442,10 +460,11 @@ relaunch_ai_pane() {
   return 0
 }
 
-# _relaunch_preserving_draft <tmux_cmd> <relaunch_file> <session_acct> — the
-# "switch is happening" path shared by the result-file and legacy flows:
+# _relaunch_preserving_draft <tmux_cmd> <relaunch_file> <session_acct> [chosen]
+# — the "switch is happening" path shared by the result-file and legacy flows:
 # stash the pane's unsent draft (claude only — opencode has no Esc-Esc
-# stash), relaunch under the new login, then hand the stashed text to a
+# stash), relaunch under the new login (the explicit popup choice when given,
+# else the pointer — see relaunch_ai_pane), then hand the stashed text to a
 # DISOWNED background waiter that replays it once the new claude shows its
 # empty prompt. Reads _rc_tool/_rc_accounts_dir from the caller's scope (the
 # same dynamic-scoping contract _read_relaunch_ctx uses). Every step is
@@ -464,7 +483,11 @@ _relaunch_preserving_draft() {
         "$_rc_project_dir")" || draft=""
     fi
   fi
-  relaunch_ai_pane "$tmux_cmd" "$relaunch_file"
+  if [ "$#" -ge 4 ]; then
+    relaunch_ai_pane "$tmux_cmd" "$relaunch_file" "$4"
+  else
+    relaunch_ai_pane "$tmux_cmd" "$relaunch_file"
+  fi
   [ -n "$draft" ] || return 0
   local cache_root new_pane
   cache_root="$(draft_cache_root "$_rc_accounts_dir" "$session_acct")"
@@ -553,7 +576,9 @@ ${session_flags}${backdrop_arg}" 2>/dev/null || true
     if [ -f "$result_file" ]; then
       IFS= read -r chosen < "$result_file" || chosen=""
       rm -f "$result_file"
-      [ "$chosen" != "$session_acct" ] && _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" "$session_acct"
+      # Hand the CHOICE itself to the relaunch: re-resolving the global
+      # pointer there would race another session's concurrent switch.
+      [ "$chosen" != "$session_acct" ] && _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" "$session_acct" "$chosen"
     fi
   else
     # Legacy binary (no result-file contract): fall back to the pointer-diff

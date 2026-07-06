@@ -68,6 +68,30 @@ resolve_claude_account_dir() {
   [ -d "$path" ] && printf '%s\n' "$path"
 }
 
+# resolve_restore_claude_account_dir <accounts_dir> <pointer_file> <acct> —
+# resolve the config dir for a RESTORED session, from the account recorded in
+# its snapshot/queue entry (see lib/session-restore.sh). The recorded login —
+# not the global pointer — decides, or a reboot would flip every restored
+# session onto whatever login the pointer happened to name at restore time:
+#   "<name>"  -> <accounts_dir>/<name> if it still exists, else empty (the
+#                login was removed since the snapshot — degrade to Default
+#                rather than launching an unrelated login)
+#   "default" -> empty (the session ran the Default/Keychain login; force it
+#                even when the pointer names a managed login)
+#   ""        -> unknown (pre-account-field snapshot): fall back to the
+#                pointer, the pre-fix behavior.
+resolve_restore_claude_account_dir() {
+  local accounts_dir="$1" pointer_file="$2" acct="$3"
+  if [ -z "$acct" ]; then
+    resolve_claude_account_dir "$accounts_dir" "$pointer_file"
+    return 0
+  fi
+  [ "$acct" = "default" ] && return 0
+  local path="$accounts_dir/$acct"
+  [ -d "$path" ] && printf '%s\n' "$path"
+  return 0
+}
+
 # apply_plain_terminal_claude_account <accounts_dir> <pointer_file> — exports
 # CLAUDE_CONFIG_DIR for the active account so `claude` launched in a plain Ghostty
 # shell (the "plain terminal" menu action) loads the login the user currently has

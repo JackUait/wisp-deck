@@ -125,7 +125,7 @@ else
     # window continues its own setup.
     restore_advance "$SHARE_DIR"
     RESTORE_MODE=1
-    IFS='|' read -r _q_path _q_tool _q_sid _q_layout <<< "$_queue_entry"
+    IFS='|' read -r _q_path _q_tool _q_sid _q_layout _q_acct <<< "$_queue_entry"
     cd "$_q_path" || exit 1
     PROJECT_NAME="$(basename "$_q_path")"
     SELECTED_AI_TOOL="$_q_tool"
@@ -292,7 +292,15 @@ export WISP_DECK_CLAUDE_SETTINGS
 # so Claude uses the standard Keychain login.
 WISP_DECK_CLAUDE_ACCOUNT_DIR=""
 if [ "$SELECTED_AI_TOOL" = "claude" ]; then
-  WISP_DECK_CLAUDE_ACCOUNT_DIR="$(resolve_claude_account_dir "$_gt_cfg_root/claude-accounts" "$_gt_cfg_root/claude-account")"
+  if [ "$RESTORE_MODE" -eq 1 ]; then
+    # A restored tab must come back under the login ITS session ran (recorded
+    # in the queue entry), not whatever the global pointer names right now —
+    # the pointer is shared mutable state and resolving it here silently
+    # flipped restored sessions' accounts after every reboot.
+    WISP_DECK_CLAUDE_ACCOUNT_DIR="$(resolve_restore_claude_account_dir "$_gt_cfg_root/claude-accounts" "$_gt_cfg_root/claude-account" "${_q_acct:-}")"
+  else
+    WISP_DECK_CLAUDE_ACCOUNT_DIR="$(resolve_claude_account_dir "$_gt_cfg_root/claude-accounts" "$_gt_cfg_root/claude-account")"
+  fi
   # A non-Default account has its own isolated CLAUDE_CONFIG_DIR, which otherwise
   # starts blank — no status line, permission mode, skills, hooks, model, etc.
   # Link the standard login's settings into it so every login shares one set of

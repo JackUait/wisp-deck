@@ -39,7 +39,7 @@ esac
 		t.Fatalf("snapshot not written: %v", err)
 	}
 	got := strings.TrimSpace(string(data))
-	want := "111|app|/p/app|claude|ghostty||" + sampleLayout
+	want := "111|app|/p/app|claude|ghostty||" + sampleLayout + "|"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -68,7 +68,7 @@ esac
 		t.Fatalf("snapshot not written: %v", err)
 	}
 	got := strings.TrimSpace(string(data))
-	want := "111|app|/p/app|claude|ghostty||"
+	want := "111|app|/p/app|claude|ghostty|||"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -90,7 +90,7 @@ func TestMaybeRestore_carries_layout_into_queue(t *testing.T) {
 		t.Fatalf("restore-queue not written: %v", err)
 	}
 	got := strings.TrimSpace(string(queue))
-	want := "222|/p/app|claude|sid-a|" + sampleLayout
+	want := "222|/p/app|claude|sid-a|" + sampleLayout + "|"
 	if got != want {
 		t.Errorf("queue:\n got %q\nwant %q", got, want)
 	}
@@ -201,7 +201,7 @@ func TestMaybeRestore_skips_legacy_numeric_ids_of_current_boot(t *testing.T) {
 		t.Fatalf("restore-queue not written: %v", err)
 	}
 	got := strings.TrimSpace(string(queue))
-	want := "996F1E8F-46BF-4D0A-8D21-FD8D13555B47|/p/web|claude||"
+	want := "996F1E8F-46BF-4D0A-8D21-FD8D13555B47|/p/web|claude|||"
 	if got != want {
 		t.Errorf("queue:\n got %q\nwant %q", got, want)
 	}
@@ -259,7 +259,7 @@ func TestMaybeRestore_dedupes_duplicate_sids(t *testing.T) {
 		t.Fatalf("restore-queue not written: %v", err)
 	}
 	got := strings.TrimSpace(string(queue))
-	want := "222|/p/app|claude|sid-a|"
+	want := "222|/p/app|claude|sid-a||"
 	if got != want {
 		t.Errorf("queue:\n got %q\nwant %q", got, want)
 	}
@@ -411,7 +411,7 @@ func TestMaybeRestore_writes_ordered_queue_and_marker(t *testing.T) {
 		t.Fatalf("restore-queue not written: %v", err)
 	}
 	got := strings.TrimSpace(string(queue))
-	want := "222|/p/app|claude|sid-a|\n222|/p/web|opencode||"
+	want := "222|/p/app|claude|sid-a||\n222|/p/web|opencode|||"
 	if got != want {
 		t.Errorf("queue:\n got %q\nwant %q", got, want)
 	}
@@ -502,7 +502,7 @@ esac
 		t.Fatalf("snapshot not written: %v", err)
 	}
 	got := strings.TrimSpace(string(data))
-	want := "111|app|/p/app|claude|ghostty||"
+	want := "111|app|/p/app|claude|ghostty|||"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -532,7 +532,7 @@ esac
 		t.Fatalf("snapshot not written: %v", err)
 	}
 	got := strings.TrimSpace(string(data))
-	want := "111|app|/p/app|claude|ghostty|sid-42|"
+	want := "111|app|/p/app|claude|ghostty|sid-42||"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -630,7 +630,7 @@ func TestMaybeRestore_assigns_distinct_transcripts_to_unstamped_duplicates(t *te
 		t.Fatalf("restore-queue not written: %v", err)
 	}
 	got := strings.TrimSpace(string(queue))
-	want := "222|/p/app|claude|sid-new|\n222|/p/app|claude|sid-old|"
+	want := "222|/p/app|claude|sid-new||\n222|/p/app|claude|sid-old||"
 	if got != want {
 		t.Errorf("queue:\n got %q\nwant %q", got, want)
 	}
@@ -652,7 +652,7 @@ func TestMaybeRestore_duplicate_fill_skips_stamped_sids(t *testing.T) {
 		t.Fatalf("restore-queue not written: %v", err)
 	}
 	got := strings.TrimSpace(string(queue))
-	want := "222|/p/app|claude|sid-new|\n222|/p/app|claude|sid-old|"
+	want := "222|/p/app|claude|sid-new||\n222|/p/app|claude|sid-old||"
 	if got != want {
 		t.Errorf("queue:\n got %q\nwant %q", got, want)
 	}
@@ -673,7 +673,7 @@ func TestMaybeRestore_single_unstamped_entry_keeps_c_fallback(t *testing.T) {
 		t.Fatalf("restore-queue not written: %v", err)
 	}
 	got := strings.TrimSpace(string(queue))
-	want := "222|/p/app|claude||"
+	want := "222|/p/app|claude|||"
 	if got != want {
 		t.Errorf("queue:\n got %q\nwant %q", got, want)
 	}
@@ -693,7 +693,7 @@ func TestMaybeRestore_duplicate_fill_survives_missing_transcript_dir(t *testing.
 		t.Fatalf("restore-queue not written: %v", err)
 	}
 	got := strings.TrimSpace(string(queue))
-	want := "222|/p/app|claude||\n222|/p/app|claude||"
+	want := "222|/p/app|claude|||\n222|/p/app|claude|||"
 	if got != want {
 		t.Errorf("queue:\n got %q\nwant %q", got, want)
 	}
@@ -717,7 +717,7 @@ func TestMaybeRestore_blanks_stamped_sid_without_transcript(t *testing.T) {
 		t.Fatalf("restore-queue not written: %v", err)
 	}
 	got := strings.TrimSpace(string(queue))
-	want := "222|/p/app|claude||"
+	want := "222|/p/app|claude|||"
 	if got != want {
 		t.Errorf("queue:\n got %q\nwant %q", got, want)
 	}
@@ -740,7 +740,7 @@ func TestMaybeRestore_blanks_stamped_sid_without_model_turn(t *testing.T) {
 		t.Fatalf("restore-queue not written: %v", err)
 	}
 	got := strings.TrimSpace(string(queue))
-	want := "222|/p/app|claude||"
+	want := "222|/p/app|claude|||"
 	if got != want {
 		t.Errorf("queue:\n got %q\nwant %q", got, want)
 	}
@@ -759,7 +759,7 @@ func TestMaybeRestore_keeps_stamped_sid_with_resumable_transcript(t *testing.T) 
 		t.Fatalf("restore-queue not written: %v", err)
 	}
 	got := strings.TrimSpace(string(queue))
-	want := "222|/p/app|claude|sid-good|"
+	want := "222|/p/app|claude|sid-good||"
 	if got != want {
 		t.Errorf("queue:\n got %q\nwant %q", got, want)
 	}
@@ -782,7 +782,7 @@ func TestMaybeRestore_dead_stamped_duplicate_gets_pinned_distinct(t *testing.T) 
 		t.Fatalf("restore-queue not written: %v", err)
 	}
 	got := strings.TrimSpace(string(queue))
-	want := "222|/p/app|claude|sid-new|\n222|/p/app|claude|sid-old|"
+	want := "222|/p/app|claude|sid-new||\n222|/p/app|claude|sid-old||"
 	if got != want {
 		t.Errorf("queue:\n got %q\nwant %q", got, want)
 	}
@@ -873,7 +873,7 @@ esac
 	assertExitCode(t, code, 0)
 	data, _ := os.ReadFile(snap)
 	got := strings.TrimSpace(string(data))
-	want := "222|app|/p/app|claude|ghostty||"
+	want := "222|app|/p/app|claude|ghostty|||"
 	if got != want {
 		t.Errorf("snapshot not rewritten after queue went stale: got %q, want %q", got, want)
 	}
@@ -1110,7 +1110,7 @@ esac
 		t.Fatalf("snapshot not written: %v", err)
 	}
 	got := strings.TrimSpace(string(data))
-	want := "111|b|/p/b|claude|ghostty||\n111|a|/p/a|claude|ghostty||"
+	want := "111|b|/p/b|claude|ghostty|||\n111|a|/p/a|claude|ghostty|||"
 	if got != want {
 		t.Errorf("snapshot order:\n got %q\nwant %q", got, want)
 	}
@@ -1142,7 +1142,7 @@ esac
 		t.Fatalf("snapshot not written: %v", err)
 	}
 	got := strings.TrimSpace(string(data))
-	want := "111|My Project|/p/app|claude|ghostty||"
+	want := "111|My Project|/p/app|claude|ghostty|||"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

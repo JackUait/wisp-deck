@@ -62,11 +62,18 @@ restore_log() {
 # Sessions are ordered by creation time (tmux lists them alphabetically) so
 # the snapshot's line order reproduces the order the tabs were opened in.
 # Writes atomically (temp + mv). One line per session:
-#   boot_id|project|path|tool|terminal|claude_session_id|window_layout
+#   boot_id|project|path|tool|terminal|claude_session_id|window_layout|account
 # claude_session_id (stamped by the statusline, may be empty) lets restore
 # reopen each tab's own conversation instead of the project's most recent one.
 # window_layout is tmux's #{window_layout} (may be empty) so restore reproduces
 # the pane sizes the session had when Wisp Deck was closed.
+# account is the Claude login THIS session runs (WISP_DECK_CLAUDE_ACCOUNT,
+# stamped at launch and kept current by the mid-session switch): a managed
+# login's dir name, "default" for a stamped Default (Keychain) login, or empty
+# when unknown (pre-stamp session). Restore relaunches each tab under ITS
+# recorded login — the global claude-account pointer must not decide here, or
+# every reboot would silently flip sessions onto whatever login the pointer
+# happened to name (the "account changed by itself" bug).
 # Field delimiter is '|' — project paths containing '|' are not supported.
 write_session_snapshot() {
   local tmux_cmd="$1" snap_file="$2"
@@ -93,7 +100,7 @@ write_session_snapshot() {
   sessions="$("$tmux_cmd" list-sessions -F '#{session_created} #{session_name}' 2>/dev/null)" || return 0
   local tmp="${snap_file}.tmp.$$"
   : > "$tmp"
-  local s env boot proj path tool term sid layout
+  local s env boot proj path tool term sid layout acct
   # shellcheck disable=SC2034  # _created only orders the list; the name field is what's consumed
   local _created
   while read -r _created s; do
@@ -106,20 +113,29 @@ write_session_snapshot() {
     tool="$(echo "$env" | sed -n 's/^WISP_DECK_TOOL=//p')"
     term="$(echo "$env" | sed -n 's/^WISP_DECK_TERMINAL=//p')"
     sid="$(echo "$env" | sed -n 's/^WISP_DECK_CLAUDE_SESSION=//p')"
+    # A stamped EMPTY account is a positive "this session runs Default" —
+    # encode it as "default" so restore can tell it apart from "unknown"
+    # (var absent, empty field) which falls back to the pointer.
+    if echo "$env" | grep -q '^WISP_DECK_CLAUDE_ACCOUNT='; then
+      acct="$(echo "$env" | sed -n 's/^WISP_DECK_CLAUDE_ACCOUNT=//p')"
+      [ -z "$acct" ] && acct="default"
+    else
+      acct=""
+    fi
     # The exact pane geometry (7th field). tmux's #{window_layout} is an opaque
     # string that select-layout can replay to reproduce the panes at the sizes
     # they hold right now. It contains no '|', so it is delimiter-safe. Empty
     # when unavailable (old tmux / race) — restore falls back to the default split.
     layout="$("$tmux_cmd" display-message -p -t "$s:0" '#{window_layout}' 2>/dev/null || true)"
-    echo "${boot}|${proj}|${path}|${tool}|${term}|${sid}|${layout}" >> "$tmp"
+    echo "${boot}|${proj}|${path}|${tool}|${term}|${sid}|${layout}|${acct}" >> "$tmp"
   done <<< "$(echo "$sessions" | sort -sn)"
   mv "$tmp" "$snap_file"
 }
 
 # Once-per-boot restore gate. Call only on interactive launch, before the
 # picker. Builds the restore queue (one
-# boot_id|path|tool|claude_session_id|window_layout line per prior-boot
-# snapshot entry, in snapshot order) and stamps
+# boot_id|path|tool|claude_session_id|window_layout|account line per
+# prior-boot snapshot entry, in snapshot order) and stamps
 # last-restore-boot. Spawns nothing itself — consumers pop entries via
 # restore_queue_pop.
 # Usage: maybe_restore_session <config_dir> <current_boot_id>
@@ -166,17 +182,18 @@ maybe_restore_session() {
 
   local tmp="$queue.tmp.$$"
   : > "$tmp"
-  local queued=0 b proj path tool term sid layout
+  local queued=0 b proj path tool term sid layout acct
   local entries=()
-  # Parallel to entries[]: the exact pane layout for each entry, held aside so
-  # the unstamped-duplicate dedup pass (which rewrites entries[] to path|tool|sid)
-  # never has to carry it.
+  # Parallel to entries[]: the exact pane layout and the session's Claude
+  # login for each entry, held aside so the unstamped-duplicate dedup pass
+  # (which rewrites entries[] to path|tool|sid) never has to carry them.
   local layouts=()
+  local accts=()
   # Non-empty sids queued so far. A snapshot must never yield two entries for
   # one conversation — whatever upstream failure duplicates a line, restoring
   # the same sid twice would open duplicate tabs.
   local queued_sids=$'\n'
-  while IFS='|' read -r b proj path tool term sid layout; do
+  while IFS='|' read -r b proj path tool term sid layout acct; do
     [ -n "$b" ] || continue
     # Skip sessions of the current boot — they are alive right now, restoring
     # them would duplicate their tabs. Drift-tolerant so entries stamped with
@@ -203,6 +220,7 @@ maybe_restore_session() {
     fi
     entries+=("${path}|${tool}|${sid}")
     layouts+=("$layout")
+    accts+=("$acct")
   done < "$snap"
 
   # Unstamped duplicates: when several tabs of one project lack a conversation
@@ -230,7 +248,7 @@ maybe_restore_session() {
         entries[i]="${path}|${tool}|${sid}"
       fi
     fi
-    echo "${cur_boot}|${path}|${tool}|${sid}|${layouts[$i]}" >> "$tmp"
+    echo "${cur_boot}|${path}|${tool}|${sid}|${layouts[$i]}|${accts[$i]}" >> "$tmp"
     queued=1
   done
   if [ "$queued" -eq 1 ]; then
@@ -250,8 +268,8 @@ maybe_restore_session() {
 
 # Atomically pop the first pending entry from the restore queue.
 # Usage: restore_queue_pop <config_dir> <current_boot_id>
-# Echoes "path|tool|claude_session_id|window_layout" (id and layout may be
-# empty), or nothing when there is no consumable entry. A queue
+# Echoes "path|tool|claude_session_id|window_layout|account" (id, layout and
+# account may be empty), or nothing when there is no consumable entry. A queue
 # from another boot, or one older than 5 minutes (a chain that broke), is
 # discarded so it can never hijack a tab the user opens later.
 restore_queue_pop() {
@@ -323,7 +341,7 @@ restore_sid_already_open() {
 # already-restored session, the tab that pops it refuses the entry. An empty
 # sid carries no identity and is never refused on those grounds (legit
 # multi-tab projects from old snapshots must still restore).
-# Usage: restore_entry_wanted <tmux_cmd> <entry>   entry = path|tool|sid|layout
+# Usage: restore_entry_wanted <tmux_cmd> <entry>   entry = path|tool|sid|layout|account
 restore_entry_wanted() {
   local tmux_cmd="$1" entry="$2" path sid
   path="${entry%%|*}"
