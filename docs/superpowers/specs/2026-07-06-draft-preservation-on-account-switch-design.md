@@ -183,6 +183,23 @@ TDD in `test/bash/` with the existing mock-tmux harness:
    switch account via the pill → draft returns with live image chips under the
    new login; submit and confirm the model sees the images.
 
+## Field findings from implementation (2026-07-06)
+
+Two facts the live e2e added to the design, both implemented:
+
+- **The empty prompt is `❯` + U+00A0** (no-break space), not an ASCII space —
+  the ready-poll matches both.
+- **The stash read races other live sessions**: history.jsonl is global, so
+  another session's prompt can be appended between our Esc-Esc and the tail
+  read. The stash only accepts appended entries whose `project` field matches
+  this pane's project dir; growth made solely of foreign entries counts as
+  "no draft".
+
+Verified end-to-end on 2026-07-06 (Claude Code 2.1.201): draft + pasted image
+under the Default login → `_relaunch_preserving_draft` → pane resumed the same
+conversation under the managed login with the draft restored and the image
+re-attached (`⎿ [Image #N]` attachment indicator on submit).
+
 ## Open risks
 
 - Esc-Esc-stashes-draft and path-paste-attaches are observed behaviors, not
