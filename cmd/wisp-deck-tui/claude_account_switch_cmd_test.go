@@ -211,9 +211,9 @@ func TestAccountSwitchModel_viewHasRoundedCorners(t *testing.T) {
 	sized, _ := m.Update(tea.WindowSizeMsg{Width: 48, Height: 18})
 	m = sized.(accountSwitchModel)
 	view := m.View()
-	for _, corner := range []string{"╭", "╮", "╰", "╯"} {
+	for _, corner := range []string{"▘", "▝", "▖", "▗"} {
 		if !strings.Contains(view, corner) {
-			t.Errorf("view missing rounded corner %q", corner)
+			t.Errorf("view missing beveled (rounded) corner %q", corner)
 		}
 	}
 }
@@ -231,9 +231,9 @@ func TestAccountSwitchModel_viewCompositesDimmedBackdrop(t *testing.T) {
 	if !strings.Contains(view, "HELLO-BACKDROP-ROW") {
 		t.Errorf("view does not composite the backdrop behind the card:\n%s", view)
 	}
-	// The rounded card is still drawn on top.
-	if !strings.Contains(view, "╭") {
-		t.Errorf("view missing the rounded card over the backdrop")
+	// The beveled card is still drawn on top.
+	if !strings.Contains(view, "▘") {
+		t.Errorf("view missing the beveled card over the backdrop")
 	}
 }
 
@@ -256,47 +256,51 @@ func TestAccountSwitchModel_closeAreaIsDimScrim(t *testing.T) {
 	}
 }
 
-func TestAccountSwitchModel_grayFillsWholeContainer(t *testing.T) {
+func TestAccountSwitchModel_roundedGrayCorners(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	defer lipgloss.SetColorProfile(prev)
 
-	// The card's gray fill must extend through the border/corner cells so the whole
-	// container is one gray block — matching the file-list (diff) modal, whose gray
-	// fills edge to edge. So the rounded border sits on the card background, not the
-	// dim scrim; otherwise the border ring shows the scrim and the corners read as
-	// dark notches carved out of the gray panel.
+	// The container is filled gray edge to edge, but the corners must still read as
+	// rounded. A terminal cell is one solid color, so a gray-filled corner cell
+	// can't also carve a rounded notch against the dark scrim — instead each corner
+	// uses a quadrant block whose outer quarter is the scrim (a sub-cell bevel), so
+	// the gray fills the whole card while the corner is softened/rounded.
 	card := accountSwitchCardStyle().Render("content")
 
 	var topBorder string
-	for _, l := range strings.Split(card, "\n") {
-		if strings.Contains(l, "╭") {
-			topBorder = l
-			break
-		}
+	lines := strings.Split(card, "\n")
+	if len(lines) > 0 {
+		topBorder = lines[0]
 	}
 	if topBorder == "" {
-		t.Fatal("card rendered no top rounded-border line")
+		t.Fatal("card rendered no top border line")
 	}
-	// Derive the exact background escapes lipgloss emits for each color so the test
-	// tracks the constants, not a hand-computed RGB triple.
-	bgSeq := func(c lipgloss.Color) string {
-		rendered := lipgloss.NewStyle().Background(c).Render(" ")
-		i := strings.Index(rendered, "48;2;")
+	// Derive the exact escapes lipgloss emits for each color so the test tracks the
+	// constants, not a hand-computed RGB triple.
+	seq := func(style lipgloss.Style, sgr string) string {
+		rendered := style.Render(" ")
+		i := strings.Index(rendered, sgr)
 		if i < 0 {
-			t.Fatalf("no truecolor background in %q", rendered)
+			t.Fatalf("no %s in %q", sgr, rendered)
 		}
 		return rendered[i : i+strings.IndexByte(rendered[i:], 'm')]
 	}
-	cardBg := bgSeq(accountSwitchCardBg)
-	scrimBg := bgSeq(accountSwitchScrim)
-	// The card gray must fill the border row so the whole container is one block.
+	cardBg := seq(lipgloss.NewStyle().Background(accountSwitchCardBg), "48;2;")
+	scrimFg := seq(lipgloss.NewStyle().Foreground(accountSwitchScrim), "38;2;")
+	// Gray fills the top border row (the whole container is one gray block).
 	if !strings.Contains(topBorder, cardBg) {
-		t.Errorf("rounded border does not carry the card gray fill %q (gray must fill the whole container):\n%q", cardBg, topBorder)
+		t.Errorf("top border does not carry the card gray fill %q:\n%q", cardBg, topBorder)
 	}
-	// The border must NOT sit on the scrim (that leaves dark corner notches).
-	if strings.Contains(topBorder, scrimBg) {
-		t.Errorf("rounded border still sits on the dim scrim %q (gray does not fill the corners):\n%q", scrimBg, topBorder)
+	// Corners are beveled with quadrant blocks, softening the gray corner.
+	for _, corner := range []string{"▘", "▝", "▖", "▗"} {
+		if !strings.Contains(card, corner) {
+			t.Errorf("card missing beveled corner glyph %q:\n%q", corner, card)
+		}
+	}
+	// The bevel's outer quarter is the scrim (drawn as the quadrant's foreground).
+	if !strings.Contains(topBorder, scrimFg) {
+		t.Errorf("corner bevel does not use the scrim notch %q:\n%q", scrimFg, topBorder)
 	}
 }
 

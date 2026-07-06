@@ -331,15 +331,34 @@ var accountSwitchDim = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("240")).
 	Background(accountSwitchScrim)
 
-// accountSwitchCardStyle is the rounded card chrome. The gray fill backs both the
-// panel and the border cells so the whole container is one gray block — the same
-// way the file-list diff modal fills edge to edge — rather than a gray panel
-// ringed by the darker scrim at its border and corners. The card floats over the
-// dimmed session because the close area around it (accountSwitchDim) is darker.
+// accountSwitchBevelBorder rounds the card's corners while the gray fill still
+// covers the whole container. A terminal cell is a single solid color, so a
+// gray-filled corner cell can't also carve a rounded notch against the darker
+// scrim — the corner would read as a hard square. Instead each corner is a
+// quadrant block: with the card gray as the cell background and the scrim as the
+// glyph foreground, only the outer quarter of the cell is dark, softening the
+// corner into a bevel. The edges are plain spaces so the gray fills them flat.
+var accountSwitchBevelBorder = lipgloss.Border{
+	Top:         " ",
+	Bottom:      " ",
+	Left:        " ",
+	Right:       " ",
+	TopLeft:     "▘",
+	TopRight:    "▝",
+	BottomLeft:  "▖",
+	BottomRight: "▗",
+}
+
+// accountSwitchCardStyle is the card chrome. The gray fill backs both the panel
+// and the border cells so the whole container is one gray block — the same way
+// the file-list diff modal fills edge to edge — while the beveled corners keep it
+// from reading as a hard rectangle. The scrim foreground draws the corner notch;
+// the card floats over the dimmed session because the close area around it
+// (accountSwitchDim) is darker.
 func accountSwitchCardStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).
+		Border(accountSwitchBevelBorder).
+		BorderForeground(accountSwitchScrim).
 		BorderBackground(accountSwitchCardBg).
 		Background(accountSwitchCardBg).
 		Padding(accountSwitchPadY, accountSwitchPadX)
