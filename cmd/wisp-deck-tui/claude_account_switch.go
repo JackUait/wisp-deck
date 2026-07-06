@@ -311,56 +311,27 @@ func (m accountSwitchModel) contentWidth() int {
 	return w
 }
 
-// accountSwitchScrim is the dim backdrop tint painted in the close area around
-// the card, so the darkened session shows through and the gray card floats above
-// it. accountSwitchCardBg is the card's gray fill; it also backs the border cells
-// so the gray fills the whole container edge to edge (matching the file-list diff
-// modal) rather than leaving the border ring — and its corners — showing the
-// darker scrim.
-const (
-	accountSwitchScrim  lipgloss.Color = "#14141b"
-	accountSwitchCardBg lipgloss.Color = "#292c33"
-)
-
-// accountSwitchDim renders the close area (everything outside the card) as a
-// half-transparent backdrop: a dim dark background tint (the scrim) with the
-// captured screen behind it drawn faint/gray, so the session shows through
-// darkened rather than as a solid opaque block.
+// accountSwitchDim renders the close area (everything outside the card). Like the
+// file-list diff modal, it dims by FAINTNESS only — no dark background tint — so
+// the surround stays the same gray as the card. That is what lets the card's
+// gray-filled corners read as cleanly rounded: a terminal cell is a single solid
+// color, so a gray corner can only round against a same-gray surround (a dark
+// scrim would leave the corner a hard square). The captured session shows through
+// faint/gray around the card.
 var accountSwitchDim = lipgloss.NewStyle().
 	Faint(true).
-	Foreground(lipgloss.Color("240")).
-	Background(accountSwitchScrim)
+	Foreground(lipgloss.Color("240"))
 
-// accountSwitchBevelBorder rounds the card's corners while the gray fill still
-// covers the whole container. A terminal cell is a single solid color, so a
-// gray-filled corner cell can't also carve a rounded notch against the darker
-// scrim — the corner would read as a hard square. Instead each corner is a
-// quadrant block: with the card gray as the cell background and the scrim as the
-// glyph foreground, only the outer quarter of the cell is dark, softening the
-// corner into a bevel. The edges are plain spaces so the gray fills them flat.
-var accountSwitchBevelBorder = lipgloss.Border{
-	Top:         " ",
-	Bottom:      " ",
-	Left:        " ",
-	Right:       " ",
-	TopLeft:     "▘",
-	TopRight:    "▝",
-	BottomLeft:  "▖",
-	BottomRight: "▗",
-}
-
-// accountSwitchCardStyle is the card chrome. The gray fill backs both the panel
-// and the border cells so the whole container is one gray block — the same way
-// the file-list diff modal fills edge to edge — while the beveled corners keep it
-// from reading as a hard rectangle. The scrim foreground draws the corner notch;
-// the card floats over the dimmed session because the close area around it
-// (accountSwitchDim) is darker.
+// accountSwitchCardStyle is the card chrome: a thin rounded border and NO
+// background of its own, mirroring the diff modal's box. Both the card and the
+// faint surround fall back to the terminal's default gray, so they are guaranteed
+// identical and the rounded border glyphs round the corners with the gray filling
+// through on both sides. The border color is a light gray so the card still reads
+// as a distinct panel over the same-gray surround.
 func accountSwitchCardStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
-		Border(accountSwitchBevelBorder).
-		BorderForeground(accountSwitchScrim).
-		BorderBackground(accountSwitchCardBg).
-		Background(accountSwitchCardBg).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("245")).
 		Padding(accountSwitchPadY, accountSwitchPadX)
 }
 

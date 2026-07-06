@@ -211,9 +211,9 @@ func TestAccountSwitchModel_viewHasRoundedCorners(t *testing.T) {
 	sized, _ := m.Update(tea.WindowSizeMsg{Width: 48, Height: 18})
 	m = sized.(accountSwitchModel)
 	view := m.View()
-	for _, corner := range []string{"▘", "▝", "▖", "▗"} {
+	for _, corner := range []string{"╭", "╮", "╰", "╯"} {
 		if !strings.Contains(view, corner) {
-			t.Errorf("view missing beveled (rounded) corner %q", corner)
+			t.Errorf("view missing rounded corner %q", corner)
 		}
 	}
 }
@@ -231,13 +231,13 @@ func TestAccountSwitchModel_viewCompositesDimmedBackdrop(t *testing.T) {
 	if !strings.Contains(view, "HELLO-BACKDROP-ROW") {
 		t.Errorf("view does not composite the backdrop behind the card:\n%s", view)
 	}
-	// The beveled card is still drawn on top.
-	if !strings.Contains(view, "▘") {
-		t.Errorf("view missing the beveled card over the backdrop")
+	// The rounded card is still drawn on top.
+	if !strings.Contains(view, "╭") {
+		t.Errorf("view missing the rounded card over the backdrop")
 	}
 }
 
-func TestAccountSwitchModel_closeAreaIsDimScrim(t *testing.T) {
+func TestAccountSwitchModel_closeAreaDimmedByFaint(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	defer lipgloss.SetColorProfile(prev)
@@ -248,59 +248,44 @@ func TestAccountSwitchModel_closeAreaIsDimScrim(t *testing.T) {
 	m = sized.(accountSwitchModel)
 
 	view := m.View()
-	// The close area (everything outside the card) is darkened into a scrim — a dim
-	// background tint — so it reads as a half-transparent backdrop over the session
-	// rather than a solid opaque block.
-	if !strings.Contains(view, "48;2;20;20;27") {
-		t.Errorf("close-area margin is not rendered as a dim scrim background:\n%s", view)
+	// Matching the file-list modal, the close area is dimmed via FAINTNESS, not a
+	// dark background tint. Keeping the surround the same gray as the card is what
+	// lets the gray-filled corners read as cleanly rounded (a dark scrim would make
+	// them square). The faint escape (SGR 2) is what the diff modal's dim uses.
+	faint := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("240")).Render("x")
+	fi := strings.IndexByte(faint, 'm')
+	faintSeq := faint[:fi+1]
+	if !strings.Contains(view, faintSeq) {
+		t.Errorf("close-area margin is not dimmed by faintness %q:\n%s", faintSeq, view)
+	}
+	// No dark scrim background — the old scrim tint must be gone so the surround
+	// matches the card gray.
+	if strings.Contains(view, "48;2;20;20;27") {
+		t.Errorf("close area still paints a dark scrim; surround must match the card gray:\n%s", view)
 	}
 }
 
-func TestAccountSwitchModel_roundedGrayCorners(t *testing.T) {
+func TestAccountSwitchModel_roundedCornersNoOwnBackground(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	defer lipgloss.SetColorProfile(prev)
 
-	// The container is filled gray edge to edge, but the corners must still read as
-	// rounded. A terminal cell is one solid color, so a gray-filled corner cell
-	// can't also carve a rounded notch against the dark scrim — instead each corner
-	// uses a quadrant block whose outer quarter is the scrim (a sub-cell bevel), so
-	// the gray fills the whole card while the corner is softened/rounded.
+	// Matching the file-list modal, the card sets no background of its own: the gray
+	// is the terminal default shown by both the card and the (faint) surround, so
+	// they are guaranteed identical and the thin rounded border rounds the corners
+	// with the gray filling through on both sides. Setting a card background would
+	// risk a lighter rectangle whose corners read as square against the surround.
 	card := accountSwitchCardStyle().Render("content")
 
-	var topBorder string
-	lines := strings.Split(card, "\n")
-	if len(lines) > 0 {
-		topBorder = lines[0]
+	top := strings.SplitN(card, "\n", 2)[0]
+	// Thin rounded corners.
+	if !strings.Contains(top, "╭") || !strings.Contains(card, "╯") {
+		t.Errorf("card does not use a thin rounded border:\n%q", card)
 	}
-	if topBorder == "" {
-		t.Fatal("card rendered no top border line")
-	}
-	// Derive the exact escapes lipgloss emits for each color so the test tracks the
-	// constants, not a hand-computed RGB triple.
-	seq := func(style lipgloss.Style, sgr string) string {
-		rendered := style.Render(" ")
-		i := strings.Index(rendered, sgr)
-		if i < 0 {
-			t.Fatalf("no %s in %q", sgr, rendered)
-		}
-		return rendered[i : i+strings.IndexByte(rendered[i:], 'm')]
-	}
-	cardBg := seq(lipgloss.NewStyle().Background(accountSwitchCardBg), "48;2;")
-	scrimFg := seq(lipgloss.NewStyle().Foreground(accountSwitchScrim), "38;2;")
-	// Gray fills the top border row (the whole container is one gray block).
-	if !strings.Contains(topBorder, cardBg) {
-		t.Errorf("top border does not carry the card gray fill %q:\n%q", cardBg, topBorder)
-	}
-	// Corners are beveled with quadrant blocks, softening the gray corner.
-	for _, corner := range []string{"▘", "▝", "▖", "▗"} {
-		if !strings.Contains(card, corner) {
-			t.Errorf("card missing beveled corner glyph %q:\n%q", corner, card)
-		}
-	}
-	// The bevel's outer quarter is the scrim (drawn as the quadrant's foreground).
-	if !strings.Contains(topBorder, scrimFg) {
-		t.Errorf("corner bevel does not use the scrim notch %q:\n%q", scrimFg, topBorder)
+	// No background fill on the card — no 48;2 (truecolor bg) or 48;5 (256 bg) escape
+	// anywhere, so the terminal default gray fills it and the surround alike.
+	if strings.Contains(card, "48;2;") || strings.Contains(card, "48;5;") {
+		t.Errorf("card paints its own background; it must inherit the terminal default so it matches the surround:\n%q", card)
 	}
 }
 
