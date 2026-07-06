@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 // Worktree represents a git worktree entry.
@@ -51,11 +52,19 @@ func ParseWorktreeListPorcelain(output string) []Worktree {
 }
 
 // PopulateWorktrees runs DetectWorktrees for each project and attaches
-// the results to the Worktrees field.
+// the results to the Worktrees field. Detection runs concurrently: it happens
+// before the main menu's first paint, so N projects must cost one git
+// round-trip of wall-clock, not N.
 func PopulateWorktrees(projects []Project) {
+	var wg sync.WaitGroup
 	for i := range projects {
-		projects[i].Worktrees = DetectWorktrees(projects[i].Path)
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			projects[i].Worktrees = DetectWorktrees(projects[i].Path)
+		}(i)
 	}
+	wg.Wait()
 }
 
 // DetectWorktrees runs `git worktree list --porcelain` for the given path

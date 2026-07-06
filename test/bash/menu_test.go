@@ -3,6 +3,7 @@ package bash_test
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1223,4 +1224,51 @@ func TestMenu_add_worktree_from_bash_is_unreachable(t *testing.T) {
 	// This test documents the expected JSON interface — add-worktree should
 	// not appear as an action from main-menu anymore.
 	t.Log("add-worktree is now handled entirely in Go; bash never receives this action")
+}
+
+// select_project_interactive runs in the latency-critical path between the menu
+// closing and the project session opening. Each jq spawn costs ~25ms; the
+// result must be parsed with a single jq invocation, not one per field.
+func TestMenu_parses_result_with_single_jq_invocation(t *testing.T) {
+	dir := t.TempDir()
+	binDir := mockCommand(t, dir, "wisp-deck-tui", `echo '{"action":"select-project","name":"proj1","path":"/tmp/p1","ai_tool":"claude"}'`)
+	realJq, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("jq not installed")
+	}
+	// Counting jq shim that delegates to the real binary.
+	mockCommand(t, dir, "jq", fmt.Sprintf(`echo x >> "$GT_JQ_COUNT"; exec %q "$@"`, realJq))
+	countFile := filepath.Join(dir, "jq-count")
+	projectsFile := writeTempFile(t, dir, "projects", "proj1:/tmp/p1\n")
+	root := projectRoot(t)
+	env := buildEnv(t, []string{binDir},
+		"XDG_CONFIG_HOME="+filepath.Join(dir, "config"),
+		"GT_JQ_COUNT="+countFile,
+	)
+
+	script := fmt.Sprintf(`
+source %q 2>/dev/null || true
+source %q
+error() { echo "ERROR: $*" >&2; }
+AI_TOOLS_AVAILABLE=("claude")
+SELECTED_AI_TOOL="claude"
+_update_version=""
+select_project_interactive %q
+echo "name=$_selected_project_name"
+echo "path=$_selected_project_path"
+echo "action=$_selected_project_action"
+`, filepath.Join(root, "lib/tui.sh"),
+		filepath.Join(root, "lib/menu-tui.sh"),
+		projectsFile)
+
+	out, code := runBashSnippet(t, script, env)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "name=proj1")
+	assertContains(t, out, "path=/tmp/p1")
+	assertContains(t, out, "action=select-project")
+
+	data, _ := os.ReadFile(countFile)
+	if n := strings.Count(string(data), "x"); n != 1 {
+		t.Errorf("expected exactly 1 jq invocation, got %d", n)
+	}
 }

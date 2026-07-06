@@ -1,7 +1,10 @@
 package models_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/jackuait/wisp-deck/internal/models"
 )
@@ -254,5 +257,39 @@ func TestParseMainBranch(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// PopulateWorktrees runs before the main menu's first paint, so N projects
+// must not cost N serial `git worktree list` spawns — detection must run
+// concurrently. Four mocked 300ms git calls: serial ≈ 1.2s, concurrent ≈ 0.3s.
+func TestPopulateWorktrees_RunsConcurrently(t *testing.T) {
+	dir := t.TempDir()
+	gitMock := `#!/bin/bash
+sleep 0.3
+printf 'worktree %s\nHEAD abc123\nbranch refs/heads/main\n\nworktree %s-wt\nHEAD def456\nbranch refs/heads/feature\n\n' "$3" "$3"
+`
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(gitMock), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	projects := []models.Project{
+		{Name: "a", Path: "/tmp/a"},
+		{Name: "b", Path: "/tmp/b"},
+		{Name: "c", Path: "/tmp/c"},
+		{Name: "d", Path: "/tmp/d"},
+	}
+	start := time.Now()
+	models.PopulateWorktrees(projects)
+	elapsed := time.Since(start)
+
+	if elapsed > 700*time.Millisecond {
+		t.Errorf("PopulateWorktrees took %v; expected concurrent detection (< 700ms for 4×300ms)", elapsed)
+	}
+	for _, p := range projects {
+		if len(p.Worktrees) != 1 || p.Worktrees[0].Branch != "feature" {
+			t.Errorf("project %s: worktrees not populated correctly: %+v", p.Name, p.Worktrees)
+		}
 	}
 }

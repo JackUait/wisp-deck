@@ -147,12 +147,15 @@ else
   type stop_loading_screen &>/dev/null && stop_loading_screen
 
   while true; do
+    # Fingerprint the settings file so the (expensive, all-session) propagation
+    # below only runs when the menu actually changed a setting.
+    _settings_before="$(settings_fingerprint "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings")"
     if select_project_interactive "$PROJECTS_FILE"; then
       # The menu just closed: push any settings change (theme, panel mode) to
       # every OTHER already-running session so a toggle reaches all open windows,
       # not just newly-launched ones. This window's own session does not exist
       # yet, so it is untouched here.
-      apply_settings_to_all_sessions "$TMUX_CMD" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" 2>/dev/null || true
+      apply_settings_to_all_sessions_if_changed "$TMUX_CMD" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" "$_settings_before" 2>/dev/null || true
       # Update AI tool if user cycled it in the menu (for all actions)
       if [[ -n "${_selected_ai_tool:-}" ]]; then
         SELECTED_AI_TOOL="$_selected_ai_tool"
@@ -192,7 +195,7 @@ else
     else
       # User quit (ESC/Ctrl-C) — still propagate any settings change they made
       # before quitting to the other running sessions.
-      apply_settings_to_all_sessions "$TMUX_CMD" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" 2>/dev/null || true
+      apply_settings_to_all_sessions_if_changed "$TMUX_CMD" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" "$_settings_before" 2>/dev/null || true
       exit 0
     fi
   done

@@ -140,6 +140,30 @@ apply_settings_to_all_sessions() {
   done
 }
 
+# Fingerprint of the settings file's current content ("missing" when absent).
+# Captured before the menu opens; compared after it closes so the all-session
+# propagation only runs when the user actually changed a setting.
+# Usage: settings_fingerprint <settings_file>
+settings_fingerprint() {
+  local file="$1"
+  if [ -f "$file" ]; then
+    cksum < "$file"
+  else
+    echo "missing"
+  fi
+}
+
+# Run apply_settings_to_all_sessions only when the settings file no longer
+# matches <before> (a settings_fingerprint capture). Selecting a project
+# without touching Settings costs zero tmux calls.
+# Usage: apply_settings_to_all_sessions_if_changed <tmux_cmd> <settings_file> <before> [lib_dir] [lazygit_cmd]
+apply_settings_to_all_sessions_if_changed() {
+  local tmux_cmd="$1" settings_file="$2" before="$3"
+  shift 3
+  [ "$(settings_fingerprint "$settings_file")" = "$before" ] && return 0
+  apply_settings_to_all_sessions "$tmux_cmd" "$settings_file" "$@"
+}
+
 # Return the age of the marker file in seconds.
 # Usage: marker_age <file>
 # Outputs the number of seconds since the file was last modified.

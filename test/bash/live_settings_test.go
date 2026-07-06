@@ -343,6 +343,115 @@ func TestLiveSettings_apply_settings_to_all_sessions_theme_and_panel(t *testing.
 	assertNotContains(t, got, "respawn-pane -k -t plain-2")
 }
 
+// --- apply_settings_to_all_sessions_if_changed: skip the (expensive) all-session
+// propagation entirely when the settings file did not change while the menu was
+// open. Selecting a project without touching Settings must cost zero tmux calls. ---
+
+func TestLiveSettings_settings_fingerprint_stable_for_same_content(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "settings", "theme=purple\n")
+	settings := filepath.Join(dir, "settings")
+
+	snippet := fmt.Sprintf("source %q && a=$(settings_fingerprint %q); b=$(settings_fingerprint %q); [ -n \"$a\" ] && [ \"$a\" = \"$b\" ]",
+		filepath.Join(projectRoot(t), "lib", "tab-title-watcher.sh"), settings, settings)
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+}
+
+func TestLiveSettings_settings_fingerprint_changes_with_content(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "settings", "theme=purple\n")
+	writeTempFile(t, dir, "settings2", "theme=amber\n")
+
+	snippet := fmt.Sprintf("source %q && a=$(settings_fingerprint %q); b=$(settings_fingerprint %q); [ \"$a\" != \"$b\" ]",
+		filepath.Join(projectRoot(t), "lib", "tab-title-watcher.sh"),
+		filepath.Join(dir, "settings"), filepath.Join(dir, "settings2"))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+}
+
+func TestLiveSettings_settings_fingerprint_differs_missing_vs_created(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "settings", "theme=purple\n")
+
+	snippet := fmt.Sprintf("source %q && a=$(settings_fingerprint %q); b=$(settings_fingerprint %q); [ \"$a\" != \"$b\" ]",
+		filepath.Join(projectRoot(t), "lib", "tab-title-watcher.sh"),
+		filepath.Join(dir, "does-not-exist"), filepath.Join(dir, "settings"))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+}
+
+func TestLiveSettings_apply_if_changed_skips_tmux_when_unchanged(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "rec")
+	writeTempFile(t, dir, "settings", "theme=purple\npanel_mode=full\n")
+	settings := filepath.Join(dir, "settings")
+	binDir := mockCommand(t, dir, "tmux", allSettingsTmux)
+	env := buildEnv(t, []string{binDir}, "GT_REC="+rec)
+	tmuxPath := filepath.Join(binDir, "tmux")
+
+	root := projectRoot(t)
+	snippet := fmt.Sprintf(
+		"source %q && source %q && source %q && before=$(settings_fingerprint %q) && apply_settings_to_all_sessions_if_changed %q %q \"$before\" /libdir /usr/bin/lazygit",
+		filepath.Join(root, "lib", "tui.sh"), filepath.Join(root, "lib", "theme.sh"),
+		filepath.Join(root, "lib", "tab-title-watcher.sh"),
+		settings, tmuxPath, settings)
+
+	_, code := runBashSnippet(t, snippet, env)
+	assertExitCode(t, code, 0)
+
+	if data, err := os.ReadFile(rec); err == nil && len(data) > 0 {
+		t.Errorf("expected no tmux calls when settings unchanged, got: %s", data)
+	}
+}
+
+func TestLiveSettings_apply_if_changed_propagates_when_changed(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "rec")
+	writeTempFile(t, dir, "settings", "theme=purple\npanel_mode=full\n")
+	settings := filepath.Join(dir, "settings")
+	binDir := mockCommand(t, dir, "tmux", allSettingsTmux)
+	env := buildEnv(t, []string{binDir}, "GT_REC="+rec)
+	tmuxPath := filepath.Join(binDir, "tmux")
+
+	root := projectRoot(t)
+	// Fingerprint taken from different content simulates a menu-time edit.
+	snippet := fmt.Sprintf(
+		"source %q && source %q && source %q && apply_settings_to_all_sessions_if_changed %q %q stale-fingerprint /libdir /usr/bin/lazygit",
+		filepath.Join(root, "lib", "tui.sh"), filepath.Join(root, "lib", "theme.sh"),
+		filepath.Join(root, "lib", "tab-title-watcher.sh"),
+		tmuxPath, settings)
+
+	_, code := runBashSnippet(t, snippet, env)
+	assertExitCode(t, code, 0)
+
+	data, _ := os.ReadFile(rec)
+	got := string(data)
+	assertContains(t, got, "list-sessions")
+	assertContains(t, got, "set-option -t dev-alpha-1 pane-active-border-style fg=colour141")
+}
+
+// wrapper.sh must use the change-gated propagation (with a fingerprint captured
+// before the menu opens) — the ungated call cost ~0.5s of tmux round-trips on
+// EVERY project open, even when no setting changed.
+func TestLiveSettings_wrapper_gates_propagation_on_settings_change(t *testing.T) {
+	root := projectRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "wrapper.sh"))
+	if err != nil {
+		t.Fatalf("failed to read wrapper.sh: %v", err)
+	}
+	src := string(data)
+	if !strings.Contains(src, "apply_settings_to_all_sessions_if_changed") {
+		t.Fatal("wrapper.sh must call apply_settings_to_all_sessions_if_changed")
+	}
+	if !strings.Contains(src, "settings_fingerprint") {
+		t.Fatal("wrapper.sh must capture a settings fingerprint before the menu opens")
+	}
+	if strings.Contains(src, "apply_settings_to_all_sessions \"") {
+		t.Fatal("wrapper.sh must not call the ungated apply_settings_to_all_sessions")
+	}
+}
+
 // --- spare_tabs_status_left: the reusable status-left builder ---
 
 func TestSpareTabs_status_left_uses_accent(t *testing.T) {
