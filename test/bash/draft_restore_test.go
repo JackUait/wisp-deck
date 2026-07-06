@@ -85,6 +85,44 @@ func TestDraftCacheRoot_managed_login_uses_account_dir(t *testing.T) {
 	}
 }
 
+// The replay must not start while claude shows a trust/login dialog (whose
+// option rows start with "❯ 2. No, exit" — pasting there would drive the
+// dialog). Only an EMPTY prompt line means the input field is ready. The mock
+// serves a dialog frame twice, then a ready frame, via a call-count file.
+func TestWaitAIPaneReady_waits_for_empty_prompt_line(t *testing.T) {
+	dir := t.TempDir()
+	count := filepath.Join(dir, "count")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "capture-pane" ]; then
+  n=$(cat %q 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > %q
+  if [ "$n" -lt 3 ]; then
+    printf '%%s\n' "Do you trust this folder?" "❯ 2. No, exit"
+  else
+    printf '%%s\n' "some banner" "❯ " "statusline"
+  fi
+fi`, count, count))
+	env := buildEnv(t, []string{bin})
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		"wait_ai_pane_ready tmux %1 10"), env)
+	assertExitCode(t, code, 0)
+	got, _ := os.ReadFile(count)
+	if strings.TrimSpace(string(got)) != "3" {
+		t.Fatalf("expected ready on 3rd capture, count file: %q", got)
+	}
+}
+
+func TestWaitAIPaneReady_times_out_on_dialog(t *testing.T) {
+	dir := t.TempDir()
+	bin := mockCommand(t, dir, "tmux", `
+if [ "$1" = "capture-pane" ]; then printf '%s\n' "❯ 2. No, exit"; fi`)
+	env := buildEnv(t, []string{bin})
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		"wait_ai_pane_ready tmux %1 2"), env)
+	if code == 0 {
+		t.Fatal("expected timeout (nonzero exit) while a dialog is showing")
+	}
+}
+
 // A missing history file (fresh install) must behave like the empty-input
 // case, not crash.
 func TestStashAIDraft_missing_history_file_is_no_draft(t *testing.T) {

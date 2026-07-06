@@ -180,6 +180,23 @@ draft_cache_root() {
   fi
 }
 
+# wait_ai_pane_ready <tmux_cmd> <pane> [iters] — poll (iters × 0.5s, default
+# ~30s) until the relaunched claude shows an EMPTY ready input line: "❯"
+# alone on its line. Trust/login/update dialogs also render "❯"-prefixed rows
+# but always with text after it, so this match keeps the replay's pastes away
+# from dialogs. Timeout is fail-open: the draft stays one Up-press away in
+# prompt history.
+wait_ai_pane_ready() {
+  local tmux_cmd="$1" pane="$2" iters="${3:-60}"
+  for _ in $(seq 1 "$iters"); do
+    if "$tmux_cmd" capture-pane -p -t "$pane" 2>/dev/null | grep -qE '^❯ *$'; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
 # build_switch_launch_cmd <tool> <claude_cmd> <opencode_cmd> <settings> <filter> \
 #   <project_dir> <new_account_dir> [resume_session] — build the launch command that
 # respawns the AI pane under new_account_dir.
