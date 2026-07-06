@@ -57,19 +57,22 @@ is_auto_switch_enabled() {
   [ "$(get_auto_switch "$1")" = "on" ]
 }
 
-# auto_switch_eligible <accounts_list_file> — exit 0 when the account list holds
-# at least two accounts (label:dir lines, skipping comments/blanks), i.e. there
-# is something to rotate between.
+# auto_switch_eligible <accounts_list_file> — exit 0 when there are at least two
+# accounts to rotate between. The list holds only the *managed* logins
+# (label:dir lines, skipping comments/blanks); the implicit Default (Keychain)
+# login always exists on top of them and IS part of the in-place rotation, so a
+# single managed entry already gives two accounts. (The proxy-era rule needed 2+
+# managed logins because the Keychain login could not be pooled.)
 auto_switch_eligible() {
-  local file="$1" count=0 line
+  local file="$1" line
   [ -f "$file" ] || return 1
   while IFS= read -r line; do
     line="${line#"${line%%[![:space:]]*}"}"  # ltrim
     [[ -z "$line" || "$line" == \#* ]] && continue
     [[ "$line" != *:* ]] && continue
-    count=$((count + 1))
+    return 0
   done < "$file"
-  [ "$count" -ge 2 ]
+  return 1
 }
 
 # The usage percentage at which auto-switch rotates to the next account, and how
@@ -92,30 +95,31 @@ auto_switch_threshold_reached() {
   return 1
 }
 
-# auto_switch_next_account <list_file> <current_dir> — print the dir name of the
-# managed account AFTER current in list order, wrapping at the end. An empty or
-# unknown current (the Default login, or a dir since removed from the list)
-# starts rotation at the first managed entry. Exit 1 when the list offers no
-# account other than current.
+# auto_switch_next_account <list_file> <current_dir> — print the account AFTER
+# current in rotation order: the implicit Default login first, then the managed
+# dirs in list order, wrapping at the end (so the last managed entry rotates
+# back to the Default). Prints a managed dir name, or the literal "default" for
+# the Default login (callers map it — relaunch_ai_pane already treats
+# ""/"default" as the Keychain login). Current "" and "default" both mean the
+# Default; an unknown current (a dir since removed from the list) restarts at
+# the first managed entry. Exit 1 when the list holds no managed account at all
+# (only the Default exists — nothing to rotate to).
 auto_switch_next_account() {
-  local file="$1" current="$2" line label dir
-  local dirs=() idx=-1 i=0
+  local file="$1" current="$2" label dir
+  local cycle=("default") idx=0 i=1
   [ -f "$file" ] || return 1
+  [ -n "$current" ] || current="default"
   while IFS=: read -r label dir; do
     label="${label#"${label%%[![:space:]]*}"}"  # ltrim
     [[ -z "$label" || "$label" == \#* ]] && continue
     [ -n "$dir" ] || continue
-    dirs+=("$dir")
+    cycle+=("$dir")
     [ "$dir" = "$current" ] && idx=$((i))
     i=$((i + 1))
   done < "$file"
-  [ "${#dirs[@]}" -ge 1 ] || return 1
+  [ "${#cycle[@]}" -ge 2 ] || return 1
   local next
-  if [ "$idx" -lt 0 ]; then
-    next="${dirs[0]}"
-  else
-    next="${dirs[$(((idx + 1) % ${#dirs[@]}))]}"
-  fi
+  next="${cycle[$(((idx + 1) % ${#cycle[@]}))]}"
   [ "$next" != "$current" ] || return 1
   printf '%s\n' "$next"
 }

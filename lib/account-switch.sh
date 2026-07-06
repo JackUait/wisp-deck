@@ -534,9 +534,14 @@ auto_switch_relaunch() {
     _rc_list="" _rc_colors="" _rc_default_label=""
   [ -f "$relaunch_file" ] || return 0
   _read_relaunch_ctx "$relaunch_file"
-  local session_acct
+  local session_acct want
   session_acct="$(current_session_account "$tmux_cmd" "$_rc_pointer")"
-  [ "$target" = "$session_acct" ] && return 0
+  # The rotation names the Default login "default"; the session env stamps it
+  # as the empty string — normalize before comparing so a stale trigger can't
+  # bounce a pane already sitting on the Default.
+  want="$target"
+  [ "$want" = "default" ] && want=""
+  [ "$want" = "$session_acct" ] && return 0
   local _gt_send_continue=1
   _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" "$session_acct" "$target"
   return 0

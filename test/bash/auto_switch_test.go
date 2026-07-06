@@ -93,22 +93,24 @@ func TestAutoSwitchEligible_needs_two_accounts(t *testing.T) {
 	dir := t.TempDir()
 	list := filepath.Join(dir, "claude-accounts.list")
 
-	// Zero accounts → not eligible.
+	// Zero managed accounts → not eligible: only the implicit Default exists,
+	// nothing to rotate to.
 	writeTempFile(t, dir, "claude-accounts.list", "# just a comment\n\n")
 	if _, code := runBashFunc(t, "lib/auto-switch.sh", "auto_switch_eligible", []string{list}, nil); code == 0 {
-		t.Fatal("0 accounts should not be eligible")
+		t.Fatal("0 managed accounts should not be eligible")
 	}
 
-	// One account → not eligible (nothing to rotate to).
+	// One managed account → eligible: it plus the implicit Default (Keychain)
+	// login are two accounts the in-place switch can rotate between.
 	writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
-	if _, code := runBashFunc(t, "lib/auto-switch.sh", "auto_switch_eligible", []string{list}, nil); code == 0 {
-		t.Fatal("1 account should not be eligible")
+	if _, code := runBashFunc(t, "lib/auto-switch.sh", "auto_switch_eligible", []string{list}, nil); code != 0 {
+		t.Fatal("1 managed account (+ implicit Default) should be eligible")
 	}
 
-	// Two accounts → eligible.
-	writeTempFile(t, dir, "claude-accounts.list", "Work:work\nPersonal:personal\n")
-	if _, code := runBashFunc(t, "lib/auto-switch.sh", "auto_switch_eligible", []string{list}, nil); code != 0 {
-		t.Fatal("2 accounts should be eligible")
+	// Missing list → not eligible.
+	if _, code := runBashFunc(t, "lib/auto-switch.sh", "auto_switch_eligible",
+		[]string{filepath.Join(dir, "missing.list")}, nil); code == 0 {
+		t.Fatal("missing list should not be eligible")
 	}
 }
 
@@ -150,9 +152,10 @@ func TestAutoSwitchNextAccount_cycles_list(t *testing.T) {
 	}{
 		{"work", "personal"},
 		{"personal", "play"},
-		{"play", "work"}, // wraps
-		{"", "work"},     // Default login -> first managed
-		{"unknown", "work"},
+		{"play", "default"}, // last managed wraps to the Default login
+		{"", "work"},        // Default login -> first managed
+		{"default", "work"}, // ...same, spelled out
+		{"unknown", "work"}, // dir gone from the list -> restart at first managed
 	}
 	for _, tt := range tests {
 		out, code := runBashFunc(t, "lib/auto-switch.sh", "auto_switch_next_account",
@@ -164,13 +167,31 @@ func TestAutoSwitchNextAccount_cycles_list(t *testing.T) {
 	}
 }
 
-func TestAutoSwitchNextAccount_fails_without_alternative(t *testing.T) {
+func TestAutoSwitchNextAccount_single_managed_rotates_with_default(t *testing.T) {
 	dir := t.TempDir()
 	list := writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	// One managed login still rotates: work <-> Default.
 	out, code := runBashFunc(t, "lib/auto-switch.sh", "auto_switch_next_account",
 		[]string{list, "work"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "default" {
+		t.Fatalf("next after the only managed login = %q, want default", strings.TrimSpace(out))
+	}
+	out, code = runBashFunc(t, "lib/auto-switch.sh", "auto_switch_next_account",
+		[]string{list, ""}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "work" {
+		t.Fatalf("next after Default = %q, want work", strings.TrimSpace(out))
+	}
+}
+
+func TestAutoSwitchNextAccount_fails_without_alternative(t *testing.T) {
+	dir := t.TempDir()
+	list := writeTempFile(t, dir, "claude-accounts.list", "# empty\n")
+	out, code := runBashFunc(t, "lib/auto-switch.sh", "auto_switch_next_account",
+		[]string{list, ""}, nil)
 	if code == 0 {
-		t.Fatalf("single-account list with itself current should fail, got %q", out)
+		t.Fatalf("empty list should fail, got %q", out)
 	}
 }
 
@@ -367,6 +388,49 @@ printf '%%s\n' "$*" >> %q`, rec))
 	if logOut, _ := os.ReadFile(rec); strings.Contains(string(logOut), "respawn-pane") {
 		t.Fatalf("must not respawn when already on target, log:\n%s", logOut)
 	}
+}
+
+func TestAutoSwitchRelaunch_skips_when_default_target_and_already_default(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	relaunch := autoSwitchRelaunchCtx(t, dir)
+	// The session env stamps an EMPTY account = the Default login.
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "list-panes" ]; then printf '%%s\n' "%%1 1"; exit 0; fi
+if [ "$1" = "show-environment" ]; then echo "WISP_DECK_CLAUDE_ACCOUNT="; exit 0; fi
+printf '%%s\n' "$*" >> %q`, rec))
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("auto_switch_relaunch tmux %q default; wait", relaunch)), env)
+	assertExitCode(t, code, 0)
+	if logOut, _ := os.ReadFile(rec); strings.Contains(string(logOut), "respawn-pane") {
+		t.Fatalf("must not respawn when already on the Default login, log:\n%s", logOut)
+	}
+}
+
+// The single-managed-account setup (one login + the implicit Default) must
+// trigger too — that IS the common case the in-place switch exists for.
+func TestAutoSwitchMaybeTrigger_single_managed_account_rotates_to_default(t *testing.T) {
+	dir := t.TempDir()
+	env, rec, cfg := autoSwitchTriggerEnv(t, dir, "on")
+	if err := os.WriteFile(filepath.Join(cfg, "wisp-deck", "claude-accounts.list"),
+		[]byte("Personal:personal\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The pane runs the managed login; rotation lands on the Default.
+	for i, e := range env {
+		if strings.HasPrefix(e, "CLAUDE_CONFIG_DIR=") {
+			env[i] = "CLAUDE_CONFIG_DIR=" + filepath.Join(cfg, "wisp-deck", "claude-accounts", "personal")
+		}
+	}
+	_, code := runBashFunc(t, "lib/auto-switch.sh", "auto_switch_maybe_trigger",
+		[]string{"99", ""}, env)
+	assertExitCode(t, code, 0)
+	logOut, _ := os.ReadFile(rec)
+	s := string(logOut)
+	assertContains(t, s, "run-shell -b")
+	assertContains(t, s, "auto_switch_relaunch")
+	assertContains(t, s, "default")
 }
 
 // --- Rework guards: the wrapper no longer launches the rotation proxy, and the
