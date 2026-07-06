@@ -187,9 +187,12 @@ draft_cache_root() {
 # from dialogs. Timeout is fail-open: the draft stays one Up-press away in
 # prompt history.
 wait_ai_pane_ready() {
-  local tmux_cmd="$1" pane="$2" iters="${3:-60}"
+  local tmux_cmd="$1" pane="$2" iters="${3:-60}" nbsp
+  # claude pads the empty prompt with a NO-BREAK space (U+00A0), not an ASCII
+  # space — accept both (printf keeps this bash-3.2/zsh safe, no $'\u..').
+  nbsp="$(printf '\302\240')"
   for _ in $(seq 1 "$iters"); do
-    if "$tmux_cmd" capture-pane -p -t "$pane" 2>/dev/null | grep -qE '^❯ *$'; then
+    if "$tmux_cmd" capture-pane -p -t "$pane" 2>/dev/null | grep -qE "^❯[ ${nbsp}]*$"; then
       return 0
     fi
     sleep 0.5

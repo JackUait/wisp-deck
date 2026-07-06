@@ -98,7 +98,9 @@ if [ "$1" = "capture-pane" ]; then
   if [ "$n" -lt 3 ]; then
     printf '%%s\n' "Do you trust this folder?" "❯ 2. No, exit"
   else
-    printf '%%s\n' "some banner" "❯ " "statusline"
+    # The real claude pads the empty prompt with a NO-BREAK space (U+00A0),
+    # not an ASCII space — the ready match must accept both.
+    printf '%%s\n' "some banner" "❯\302\240" "statusline"
   fi
 fi`, count, count))
 	env := buildEnv(t, []string{bin})
