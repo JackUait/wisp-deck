@@ -65,7 +65,6 @@ unset _gt_libs _gt_lib
 warm_tui_binary
 
 TMUX_CMD="$(command -v tmux)"
-LAZYGIT_CMD="$(command -v lazygit)"
 CLAUDE_CMD="$(command -v claude)"
 OPENCODE_CMD="$(resolve_opencode_cmd)"
 
@@ -216,15 +215,6 @@ if [ -f "$_settings_file" ]; then
   _saved_tab_title=$(grep '^tab_title=' "$_settings_file" 2>/dev/null | cut -d= -f2)
   if [ -n "$_saved_tab_title" ]; then
     _tab_title_setting="$_saved_tab_title"
-  fi
-fi
-
-# Read panel mode setting
-_panel_mode="compact"
-if [ -f "$_settings_file" ]; then
-  _saved_panel_mode=$(grep '^panel_mode=' "$_settings_file" 2>/dev/null | cut -d= -f2)
-  if [ -n "$_saved_panel_mode" ]; then
-    _panel_mode="$_saved_panel_mode"
   fi
 fi
 
@@ -430,14 +420,9 @@ WISP_DECK_SNAPSHOT="$SHARE_DIR/last-session"
 ) &
 HEARTBEAT_PID=$!
 
-# Build pane 0 command: lazygit or compact view
-if [ "$_panel_mode" = "compact" ]; then
-  _pane0_cmd="source \"$_WRAPPER_DIR/lib/compact-view.sh\" && compact_view \"$PROJECT_DIR\"; exec bash"
-  _pane0_pct=75
-else
-  _pane0_cmd="$LAZYGIT_CMD; exec bash"
-  _pane0_pct=50
-fi
+# Build pane 0 command: the compact changeset-ledger view.
+_pane0_cmd="source \"$_WRAPPER_DIR/lib/compact-view.sh\" && compact_view \"$PROJECT_DIR\"; exec bash"
+_pane0_pct=75
 
 # Drag-dropping a screenshot onto a specific tmux pane is unreliable: tmux
 # delivers the paste to the *active* pane, not the pane under the cursor (an
@@ -479,7 +464,6 @@ _spare_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/spare-tabs.sh\" && spare_
   set-option exit-unattached on \; \
   set-option pane-border-style "fg=colour238" \; \
   set-option pane-active-border-style "fg=colour${_gt_accent}" \; \
-  set-option @gt_panel_mode "$_panel_mode" \; \
   bind-key i run-shell "$_screenshot_bind" \; \
   bind-key t run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label new-window -c \"$PROJECT_DIR\"" \; \
   bind-key w run-shell "$_spare_close_bind" \; \

@@ -87,7 +87,7 @@ func TestRenderSettingsBox_appearanceItemsGroupedAboveNotifications(t *testing.T
 func TestSettingsItemOrder_groupsAppearanceThenSections(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	got := m.settingsItemOrder()
-	want := []int{0, 1, 3, 4, 6, 2, 5, 7, 8, 9}
+	want := []int{0, 1, 3, 5, 2, 4, 6, 7, 8}
 	if len(got) != len(want) {
 		t.Fatalf("settingsItemOrder len=%d want %d: %v", len(got), len(want), got)
 	}
@@ -100,14 +100,14 @@ func TestSettingsItemOrder_groupsAppearanceThenSections(t *testing.T) {
 
 func TestSettingsStep_movesInVisualOrder(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
-	m.settingsSelected = 6 // Usage bars — last Appearance item
+	m.settingsSelected = 5 // Usage bars — last Appearance item
 	m.settingsStep(1, false)
 	if m.settingsSelected != 2 {
 		t.Fatalf("down from Usage bars → %d, want 2 (Idle sound)", m.settingsSelected)
 	}
 	m.settingsStep(1, false)
-	if m.settingsSelected != 5 {
-		t.Fatalf("down from Idle sound → %d, want 5 (Projects folder)", m.settingsSelected)
+	if m.settingsSelected != 4 {
+		t.Fatalf("down from Idle sound → %d, want 4 (Projects folder)", m.settingsSelected)
 	}
 	m.settingsStep(-1, false)
 	if m.settingsSelected != 2 {
@@ -117,11 +117,11 @@ func TestSettingsStep_movesInVisualOrder(t *testing.T) {
 
 func TestSettingsStep_clampsAndWraps(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
-	// Clamp at the last visual item (Auto-switch, index 9).
-	m.settingsSelected = 9
+	// Clamp at the last visual item (Auto-switch, index 8).
+	m.settingsSelected = 8
 	m.settingsStep(1, false)
-	if m.settingsSelected != 9 {
-		t.Fatalf("down past last clamped to %d, want 9", m.settingsSelected)
+	if m.settingsSelected != 8 {
+		t.Fatalf("down past last clamped to %d, want 8", m.settingsSelected)
 	}
 	// Wrap from last back to first (Mascot, index 0).
 	m.settingsStep(1, true)
@@ -130,7 +130,7 @@ func TestSettingsStep_clampsAndWraps(t *testing.T) {
 	}
 	// Wrap from first back to last.
 	m.settingsStep(-1, true)
-	if m.settingsSelected != 9 {
-		t.Fatalf("wrap up from first → %d, want 9", m.settingsSelected)
+	if m.settingsSelected != 8 {
+		t.Fatalf("wrap up from first → %d, want 8", m.settingsSelected)
 	}
 }

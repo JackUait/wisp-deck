@@ -193,105 +193,7 @@ func TestLiveSettings_apply_theme_to_all_sessions_named_preset(t *testing.T) {
 	assertNotContains(t, got, "set-option -t plain-3")
 }
 
-// --- apply_session_panel_mode: live compact <-> full switch ---
-
-// Mock tmux for panel-mode tests: reports the session's current mode as
-// "compact", a 3-pane layout (ledger top-left=0, spare bottom-left=1, AI
-// right=2), and a 100-col window so resize math is exact (75/50 cells).
-const panelModeTmux = `#!/bin/bash
-printf '%s\n' "$*" >> "$GT_REC"
-case "$1" in
-  show-options)   echo "compact" ;;           # current @gt_panel_mode
-  list-panes)     printf '%s\n' "0 0 0" "1 0 20" "2 47 0" ;;
-  display-message) echo "100" ;;               # window_width
-esac
-exit 0
-`
-
-func runPanelMode(t *testing.T, mode string) string {
-	t.Helper()
-	dir := t.TempDir()
-	rec := filepath.Join(dir, "rec")
-	binDir := mockCommand(t, dir, "tmux", panelModeTmux)
-	env := buildEnv(t, []string{binDir}, "GT_REC="+rec)
-	tmuxPath := filepath.Join(binDir, "tmux")
-
-	root := projectRoot(t)
-	tuiPath := filepath.Join(root, "lib", "tui.sh")
-	watcherPath := filepath.Join(root, "lib", "tab-title-watcher.sh")
-	snippet := fmt.Sprintf(
-		"source %q && source %q && apply_session_panel_mode %q dev-x %q /proj /libdir /usr/bin/lazygit",
-		tuiPath, watcherPath, tmuxPath, mode)
-
-	_, code := runBashSnippet(t, snippet, env)
-	assertExitCode(t, code, 0)
-	data, _ := os.ReadFile(rec)
-	return string(data)
-}
-
-func TestLiveSettings_panel_mode_switch_to_full_respawns_and_resizes(t *testing.T) {
-	got := runPanelMode(t, "full")
-	// Ledger pane (top-left, index 0) respawned with lazygit.
-	assertContains(t, got, "respawn-pane")
-	assertContains(t, got, "dev-x:0.0")
-	assertContains(t, got, "lazygit")
-	// AI pane (rightmost, index 2) resized to 50% of 100 cols.
-	assertContains(t, got, "resize-pane -t dev-x:0.2 -x 50")
-	// Session re-tagged so a later sync sees the new mode.
-	assertContains(t, got, "@gt_panel_mode full")
-}
-
-func TestLiveSettings_panel_mode_switch_to_compact_uses_compact_view(t *testing.T) {
-	// Current mode is "compact" (mock), so requesting compact must be a no-op:
-	// it may read @gt_panel_mode to detect drift, but must not respawn or re-tag.
-	got := runPanelMode(t, "compact")
-	assertNotContains(t, got, "respawn-pane")
-	assertNotContains(t, got, "set-option -t dev-x @gt_panel_mode")
-}
-
-// Regression: the ledger respawn must pass the pane command RAW (exactly as the
-// launch-time new-session does), never wrapped in `bash -c '...'`. The single-quote
-// wrapper silently corrupts the command when a project/lib path contains an
-// apostrophe (e.g. /Users/o'brien), collapsing the pane layout. Mock reports the
-// current mode as "full" so requesting "compact" actually respawns.
-const panelModeFullTmux = `#!/bin/bash
-printf '%s\n' "$*" >> "$GT_REC"
-case "$1" in
-  show-options)   echo "full" ;;
-  list-panes)     printf '%s\n' "0 0 0" "1 0 20" "2 47 0" ;;
-  display-message) echo "100" ;;
-esac
-exit 0
-`
-
-func TestLiveSettings_panel_mode_respawn_is_raw_not_bash_c(t *testing.T) {
-	dir := t.TempDir()
-	rec := filepath.Join(dir, "rec")
-	binDir := mockCommand(t, dir, "tmux", panelModeFullTmux)
-	env := buildEnv(t, []string{binDir}, "GT_REC="+rec)
-	tmuxPath := filepath.Join(binDir, "tmux")
-
-	root := projectRoot(t)
-	tuiPath := filepath.Join(root, "lib", "tui.sh")
-	watcherPath := filepath.Join(root, "lib", "tab-title-watcher.sh")
-	// A project dir containing an apostrophe — the exact input that breaks a
-	// single-quoted bash -c wrapper.
-	snippet := fmt.Sprintf(
-		"source %q && source %q && apply_session_panel_mode %q dev-x compact \"/Users/o'brien/proj\" /libdir /usr/bin/lazygit",
-		tuiPath, watcherPath, tmuxPath)
-
-	_, code := runBashSnippet(t, snippet, env)
-	assertExitCode(t, code, 0)
-	data, _ := os.ReadFile(rec)
-	got := string(data)
-	// Must respawn with the raw command, no bash -c wrapper.
-	assertContains(t, got, "respawn-pane")
-	assertNotContains(t, got, "bash -c")
-	// The compact command and the apostrophe-bearing path survive intact.
-	assertContains(t, got, "compact_view \"/Users/o'brien/proj\"")
-}
-
-// --- apply_settings_to_all_sessions: theme + panel_mode across every session ---
+// --- apply_settings_to_all_sessions: theme across every session ---
 
 const allSettingsTmux = `#!/bin/bash
 printf '%s\n' "$*" >> "$GT_REC"
@@ -305,17 +207,14 @@ case "$1" in
       WISP_DECK_TOOL) echo "WISP_DECK_TOOL=claude" ;;
       WISP_DECK_PATH) echo "WISP_DECK_PATH=/proj/alpha" ;;
     esac ;;
-  show-options)    echo "compact" ;;
-  list-panes)      printf '%s\n' "0 0 0" "1 0 20" "2 47 0" ;;
-  display-message) echo "100" ;;
 esac
 exit 0
 `
 
-func TestLiveSettings_apply_settings_to_all_sessions_theme_and_panel(t *testing.T) {
+func TestLiveSettings_apply_settings_to_all_sessions_theme(t *testing.T) {
 	dir := t.TempDir()
 	rec := filepath.Join(dir, "rec")
-	writeTempFile(t, dir, "settings", "theme=purple\npanel_mode=full\n")
+	writeTempFile(t, dir, "settings", "theme=purple\n")
 	settings := filepath.Join(dir, "settings")
 	binDir := mockCommand(t, dir, "tmux", allSettingsTmux)
 	env := buildEnv(t, []string{binDir}, "GT_REC="+rec)
@@ -325,7 +224,7 @@ func TestLiveSettings_apply_settings_to_all_sessions_theme_and_panel(t *testing.
 	tuiPath := filepath.Join(root, "lib", "tui.sh")
 	themePath := filepath.Join(root, "lib", "theme.sh")
 	watcherPath := filepath.Join(root, "lib", "tab-title-watcher.sh")
-	snippet := fmt.Sprintf("source %q && source %q && source %q && apply_settings_to_all_sessions %q %q /libdir /usr/bin/lazygit",
+	snippet := fmt.Sprintf("source %q && source %q && source %q && apply_settings_to_all_sessions %q %q /libdir",
 		tuiPath, themePath, watcherPath, tmuxPath, settings)
 
 	_, code := runBashSnippet(t, snippet, env)
@@ -335,12 +234,8 @@ func TestLiveSettings_apply_settings_to_all_sessions_theme_and_panel(t *testing.
 	got := string(data)
 	// Theme accent applied to the wisp-deck session.
 	assertContains(t, got, "set-option -t dev-alpha-1 pane-active-border-style fg=colour141")
-	// panel_mode=full respawned its ledger pane to lazygit.
-	assertContains(t, got, "respawn-pane")
-	assertContains(t, got, "lazygit")
 	// The non-wisp-deck session is probed but never acted on.
 	assertNotContains(t, got, "set-option -t plain-2")
-	assertNotContains(t, got, "respawn-pane -k -t plain-2")
 }
 
 // --- apply_settings_to_all_sessions_if_changed: skip the (expensive) all-session
@@ -384,7 +279,7 @@ func TestLiveSettings_settings_fingerprint_differs_missing_vs_created(t *testing
 func TestLiveSettings_apply_if_changed_skips_tmux_when_unchanged(t *testing.T) {
 	dir := t.TempDir()
 	rec := filepath.Join(dir, "rec")
-	writeTempFile(t, dir, "settings", "theme=purple\npanel_mode=full\n")
+	writeTempFile(t, dir, "settings", "theme=purple\n")
 	settings := filepath.Join(dir, "settings")
 	binDir := mockCommand(t, dir, "tmux", allSettingsTmux)
 	env := buildEnv(t, []string{binDir}, "GT_REC="+rec)
@@ -392,7 +287,7 @@ func TestLiveSettings_apply_if_changed_skips_tmux_when_unchanged(t *testing.T) {
 
 	root := projectRoot(t)
 	snippet := fmt.Sprintf(
-		"source %q && source %q && source %q && before=$(settings_fingerprint %q) && apply_settings_to_all_sessions_if_changed %q %q \"$before\" /libdir /usr/bin/lazygit",
+		"source %q && source %q && source %q && before=$(settings_fingerprint %q) && apply_settings_to_all_sessions_if_changed %q %q \"$before\" /libdir",
 		filepath.Join(root, "lib", "tui.sh"), filepath.Join(root, "lib", "theme.sh"),
 		filepath.Join(root, "lib", "tab-title-watcher.sh"),
 		settings, tmuxPath, settings)
@@ -408,7 +303,7 @@ func TestLiveSettings_apply_if_changed_skips_tmux_when_unchanged(t *testing.T) {
 func TestLiveSettings_apply_if_changed_propagates_when_changed(t *testing.T) {
 	dir := t.TempDir()
 	rec := filepath.Join(dir, "rec")
-	writeTempFile(t, dir, "settings", "theme=purple\npanel_mode=full\n")
+	writeTempFile(t, dir, "settings", "theme=purple\n")
 	settings := filepath.Join(dir, "settings")
 	binDir := mockCommand(t, dir, "tmux", allSettingsTmux)
 	env := buildEnv(t, []string{binDir}, "GT_REC="+rec)
@@ -417,7 +312,7 @@ func TestLiveSettings_apply_if_changed_propagates_when_changed(t *testing.T) {
 	root := projectRoot(t)
 	// Fingerprint taken from different content simulates a menu-time edit.
 	snippet := fmt.Sprintf(
-		"source %q && source %q && source %q && apply_settings_to_all_sessions_if_changed %q %q stale-fingerprint /libdir /usr/bin/lazygit",
+		"source %q && source %q && source %q && apply_settings_to_all_sessions_if_changed %q %q stale-fingerprint /libdir",
 		filepath.Join(root, "lib", "tui.sh"), filepath.Join(root, "lib", "theme.sh"),
 		filepath.Join(root, "lib", "tab-title-watcher.sh"),
 		tmuxPath, settings)

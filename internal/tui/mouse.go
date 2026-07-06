@@ -403,11 +403,11 @@ func (m *MainMenuModel) clickSettings(idx int) (tea.Model, tea.Cmd) {
 	m.settingsSelected = idx
 	m.focus = FocusBody
 	switch {
-	case idx == 5: // Default projects dir → inline edit
+	case idx == 4: // Default projects dir → inline edit
 		return m.settingsEnter()
 	case idx == m.loginRowIndex(): // Login → account management
 		return m.settingsEnter()
-	case idx == 7 && m.ClaudeConfigVisible() && m.selectedConfig > 0:
+	case idx == 6 && m.ClaudeConfigVisible() && m.selectedConfig > 0:
 		// Plan row on a custom config → open the model map (its ⏎ action). Cycling
 		// the plan stays available via the top PLAN switcher row.
 		return m.settingsEnter()

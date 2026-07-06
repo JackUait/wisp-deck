@@ -306,7 +306,6 @@ source %q
 called=""
 ensure_jq()       { called="$called jq"; }
 ensure_tmux()     { called="$called tmux"; }
-ensure_lazygit()  { called="$called lazygit"; }
 ensure_base_requirements
 echo "$called"
 `, tuiPath, installPath)
@@ -314,7 +313,6 @@ echo "$called"
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "jq")
 	assertContains(t, out, "tmux")
-	assertContains(t, out, "lazygit")
 }
 
 // ============================================================

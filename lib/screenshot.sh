@@ -5,7 +5,7 @@
 # Why this exists: tmux delivers a drag-and-drop's paste to the *active* pane,
 # not the pane the cursor is over (an external file drag never produces a tmux
 # mouse event, so tmux cannot know the target pane). In wisp-deck's multi-pane
-# layout the active pane is often lazygit or the spare shell, so a screenshot
+# layout the active pane is often the changeset ledger or the spare shell, so a screenshot
 # dropped onto the Claude pane lands elsewhere and Claude shows nothing. This
 # lets a tmux binding inject the latest screenshot straight into the AI pane,
 # bypassing drop routing entirely.

@@ -26,7 +26,6 @@ func TestWrapperInteractive_pops_restore_queue_into_current_window(t *testing.T)
 	mocks := map[string]string{
 		"tmux":          "#!/bin/bash\nif [ \"$1\" = \"new-session\" ]; then printf '%s\\n' \"$*\" > \"$GT_REC\"; exit 0; fi\nexit 0\n",
 		"claude":        "#!/bin/bash\nexit 0\n",
-		"lazygit":       "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
 	}
@@ -95,7 +94,6 @@ func TestWrapperRestore_applies_captured_layout(t *testing.T) {
 	mocks := map[string]string{
 		"tmux":          "#!/bin/bash\nif [ \"$1\" = \"select-layout\" ]; then printf '%s\\n' \"$*\" >> \"$GT_LAYOUT_REC\"; fi\nexit 0\n",
 		"claude":        "#!/bin/bash\nexit 0\n",
-		"lazygit":       "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
 	}
@@ -149,7 +147,6 @@ func TestWrapperRestore_skips_layout_when_empty(t *testing.T) {
 	mocks := map[string]string{
 		"tmux":          "#!/bin/bash\nif [ \"$1\" = \"select-layout\" ]; then printf '%s\\n' \"$*\" >> \"$GT_LAYOUT_REC\"; fi\nexit 0\n",
 		"claude":        "#!/bin/bash\nexit 0\n",
-		"lazygit":       "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
 	}
@@ -212,7 +209,6 @@ exit 0
 	mocks := map[string]string{
 		"tmux":          tmuxMock,
 		"claude":        "#!/bin/bash\nexit 0\n",
-		"lazygit":       "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
 		"osascript":     "#!/bin/bash\nexit 1\n",

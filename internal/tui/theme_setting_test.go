@@ -93,7 +93,7 @@ func TestThemeSetting_renderShowsThemeRow(t *testing.T) {
 
 func TestThemeSetting_valueRightAtThemeRowCycles(t *testing.T) {
 	m, _ := newSettingsMenuForTheme(t)
-	m.settingsSelected = 4 // Theme row
+	m.settingsSelected = 3 // Theme row
 	m.settingsValueRight()
 	if m.themePref != ThemePresets[1] {
 		t.Errorf("→ on the Theme row should cycle the theme, got %q", m.themePref)

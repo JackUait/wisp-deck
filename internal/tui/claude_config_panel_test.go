@@ -32,7 +32,7 @@ func newPanelMenu(t *testing.T) (*MainMenuModel, string, string) {
 	m.SetClaudeConfigs(LoadClaudeConfigsList(list))
 	m.SetActiveClaudeConfig("")
 	m.EnterSettings()
-	m.settingsSelected = 7
+	m.settingsSelected = 6
 	return m, list, ptr
 }
 
@@ -211,18 +211,18 @@ func TestUpdate_clickPlanSettingsRow_opensModelMap(t *testing.T) {
 	m.CycleClaudeConfig("next") // select Work (a custom config)
 	m.width, m.height = 100, 60
 	_ = m.View()
-	// Plan (Subscription, item index 7) sits under the Account section header.
+	// Plan (Subscription, item index 6) sits under the Account section header.
 	// Find its body row from the same layout the renderer/mouse mapping use.
 	bodyRows := m.settingsBodyRowIndices()
 	rowOffset := -1
 	for i, idx := range bodyRows {
-		if idx == 7 {
+		if idx == 6 {
 			rowOffset = i
 			break
 		}
 	}
 	if rowOffset < 0 {
-		t.Fatal("Subscription (index 7) not found in settings body rows")
+		t.Fatal("Subscription (index 6) not found in settings body rows")
 	}
 	row := m.firstSettingsItemRow() + rowOffset
 	msg := tea.MouseMsg{X: m.menuOriginX + 5, Y: m.menuOriginY + row, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
@@ -327,7 +327,7 @@ func TestModelMap_ShowsMappedIndicator(t *testing.T) {
 	m.SetClaudeConfigs(LoadClaudeConfigsList(list))
 	m.SetActiveClaudeConfig("work.json")
 	m.EnterSettings()
-	m.settingsSelected = 7
+	m.settingsSelected = 6
 
 	view := m.View()
 	if !strings.Contains(view, "1 mapped") {
@@ -338,7 +338,7 @@ func TestModelMap_ShowsMappedIndicator(t *testing.T) {
 func TestModelMap_ShowsUnmappedIndicator(t *testing.T) {
 	m, _, _ := newPanelMenu(t)
 	m.SetActiveClaudeConfig("work.json")
-	m.settingsSelected = 7
+	m.settingsSelected = 6
 	view := m.View()
 	if !strings.Contains(view, "unmapped") {
 		t.Fatalf("config row should show 'unmapped' indicator:\n%s", view)
@@ -431,7 +431,7 @@ func TestModelMap_APIKeyInput_ShowsInPanel(t *testing.T) {
 	m.SetClaudeConfigs(LoadClaudeConfigsList(list))
 	m.SetActiveClaudeConfig("work.json")
 	m.EnterSettings()
-	m.settingsSelected = 7
+	m.settingsSelected = 6
 	m = key(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	view := m.View()
 	if !strings.Contains(view, "API Key") {

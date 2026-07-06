@@ -9,8 +9,7 @@ import (
 
 // The Settings menu exposes a "Usage bars" row that chooses which statusline
 // usage pills show: 7d only, 5h only, both, or none. It cycles and persists the
-// choice to usage_bars= in the settings file, mirroring the Side panel / Theme
-// rows.
+// choice to usage_bars= in the settings file, mirroring the Theme row.
 
 func TestUsageBars_defaultIs7d(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "animated")

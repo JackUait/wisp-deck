@@ -17,7 +17,7 @@ import (
 func TestPersistSetting_concurrentReadNeverEmpty(t *testing.T) {
 	dir := t.TempDir()
 	sf := filepath.Join(dir, "settings")
-	if err := os.WriteFile(sf, []byte("ghost_display=animated\ntab_title=full\npanel_mode=compact\ntheme=auto\n"), 0644); err != nil {
+	if err := os.WriteFile(sf, []byte("ghost_display=animated\ntab_title=full\ntheme=auto\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")

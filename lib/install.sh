@@ -88,33 +88,6 @@ ensure_tmux() {
   fi
 }
 
-# Install lazygit from jesseduffield/lazygit GitHub releases.
-ensure_lazygit() {
-  if command -v lazygit &>/dev/null; then
-    success "lazygit already installed"
-    return 0
-  fi
-  local arch tag version tmp_dir url
-  arch="$(detect_arch)" || return 1
-  tag="$(get_latest_release_tag "jesseduffield/lazygit")" || return 1
-  version="${tag#v}"
-  tmp_dir="$(mktemp -d)"
-  # shellcheck disable=SC2064
-  trap "rm -rf '$tmp_dir'" RETURN
-  url="https://github.com/jesseduffield/lazygit/releases/download/${tag}/lazygit_${version}_darwin_${arch}.tar.gz"
-  info "Downloading lazygit..."
-  if curl -fsSL -o "$tmp_dir/lazygit.tar.gz" "$url"; then
-    tar -xzf "$tmp_dir/lazygit.tar.gz" -C "$tmp_dir" lazygit
-    mkdir -p "$HOME/.local/bin"
-    mv "$tmp_dir/lazygit" "$HOME/.local/bin/lazygit"
-    chmod +x "$HOME/.local/bin/lazygit"
-    success "lazygit installed"
-  else
-    warn "Failed to install lazygit"
-    return 1
-  fi
-}
-
 # Install or update wisp-deck-tui by downloading the pre-built binary from the wisp-deck release.
 # Args: share_dir (to read VERSION from)
 # Checks installed binary version against VERSION file and re-downloads if mismatched.
@@ -154,7 +127,6 @@ ensure_wisp_deck_tui() {
 ensure_base_requirements() {
   ensure_jq
   ensure_tmux
-  ensure_lazygit
 }
 
 # Install a Homebrew cask if the .app isn't in /Applications.

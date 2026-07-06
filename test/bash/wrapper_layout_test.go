@@ -41,7 +41,6 @@ func TestWrapper_terminal_pane_is_45_percent(t *testing.T) {
 	mocks := map[string]string{
 		"tmux":          "#!/bin/bash\nif [ \"$1\" = \"new-session\" ]; then printf '%s\\n' \"$*\" > \"$GT_REC\"; exit 0; fi\nexit 0\n",
 		"claude":        "#!/bin/bash\nexit 0\n",
-		"lazygit":       "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
 	}
@@ -86,7 +85,6 @@ func recordWrapperNewSession(t *testing.T) string {
 	mocks := map[string]string{
 		"tmux":          "#!/bin/bash\nif [ \"$1\" = \"new-session\" ]; then printf '%s\\n' \"$*\" > \"$GT_REC\"; exit 0; fi\nexit 0\n",
 		"claude":        "#!/bin/bash\nexit 0\n",
-		"lazygit":       "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
 	}
@@ -124,7 +122,6 @@ func recordWrapperNewSessionForTool(t *testing.T, tool string) string {
 	recPath := filepath.Join(home, "rec")
 	mocks := map[string]string{
 		"tmux":          "#!/bin/bash\nif [ \"$1\" = \"new-session\" ]; then printf '%s\\n' \"$*\" > \"$GT_REC\"; exit 0; fi\nexit 0\n",
-		"lazygit":       "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
 		tool:            "#!/bin/bash\nexit 0\n",
@@ -164,10 +161,8 @@ func TestWrapper_active_pane_border_uses_tool_accent(t *testing.T) {
 	}
 }
 
-// TestWrapper_default_panel_is_compact verifies that, with no saved panel_mode
-// setting, the left pane runs the compact changeset ledger (the application
-// default) rather than lazygit. recordWrapperNewSession uses a fresh HOME with
-// no settings file, so the wrapper falls back to its built-in default.
+// TestWrapper_default_panel_is_compact verifies the left pane runs the compact
+// changeset ledger — the only panel the wrapper builds.
 func TestWrapper_default_panel_is_compact(t *testing.T) {
 	got := recordWrapperNewSession(t)
 	if !strings.Contains(got, "compact_view") {

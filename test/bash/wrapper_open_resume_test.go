@@ -28,7 +28,6 @@ func wrapperOpenMocks(t *testing.T, binDir string) {
 	mocks := map[string]string{
 		"tmux":          "#!/bin/bash\nif [ \"$1\" = \"new-session\" ]; then printf '%s\\n' \"$*\" > \"$GT_REC\"; exit 0; fi\nexit 0\n",
 		"claude":        "#!/bin/bash\nexit 0\n",
-		"lazygit":       "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
 	}

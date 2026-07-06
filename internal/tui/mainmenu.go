@@ -92,7 +92,6 @@ type MainMenuResult struct {
 	GhostDisplay string  `json:"ghost_display,omitempty"`
 	TabTitle     string  `json:"tab_title,omitempty"`
 	SoundName    *string `json:"sound_name,omitempty"`
-	PanelMode    string  `json:"panel_mode,omitempty"`
 }
 
 // MenuTab identifies which top-level tab is active.
@@ -211,9 +210,6 @@ type MainMenuModel struct {
 	soundName           string // "" means Off
 	initialSoundName    string
 	soundNameChanged    bool
-	panelMode           string // "lazygit" or "compact"
-	initialPanelMode    string
-	panelModeChanged    bool
 	usageBars           string // "7d", "5h", "both", or "none" — which statusline usage pills show
 	initialUsageBars    string
 	usageBarsChanged    bool
@@ -392,8 +388,6 @@ func NewMainMenu(projects []models.Project, aiTools []string, currentAI string, 
 		selectedItem:              0,
 		ghostDisplay:              ghostDisplay,
 		initialGhostDisplay:       ghostDisplay,
-		panelMode:                 "compact",
-		initialPanelMode:          "compact",
 		usageBars:                 "7d",
 		initialUsageBars:          "7d",
 		themePref:                 "auto",
@@ -809,33 +803,6 @@ func (m *MainMenuModel) TabTitle() string {
 func (m *MainMenuModel) SetTabTitle(mode string) {
 	m.tabTitle = mode
 	m.initialTabTitle = mode
-}
-
-// PanelMode returns the panel mode ("lazygit" or "compact").
-func (m *MainMenuModel) PanelMode() string {
-	return m.panelMode
-}
-
-// SetPanelMode sets the panel mode and records the initial value.
-func (m *MainMenuModel) SetPanelMode(mode string) {
-	m.panelMode = mode
-	m.initialPanelMode = mode
-}
-
-// CyclePanelMode cycles panel mode: compact -> lazygit -> compact.
-func (m *MainMenuModel) CyclePanelMode() {
-	if m.panelMode == "compact" {
-		m.panelMode = "lazygit"
-	} else {
-		m.panelMode = "compact"
-	}
-	m.panelModeChanged = m.panelMode != m.initialPanelMode
-	m.persistSetting("panel_mode", m.panelMode)
-}
-
-// CyclePanelModeReverse cycles panel mode in reverse: compact -> lazygit -> compact.
-func (m *MainMenuModel) CyclePanelModeReverse() {
-	m.CyclePanelMode() // binary toggle — same either direction
 }
 
 // usageBarsOrder is the forward cycle order for the Usage bars setting; the
@@ -1351,11 +1318,11 @@ func (m *MainMenuModel) CycleTab(direction string) {
 	}
 }
 
-// settingsItemCount returns the number of settings rows: 7 base (Ghost, Tab,
-// Sound, Panel, Theme, Dir, Usage bars) + the Plan row when the Claude config
+// settingsItemCount returns the number of settings rows: 6 base (Ghost, Tab,
+// Sound, Theme, Dir, Usage bars) + the Plan row when the Claude config
 // control is visible + the always-present Login row + the Auto-switch toggle.
 func (m *MainMenuModel) settingsItemCount() int {
-	n := 7
+	n := 6
 	if m.ClaudeConfigVisible() {
 		n++ // Plan
 	}
@@ -1379,19 +1346,19 @@ type settingsSection struct {
 
 // settingsSections returns the settings items grouped under section headers, in
 // visual order. Item indices are the stable handler indices (see settingsEnter),
-// which do NOT match visual order: Idle sound (2) and Projects folder (5) move
+// which do NOT match visual order: Idle sound (2) and Projects folder (4) move
 // out of the Appearance block into their own sections.
 func (m *MainMenuModel) settingsSections() []settingsSection {
-	appearance := []int{0, 1, 3, 4, 6} // Mascot, Tab title, Side panel, Theme, Usage bars
+	appearance := []int{0, 1, 3, 5} // Mascot, Tab title, Theme, Usage bars
 	account := []int{}
 	if m.ClaudeConfigVisible() {
-		account = append(account, 7) // Subscription
+		account = append(account, 6) // Subscription
 	}
 	account = append(account, m.loginRowIndex(), m.autoSwitchRowIndex())
 	return []settingsSection{
 		{title: "Appearance", indices: appearance},
 		{title: "Notifications", indices: []int{2}}, // Idle sound
-		{title: "Projects", indices: []int{5}},      // Projects folder
+		{title: "Projects", indices: []int{4}},      // Projects folder
 		{title: "Account", indices: account},
 	}
 }
@@ -1927,15 +1894,6 @@ func (m *MainMenuModel) tabTitleForResult() string {
 	return ""
 }
 
-// panelModeForResult returns the panel mode value to include in the result,
-// or empty string if unchanged.
-func (m *MainMenuModel) panelModeForResult() string {
-	if m.panelModeChanged {
-		return m.panelMode
-	}
-	return ""
-}
-
 // selectCurrent produces a result for the currently selected item.
 // Returns a tea.Cmd if the item requires a navigation action (e.g. push a screen).
 func (m *MainMenuModel) selectCurrent() tea.Cmd {
@@ -1955,7 +1913,6 @@ func (m *MainMenuModel) selectCurrent() tea.Cmd {
 			GhostDisplay: m.ghostDisplayForResult(),
 			TabTitle:     m.tabTitleForResult(),
 			SoundName:    m.soundNameForResult(),
-			PanelMode:    m.panelModeForResult(),
 		}
 	case "worktree":
 		m.result = &MainMenuResult{
@@ -1966,7 +1923,6 @@ func (m *MainMenuModel) selectCurrent() tea.Cmd {
 			GhostDisplay: m.ghostDisplayForResult(),
 			TabTitle:     m.tabTitleForResult(),
 			SoundName:    m.soundNameForResult(),
-			PanelMode:    m.panelModeForResult(),
 		}
 	case "add-worktree":
 		// Store the project index so BranchPickerDoneMsg can reference it.
@@ -1998,7 +1954,6 @@ func (m *MainMenuModel) setActionResult(action string) {
 		GhostDisplay: m.ghostDisplayForResult(),
 		TabTitle:     m.tabTitleForResult(),
 		SoundName:    m.soundNameForResult(),
-		PanelMode:    m.panelModeForResult(),
 	}
 	m.quitting = true
 }
@@ -2592,10 +2547,8 @@ func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 	case 2:
 		m.CycleSoundName()
 	case 3:
-		m.CyclePanelMode()
-	case 4:
 		m.CycleTheme()
-	case 5:
+	case 4:
 		// Open text input for projects root
 		m.settingsInputMode = true
 		si := textinput.New()
@@ -2606,13 +2559,13 @@ func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 		m.settingsInput = si
 		m.settingsInputErr = nil
 		return m, textinput.Blink
-	case 6:
+	case 5:
 		m.CycleUsageBars()
-	case 7:
+	case 6:
 		if m.selectedConfig > 0 {
 			m.openModelMap()
 		}
-	case 8:
+	case 7:
 		// Open the login-management panel (switch / add / remove logins).
 		m.openAccountMenu()
 		return m, nil
@@ -2632,14 +2585,12 @@ func (m *MainMenuModel) settingsValueRight() {
 	case 2:
 		m.CycleSoundName()
 	case 3:
-		m.CyclePanelMode()
-	case 4:
 		m.CycleTheme()
-	case 6:
+	case 5:
 		m.CycleUsageBars()
-	case 7:
+	case 6:
 		m.CycleClaudeConfig("next")
-	case 8:
+	case 7:
 		m.CycleAccount("next")
 	case m.autoSwitchRowIndex():
 		m.CycleAutoSwitch()
@@ -2656,14 +2607,12 @@ func (m *MainMenuModel) settingsValueLeft() {
 	case 2:
 		m.CycleSoundNameReverse()
 	case 3:
-		m.CyclePanelModeReverse()
-	case 4:
 		m.CycleThemeReverse()
-	case 6:
+	case 5:
 		m.CycleUsageBarsReverse()
-	case 7:
+	case 6:
 		m.CycleClaudeConfig("prev")
-	case 8:
+	case 7:
 		m.CycleAccount("prev")
 	case m.autoSwitchRowIndex():
 		m.CycleAutoSwitch()
@@ -2941,7 +2890,6 @@ func (m *MainMenuModel) submitInputMode() (tea.Model, tea.Cmd) {
 			GhostDisplay: m.ghostDisplayForResult(),
 			TabTitle:     m.tabTitleForResult(),
 			SoundName:    m.soundNameForResult(),
-			PanelMode:    m.panelModeForResult(),
 		}
 		m.quitting = true
 		return m, tea.Quit
@@ -3278,18 +3226,6 @@ func tabTitleLabel(mode string) string {
 		return "Project Only"
 	case "model":
 		return "Model Set"
-	default:
-		return mode
-	}
-}
-
-// panelModeLabel returns a capitalized display label for the panel mode.
-func panelModeLabel(mode string) string {
-	switch mode {
-	case "lazygit":
-		return "lazygit"
-	case "compact":
-		return "Compact"
 	default:
 		return mode
 	}

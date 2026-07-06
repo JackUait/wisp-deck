@@ -53,59 +53,6 @@ apply_theme_to_all_sessions() {
   done
 }
 
-# Discover the ledger/lazygit pane (top-left: leftmost column, topmost row).
-# This is pane 0's *position*, but tmux pane indices are not creation-order
-# stable, so resolve it by geometry rather than assuming index 0.
-# Usage: discover_ledger_pane <session_name> <tmux_cmd>
-discover_ledger_pane() {
-  local session_name="$1" tmux_cmd="$2"
-  "$tmux_cmd" list-panes -t "$session_name" -F '#{pane_index} #{pane_left} #{pane_top}' 2>/dev/null \
-    | sort -k2,2n -k3,3n | head -1 | awk '{print $1}'
-}
-
-# Switch a running session's ledger pane between compact (usage ledger) and full
-# (lazygit) layout so a mid-session panel_mode change reaches it. Only acts when
-# the session's recorded mode (@gt_panel_mode) differs from the requested one, so
-# unchanged sessions are never disrupted; legacy sessions with no tag default to
-# "compact" (the historical default). Respawns the ledger pane with the new mode's
-# command and resizes the AI pane to the mode's width (75% AI for compact, 50%
-# for full — mirroring the launch-time split).
-# Usage: apply_session_panel_mode <tmux_cmd> <session> <mode> <project_dir> <lib_dir> <lazygit_cmd>
-apply_session_panel_mode() {
-  local tmux_cmd="$1" session="$2" mode="$3" project_dir="$4" lib_dir="$5" lazygit_cmd="$6"
-  local cur
-  cur="$("$tmux_cmd" show-options -t "$session" -v @gt_panel_mode 2>/dev/null)"
-  [ -z "$cur" ] && cur="compact"
-  [ "$cur" = "$mode" ] && return 0
-
-  local pane0_cmd ai_pct
-  if [ "$mode" = "compact" ]; then
-    pane0_cmd="source \"$lib_dir/compact-view.sh\" && compact_view \"$project_dir\"; exec bash"
-    ai_pct=75
-  else
-    pane0_cmd="$lazygit_cmd; exec bash"
-    ai_pct=50
-  fi
-
-  local ledger
-  ledger="$(discover_ledger_pane "$session" "$tmux_cmd")"
-  [ -z "$ledger" ] && return 0
-  # Pass the command RAW, exactly as the launch-time new-session does (wrapper.sh).
-  # tmux runs it through the same shell, so compact_view's bash-isms still work —
-  # and, unlike a bash -c '...' wrapper, a single quote in $project_dir/$lib_dir
-  # (e.g. /Users/o'brien) cannot break out and corrupt the command.
-  "$tmux_cmd" respawn-pane -k -t "$session:0.$ledger" "$pane0_cmd" 2>/dev/null || return 0
-
-  local ai_pane win_w cells
-  ai_pane="$(discover_ai_pane "$session" "$tmux_cmd")"
-  win_w="$("$tmux_cmd" display-message -p -t "$session" '#{window_width}' 2>/dev/null)"
-  if [ -n "$ai_pane" ] && [ -n "$win_w" ]; then
-    cells=$(( win_w * ai_pct / 100 ))
-    "$tmux_cmd" resize-pane -t "$session:0.$ai_pane" -x "$cells" 2>/dev/null || true
-  fi
-  "$tmux_cmd" set-option -t "$session" @gt_panel_mode "$mode" 2>/dev/null || true
-}
-
 # Propagate every live-applicable setting to ALL active wisp-deck sessions at
 # once — the watcher-age-independent path (a running session's watcher loop is
 # frozen at its launch-time code, so it cannot pick up settings that postdate it).
@@ -114,29 +61,21 @@ apply_session_panel_mode() {
 # from the env captured at launch.
 #
 # theme: a plain tmux session property — applied to every session here.
-# panel_mode: a structural pane respawn — applied here (single-source, so it is
-#   never double-applied by a watcher tick).
 # tab_title: a per-terminal OSC escape that only the session's own watcher can
 #   emit, so it is NOT handled here; new-code sessions update it live each tick.
-# Usage: apply_settings_to_all_sessions <tmux_cmd> <settings_file> [lib_dir] [lazygit_cmd]
+# Usage: apply_settings_to_all_sessions <tmux_cmd> <settings_file> [lib_dir]
 apply_settings_to_all_sessions() {
   local tmux_cmd="$1" settings_file="$2"
-  local lib_dir="${3:-${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/lib}"
-  local lazygit_cmd="${4:-lazygit}"
-  local theme_pref panel_mode
+  local theme_pref
   theme_pref="$(read_settings_value "$settings_file" theme)"
-  panel_mode="$(read_settings_value "$settings_file" panel_mode)"
-  [ -z "$panel_mode" ] && panel_mode="compact"
   # Pipe (not process substitution): wrapper sources libs under bash --posix.
   "$tmux_cmd" list-sessions -F '#{session_name}' 2>/dev/null | while IFS= read -r session; do
     [ -z "$session" ] && continue
     "$tmux_cmd" show-environment -t "$session" WISP_DECK >/dev/null 2>&1 || continue
-    local tool project_dir accent
+    local tool accent
     tool="$("$tmux_cmd" show-environment -t "$session" WISP_DECK_TOOL 2>/dev/null | cut -d= -f2-)"
-    project_dir="$("$tmux_cmd" show-environment -t "$session" WISP_DECK_PATH 2>/dev/null | cut -d= -f2-)"
     accent="$(get_theme_accent "$(gt_resolve_theme "$theme_pref" "$tool")")"
     apply_session_theme "$tmux_cmd" "$session" "$accent"
-    apply_session_panel_mode "$tmux_cmd" "$session" "$panel_mode" "$project_dir" "$lib_dir" "$lazygit_cmd"
   done
 }
 
@@ -156,7 +95,7 @@ settings_fingerprint() {
 # Run apply_settings_to_all_sessions only when the settings file no longer
 # matches <before> (a settings_fingerprint capture). Selecting a project
 # without touching Settings costs zero tmux calls.
-# Usage: apply_settings_to_all_sessions_if_changed <tmux_cmd> <settings_file> <before> [lib_dir] [lazygit_cmd]
+# Usage: apply_settings_to_all_sessions_if_changed <tmux_cmd> <settings_file> <before> [lib_dir]
 apply_settings_to_all_sessions_if_changed() {
   local tmux_cmd="$1" settings_file="$2" before="$3"
   shift 3

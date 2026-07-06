@@ -138,23 +138,11 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	}
 	itemLines[2] = []string{m.renderSettingsItem(2, soundLabel, soundState, soundStyle, primaryBoldStyle, leftBorder, rightBorder)}
 
-	// Panel item
-	var panelColor lipgloss.Color
-	if m.panelMode == "compact" {
-		panelColor = lipgloss.Color("114") // green (default)
-	} else {
-		panelColor = lipgloss.Color("220") // yellow (non-default)
-	}
-	panelStyle := lipgloss.NewStyle().Foreground(panelColor)
-	panelLabel := "Side panel"
-	panelState := "[" + panelModeLabel(m.panelMode) + "]"
-	itemLines[3] = []string{m.renderSettingsItem(3, panelLabel, panelState, panelStyle, primaryBoldStyle, leftBorder, rightBorder)}
-
 	// Theme item — the state swatch is painted in the live (resolved) accent so
 	// the row previews the chosen palette's color.
 	themeStyle := lipgloss.NewStyle().Foreground(m.theme.Primary)
 	themeState := "[" + themeLabel(m.themePref) + "]"
-	itemLines[4] = []string{m.renderSettingsItem(4, "Theme", themeState, themeStyle, primaryBoldStyle, leftBorder, rightBorder)}
+	itemLines[3] = []string{m.renderSettingsItem(3, "Theme", themeState, themeStyle, primaryBoldStyle, leftBorder, rightBorder)}
 
 	// Default projects dir item
 	var rootState string
@@ -168,7 +156,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 		rootColor = lipgloss.Color("114") // green when set
 	}
 	rootStyle := lipgloss.NewStyle().Foreground(rootColor)
-	if m.settingsInputMode && m.settingsSelected == 5 {
+	if m.settingsInputMode && m.settingsSelected == 4 {
 		// Render inline text input
 		inputView := m.settingsInput.View()
 		inputWidth := lipgloss.Width(inputView)
@@ -187,9 +175,9 @@ func (m *MainMenuModel) renderSettingsBox() string {
 			errRow := leftBorder + " " + errText + strings.Repeat(" ", errPadding) + rightBorder
 			rows = append(rows, errRow)
 		}
-		itemLines[5] = rows
+		itemLines[4] = rows
 	} else {
-		itemLines[5] = []string{m.renderSettingsItem(5, "Projects folder", rootState, rootStyle, primaryBoldStyle, leftBorder, rightBorder)}
+		itemLines[4] = []string{m.renderSettingsItem(4, "Projects folder", rootState, rootStyle, primaryBoldStyle, leftBorder, rightBorder)}
 	}
 
 	// Usage bars item — which statusline usage pills show (7d / 5h / both / none).
@@ -202,7 +190,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	}
 	usageStyle := lipgloss.NewStyle().Foreground(usageColor)
 	usageState := "[" + usageBarsLabel(m.usageBars) + "]"
-	itemLines[6] = []string{m.renderSettingsItem(6, "Usage bars", usageState, usageStyle, primaryBoldStyle, leftBorder, rightBorder)}
+	itemLines[5] = []string{m.renderSettingsItem(5, "Usage bars", usageState, usageStyle, primaryBoldStyle, leftBorder, rightBorder)}
 
 	// Claude Config item (only for the claude tool)
 	if m.ClaudeConfigVisible() {
@@ -221,7 +209,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 			dimIndicator := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(" " + indicator)
 			state = state + dimIndicator
 		}
-		itemLines[7] = []string{m.renderSettingsItem(7, "Subscription", state, cfgStyle, primaryBoldStyle, leftBorder, rightBorder)}
+		itemLines[6] = []string{m.renderSettingsItem(6, "Subscription", state, cfgStyle, primaryBoldStyle, leftBorder, rightBorder)}
 	}
 
 	// Login item: the active native Claude account (manage logins here — ←→
@@ -285,9 +273,9 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	sep := dimStyle.Render(" · ")
 	var cycleOrEdit string
 	switch {
-	case m.settingsSelected == 5:
+	case m.settingsSelected == 4:
 		cycleOrEdit = helpStyle.Render("⏎ edit")
-	case m.settingsSelected == 7 && m.ClaudeConfigVisible():
+	case m.settingsSelected == 6 && m.ClaudeConfigVisible():
 		if m.selectedConfig > 0 {
 			cycleOrEdit = helpStyle.Render("←→ cycle") + sep + helpStyle.Render("⏎ map models")
 		} else {
