@@ -209,21 +209,30 @@ fi`)
 	}
 }
 
-func TestBuildSwitchLaunchCmd_managed_account_sets_config_dir_and_continues(t *testing.T) {
+func TestBuildSwitchLaunchCmd_managed_account_sets_config_dir_and_launches_fresh(t *testing.T) {
+	// No stamped session id (8th arg omitted): the previous account had no active
+	// session, so the switch must NOT resume the cwd's most-recent conversation
+	// (`claude -c`) — it launches a fresh claude under the new login instead,
+	// still with the account's config dir and settings.
 	out, code := runBashSnippet(t, accountSwitchSnippet(t,
 		`build_switch_launch_cmd claude claude opencode "/cfg/settings.json" "" "/proj" "/cfg/claude-accounts/work"`), nil)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, `CLAUDE_CONFIG_DIR="/cfg/claude-accounts/work"`)
-	assertContains(t, out, "claude -c")
 	assertContains(t, out, `--settings "/cfg/settings.json"`)
+	assertNotContains(t, out, "claude -c")
+	assertNotContains(t, out, "--resume")
 }
 
-func TestBuildSwitchLaunchCmd_default_account_leaves_config_dir_unset(t *testing.T) {
+func TestBuildSwitchLaunchCmd_default_account_launches_fresh_without_config_dir(t *testing.T) {
+	// No session and the Default (Keychain) login: fresh plain `claude`, no
+	// config dir, no `-c` resume.
 	out, code := runBashSnippet(t, accountSwitchSnippet(t,
 		`build_switch_launch_cmd claude claude opencode "/cfg/settings.json" "" "/proj" ""`), nil)
 	assertExitCode(t, code, 0)
 	assertNotContains(t, out, "CLAUDE_CONFIG_DIR=")
-	assertContains(t, out, "claude -c")
+	assertNotContains(t, out, "claude -c")
+	assertNotContains(t, out, "--resume")
+	assertContains(t, out, "claude")
 }
 
 func TestBuildSwitchLaunchCmd_resumes_exact_session_when_stamped(t *testing.T) {
@@ -338,7 +347,11 @@ printf '%%s\n' "$*" >> %q`, rec))
 	assertContains(t, logOut, `CLAUDE_CONFIG_DIR="`+filepath.Join(cfg, "claude-accounts", "work")+`"`)
 }
 
-func TestRelaunchAIPane_respawns_with_new_account(t *testing.T) {
+// The tmux mock here never stamps WISP_DECK_CLAUDE_SESSION, so this pane had no
+// active session when the switch fired. The relaunch must respawn under the new
+// account but launch a FRESH claude — not resume the cwd's most-recent
+// conversation (`claude -c`), which was never this pane's.
+func TestRelaunchAIPane_respawns_fresh_with_new_account_when_no_active_session(t *testing.T) {
 	dir := t.TempDir()
 	// The switcher already wrote the pointer to "work"; its config dir exists.
 	writeTempFile(t, dir, "claude-account", "work\n")
@@ -374,7 +387,8 @@ printf '%%s\n' "$*" >> %q`, rec))
 	assertContains(t, logOut, "-k")
 	assertContains(t, logOut, "%1")
 	assertContains(t, logOut, `CLAUDE_CONFIG_DIR="`+filepath.Join(dir, "claude-accounts", "work")+`"`)
-	assertContains(t, logOut, "claude -c")
+	assertNotContains(t, logOut, "claude -c")
+	assertNotContains(t, logOut, "--resume")
 	_ = out
 }
 

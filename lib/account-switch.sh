@@ -134,21 +134,40 @@ current_ai_session() {
 
 # build_switch_launch_cmd <tool> <claude_cmd> <opencode_cmd> <settings> <filter> \
 #   <project_dir> <new_account_dir> [resume_session] — build the launch command that
-# respawns the AI pane under new_account_dir. Reuses build_ai_launch_cmd in resume
-# mode: with resume_session it re-opens THAT exact conversation (`--resume <id>`,
-# falling back to `-c` then plain `claude`); without it, `-c` (most-recent-in-cwd).
-# Passing the stamped id keeps a multi-tab/window project's pane on ITS own
-# conversation, which bare `-c` could not guarantee. new_account_dir empty = the
-# Default (Keychain) login, so CLAUDE_CONFIG_DIR is left unset.
+# respawns the AI pane under new_account_dir.
+#
+# resume_session is the id of THIS pane's active conversation (the statusline
+# stamps it only once the transcript is durable — see current_ai_session). Its
+# presence is the "the previous account HAD an active session" signal:
+#   - non-empty: reopen THAT exact conversation via build_ai_launch_cmd's resume
+#     chain (`--resume <id>` → `-c` → plain claude). The stamped id keeps a
+#     multi-tab/window project's pane on ITS own conversation, which bare `-c`
+#     could not guarantee.
+#   - empty: the pane had NO active session, so do NOT resume — launching `-c`
+#     would restore the cwd's most-recent conversation, one that was never this
+#     pane's. Build a plain, fresh claude under the new login instead.
+# new_account_dir empty = the Default (Keychain) login, so CLAUDE_CONFIG_DIR is
+# left unset.
 build_switch_launch_cmd() {
   local tool="$1" claude_cmd="$2" opencode_cmd="$3" settings="$4" filter="$5" \
     project_dir="$6" new_account_dir="$7" resume_session="${8:-}"
-  WISP_DECK_RESUME=1 \
-  WISP_DECK_RESUME_SESSION="$resume_session" \
+  if [ -n "$resume_session" ]; then
+    WISP_DECK_RESUME=1 \
+    WISP_DECK_RESUME_SESSION="$resume_session" \
+    WISP_DECK_CLAUDE_ACCOUNT_DIR="$new_account_dir" \
+    WISP_DECK_CLAUDE_SETTINGS="$settings" \
+    WISP_DECK_CLAUDE_FILTER="$filter" \
+      build_ai_launch_cmd "$tool" "$claude_cmd" "$opencode_cmd" "$project_dir"
+    return 0
+  fi
+  # Fresh launch: no resume. claude takes no positional dir (its cwd is set by
+  # respawn-pane's -c); opencode does, so only it gets project_dir as the extra.
+  local extra=""
+  [ "$tool" = "opencode" ] && extra="$project_dir"
   WISP_DECK_CLAUDE_ACCOUNT_DIR="$new_account_dir" \
   WISP_DECK_CLAUDE_SETTINGS="$settings" \
   WISP_DECK_CLAUDE_FILTER="$filter" \
-    build_ai_launch_cmd "$tool" "$claude_cmd" "$opencode_cmd" "$project_dir"
+    build_ai_launch_cmd "$tool" "$claude_cmd" "$opencode_cmd" "$extra"
 }
 
 # _read_relaunch_ctx <relaunch_file> — load the key=value relaunch context into the
@@ -230,6 +249,8 @@ relaunch_ai_pane() {
 
   # Resume the exact conversation this pane was on (the statusline stamped its id),
   # so the switch carries over THIS session rather than the cwd's most-recent one.
+  # An empty sid means the previous account had no active session — the switch
+  # then launches a fresh claude rather than resuming (see build_switch_launch_cmd).
   local sid
   sid="$(current_ai_session "$tmux_cmd")"
   cmd="$(build_switch_launch_cmd "$_rc_tool" "$_rc_claude_cmd" "$_rc_opencode_cmd" \
