@@ -2189,12 +2189,15 @@ func TestPruneSelection_all_missing_empties(t *testing.T) {
 }
 
 // discard_prompt is the armed-confirm footer text; "file" is singular at 1.
+// The armed-discard confirm is now fully mouse-driven: it offers clickable
+// [ yes ] / [ no ] buttons (the y/n keys still work) instead of a "[y/n]" hint.
 func TestDiscardPrompt_plural(t *testing.T) {
 	out, code := cvFuncArgv(t, "discard_prompt", "3")
 	assertExitCode(t, code, 0)
 	clean := ansiRE.ReplaceAllString(out, "")
-	if !strings.Contains(clean, "Discard 3 files?") || !strings.Contains(clean, "[y/n]") {
-		t.Errorf("plural prompt: got %q", clean)
+	if !strings.Contains(clean, "Discard 3 files?") ||
+		!strings.Contains(clean, "yes") || !strings.Contains(clean, "no") {
+		t.Errorf("plural prompt should ask and offer clickable yes/no: got %q", clean)
 	}
 }
 
@@ -2210,63 +2213,146 @@ func TestDiscardPrompt_singular(t *testing.T) {
 	}
 }
 
-// apply_selection_markers marks each selected FILE row (per body_map) with a ✓
-// and leaves unselected rows and non-file rows (empty map path) untouched.
-func TestApplySelectionMarkers_marks_selected_file_rows(t *testing.T) {
-	// A body with a header row, two file rows, a blank row. The map carries a path
-	// on the file rows and an empty line on the header/blank rows.
+// apply_checkboxes draws a checkbox to the LEFT of each file row: a CHECKED box
+// (☑) on a selected row and an EMPTY box (☐) on the currently hovered row.
+// Non-file rows (empty map path) and untouched rows keep their plain indent.
+func TestApplyCheckboxes_marks_selected_with_checked_box(t *testing.T) {
+	// A body with a header row and two file rows. The map carries a path on the
+	// file rows and an empty line on the header row.
 	body := "HEADER\n   +1 −0  a.txt\n   +2 −0  b.txt\n"
 	bodyMap := "\na.txt\nb.txt\n"
-	out, code := cvFuncArgv(t, "apply_selection_markers", body, bodyMap, "a.txt")
+	// hover 0 = nothing hovered; a.txt selected.
+	out, code := cvFuncArgv(t, "apply_checkboxes", body, bodyMap, "a.txt", "0")
 	assertExitCode(t, code, 0)
 	lines := strings.Split(out, "\n")
 	if len(lines) < 3 {
 		t.Fatalf("expected >=3 lines, got %q", out)
 	}
-	if !strings.Contains(lines[1], "✓") {
-		t.Errorf("selected row a.txt should carry a ✓ marker: got %q", lines[1])
+	if !strings.Contains(lines[1], "☑") {
+		t.Errorf("selected row a.txt should carry a checked box ☑: got %q", lines[1])
 	}
-	if strings.Contains(lines[2], "✓") {
-		t.Errorf("unselected row b.txt must not carry a marker: got %q", lines[2])
+	if strings.Contains(lines[2], "☑") || strings.Contains(lines[2], "☐") {
+		t.Errorf("unselected, non-hovered row b.txt must have no box: got %q", lines[2])
 	}
-	if strings.Contains(lines[0], "✓") {
-		t.Errorf("header row must not carry a marker: got %q", lines[0])
+	if strings.Contains(lines[0], "☑") || strings.Contains(lines[0], "☐") {
+		t.Errorf("header row must carry no box: got %q", lines[0])
 	}
 }
 
-// The marker must preserve the row's VISIBLE width (it replaces the 3-space
-// indent with a 3-column " ✓ "), so column alignment and the hover-highlight
-// padding math are unaffected. Compare the stripped-ANSI visible length.
-func TestApplySelectionMarkers_preserves_visible_width(t *testing.T) {
+// The hovered row (and only it) shows an EMPTY checkbox (☐) so the user sees the
+// clickable mark affordance to the left of the file under the cursor.
+func TestApplyCheckboxes_hovered_row_shows_empty_box(t *testing.T) {
+	body := "HEADER\n   +1 −0  a.txt\n   +2 −0  b.txt\n"
+	bodyMap := "\na.txt\nb.txt\n"
+	// hover line 2 (1-based) = a.txt; nothing selected.
+	out, code := cvFuncArgv(t, "apply_checkboxes", body, bodyMap, "", "2")
+	assertExitCode(t, code, 0)
+	lines := strings.Split(out, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected >=3 lines, got %q", out)
+	}
+	if !strings.Contains(lines[1], "☐") {
+		t.Errorf("hovered row a.txt should carry an empty box ☐: got %q", lines[1])
+	}
+	if strings.Contains(lines[2], "☐") || strings.Contains(lines[2], "☑") {
+		t.Errorf("non-hovered row b.txt must have no box: got %q", lines[2])
+	}
+}
+
+// A selected row that is ALSO hovered shows the CHECKED box (selection wins), so
+// hovering a marked file never makes it read as unchecked.
+func TestApplyCheckboxes_selected_beats_hover(t *testing.T) {
+	body := "HEADER\n   +1 −0  a.txt\n"
+	bodyMap := "\na.txt\n"
+	out, code := cvFuncArgv(t, "apply_checkboxes", body, bodyMap, "a.txt", "2")
+	assertExitCode(t, code, 0)
+	lines := strings.Split(out, "\n")
+	if !strings.Contains(lines[1], "☑") || strings.Contains(lines[1], "☐") {
+		t.Errorf("selected+hovered row should show a checked box only: got %q", lines[1])
+	}
+}
+
+// A box (checked or empty) replaces the 3-space indent, preserving the row's
+// VISIBLE width so column alignment and the hover-highlight padding math hold.
+func TestApplyCheckboxes_preserves_visible_width(t *testing.T) {
 	body := "   +1 −0  a.txt"
 	bodyMap := "a.txt"
-	out, code := cvFuncArgv(t, "apply_selection_markers", body, bodyMap, "a.txt")
-	assertExitCode(t, code, 0)
-	got := len([]rune(ansiRE.ReplaceAllString(strings.TrimRight(out, "\n"), "")))
-	want := len([]rune(body))
-	if got != want {
-		t.Errorf("visible width changed by marker: got %d, want %d (row %q)",
-			got, want, ansiRE.ReplaceAllString(out, ""))
+	for _, tc := range []struct {
+		name, selected, hover string
+	}{
+		{"checked", "a.txt", "0"},
+		{"empty", "", "1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, code := cvFuncArgv(t, "apply_checkboxes", body, bodyMap, tc.selected, tc.hover)
+			assertExitCode(t, code, 0)
+			got := len([]rune(ansiRE.ReplaceAllString(strings.TrimRight(out, "\n"), "")))
+			want := len([]rune(body))
+			if got != want {
+				t.Errorf("visible width changed by box: got %d, want %d (row %q)",
+					got, want, ansiRE.ReplaceAllString(out, ""))
+			}
+		})
 	}
 }
 
-// ledger_hint is the dim key-hint shown while the cursor is over a file row, so
-// the select/discard keys are discoverable without reading docs.
-func TestLedgerHint_none_marked_shows_keys(t *testing.T) {
-	out, code := cvFuncArgv(t, "ledger_hint", "0")
+// With nothing selected and nothing hovered, the body passes through verbatim
+// (the redraw fast path draws no boxes).
+func TestApplyCheckboxes_no_selection_no_hover_unchanged(t *testing.T) {
+	body := "HEADER\n   +1 −0  a.txt\n"
+	bodyMap := "\na.txt\n"
+	out, code := cvFuncArgv(t, "apply_checkboxes", body, bodyMap, "", "0")
 	assertExitCode(t, code, 0)
-	clean := ansiRE.ReplaceAllString(out, "")
-	if !strings.Contains(clean, "x mark") || !strings.Contains(clean, "d discard") {
-		t.Errorf("hint should advertise the mark/discard keys: got %q", clean)
+	if strings.TrimRight(out, "\n") != strings.TrimRight(body, "\n") {
+		t.Errorf("no selection/hover should return body verbatim: got %q, want %q", out, body)
 	}
 }
 
-func TestLedgerHint_marked_shows_count(t *testing.T) {
-	out, code := cvFuncArgv(t, "ledger_hint", "2")
+// discard_button renders the clickable "[ discard N ]" affordance shown in the
+// bottom bar when 1+ files are marked, echoing the drawable string then its
+// VISIBLE click width on a second line (like account_pill).
+func TestDiscardButton_shows_bracketed_count(t *testing.T) {
+	out, code := cvFuncArgv(t, "discard_button", "2")
 	assertExitCode(t, code, 0)
-	clean := ansiRE.ReplaceAllString(out, "")
-	if !strings.Contains(clean, "2") || !strings.Contains(clean, "d discard") {
-		t.Errorf("hint with marked files should show the count and discard key: got %q", clean)
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("discard_button should echo <str>\\n<width>: got %q", out)
+	}
+	clean := ansiRE.ReplaceAllString(lines[0], "")
+	if !strings.Contains(clean, "discard 2") || !strings.Contains(clean, "[") || !strings.Contains(clean, "]") {
+		t.Errorf("button should read like [ discard 2 ]: got %q", clean)
+	}
+	if got, want := lines[1], "13"; got != want { // "[ discard 2 ]" = 13 columns
+		t.Errorf("button width: got %q, want %q", got, want)
+	}
+}
+
+func TestDiscardButton_zero_is_empty(t *testing.T) {
+	out, code := cvFuncArgv(t, "discard_button", "0")
+	assertExitCode(t, code, 0)
+	clean := ansiRE.ReplaceAllString(strings.TrimRight(out, "\n"), "")
+	// No button when nothing is marked: the drawable string is empty and width 0.
+	if strings.Contains(clean, "discard") {
+		t.Errorf("zero marked should draw no discard button: got %q", clean)
+	}
+}
+
+// visible_width strips ANSI escapes and counts the remaining RUNES (each ledger
+// glyph is one display column), so the bottom bar's click spans line up with the
+// rendered text.
+func TestVisibleWidth_ignores_ansi(t *testing.T) {
+	out, code := cvFuncArgv(t, "visible_width", "\x1b[32m+1\x1b[0m ab")
+	assertExitCode(t, code, 0)
+	if got := strings.TrimSpace(out); got != "5" { // "+1 ab"
+		t.Errorf("visible_width ignoring ANSI: got %q, want 5", got)
+	}
+}
+
+func TestVisibleWidth_counts_multibyte_as_runes(t *testing.T) {
+	out, code := cvFuncArgv(t, "visible_width", "↑2")
+	assertExitCode(t, code, 0)
+	if got := strings.TrimSpace(out); got != "2" {
+		t.Errorf("visible_width counting runes: got %q, want 2", got)
 	}
 }
 

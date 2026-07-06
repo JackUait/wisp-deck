@@ -4,8 +4,10 @@
 # Branch as a heading, net +/- stamp, aligned +/- columns with filenames.
 # Refreshes every 2 seconds. Scroll with the mouse wheel, arrows/j/k,
 # space/b (page), g/G (top/bottom) when the list overflows. Ctrl-C to exit.
-# Hover a file row and press 'x' to mark it (✓); press 'd' to discard the marked
-# files (or, with none marked, the hovered file) after a y/n confirm.
+# Hover a file row to reveal a checkbox (☐) at its left edge; click the box to
+# mark the file (☑). With 1+ files marked a "[ discard N ]" button appears in the
+# bottom bar — click it, then click [ yes ] to discard them (or [ no ] to cancel).
+# The x/d/y/n keys still drive the same mark/discard flow.
 # Click the account pill in the bottom bar (when 2+ Claude logins exist) to switch
 # the active account mid-session; the AI pane relaunches under the new login.
 
@@ -499,53 +501,92 @@ prune_selection() {
 }
 
 # discard_prompt echoes the armed-confirm footer shown while a batch discard is
-# pending: "Discard N file(s)? [y/n]" — singular "file" when N == 1.
+# pending: "Discard N file(s)? [ yes ] [ no ]" — singular "file" when N == 1. The
+# yes/no are CLICKABLE buttons (the loop maps their column spans via
+# visible_width); the y/n keys still work too.
 # Usage: discard_prompt <count>
 discard_prompt() {
   local n="$1" unit="files"
   [ "$n" = 1 ] && unit="file"
-  local yellow="\033[33m" bold="\033[1m" reset="\033[0m" dim="\033[2m"
-  printf "${yellow}${bold}Discard %s %s?${reset} ${dim}[y/n]${reset}" "$n" "$unit"
+  local yellow="\033[33m" bold="\033[1m" reset="\033[0m" dim="\033[2m" green="\033[32m"
+  printf "${yellow}${bold}Discard %s %s?${reset} ${dim}[${reset} ${green}yes${reset} ${dim}]${reset} ${dim}[${reset} no ${dim}]${reset}" \
+    "$n" "$unit"
 }
 
-# apply_selection_markers rewrites each body line whose mapped path (the SAME
-# line index in <body_map>) is a member of <selected>, replacing the row's
-# 3-space indent with a 3-column " ✓ " marker so selected files read as checked.
-# The marker preserves the row's VISIBLE width (3 columns in, 3 columns out) so
-# column alignment and the hover-highlight padding math stay intact. Non-file
-# rows (empty map line) and unselected rows pass through untouched. An empty
-# selection returns the body verbatim (the redraw fast path). Fork-free (nth_line
-# + selection_contains, no $()) so it stays cheap on the hover redraw path.
-# Usage: apply_selection_markers <body> <body_map> <selected>
-apply_selection_markers() {
-  local body="$1" map="$2" selected="$3"
-  [ -z "$selected" ] && { printf '%s' "$body"; return; }
-  local green=$'\033[32m' bold=$'\033[1m' reset=$'\033[0m'
-  local marker="${green}${bold} ✓ ${reset}"
-  local out="" bline i=0
+# apply_checkboxes draws a checkbox to the LEFT of each file row: a CHECKED box
+# (☑, green) on a row whose mapped path (the SAME line index in <body_map>) is a
+# member of <selected>, and an EMPTY box (☐, dim) on the row the cursor is over
+# (<hover>, a 1-based body-line index; 0 = none). Selection wins when a row is
+# both selected and hovered. The box replaces the row's 3-space indent with a
+# 3-column " ☑ "/" ☐ ", preserving the row's VISIBLE width (3 columns in, 3 out)
+# so column alignment and the hover-highlight padding math stay intact. Non-file
+# rows (empty map line) and rows that are neither selected nor hovered pass
+# through untouched. With nothing selected AND nothing hovered the body returns
+# verbatim (the redraw fast path). Fork-free (nth_line + selection_contains, no
+# $()) so it stays cheap on the hover redraw path.
+# Usage: apply_checkboxes <body> <body_map> <selected> [hover]
+apply_checkboxes() {
+  local body="$1" map="$2" selected="$3" hover="${4:-0}"
+  [ -z "$selected" ] && [ "$hover" -lt 1 ] 2>/dev/null && { printf '%s' "$body"; return; }
+  local checked=$'\033[1;32m ☑ \033[0m'
+  local empty=$'\033[2m ☐ \033[0m'
+  local out="" bline i=0 marker
   while IFS= read -r bline; do
     i=$((i + 1))
     nth_line "$map" "$i"
-    if [ -n "$NTH_LINE" ] && selection_contains "$selected" "$NTH_LINE"; then
-      bline="${marker}${bline#   }"   # swap the 3-space indent for the 3-col mark
+    marker=""
+    if [ -n "$NTH_LINE" ]; then
+      if selection_contains "$selected" "$NTH_LINE"; then
+        marker="$checked"
+      elif [ "$i" -eq "$hover" ] 2>/dev/null; then
+        marker="$empty"
+      fi
     fi
+    [ -n "$marker" ] && bline="${marker}${bline#   }"   # swap indent for the box
     out="${out}${bline}"$'\n'
   done <<< "$body"
   printf '%s' "${out%$'\n'}"
 }
 
-# ledger_hint renders the dim key-hint shown while the cursor is over a file row
-# — how to mark files and discard them — so the feature is discoverable without
-# docs. With <marked> > 0 it also reports the count staged for discard.
-# Usage: ledger_hint <marked_count>
-ledger_hint() {
-  local marked="$1"
-  local dim="\033[2m" reset="\033[0m"
-  if [ "$marked" -gt 0 ]; then
-    printf " ${dim}✓%s · x mark · d discard${reset}" "$marked"
-  else
-    printf " ${dim}x mark · d discard${reset}"
+# visible_width echoes the number of DISPLAY COLUMNS a string occupies: its ANSI
+# escapes stripped (fork-free, the same parameter-expansion strip as
+# highlight_body_line), then the remaining runes counted — every ledger glyph
+# (↑ ↓ · − ☑ ☐) is one column, so a rune count matches the rendered width. Used
+# to place the bottom bar's clickable spans (the discard button, the yes/no
+# confirm) exactly under their drawn text.
+# Usage: visible_width <string>
+visible_width() {
+  local esc=$'\033' visible="" rest="$1" pre
+  while [ -n "$rest" ]; do
+    case "$rest" in
+      *"${esc}["*)
+        pre="${rest%%"${esc}["*}"
+        visible="${visible}${pre}"
+        rest="${rest#*"${esc}["}"
+        rest="${rest#*m}"
+        ;;
+      *) visible="${visible}${rest}"; rest="" ;;
+    esac
+  done
+  printf '%d' "${#visible}"
+}
+
+# discard_button renders the clickable "[ discard N ]" affordance shown in the
+# bottom bar when 1+ files are marked. It echoes the drawable (colored) string on
+# the first line and its VISIBLE click width on the second (like account_pill),
+# so the loop can map a click on that column span to arming the discard. With no
+# files marked it draws NOTHING (empty string, width 0).
+# Usage: discard_button <marked_count>   -> "<str>\n<width>"
+discard_button() {
+  local count="$1"
+  if ! [ "$count" -gt 0 ] 2>/dev/null; then
+    printf '\n0'
+    return
   fi
+  local dim=$'\033[2m' bold=$'\033[1m' reset=$'\033[0m'
+  local vis="[ discard ${count} ]"
+  printf '%s\n%d' \
+    "${dim}[${reset} ${bold}discard ${count}${reset} ${dim}]${reset}" "${#vis}"
 }
 
 # discard_worktree_files reverts every member path of <selected> back to the
@@ -827,6 +868,58 @@ compact_view() {
     fi
   }
 
+  # build_bottom_bar composes the pane's bottom row into $bottom_bar and records
+  # the clickable column spans on it (row $h). While a discard is armed the row is
+  # the confirm — "Discard N file(s)? [ yes ] [ no ]" — and confirm_{yes,no}_*
+  # bound its two buttons. Otherwise the row leads with the account pill (when
+  # shown), then the branch bar, the scroll position (on overflow), and — when 1+
+  # files are marked — the right-hand "[ discard N ]" button, whose span is
+  # discard_btn_start..discard_btn_end (0 when unmarked). Reads the loop-scope
+  # state via dynamic scope; called on the draw path only when bar_dirty.
+  build_bottom_bar() {
+    discard_btn_start=0; discard_btn_end=0
+    confirm_yes_start=0; confirm_yes_end=0; confirm_no_start=0; confirm_no_end=0
+    local dot=$'\033[90m·\033[0m'
+    if [ "$discard_armed" = 1 ]; then
+      local dn
+      dn=$(selection_count "$discard_set")
+      bottom_bar=$(discard_prompt "$dn")
+      # The confirm is drawn from column 1. Its visible layout is a plain-ASCII
+      # prefix then two fixed-width buttons: "[ yes ]" (7 cols), a space, "[ no ]"
+      # (6 cols). Locate them off the prefix length (no ANSI in the prefix, so
+      # ${#} is its column width).
+      local unit="files"; [ "$dn" = 1 ] && unit="file"
+      local pre="Discard ${dn} ${unit}? "
+      confirm_yes_start=$(( ${#pre} + 1 )); confirm_yes_end=$(( ${#pre} + 7 ))
+      confirm_no_start=$(( ${#pre} + 9 )); confirm_no_end=$(( ${#pre} + 14 ))
+      return
+    fi
+    bottom_bar=""
+    if [ -n "$account_pill_str" ]; then
+      if [ "$pill_hover" = 1 ]; then
+        bottom_bar="$account_pill_hover_str"
+      else
+        bottom_bar="$account_pill_str"
+      fi
+      bottom_bar="${bottom_bar} ${dot}"
+    fi
+    bottom_bar="${bottom_bar}$(branch_status "$branch" "$ahead" "$behind")"
+    if [ "$body_total" -gt "$avail" ]; then
+      bottom_bar="${bottom_bar} ${dot}$(scroll_status "$scroll" "$avail" "$body_total")"
+    fi
+    local mcount
+    mcount=$(selection_count "$SELECTED")
+    if [ "$mcount" -gt 0 ]; then
+      bottom_bar="${bottom_bar} ${dot} "
+      local prefix_w btn btn_str btn_w
+      prefix_w=$(visible_width "$bottom_bar")
+      btn=$(discard_button "$mcount")
+      btn_str="${btn%$'\n'*}"; btn_w="${btn##*$'\n'}"
+      discard_btn_start=$(( prefix_w + 1 )); discard_btn_end=$(( prefix_w + btn_w ))
+      bottom_bar="${bottom_bar}${btn_str}"
+    fi
+  }
+
   # ANSI helpers
   local dim="\033[90m"
   local bold="\033[1m"
@@ -880,6 +973,16 @@ compact_view() {
   # state_dirty forces a repaint when the selection/armed state changes without a
   # rebuild or hover/scroll change.
   local SELECTED="" discard_armed=0 discard_set="" state_dirty=0
+  # Bottom bar, built in loop scope (not the frame subshell) so its clickable
+  # spans are known to the click handler. bar_dirty rebuilds it only when its
+  # inputs change (branch/pill/scroll/selection/armed) — never on a hover-only
+  # repaint, since the bar no longer carries a hover hint (the checkbox lives on
+  # the file row instead). discard_btn_* is the "[ discard N ]" click span (row h,
+  # cols start..end; 0 when unmarked); confirm_{yes,no}_* are the armed confirm's
+  # button spans. Declared ONCE (never an in-loop `local` — see the zsh NOTE).
+  local bottom_bar="" bar_dirty=1
+  local discard_btn_start=0 discard_btn_end=0
+  local confirm_yes_start=0 confirm_yes_end=0 confirm_no_start=0 confirm_no_end=0
   # Frame-erase helpers, built ONCE: $nl is a literal newline (the match), $rowend
   # is "erase-to-end-of-line + newline" (the replacement). The flicker-free redraw
   # swaps every newline in the composed frame for $rowend so each row scrubs the
@@ -1064,11 +1167,27 @@ compact_view() {
                   set_pill_hover "$mrow" "$mcol"
                   ;;
                 0)
-                  # Left-click: the account pill (bottom bar, row h) opens the
-                  # login switcher; anything else maps the report's row (the 3rd
-                  # ";"-field of "btn;col;row") to a body line, then to a path, and
-                  # floats the whole-file diff over the window.
-                  if [ "$mterm" = M ] && [ -n "$account_pill_str" ] \
+                  # Left-PRESS handling (mterm M). While a discard is armed the
+                  # bottom row is the confirm, so a click there hits its [ yes ] /
+                  # [ no ] buttons and nothing else acts. Otherwise: the account
+                  # pill opens the login switcher; the right-hand "[ discard N ]"
+                  # button arms the confirm; a click in a file row's CHECKBOX slot
+                  # (cols 1-3, the left indent) toggles that file's mark; a click
+                  # anywhere else on a file row floats its whole-file diff.
+                  if [ "$mterm" != M ]; then
+                    :   # release — ignore (open on press only)
+                  elif [ "$discard_armed" = 1 ]; then
+                    if [ "$mrow" = "$h" ] && [ "$mcol" -ge "$confirm_yes_start" ] \
+                       && [ "$mcol" -le "$confirm_yes_end" ]; then
+                      # Click [ yes ]: run the batch discard (mirrors the 'y' key).
+                      discard_worktree_files "$project_dir" "$discard_set"
+                      SELECTED=""; discard_armed=0; discard_set=""; need_build=1
+                    elif [ "$mrow" = "$h" ] && [ "$mcol" -ge "$confirm_no_start" ] \
+                       && [ "$mcol" -le "$confirm_no_end" ]; then
+                      # Click [ no ]: cancel the confirm (mirrors 'n'); selection kept.
+                      discard_armed=0; state_dirty=1
+                    fi
+                  elif [ -n "$account_pill_str" ] \
                      && [ "$mrow" = "$h" ] && [ "$mcol" -le "$account_pill_cols" ]; then
                     # Re-read the switcher lib from disk so edits to the popup
                     # (size, flags) go live without restarting this long-running
@@ -1077,14 +1196,26 @@ compact_view() {
                     open_account_switcher tmux "$_rc_relaunch"
                     enter_ui_mode "$interactive"   # re-assert alt-screen + mouse
                     need_build=1                   # redraw + refresh the pill
-                  elif [ "$mterm" = M ]; then
+                  elif [ "$discard_btn_start" -gt 0 ] && [ "$mrow" = "$h" ] \
+                     && [ "$mcol" -ge "$discard_btn_start" ] && [ "$mcol" -le "$discard_btn_end" ]; then
+                    # Click [ discard N ]: arm the confirm over the marked set
+                    # (mirrors the 'd' key).
+                    discard_set="$SELECTED"; discard_armed=1; state_dirty=1
+                  else
                     bl=$(body_line_for_click "$mrow" "$scroll" "$avail" "$body_total" "$header_rows" "$mcol" "$w")
                     if [ "$bl" != 0 ]; then
                       nth_line "$body_map" "$bl"; cpath="$NTH_LINE"
                       if [ -n "$cpath" ]; then
-                        open_diff_popup "$project_dir" "$cpath"
-                        enter_ui_mode "$interactive"   # re-assert alt-screen + mouse
-                        need_build=1                   # redraw after the popup closes
+                        if [ "$mcol" -le 3 ]; then
+                          # Checkbox slot (left indent): toggle this file's mark
+                          # instead of opening its diff (mirrors the 'x' key).
+                          SELECTED=$(toggle_selection "$SELECTED" "$cpath")
+                          state_dirty=1
+                        else
+                          open_diff_popup "$project_dir" "$cpath"
+                          enter_ui_mode "$interactive"   # re-assert alt-screen + mouse
+                          need_build=1                   # redraw after the popup closes
+                        fi
                       fi
                     fi
                   fi
@@ -1280,15 +1411,19 @@ compact_view() {
       _pill="$(account_pill "$_pill_label" "$_pill_color" 1)"
       account_pill_hover_str="${_pill%$'\n'*}"
     fi
+    # The build recomputed the branch, pill, and changeset, so the bottom bar
+    # (and its click spans) must be rebuilt on the next draw.
+    bar_dirty=1
     fi
 
     local body_rows=$((h - header_rows))
     [ "$body_rows" -lt 1 ] && body_rows=1
     # The bottom row is ALWAYS reserved for the branch bar (branch name + push/pull
     # commit counts), which sits at the bottom of the file-list view. That row also
-    # carries the scroll position (on overflow), the mark/discard hint (on hover),
-    # and the y/n confirm (while a discard is armed). A CONSTANT reserve also means
-    # the viewport height never changes on hover, so the list never jitters.
+    # carries the scroll position (on overflow), the "[ discard N ]" button (when
+    # files are marked), and the yes/no confirm (while a discard is armed). A
+    # CONSTANT reserve also means the viewport height never changes, so the list
+    # never jitters.
     avail=$((body_rows - 1))
     [ "$avail" -lt 1 ] && avail=1
     scroll=$(clamp_scroll "$scroll" "$body_total" "$avail")
@@ -1305,10 +1440,15 @@ compact_view() {
     # Redraw only when something visible changed (need_draw). Hover motion that
     # lands on the same row leaves need_draw=0, so the screen doesn't flicker.
     if [ "$need_draw" = 1 ]; then
-      # Mark the selected rows (✓) first, then overlay the hover bar. The markers
-      # preserve each row's visible width, so the hover padding math is unaffected.
-      draw_body=$(apply_selection_markers "$body" "$body_map" "$SELECTED")
+      # Draw a checkbox on the selected/hovered file rows (☑/☐) first, then
+      # overlay the hover bar. The boxes preserve each row's visible width, so the
+      # hover padding math is unaffected.
+      draw_body=$(apply_checkboxes "$body" "$body_map" "$SELECTED" "$hover_line")
       draw_body=$(highlight_body_line "$draw_body" "$hover_line" "$hover_style" "$w")
+      # Recompose the bottom bar only when its inputs changed (bar_dirty): the row
+      # no longer depends on the hover, so a hover-only repaint reuses the cached
+      # $bottom_bar and its click spans (no branch/scroll/pill forks per motion).
+      [ "$bar_dirty" = 1 ] && { build_bottom_bar; bar_dirty=0; }
       frame=$(
         printf '%s\n' "$header"
         printf '%s\n' "$draw_body" | viewport_slice "$scroll" "$avail"
@@ -1321,34 +1461,10 @@ compact_view() {
         [ "$_shown" -lt 0 ] && _shown=0
         _blank=$((avail - _shown))
         while [ "$_blank" -gt 0 ]; do printf '\n'; _blank=$((_blank - 1)); done
-        # Bottom bar. The armed discard confirm owns the whole row; otherwise the
-        # branch name + push/pull counts lead, then — appended and dot-separated —
-        # the scroll position when the list overflows and the mark/discard hint
-        # while a file row is hovered.
-        if [ "$discard_armed" = 1 ]; then
-          discard_prompt "$(selection_count "$discard_set")"
-        else
-          # Account pill leads the bottom bar (leftmost = a fixed, clickable
-          # column span), dot-separated from the branch. Emitted as real bytes
-          # (%s) — account_pill already interpreted its ANSI escapes.
-          if [ -n "$account_pill_str" ]; then
-            if [ "$pill_hover" = 1 ]; then
-              printf '%s' "$account_pill_hover_str"
-            else
-              printf '%s' "$account_pill_str"
-            fi
-            printf ' \033[90m·\033[0m'
-          fi
-          branch_status "$branch" "$ahead" "$behind"
-          if [ "$body_total" -gt "$avail" ]; then
-            printf ' \033[90m·\033[0m'
-            scroll_status "$scroll" "$avail" "$body_total"
-          fi
-          if [ "$hover_line" -gt 0 ]; then
-            printf ' \033[90m·\033[0m'
-            ledger_hint "$(selection_count "$SELECTED")"
-          fi
-        fi
+        # Bottom bar, prebuilt in loop scope (build_bottom_bar) so its clickable
+        # spans are known to the click handler. Emitted as real bytes (its ANSI is
+        # already interpreted).
+        printf '%s' "$bottom_bar"
       )
       # Home the cursor and overwrite the frame IN PLACE — never a full-screen
       # \033[2J, which blanks the pane for one frame and makes the list blink on
@@ -1400,6 +1516,13 @@ compact_view() {
       [ "$need_build" = 1 ] && break   # popup opened / rebuild -> stop draining
       read_key 0.006 || break          # no more buffered input -> flood settled
     done
+
+    # The bottom bar depends on scroll (scroll status), the pill hover, and the
+    # selection/armed state — but NOT the file hover — so flag it for a rebuild
+    # only when one of those changed. A hover-only repaint keeps the cached bar.
+    if [ "$scroll" != "$prev_scroll" ] || [ "$pill_hover" != "$prev_pill_hover" ] || [ "$state_dirty" = 1 ]; then
+      bar_dirty=1
+    fi
 
     # Repaint once — and only when the settled state actually differs from what is
     # already on screen (a flood that ends where it began draws nothing), or a

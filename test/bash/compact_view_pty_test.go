@@ -874,12 +874,112 @@ func TestCompactView_multiselect_discards_selected_files(t *testing.T) {
 	}
 }
 
-// Discoverability: the select/discard keys must be advertised in-UI, not just in
-// docs. The hint appears the moment the cursor is over a file row and is gone
-// when nothing is hovered (so the idle view stays full-height). Drives the real
-// loop under zsh, checks the idle frame has no hint, then hovers a file row and
-// asserts the hint ("d discard") shows up.
-func TestCompactView_shows_hover_hint(t *testing.T) {
+// End-to-end, FULLY MOUSE-DRIVEN: click the checkbox to the left of two file rows
+// to mark them, click the "[ discard N ]" button that appears in the bottom bar to
+// arm the confirm, then click "[ yes ]" to run it — no keyboard at all. Asserts the
+// two clicked files reverted to HEAD while the unclicked one keeps its edit. This
+// exercises the new click wiring: checkbox-slot toggle, the discard button span,
+// and the yes/no confirm spans.
+func TestCompactView_mouse_marks_and_discards(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not available")
+	}
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	for _, f := range []string{"a.txt", "b.txt", "c.txt"} {
+		writeTempFile(t, dir, f, "base\n")
+		git("add", f)
+	}
+	git("commit", "-q", "-m", "init")
+	for _, f := range []string{"a.txt", "b.txt", "c.txt"} {
+		writeTempFile(t, dir, f, "base\nDIRTY\n")
+	}
+
+	cmd := exec.Command(zsh, "-c", "source "+module+" && compact_view "+dir)
+	// Strip TMUX and the relaunch-context file so the bottom bar carries NO account
+	// pill — the pill's width is environment-dependent and would shift the discard
+	// button's columns; without it the bar is deterministic (" main · [ discard N ]").
+	env := []string{}
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "TMUX=") || strings.HasPrefix(e, "WISP_DECK_RELAUNCH_FILE=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=5", "TERM=xterm")
+
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 12, Cols: 60})
+	if err != nil {
+		t.Fatalf("start pty: %v", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	go func() {
+		b := make([]byte, 4096)
+		for {
+			if _, err := ptmx.Read(b); err != nil {
+				return
+			}
+		}
+	}()
+
+	// A left-PRESS SGR report (button 0, terminator M) at (col,row).
+	click := func(col, row int) {
+		_, _ = ptmx.Write([]byte(fmt.Sprintf("\x1b[<0;%d;%dM", col, row)))
+		time.Sleep(180 * time.Millisecond)
+	}
+
+	time.Sleep(700 * time.Millisecond) // first frame
+
+	// Body: row 3 = "modified" header, row 4 = a.txt, row 5 = b.txt, row 6 = c.txt.
+	// The checkbox lives in the left indent (cols 1-3), so a click at col 2 toggles
+	// the row's mark.
+	click(2, 4) // mark a.txt
+	click(2, 5) // mark b.txt
+	// With 2 files marked the bottom bar (row 12) reads " main · [ discard 2 ]"; the
+	// button spans cols 9-21. Click inside it to arm the confirm.
+	click(13, 12)
+	// The confirm reads "Discard 2 files? [ yes ] [ no ]"; [ yes ] spans cols 18-24.
+	click(21, 12) // confirm
+	time.Sleep(500 * time.Millisecond)
+
+	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
+	time.Sleep(300 * time.Millisecond)
+
+	read := func(f string) string {
+		b, _ := os.ReadFile(filepath.Join(dir, f))
+		return string(b)
+	}
+	if got := read("a.txt"); got != "base\n" {
+		t.Errorf("a.txt should be reverted after mouse discard: got %q, want %q", got, "base\n")
+	}
+	if got := read("b.txt"); got != "base\n" {
+		t.Errorf("b.txt should be reverted after mouse discard: got %q, want %q", got, "base\n")
+	}
+	if got := read("c.txt"); got != "base\nDIRTY\n" {
+		t.Errorf("unclicked c.txt must keep its edit: got %q", got)
+	}
+}
+
+// Discoverability: hovering a file row reveals a checkbox (☐) to its LEFT — the
+// clickable mark affordance — and it is gone when nothing is hovered (so the idle
+// view stays box-free). Drives the real loop under zsh, checks the idle frame has
+// no box, then hovers a file row and asserts the ☐ shows up on that row.
+func TestCompactView_shows_hover_checkbox(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
 		t.Skip("zsh not available")
@@ -942,8 +1042,8 @@ func TestCompactView_shows_hover_hint(t *testing.T) {
 	idle := out.String()
 	out.Reset()
 	mu.Unlock()
-	if strings.Contains(idle, "d discard") {
-		t.Errorf("idle frame (no hover) should not show the hint; got:\n%s", idle)
+	if strings.Contains(idle, "☐") {
+		t.Errorf("idle frame (no hover) should not show a checkbox; got:\n%s", idle)
 	}
 
 	// Hover the single file row: screen row 4 (row 3 is the "modified" header).
@@ -956,8 +1056,8 @@ func TestCompactView_shows_hover_hint(t *testing.T) {
 	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
 	time.Sleep(200 * time.Millisecond)
 
-	if !strings.Contains(hovered, "d discard") {
-		t.Errorf("hovering a file row should reveal the 'd discard' hint; got:\n%s", hovered)
+	if !strings.Contains(hovered, "☐") {
+		t.Errorf("hovering a file row should reveal a ☐ checkbox on it; got:\n%s", hovered)
 	}
 }
 
@@ -1120,12 +1220,12 @@ func TestCompactView_shows_branch_only_at_bottom_with_push_pull(t *testing.T) {
 	}
 }
 
-// Regression: on an OVERFLOWING list, hovering a file row must show the scroll
-// position indicator AND the mark/discard hint on the same reserved bottom row
-// (alongside the branch bar) — the hint does not replace the scroll data. Drives
-// the real loop under zsh with enough modified files to overflow a short pane,
-// hovers a row, and asserts both the "N-M/T" scroll data and "d discard" show.
-func TestCompactView_overflow_hover_keeps_scroll_and_hint(t *testing.T) {
+// Regression: on an OVERFLOWING list, hovering a file row reveals the checkbox
+// (☐) on that row while the bottom bar KEEPS its scroll position indicator — the
+// hover does not disturb the scroll data. Drives the real loop under zsh with
+// enough modified files to overflow a short pane, hovers a row, and asserts both
+// the ☐ box on the row and the "N-M/T" scroll data show.
+func TestCompactView_overflow_hover_keeps_scroll_position(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
 		t.Skip("zsh not available")
@@ -1206,14 +1306,14 @@ func TestCompactView_overflow_hover_keeps_scroll_and_hint(t *testing.T) {
 	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
 	time.Sleep(200 * time.Millisecond)
 
-	if !strings.Contains(hovered, "d discard") {
-		t.Errorf("overflow hover should reveal the 'd discard' hint; got:\n%s", hovered)
+	if !strings.Contains(hovered, "☐") {
+		t.Errorf("overflow hover should reveal a ☐ checkbox on the hovered row; got:\n%s", hovered)
 	}
 	// The scroll position indicator ("first-last/total", e.g. "1-9/32") must
-	// remain on the row alongside the hint.
+	// remain in the bottom bar while a row is hovered.
 	scrollRE := regexp.MustCompile(`\d+-\d+/\d+`)
 	if !scrollRE.MatchString(hovered) {
-		t.Errorf("overflow hover should KEEP the scroll position data next to the hint; got:\n%s", hovered)
+		t.Errorf("overflow hover should KEEP the scroll position data in the bottom bar; got:\n%s", hovered)
 	}
 }
 
