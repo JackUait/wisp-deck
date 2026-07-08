@@ -273,6 +273,12 @@ maybe_restore_session() {
   if [ "$queued" -eq 1 ]; then
     echo "$cur_boot" > "$marker"
     mv "$tmp" "$queue"
+    # This launch created the queue — it is the user's own window (or the
+    # claim winner of a crash-resume storm) and must never be closed as a
+    # surplus launch; it keeps the picker fallback when every entry is
+    # skipped. Read by the wrapper via restore_surplus_launch.
+    # shellcheck disable=SC2034  # consumed by the sourcing wrapper, not here
+    WISP_DECK_RESTORE_BUILDER=1
     # Trim the decision log so it can't grow unbounded, then record the build.
     if [ -f "$config_dir/restore.log" ]; then
       tail -n 500 "$config_dir/restore.log" > "$config_dir/restore.log.tmp.$$" 2>/dev/null \
@@ -327,12 +333,61 @@ restore_queue_pop() {
   fi
   if [ "$(wc -l < "$queue")" -le 1 ]; then
     rm -f "$queue"
+    # Genuine drain: the last entry was just consumed. Stamp the moment so a
+    # straggler launch of the same restore storm (macOS crash resume opens
+    # more wrapper tabs than the queue has entries) can recognize it popped
+    # empty because the chain finished, and close instead of showing the
+    # picker (see restore_surplus_launch). Discards above must NOT stamp.
+    date +%s > "${queue%/*}/restore-drained-at" 2>/dev/null || true
   else
     tail -n +2 "$queue" > "$queue.tmp.$$" && mv "$queue.tmp.$$" "$queue"
   fi
   rmdir "$lock" 2>/dev/null
   restore_log "$config_dir" "popped ${line#*|}"
   echo "${line#*|}"
+}
+
+# True iff a restore queue for the CURRENT boot exists and is fresh (same
+# 5-minute liveness window restore_queue_pop uses). Checked at wrapper start:
+# a launch that begins while a current-boot queue is draining is a restore
+# participant — if it later pops nothing, it is surplus (see
+# restore_surplus_launch), not a window the user opened for the picker.
+# Usage: restore_queue_active <config_dir> <current_boot_id>
+restore_queue_active() {
+  local config_dir="$1" cur_boot="$2"
+  local queue="$config_dir/restore-queue"
+  [ -f "$queue" ] || return 1
+  local now mtime
+  now="$(date +%s)"
+  mtime="$(stat -f %m "$queue" 2>/dev/null || echo 0)"
+  [ $((now - mtime)) -le 300 ] || return 1
+  local b
+  b="$(head -n 1 "$queue" 2>/dev/null)"
+  boot_id_is_current "${b%%|*}" "$cur_boot"
+}
+
+# Decide whether an interactive launch that popped NOTHING from the queue is
+# a surplus member of a restore storm and should close its tab instead of
+# opening the project picker. After a macOS crash, resume relaunches Ghostty
+# with its saved windows — each re-runs the wrapper — while the restore chain
+# also spawns one tab per queue entry; launches beyond the queue length used
+# to fall through to the picker ("several wisp-deck tabs on the main page").
+# Surplus iff NOT the queue builder (the user's own window keeps its picker
+# fallback) AND either the launch saw an active current-boot queue at start
+# (participant=1) or the queue drained within the last 15 seconds. 15s covers
+# the Cmd+T-to-pop latency of the last chained tabs; a launch the user opens
+# later never trips it.
+# Usage: restore_surplus_launch <config_dir> <participant> <builder>
+restore_surplus_launch() {
+  local config_dir="$1" participant="${2:-0}" builder="${3:-0}"
+  [ "$builder" = "1" ] && return 1
+  [ "$participant" = "1" ] && return 0
+  local marker="$config_dir/restore-drained-at" drained now
+  [ -f "$marker" ] || return 1
+  drained="$(tr -d '[:space:]' < "$marker" 2>/dev/null)"
+  case "$drained" in '' | *[!0-9]*) return 1 ;; esac
+  now="$(date +%s)"
+  [ $((now - drained)) -le 15 ]
 }
 
 # True iff an alive Wisp Deck tmux session is already running conversation

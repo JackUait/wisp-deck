@@ -2,6 +2,20 @@
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 SHARE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
+_wrapper_dir_early="$(cd "$(dirname "$0")" && pwd)"
+
+# Restore-storm participant snapshot — taken FIRST, before the update check
+# can delay it: a launch that starts while a current-boot restore queue is
+# draining belongs to the restore chain (a chained Cmd+T tab, or a window
+# macOS resume reopened after a crash). If it later pops an empty queue it is
+# surplus and closes instead of showing the picker (see the interactive
+# branch below).
+_restore_participant=0
+if [ -z "$1" ] && [ -f "$_wrapper_dir_early/lib/session-restore.sh" ]; then
+  # shellcheck disable=SC1091  # Dynamic path
+  source "$_wrapper_dir_early/lib/session-restore.sh"
+  restore_queue_active "$SHARE_DIR" "$(current_boot_id)" && _restore_participant=1
+fi
 
 # shellcheck source=/dev/null
 [ -f "$SHARE_DIR/lib/update.sh" ] && source "$SHARE_DIR/lib/update.sh"
@@ -10,7 +24,6 @@ notify_if_update_available
 check_for_update "${HOME}/.local/share/wisp-deck"
 
 # Show animated loading screen immediately in interactive mode (no args)
-_wrapper_dir_early="$(cd "$(dirname "$0")" && pwd)"
 if [ -z "$1" ] && [ -f "$_wrapper_dir_early/lib/loading.sh" ]; then
   # shellcheck disable=SC1091  # Dynamic path
   source "$_wrapper_dir_early/lib/loading.sh"
@@ -138,6 +151,17 @@ else
     WISP_DECK_RESUME_LAYOUT="$_q_layout"
     type stop_loading_screen &>/dev/null && stop_loading_screen
   else
+
+  # No queue entry for this launch. A launch that took part in a restore
+  # drain (saw the active queue at start, or popped right after it emptied)
+  # is a surplus tab of the crash-resume storm — close it quietly instead of
+  # littering the window with picker tabs. The queue builder is exempt: it is
+  # the user's own window and keeps the picker fallback.
+  if restore_surplus_launch "$SHARE_DIR" "$_restore_participant" "${WISP_DECK_RESTORE_BUILDER:-0}"; then
+    restore_log "$SHARE_DIR" "surplus restore launch closed (participant=$_restore_participant)"
+    type stop_loading_screen &>/dev/null && stop_loading_screen
+    exit 0
+  fi
 
   # Use TUI for project selection
   printf '\033]0;󰊠  Wisp Deck\007'
