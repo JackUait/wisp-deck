@@ -1711,6 +1711,55 @@ func TestStatusline_stamp_claude_session_noop_without_session_id(t *testing.T) {
 	}
 }
 
+// --- gt_stamp_claude_live_session ---
+
+func TestStatusline_stamp_live_session_stamps_unconditionally(t *testing.T) {
+	// The live stamp records claude's CURRENTLY-active conversation id with NO
+	// durability gate — a fresh /new session (no transcript / no model turn yet)
+	// must still be recorded, so a mid-session account switch can tell the
+	// durable (lagging) id no longer names the live conversation.
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "rec")
+	binDir := mockCommand(t, dir, "tmux", fmt.Sprintf(`echo "$@" >> %q`, rec))
+	env := buildEnv(t, []string{binDir}, "TMUX=/tmp/sock,1,0")
+	// No transcript on disk at all — gt_stamp_claude_session would no-op here.
+	json := `{"session_id":"sid-42","transcript_path":"` + filepath.Join(dir, "nope.jsonl") + `","cwd":"/p/app"}`
+	_, code := runBashFunc(t, "lib/statusline.sh", "gt_stamp_claude_live_session",
+		[]string{json}, env)
+	assertExitCode(t, code, 0)
+	data, err := os.ReadFile(rec)
+	if err != nil {
+		t.Fatalf("tmux not invoked: %v", err)
+	}
+	assertContains(t, string(data), "set-environment WISP_DECK_CLAUDE_LIVE_SESSION sid-42")
+}
+
+func TestStatusline_stamp_live_session_noop_outside_tmux(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "rec")
+	binDir := mockCommand(t, dir, "tmux", fmt.Sprintf(`echo "$@" >> %q`, rec))
+	env := buildEnv(t, []string{binDir}, "TMUX=")
+	_, code := runBashFunc(t, "lib/statusline.sh", "gt_stamp_claude_live_session",
+		[]string{`{"session_id":"sid-42"}`}, env)
+	assertExitCode(t, code, 0)
+	if _, err := os.Stat(rec); err == nil {
+		t.Error("must not touch tmux when not inside a tmux pane")
+	}
+}
+
+func TestStatusline_stamp_live_session_noop_without_session_id(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "rec")
+	binDir := mockCommand(t, dir, "tmux", fmt.Sprintf(`echo "$@" >> %q`, rec))
+	env := buildEnv(t, []string{binDir}, "TMUX=/tmp/sock,1,0")
+	_, code := runBashFunc(t, "lib/statusline.sh", "gt_stamp_claude_live_session",
+		[]string{`{"cwd":"/p/app"}`}, env)
+	assertExitCode(t, code, 0)
+	if _, err := os.Stat(rec); err == nil {
+		t.Error("must not stamp when the payload has no session_id")
+	}
+}
+
 // --- gt_claude_account_label ---
 //
 // The statusline runs as a child of `claude`, which wrapper.sh launches with the

@@ -337,3 +337,22 @@ gt_stamp_claude_session() {
   fi
   tmux set-environment WISP_DECK_CLAUDE_SESSION "$sid" 2>/dev/null || true
 }
+
+# Record claude's CURRENTLY-active conversation id — the LIVE session — into the
+# tmux session env (WISP_DECK_CLAUDE_LIVE_SESSION) on EVERY render, with no
+# durability gate. This is the counterpart to gt_stamp_claude_session's durable
+# (lagging) stamp: when the user runs /new (or /clear), claude's live session_id
+# changes at once, but the fresh session has no model turn yet, so it is not
+# resumable and the durable stamp deliberately keeps naming the OLD conversation.
+# A mid-session account switch resumes the durable id; if the live id no longer
+# matches it, resuming would resurrect the conversation the user just closed.
+# Recording the live id here lets the switch (current_ai_session) detect that
+# divergence and launch a fresh claude instead.
+# Usage: gt_stamp_claude_live_session <statusline_json>
+gt_stamp_claude_live_session() {
+  [ -n "${TMUX:-}" ] || return 0
+  local sid
+  sid="$(echo "$1" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')"
+  [ -n "$sid" ] || return 0
+  tmux set-environment WISP_DECK_CLAUDE_LIVE_SESSION "$sid" 2>/dev/null || true
+}

@@ -129,17 +129,38 @@ find_ai_pane() {
   return 0
 }
 
-# current_ai_session <tmux_cmd> — print the resume-validated conversation id the
-# statusline stamped into the session env (gt_stamp_claude_session sets
-# WISP_DECK_CLAUDE_SESSION only once the transcript is durable). tmux prints
-# `NAME=value` when set, or `-NAME` (leading dash) when unset — only the former
-# yields an id. Empty when unstamped, so the relaunch falls back to `-c`.
+# current_ai_session <tmux_cmd> — print the conversation id this pane's switch
+# should resume: the resume-validated (durable) id the statusline stamped into
+# the session env (gt_stamp_claude_session sets WISP_DECK_CLAUDE_SESSION only
+# once the transcript is durable). tmux prints `NAME=value` when set, or `-NAME`
+# (leading dash) when unset — only the former yields an id. Empty when unstamped,
+# so the relaunch falls back to `-c`.
+#
+# Guard against resurrecting a just-closed conversation: the statusline also
+# records claude's LIVE session id every render (WISP_DECK_CLAUDE_LIVE_SESSION,
+# no durability gate). When the user runs /new (or /clear), the live id changes
+# at once while the durable stamp keeps naming the OLD conversation (the fresh
+# one has no model turn yet, so it is not resumable). If the live id is stamped
+# AND differs from the durable one, the durable id no longer names the pane's
+# current conversation — return empty so the switch launches a FRESH claude
+# rather than reopening the session the user just closed. An unstamped live var
+# (older statusline, or a pane before its first render) never suppresses.
 current_ai_session() {
-  local tmux_cmd="$1" line
+  local tmux_cmd="$1" line sid live
   line="$("$tmux_cmd" show-environment WISP_DECK_CLAUDE_SESSION 2>/dev/null)" || return 0
   case "$line" in
-    WISP_DECK_CLAUDE_SESSION=*) printf '%s\n' "${line#WISP_DECK_CLAUDE_SESSION=}" ;;
+    WISP_DECK_CLAUDE_SESSION=*) sid="${line#WISP_DECK_CLAUDE_SESSION=}" ;;
+    *) return 0 ;;
   esac
+  [ -n "$sid" ] || return 0
+  live="$("$tmux_cmd" show-environment WISP_DECK_CLAUDE_LIVE_SESSION 2>/dev/null)" || live=""
+  case "$live" in
+    WISP_DECK_CLAUDE_LIVE_SESSION=*)
+      live="${live#WISP_DECK_CLAUDE_LIVE_SESSION=}"
+      [ -n "$live" ] && [ "$live" != "$sid" ] && return 0
+      ;;
+  esac
+  printf '%s\n' "$sid"
   return 0
 }
 

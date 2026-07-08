@@ -8,6 +8,9 @@ input=$(cat)
 # Record this pane's conversation id in the tmux session env so a session
 # restored after a reboot reopens this exact conversation.
 type gt_stamp_claude_session &>/dev/null && gt_stamp_claude_session "$input"
+# Also record claude's LIVE (current) conversation id, ungated by durability, so
+# a mid-session account switch after /new does not resume the just-closed one.
+type gt_stamp_claude_live_session &>/dev/null && gt_stamp_claude_live_session "$input"
 git_info=$(echo "$input" | bash ~/.claude/statusline-command.sh)
 context_pct=$(echo "$input" | npx ccstatusline 2>/dev/null)
 model_name=$(echo "$input" | sed -n 's/.*"display_name":"\([^"]*\)".*/\1/p')

@@ -323,6 +323,71 @@ if [ "$1" = "show-environment" ]; then printf -- '-WISP_DECK_CLAUDE_SESSION\n'; 
 	}
 }
 
+func TestCurrentAISession_suppressed_when_live_session_differs(t *testing.T) {
+	// The durable stamp (WISP_DECK_CLAUDE_SESSION) deliberately lags: after the
+	// user runs /new (or /clear), claude's LIVE session_id changes immediately
+	// but the fresh session has no model turn yet, so it stays non-resumable and
+	// the durable stamp still names the OLD (now closed) conversation. Resuming
+	// that durable id on an account switch would resurrect the conversation the
+	// user just closed. When the live id differs from the durable one, refuse it.
+	dir := t.TempDir()
+	bin := mockCommand(t, dir, "tmux", `
+if [ "$1" = "show-environment" ]; then
+  case "$2" in
+    WISP_DECK_CLAUDE_LIVE_SESSION) printf 'WISP_DECK_CLAUDE_LIVE_SESSION=new-fresh\n' ;;
+    *) printf 'WISP_DECK_CLAUDE_SESSION=old-durable\n' ;;
+  esac
+  exit 0
+fi`)
+	env := buildEnv(t, []string{bin})
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, "current_ai_session tmux"), env)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("expected empty (suppressed) when live session differs, got %q", out)
+	}
+}
+
+func TestCurrentAISession_returns_id_when_live_session_matches(t *testing.T) {
+	// Live id equals the durable id — the pane is still on its stamped
+	// conversation, so resuming it is correct.
+	dir := t.TempDir()
+	bin := mockCommand(t, dir, "tmux", `
+if [ "$1" = "show-environment" ]; then
+  case "$2" in
+    WISP_DECK_CLAUDE_LIVE_SESSION) printf 'WISP_DECK_CLAUDE_LIVE_SESSION=abc-42\n' ;;
+    *) printf 'WISP_DECK_CLAUDE_SESSION=abc-42\n' ;;
+  esac
+  exit 0
+fi`)
+	env := buildEnv(t, []string{bin})
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, "current_ai_session tmux"), env)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "abc-42" {
+		t.Fatalf("expected 'abc-42' when live matches durable, got %q", out)
+	}
+}
+
+func TestCurrentAISession_returns_id_when_live_session_unset(t *testing.T) {
+	// An older statusline (or a pane before its first statusline render) never
+	// stamps the live var — tmux prints `-NAME` for it. The durable id must
+	// still be returned unchanged (backward compatible).
+	dir := t.TempDir()
+	bin := mockCommand(t, dir, "tmux", `
+if [ "$1" = "show-environment" ]; then
+  case "$2" in
+    WISP_DECK_CLAUDE_LIVE_SESSION) printf -- '-WISP_DECK_CLAUDE_LIVE_SESSION\n' ;;
+    *) printf 'WISP_DECK_CLAUDE_SESSION=abc-42\n' ;;
+  esac
+  exit 0
+fi`)
+	env := buildEnv(t, []string{bin})
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, "current_ai_session tmux"), env)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "abc-42" {
+		t.Fatalf("expected 'abc-42' when live var unset, got %q", out)
+	}
+}
+
 func TestRelaunchAIPane_resumes_exact_stamped_conversation(t *testing.T) {
 	dir := t.TempDir()
 	writeTempFile(t, dir, "claude-account", "work\n")
