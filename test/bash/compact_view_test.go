@@ -600,6 +600,59 @@ func TestHeaderRowsFor_empty_heading_is_two_rows(t *testing.T) {
 	}
 }
 
+// viewport_avail is the single source of truth for the scrollable body height:
+// the rows below the pinned header MINUS the screen rows the bottom bar occupies.
+// The bottom bar is NOT a fixed one row — a long branch name wraps it onto extra
+// rows — so its TRUE height (wrap_rows_for of its visible width) is reserved.
+// Reserving only one row would overflow the pane, scroll it up, and desync the
+// top-anchored hover mapping (the wrong file lights up under the cursor).
+func TestViewportAvail_single_row_bar_reserves_one(t *testing.T) {
+	// body_rows 20, bar visible 40 in a width-80 pane -> bar is 1 row -> avail 19.
+	out, code := runBashFunc(t, "lib/compact-view.sh", "viewport_avail",
+		[]string{"20", "40", "80"}, nil)
+	assertExitCode(t, code, 0)
+	if got := strings.TrimSpace(out); got != "19" {
+		t.Errorf("1-row bar should reserve 1 row (avail 19), got %q", got)
+	}
+}
+
+func TestViewportAvail_wrapped_bar_reserves_two(t *testing.T) {
+	// A long branch wraps the bar to 2 rows (visible 100 in width 80), so the
+	// viewport must shrink to 18 — reserving only 1 (avail 19) overflows the pane.
+	out, _ := runBashFunc(t, "lib/compact-view.sh", "viewport_avail",
+		[]string{"20", "100", "80"}, nil)
+	if got := strings.TrimSpace(out); got != "18" {
+		t.Errorf("2-row bar should reserve 2 rows (avail 18), got %q", got)
+	}
+}
+
+func TestViewportAvail_double_wrapped_bar_reserves_three(t *testing.T) {
+	// Visible 170 in width 80 wraps to 3 rows -> avail 17.
+	out, _ := runBashFunc(t, "lib/compact-view.sh", "viewport_avail",
+		[]string{"20", "170", "80"}, nil)
+	if got := strings.TrimSpace(out); got != "17" {
+		t.Errorf("3-row bar should reserve 3 rows (avail 17), got %q", got)
+	}
+}
+
+func TestViewportAvail_exact_width_bar_stays_one_row(t *testing.T) {
+	// A bar exactly as wide as the pane does NOT wrap (pending-wrap margin).
+	out, _ := runBashFunc(t, "lib/compact-view.sh", "viewport_avail",
+		[]string{"10", "80", "80"}, nil)
+	if got := strings.TrimSpace(out); got != "9" {
+		t.Errorf("exact-width bar is 1 row (avail 9), got %q", got)
+	}
+}
+
+func TestViewportAvail_floors_at_one(t *testing.T) {
+	// A bar taller than the whole body region still leaves a 1-row viewport.
+	out, _ := runBashFunc(t, "lib/compact-view.sh", "viewport_avail",
+		[]string{"2", "300", "80"}, nil)
+	if got := strings.TrimSpace(out); got != "1" {
+		t.Errorf("avail must floor at 1, got %q", got)
+	}
+}
+
 // heading_layout decides where the ledger's +/- stamp goes and how many SCREEN
 // rows the pinned heading spans. The stamp is one block and is never split: it
 // sits right-aligned on the branch line when it fits (mode "inline"), otherwise

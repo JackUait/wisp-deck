@@ -246,6 +246,24 @@ header_rows_for() {
   printf '%d' "$(( $(wrap_rows_for "$1" "$2") + 1 ))"
 }
 
+# viewport_avail is the single source of truth for the scrollable body viewport
+# height: the <body_rows> below the pinned header MINUS the SCREEN rows the bottom
+# bar occupies. The bottom bar is NOT a fixed one row — a long branch name wraps
+# it onto extra rows (wrap_rows_for of its <bar_visible_width>) — so its TRUE
+# height is reserved. Reserving only one row would let the composed frame exceed
+# the pane, which SCROLLS the pane up and shifts every file row out from under the
+# top-anchored hover mapping (vr = row - header_rows), lighting the WRONG file
+# under the cursor. Always at least 1, so a degenerate (tiny) pane still renders a
+# one-row viewport rather than a zero/negative one. The caller updates this only
+# when the bar or pane changes, never on the per-motion hover hot path.
+# Usage: viewport_avail <body_rows> <bar_visible_width> <pane_width>
+viewport_avail() {
+  local body_rows="$1" bar_vis="$2" w="$3" avail
+  avail=$(( body_rows - $(wrap_rows_for "$bar_vis" "$w") ))
+  [ "$avail" -lt 1 ] && avail=1
+  printf '%d' "$avail"
+}
+
 # ahead_behind_marker builds the upstream-divergence markers ("↑N" ahead, "↓M"
 # behind) that trail the branch name in the ledger heading. Every value in the
 # heading shares ONE separator — a dim dot — so each present marker is joined
@@ -1440,14 +1458,28 @@ compact_view() {
 
     local body_rows=$((h - header_rows))
     [ "$body_rows" -lt 1 ] && body_rows=1
-    # The bottom row is ALWAYS reserved for the branch bar (branch name + push/pull
-    # commit counts), which sits at the bottom of the file-list view. That row also
-    # carries the scroll position (on overflow) and the account pill. (The
-    # "[ discard N ]" button and its yes/no confirm now overlay the TOP group
-    # header instead — see $discard_overlay.) A CONSTANT reserve also means the
-    # viewport height never changes, so the list never jitters.
-    avail=$((body_rows - 1))
-    [ "$avail" -lt 1 ] && avail=1
+    # The bottom row is reserved for the branch bar (branch name + push/pull commit
+    # counts), which sits at the bottom of the file-list view and also carries the
+    # scroll position (on overflow) and the account pill. (The "[ discard N ]" button
+    # and its yes/no confirm now overlay the TOP group header instead — see
+    # $discard_overlay.) That bar is NOT always one row: a long branch name wraps it
+    # onto extra rows (Image: "feat/…register-lookup" spilling to a second line).
+    # Reserve its ACTUAL height so the composed frame never exceeds the pane — an
+    # overflow scrolls the pane up and shifts every file row out from under the
+    # top-anchored hover mapping, lighting the WRONG file under the cursor. Rebuild
+    # the bar (only when its inputs changed) and re-measure via viewport_avail BEFORE
+    # sizing the viewport, so THIS frame reserves the right number of rows.
+    # build_bottom_bar reads `avail` only for the scroll indicator, so seed a
+    # provisional one-row reserve for that decision, then take the real reserve from
+    # the built bar. This whole block runs ONLY when bar_dirty (a build, resize, or
+    # scroll/selection change) — never on the per-motion hover hot path, which reuses
+    # the stored $avail and adds no measurement fork.
+    if [ "$bar_dirty" = 1 ]; then
+      avail=$((body_rows - 1)); [ "$avail" -lt 1 ] && avail=1
+      build_bottom_bar
+      avail=$(viewport_avail "$body_rows" "$(visible_width "$bottom_bar")" "$w")
+      bar_dirty=0
+    fi
     scroll=$(clamp_scroll "$scroll" "$body_total" "$avail")
 
     # Keep the hover highlight only on an actual file row: drop it if the
@@ -1467,11 +1499,9 @@ compact_view() {
       # hover padding math is unaffected.
       draw_body=$(apply_checkboxes "$body" "$body_map" "$SELECTED" "$hover_line")
       draw_body=$(highlight_body_line "$draw_body" "$hover_line" "$hover_style" "$w")
-      # Recompose the bottom bar only when its inputs changed (bar_dirty): the row
-      # no longer depends on the hover, so a hover-only repaint reuses the cached
-      # $bottom_bar and its click spans (no branch/scroll/pill forks per motion).
-      # The same rebuild composes $discard_overlay (the top button/confirm).
-      [ "$bar_dirty" = 1 ] && { build_bottom_bar; bar_dirty=0; }
+      # The bottom bar (and its $discard_overlay + click spans) was already rebuilt
+      # above, before the viewport was sized, so its wrapped height could be reserved.
+      # A hover-only repaint (bar_dirty=0) left it untouched, so it is reused here.
       # Splice the discard affordance onto the FIRST body line (the topmost group
       # header) so it sits next to that title. Fork-free string ops; only body line
       # 1 is touched, and it is never a checkbox/hover target so the overlays above
