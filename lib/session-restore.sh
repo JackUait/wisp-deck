@@ -151,6 +151,25 @@ run_snapshot_heartbeat() {
   done
 }
 
+# A launch that lost the once-per-boot claim while the winner is still
+# BUILDING must not race ahead: its very next step is the queue pop, and an
+# empty pop with no drain marker yet falls through to the picker — the storm
+# symptom via a build/pop race. Wait briefly (≤3s) for the in-flight build's
+# queue to land. Bounded to FRESH claims (≤30s): a claim whose builder died
+# mid-build persists all boot, and later launches must not pay the wait.
+# Usage: _restore_wait_for_inflight_build <config_dir> <claim_path>
+_restore_wait_for_inflight_build() {
+  local config_dir="$1" claim="$2" now mtime i=0
+  now="$(date +%s)"
+  mtime="$(stat -f %m "$claim" 2>/dev/null || echo 0)"
+  [ $((now - mtime)) -le 30 ] || return 0
+  while [ ! -f "$config_dir/restore-queue" ] && [ "$i" -lt 30 ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 0
+}
+
 # Once-per-boot restore gate. Call only on interactive launch, before the
 # picker. Builds the restore queue (one
 # boot_id|path|tool|claude_session_id|window_layout|account line per
@@ -186,11 +205,13 @@ maybe_restore_session() {
     [ "$old" = "$claim" ] && continue
     if boot_id_is_current "${old##*.}" "$cur_boot"; then
       restore_log "$config_dir" "queue-build blocked: current-boot claim ${old##*/} already exists (cur=$cur_boot)"
+      _restore_wait_for_inflight_build "$config_dir" "$old"
       return 0
     fi
     rm -f "$old"
   done
   if ! (set -o noclobber; : > "$claim") 2>/dev/null; then
+    _restore_wait_for_inflight_build "$config_dir" "$claim"
     return 0
   fi
 
@@ -332,13 +353,15 @@ restore_queue_pop() {
     return 0
   fi
   if [ "$(wc -l < "$queue")" -le 1 ]; then
-    rm -f "$queue"
-    # Genuine drain: the last entry was just consumed. Stamp the moment so a
+    # Genuine drain: the last entry is being consumed. Stamp the moment so a
     # straggler launch of the same restore storm (macOS crash resume opens
     # more wrapper tabs than the queue has entries) can recognize it popped
     # empty because the chain finished, and close instead of showing the
     # picker (see restore_surplus_launch). Discards above must NOT stamp.
+    # Stamped BEFORE the queue is removed: a concurrent pop must never observe
+    # "no queue" without the marker already in place.
     date +%s > "${queue%/*}/restore-drained-at" 2>/dev/null || true
+    rm -f "$queue"
   else
     tail -n +2 "$queue" > "$queue.tmp.$$" && mv "$queue.tmp.$$" "$queue"
   fi

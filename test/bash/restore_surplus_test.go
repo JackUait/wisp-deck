@@ -369,3 +369,99 @@ func TestRestoreSurplusLaunch_started_after_drain_is_not_surplus(t *testing.T) {
 		t.Error("a launch begun after the drain must not be treated as surplus")
 	}
 }
+
+func TestMaybeRestore_claim_loser_waits_for_inflight_build(t *testing.T) {
+	// Every interactive launch runs maybe_restore_session then pops. A launch
+	// that loses the once-per-boot claim while the winner is still building
+	// used to fall straight through to an empty pop (no queue yet, no drain
+	// marker) and open the picker — the storm symptom via a race. The loser
+	// must wait briefly for the in-flight build to land.
+	dir := t.TempDir()
+	// The claim exists (current boot) but neither marker nor queue yet: a
+	// build is in flight. A background writer lands the queue 300ms later.
+	writeTempFile(t, dir, "last-session", "boot-old|app|/p/app|opencode|ghostty|||\n")
+	writeTempFile(t, dir, "last-restore-boot.boot-1", "")
+	root := projectRoot(t)
+	script := `
+(sleep 0.3; echo "boot-1|/p/app|claude||" > ` + quote(filepath.Join(dir, "restore-queue")) + `) &
+source ` + quote(filepath.Join(root, "lib", "session-restore.sh")) + `
+maybe_restore_session ` + quote(dir) + ` boot-1
+if [ -f ` + quote(filepath.Join(dir, "restore-queue")) + ` ]; then
+  echo "QUEUE-PRESENT"
+else
+  echo "QUEUE-MISSING"
+fi
+`
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "QUEUE-PRESENT")
+}
+
+// TestWrapperStorm_parallel_launches_open_exactly_queue_entries is the
+// end-to-end guard for the crash-resume incident: FOUR interactive wrappers
+// start simultaneously (macOS resume reopening Ghostty windows) against a
+// prior-boot snapshot of TWO sessions. Exactly the two snapshot sessions may
+// be opened; the two surplus launches must close without ever reaching the
+// project picker.
+func TestWrapperStorm_parallel_launches_open_exactly_queue_entries(t *testing.T) {
+	home, confDir, tuiRec := wrapperHomeWithMocks(t)
+	binDir := filepath.Join(home, ".local", "bin")
+	sessRec := filepath.Join(home, "new-session-rec")
+
+	// tmux mock: record new-session calls (atomic append), no alive sessions.
+	tmuxMock := "#!/bin/bash\n" +
+		"if [ \"$1\" = \"new-session\" ]; then printf 'new-session\\n' >> \"$GT_SESS_REC\"; fi\n" +
+		"exit 0\n"
+	if err := os.WriteFile(filepath.Join(binDir, "tmux"), []byte(tmuxMock), 0755); err != nil {
+		t.Fatalf("write tmux mock: %v", err)
+	}
+	// The restore chain's Cmd+T needs Accessibility; fail it so the chain
+	// falls back to terminal_launch_window, whose `open` is mocked inert.
+	for name, body := range map[string]string{
+		"osascript": "#!/bin/bash\nexit 1\n",
+		"open":      "#!/bin/bash\nexit 0\n",
+	} {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(body), 0755); err != nil {
+			t.Fatalf("write mock %s: %v", name, err)
+		}
+	}
+
+	projA := filepath.Join(home, "proj-a")
+	projB := filepath.Join(home, "proj-b")
+	for _, p := range []string{projA, projB} {
+		if err := os.MkdirAll(p, 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+	// Prior-boot snapshot (boot 99999 is outside the mocked boottime's drift
+	// window): two opencode sessions — no transcript validation involved.
+	snap := "99999|a|" + projA + "|opencode|ghostty|||\n" +
+		"99999|b|" + projB + "|opencode|ghostty|||\n"
+	if err := os.WriteFile(filepath.Join(confDir, "last-session"), []byte(snap), 0644); err != nil {
+		t.Fatalf("write snapshot: %v", err)
+	}
+
+	env := buildEnv(t, nil, "HOME="+home, "GT_TUI_REC="+tuiRec, "GT_SESS_REC="+sessRec)
+	root := projectRoot(t)
+	storm := `
+pids=()
+for i in 1 2 3 4; do
+  bash ` + quote(filepath.Join(root, "wrapper.sh")) + ` &
+  pids+=($!)
+done
+rc=0
+for p in "${pids[@]}"; do wait "$p" || rc=1; done
+exit $rc
+`
+	_, code := runBashSnippet(t, storm, env)
+	assertExitCode(t, code, 0)
+
+	data, _ := os.ReadFile(sessRec)
+	got := strings.Count(string(data), "new-session")
+	if got != 2 {
+		t.Errorf("storm must open exactly the 2 snapshot sessions, opened %d", got)
+	}
+	if tui, err := os.ReadFile(tuiRec); err == nil && strings.Contains(string(tui), "main-menu") {
+		t.Errorf("no storm launch may reach the picker; tui calls:\n%s", tui)
+	}
+}
