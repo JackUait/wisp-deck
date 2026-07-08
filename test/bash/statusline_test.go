@@ -1760,6 +1760,20 @@ func TestStatusline_stamp_live_session_noop_without_session_id(t *testing.T) {
 	}
 }
 
+// The stamping function is worthless if the statusline wrapper never calls it.
+// This guards the wiring: the shipped template must invoke
+// gt_stamp_claude_live_session on every render, so the mid-session switch always
+// has a fresh live id to compare against (preventing a /new-closed conversation
+// from being resumed on an account switch).
+func TestStatuslineWrapperTemplate_invokes_live_session_stamp(t *testing.T) {
+	root := projectRoot(t)
+	body, err := os.ReadFile(filepath.Join(root, "templates", "statusline-wrapper.sh"))
+	if err != nil {
+		t.Fatalf("read wrapper template: %v", err)
+	}
+	assertContains(t, string(body), "gt_stamp_claude_live_session")
+}
+
 // --- gt_claude_account_label ---
 //
 // The statusline runs as a child of `claude`, which wrapper.sh launches with the

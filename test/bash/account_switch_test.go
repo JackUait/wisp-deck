@@ -420,6 +420,53 @@ printf '%%s\n' "$*" >> %q`, rec))
 	assertContains(t, logOut, "--resume sess-abc-123")
 }
 
+// End-to-end regression guard for the "account switch after /new resurrected
+// the closed conversation" bug: the durable stamp still names the old session
+// (sess-old) while claude's LIVE session moved to a fresh one (sess-new). The
+// relaunch must NOT `--resume sess-old` — it respawns a fresh claude instead.
+// This locks the guarantee at the relaunch boundary, so a future refactor that
+// bypasses current_ai_session (or drops its live-awareness) is caught here even
+// if the unit test on current_ai_session is not.
+func TestRelaunchAIPane_does_not_resume_closed_session_after_new(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "claude-account", "work\n")
+	acctDir := filepath.Join(dir, "claude-accounts", "work")
+	writeTempFile(t, acctDir, ".keep", "")
+	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
+		"tool=claude",
+		"claude_cmd=claude",
+		"opencode_cmd=opencode",
+		"settings=/cfg/settings.json",
+		"filter=",
+		"project_dir=/proj",
+		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
+		"pointer=" + filepath.Join(dir, "claude-account"),
+		"list=" + filepath.Join(dir, "claude-accounts.list"),
+		"colors=" + filepath.Join(dir, "claude-account-colors"),
+		"default_label=" + filepath.Join(dir, "claude-account-default-label"),
+		"",
+	}, "\n"))
+	rec := filepath.Join(dir, "tmux.log")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "list-panes" ]; then printf '%%s\n' "%%1 1"; exit 0; fi
+if [ "$1" = "show-environment" ]; then
+  case "$2" in
+    WISP_DECK_CLAUDE_LIVE_SESSION) printf 'WISP_DECK_CLAUDE_LIVE_SESSION=sess-new\n' ;;
+    *) printf 'WISP_DECK_CLAUDE_SESSION=sess-old\n' ;;
+  esac
+  exit 0
+fi
+printf '%%s\n' "$*" >> %q`, rec))
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("relaunch_ai_pane tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "respawn-pane")             // the switch still happens
+	assertNotContains(t, logOut, "--resume sess-old")     // never the closed session
+	assertNotContains(t, logOut, "--resume")              // fresh launch, no resume at all
+}
+
 func TestWriteRelaunchContext_writes_all_keys(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "relaunch")
