@@ -12,10 +12,20 @@ _wrapper_dir_early="$(cd "$(dirname "$0")" && pwd)"
 # branch below).
 _restore_participant=0
 _wd_launch_epoch="$(date +%s)"
-if [ -z "$1" ] && [ -f "$_wrapper_dir_early/lib/session-restore.sh" ]; then
+_wd_launch_seq=""
+if [ -f "$_wrapper_dir_early/lib/session-restore.sh" ]; then
   # shellcheck disable=SC1091  # Dynamic path
   source "$_wrapper_dir_early/lib/session-restore.sh"
-  restore_queue_active "$SHARE_DIR" "$(current_boot_id)" && _restore_participant=1
+  # Taken HERE, before any slow init: launch order = tab order (a restore
+  # chain's tab N+1 only starts after tab N popped its entry, i.e. after tab
+  # N already holds a lower seq). Stamped into the session env below so
+  # snapshots reproduce tab order even for sessions created within the same
+  # second (tmux's created stamp cannot tell those apart).
+  mkdir -p "$SHARE_DIR" 2>/dev/null
+  _wd_launch_seq="$(next_launch_seq "$SHARE_DIR")"
+  if [ -z "$1" ]; then
+    restore_queue_active "$SHARE_DIR" "$(current_boot_id)" && _restore_participant=1
+  fi
 fi
 
 # shellcheck source=/dev/null
@@ -437,7 +447,7 @@ _spare_zdotdir="$(spare_prompt_zdotdir "$SHARE_DIR" "$SESSION_NAME" "$SHELL" "${
 _spare_cmd="$(spare_tabs_launch_cmd "$_spare_label" "$_spare_conf" "$PROJECT_DIR" "$_spare_zdotdir")"
 _spare_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/spare-tabs.sh\" && spare_tabs_close_current \"$_spare_label\"'"
 
-"$TMUX_CMD" new-session -s "$SESSION_NAME" -e "PATH=$PATH" -e "WISP_DECK_MARKER_FILE=$WISP_DECK_MARKER_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=${WISP_DECK_RESUME_SESSION:-}" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$WISP_DECK_RELAUNCH_FILE" -e "WISP_DECK_CLAUDE_ACCOUNT=${WISP_DECK_CLAUDE_ACCOUNT_DIR##*/}" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
+"$TMUX_CMD" new-session -s "$SESSION_NAME" -e "PATH=$PATH" -e "WISP_DECK_MARKER_FILE=$WISP_DECK_MARKER_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=${WISP_DECK_RESUME_SESSION:-}" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$WISP_DECK_RELAUNCH_FILE" -e "WISP_DECK_CLAUDE_ACCOUNT=${WISP_DECK_CLAUDE_ACCOUNT_DIR##*/}" -e "WISP_DECK_SEQ=${_wd_launch_seq}" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
   "$_pane0_cmd" \; \
   set-option status-left " ⬡ ${PROJECT_NAME} " \; \
   set-option status-left-style "fg=white,bg=colour236,bold" \; \

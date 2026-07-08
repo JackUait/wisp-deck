@@ -14,6 +14,7 @@ package bash_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -463,5 +464,215 @@ exit $rc
 	}
 	if tui, err := os.ReadFile(tuiRec); err == nil && strings.Contains(string(tui), "main-menu") {
 		t.Errorf("no storm launch may reach the picker; tui calls:\n%s", tui)
+	}
+}
+
+// TestWrapperRestore_sequential_launches_preserve_queue_order pins the tab
+// ORDER guarantee: the restore chain is sequential (each tab pops the queue
+// head, and Cmd+T appends the next tab at the end of the tab bar), so the
+// projects must come back in exactly the snapshot/queue order. The crash
+// incident's scrambled order came from Ghostty's native resume racing many
+// windows onto the queue — with that disabled, this chain is the only path.
+func TestWrapperRestore_sequential_launches_preserve_queue_order(t *testing.T) {
+	home, confDir, tuiRec := wrapperHomeWithMocks(t)
+	binDir := filepath.Join(home, ".local", "bin")
+	sessRec := filepath.Join(home, "new-session-rec")
+
+	// tmux mock: record each new-session's stamped project path, in order.
+	tmuxMock := "#!/bin/bash\n" +
+		"if [ \"$1\" = \"new-session\" ]; then\n" +
+		"  for a in \"$@\"; do case \"$a\" in WISP_DECK_PATH=*) echo \"${a#WISP_DECK_PATH=}\" >> \"$GT_SESS_REC\" ;; esac; done\n" +
+		"fi\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(binDir, "tmux"), []byte(tmuxMock), 0755); err != nil {
+		t.Fatalf("write tmux mock: %v", err)
+	}
+	for name, body := range map[string]string{
+		"osascript": "#!/bin/bash\nexit 1\n",
+		"open":      "#!/bin/bash\nexit 0\n",
+	} {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(body), 0755); err != nil {
+			t.Fatalf("write mock %s: %v", name, err)
+		}
+	}
+
+	projA := filepath.Join(home, "proj-a")
+	projB := filepath.Join(home, "proj-b")
+	for _, p := range []string{projA, projB} {
+		if err := os.MkdirAll(p, 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(confDir, "restore-queue"),
+		[]byte("12345|"+projA+"|opencode|||\n12345|"+projB+"|opencode|||\n"), 0644); err != nil {
+		t.Fatalf("write queue: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(confDir, "last-restore-boot"),
+		[]byte("12345\n"), 0644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	env := buildEnv(t, nil, "HOME="+home, "GT_TUI_REC="+tuiRec, "GT_SESS_REC="+sessRec)
+	// Two sequential launches — the chain: tab 1, then the tab its Cmd+T opened.
+	for i := 0; i < 2; i++ {
+		_, code := runBashScript(t, "wrapper.sh", nil, env)
+		assertExitCode(t, code, 0)
+	}
+
+	data, err := os.ReadFile(sessRec)
+	if err != nil {
+		t.Fatalf("no sessions recorded: %v", err)
+	}
+	want := projA + "\n" + projB + "\n"
+	if string(data) != want {
+		t.Errorf("restore order:\n got %q\nwant %q", string(data), want)
+	}
+}
+
+// --- launch-order sequence (tab order across snapshots) ---
+
+// tmux's #{session_created} has ONE-SECOND resolution. A restore chain (or
+// any burst of launches) creates several sessions within the same second and
+// the snapshot's tie-break was tmux's alphabetical list order — so restored
+// tabs came back alphabetized, not in their real order, and the damage
+// persisted through every later snapshot/reboot. A strictly-increasing,
+// epoch-seeded launch sequence stamped per session fixes the order; the
+// epoch seed keeps it comparable with the created-time fallback of sessions
+// stamped by pre-fix wrappers.
+
+func TestNextLaunchSeq_strictly_increases_within_a_second(t *testing.T) {
+	dir := t.TempDir()
+	root := projectRoot(t)
+	script := `
+source ` + quote(filepath.Join(root, "lib", "session-restore.sh")) + `
+a="$(next_launch_seq ` + quote(dir) + `)"
+b="$(next_launch_seq ` + quote(dir) + `)"
+c="$(next_launch_seq ` + quote(dir) + `)"
+echo "$a $b $c"
+`
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	parts := strings.Fields(strings.TrimSpace(out))
+	if len(parts) != 3 {
+		t.Fatalf("expected 3 seqs, got %q", out)
+	}
+	prev := int64(0)
+	for _, p := range parts {
+		v, err := strconv.ParseInt(p, 10, 64)
+		if err != nil {
+			t.Fatalf("non-numeric seq %q", p)
+		}
+		if v <= prev {
+			t.Errorf("seq must strictly increase: %v", parts)
+		}
+		prev = v
+	}
+	// Epoch-seeded: comparable with #{session_created} of unstamped sessions.
+	if now := time.Now().Unix(); prev < now-5 || prev > now+60 {
+		t.Errorf("seq %d not epoch-seeded (now %d)", prev, now)
+	}
+}
+
+func TestWriteSessionSnapshot_orders_by_launch_seq_on_created_tie(t *testing.T) {
+	// Two sessions created in the same second, listed alphabetically by tmux
+	// in the OPPOSITE of their launch order. The snapshot must follow the
+	// stamped WISP_DECK_SEQ, not the alphabetical tie-break.
+	dir := t.TempDir()
+	tmuxBody := `
+case "$1" in
+  list-sessions) printf '100 dev-alpha-1\n100 dev-beta-1\n' ;;
+  show-environment)
+    case "$3" in
+      dev-alpha-1)
+        printf 'WISP_DECK=1\nWISP_DECK_BOOT=111\nWISP_DECK_PROJECT=alpha\nWISP_DECK_PATH=/p/alpha\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\nWISP_DECK_SEQ=2002\n' ;;
+      dev-beta-1)
+        printf 'WISP_DECK=1\nWISP_DECK_BOOT=111\nWISP_DECK_PROJECT=beta\nWISP_DECK_PATH=/p/beta\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\nWISP_DECK_SEQ=2001\n' ;;
+    esac ;;
+  display-message) : ;;
+esac
+`
+	binDir := mockCommand(t, dir, "tmux", tmuxBody)
+	env := buildEnv(t, []string{binDir})
+	snap := filepath.Join(dir, "last-session")
+	_, code := runBashFunc(t, "lib/session-restore.sh", "write_session_snapshot",
+		[]string{"tmux", snap}, env)
+	assertExitCode(t, code, 0)
+	data, err := os.ReadFile(snap)
+	if err != nil {
+		t.Fatalf("snapshot not written: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], "/p/beta") || !strings.Contains(lines[1], "/p/alpha") {
+		t.Errorf("snapshot must follow launch seq (beta first), got:\n%s", data)
+	}
+}
+
+func TestWriteSessionSnapshot_unstamped_session_falls_back_to_created(t *testing.T) {
+	// A session stamped by a pre-fix wrapper has no WISP_DECK_SEQ: its
+	// creation time orders it against seq-stamped sessions (the seq is
+	// epoch-seeded precisely so the two scales are comparable).
+	dir := t.TempDir()
+	tmuxBody := `
+case "$1" in
+  list-sessions) printf '3000 dev-old-1\n100 dev-new-1\n' ;;
+  show-environment)
+    case "$3" in
+      dev-old-1)
+        printf 'WISP_DECK=1\nWISP_DECK_BOOT=111\nWISP_DECK_PROJECT=old\nWISP_DECK_PATH=/p/old\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\n' ;;
+      dev-new-1)
+        printf 'WISP_DECK=1\nWISP_DECK_BOOT=111\nWISP_DECK_PROJECT=new\nWISP_DECK_PATH=/p/new\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\nWISP_DECK_SEQ=2000\n' ;;
+    esac ;;
+  display-message) : ;;
+esac
+`
+	binDir := mockCommand(t, dir, "tmux", tmuxBody)
+	env := buildEnv(t, []string{binDir})
+	snap := filepath.Join(dir, "last-session")
+	_, code := runBashFunc(t, "lib/session-restore.sh", "write_session_snapshot",
+		[]string{"tmux", snap}, env)
+	assertExitCode(t, code, 0)
+	data, err := os.ReadFile(snap)
+	if err != nil {
+		t.Fatalf("snapshot not written: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], "/p/new") || !strings.Contains(lines[1], "/p/old") {
+		t.Errorf("seq 2000 must sort before created 3000, got:\n%s", data)
+	}
+}
+
+func TestWrapperInteractive_stamps_launch_seq_into_session(t *testing.T) {
+	// Every session must carry its launch order so snapshots reproduce tab
+	// order even when many tabs are created within one second.
+	home, confDir, _ := wrapperHomeWithMocks(t)
+	binDir := filepath.Join(home, ".local", "bin")
+	sessRec := filepath.Join(home, "new-session-rec")
+	tmuxMock := "#!/bin/bash\n" +
+		"if [ \"$1\" = \"new-session\" ]; then printf '%s\\n' \"$*\" > \"$GT_SESS_REC\"; fi\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(binDir, "tmux"), []byte(tmuxMock), 0755); err != nil {
+		t.Fatalf("write tmux mock: %v", err)
+	}
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(confDir, "restore-queue"),
+		[]byte("12345|"+proj+"|opencode|||\n"), 0644); err != nil {
+		t.Fatalf("write queue: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(confDir, "last-restore-boot"),
+		[]byte("12345\n"), 0644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	env := buildEnv(t, nil, "HOME="+home, "GT_SESS_REC="+sessRec)
+	_, code := runBashScript(t, "wrapper.sh", nil, env)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(sessRec)
+	if err != nil {
+		t.Fatalf("new-session never invoked: %v", err)
+	}
+	if !regexp.MustCompile(`WISP_DECK_SEQ=\d+`).MatchString(string(data)) {
+		t.Errorf("new-session must stamp WISP_DECK_SEQ=<digits>, got:\n%s", data)
 	}
 }

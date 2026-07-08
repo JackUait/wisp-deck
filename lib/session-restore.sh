@@ -56,6 +56,36 @@ restore_log() {
   echo "$(date '+%Y-%m-%dT%H:%M:%S') $*" >> "$config_dir/restore.log" 2>/dev/null || true
 }
 
+# Print a strictly-increasing launch sequence number and persist it. tmux's
+# #{session_created} has ONE-SECOND resolution: a restore chain (or any burst
+# of launches) creates several sessions within the same second, and the
+# snapshot's tie-break was tmux's alphabetical list order — restored tabs came
+# back alphabetized, not in their real order, and the damage persisted through
+# every later snapshot. Each launch takes the next number here and stamps it
+# into the session env (WISP_DECK_SEQ); the snapshot orders by it. Seeded from
+# the epoch so it stays comparable with the #{session_created} fallback of
+# sessions stamped by pre-fix wrappers.
+# Usage: next_launch_seq <config_dir>
+next_launch_seq() {
+  local config_dir="$1" lock i=0 prev next now
+  local f="$config_dir/launch-seq"
+  lock="$f.lock"
+  until mkdir "$lock" 2>/dev/null; do
+    i=$((i + 1))
+    [ "$i" -ge 40 ] && break
+    sleep 0.05
+  done
+  now="$(date +%s)"
+  prev=""
+  [ -f "$f" ] && prev="$(tr -d '[:space:]' < "$f" 2>/dev/null)"
+  case "$prev" in '' | *[!0-9]*) prev=0 ;; esac
+  next=$((prev + 1))
+  [ "$now" -gt "$next" ] && next="$now"
+  echo "$next" > "$f"
+  rmdir "$lock" 2>/dev/null
+  echo "$next"
+}
+
 # Re-derive the live snapshot from alive Wisp Deck tmux sessions.
 # Usage: write_session_snapshot <tmux_cmd> <snapshot_file>
 # A session is "ours" iff its session environment contains WISP_DECK=1.
@@ -99,9 +129,14 @@ write_session_snapshot() {
   # overwrite the snapshot — leaving it frozen is what enables restore.
   sessions="$("$tmux_cmd" list-sessions -F '#{session_created} #{session_name}' 2>/dev/null)" || return 0
   local tmp="${snap_file}.tmp.$$"
-  : > "$tmp"
-  local s env boot proj path tool term sid layout acct
-  # shellcheck disable=SC2034  # _created only orders the list; the name field is what's consumed
+  # Lines are collected keyed by launch order first ("<key> <line>"), then
+  # sorted and stripped. The key is the session's stamped WISP_DECK_SEQ, or
+  # its creation time for sessions stamped by pre-fix wrappers — created has
+  # one-second resolution, and same-second ties used to fall back to tmux's
+  # alphabetical list order, alphabetizing restored tabs (see next_launch_seq).
+  local keyed="$tmp.keyed"
+  : > "$keyed"
+  local s env boot proj path tool term sid layout acct seq
   local _created
   while read -r _created s; do
     [ -n "$s" ] || continue
@@ -127,8 +162,12 @@ write_session_snapshot() {
     # they hold right now. It contains no '|', so it is delimiter-safe. Empty
     # when unavailable (old tmux / race) — restore falls back to the default split.
     layout="$("$tmux_cmd" display-message -p -t "$s:0" '#{window_layout}' 2>/dev/null || true)"
-    echo "${boot}|${proj}|${path}|${tool}|${term}|${sid}|${layout}|${acct}" >> "$tmp"
-  done <<< "$(echo "$sessions" | sort -sn)"
+    seq="$(echo "$env" | sed -n 's/^WISP_DECK_SEQ=//p')"
+    case "$seq" in '' | *[!0-9]*) seq="$_created" ;; esac
+    echo "${seq} ${boot}|${proj}|${path}|${tool}|${term}|${sid}|${layout}|${acct}" >> "$keyed"
+  done <<< "$sessions"
+  sort -sn "$keyed" | cut -d' ' -f2- > "$tmp"
+  rm -f "$keyed"
   mv "$tmp" "$snap_file"
 }
 
