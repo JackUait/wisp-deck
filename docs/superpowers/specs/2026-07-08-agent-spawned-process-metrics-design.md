@@ -1,7 +1,13 @@
 # Agent-Spawned Process CPU/RAM Metrics — Design
 
 Date: 2026-07-08
-Status: approved (autonomous goal session)
+Status: superseded — user chose to fold spawned processes into the overall
+figures instead of a dedicated segment. The overall memory/CPU tree walk
+(`get_tree_footprint_kb` / `get_tree_rss_kb` / `get_tree_cpu_pct`) already
+covers every claude descendant, so the `get_spawned_*` helpers and the extra
+statusline segment below were removed;
+`TestStatusline_wrapper_overall_metrics_include_agent_spawned_processes` pins
+that the overall figures include agent-spawned children.
 
 ## Problem
 

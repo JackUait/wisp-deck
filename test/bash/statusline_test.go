@@ -2432,205 +2432,13 @@ func TestStatusline_wrapper_no_placeholder_for_single_login(t *testing.T) {
 }
 
 // ============================================================
-// Agent-spawned process metrics: descendants of claude only
-// (the processes the agent starts), excluding claude itself and
-// the statusline's own measurement subtree.
+// Overall metrics must cover the processes the agent starts
 // ============================================================
-
-// --- get_spawned_pids ---
-
-func TestStatusline_get_spawned_pids_lists_descendants_excluding_root(t *testing.T) {
-	dir := t.TempDir()
-	// 100 -> [101, 102], 101 -> [103]
-	mockCommand(t, dir, "pgrep", `
-pid="${@: -1}"
-case "$pid" in
-  100) printf '101\n102\n' ;;
-  101) printf '103\n' ;;
-  *) exit 1 ;;
-esac
-`)
-	env := buildEnv(t, []string{filepath.Join(dir, "bin")})
-	out, code := runBashFunc(t, "lib/statusline.sh", "get_spawned_pids", []string{"100"}, env)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "101\n102\n103" {
-		t.Errorf("expected descendants 101/102/103 without root, got %q", strings.TrimSpace(out))
-	}
-}
-
-func TestStatusline_get_spawned_pids_prunes_skip_pid_subtree(t *testing.T) {
-	dir := t.TempDir()
-	// 100 -> [101, 102], 101 -> [103]; skipping 101 must also drop 103.
-	mockCommand(t, dir, "pgrep", `
-pid="${@: -1}"
-case "$pid" in
-  100) printf '101\n102\n' ;;
-  101) printf '103\n' ;;
-  *) exit 1 ;;
-esac
-`)
-	env := buildEnv(t, []string{filepath.Join(dir, "bin")})
-	out, code := runBashFunc(t, "lib/statusline.sh", "get_spawned_pids", []string{"100", "101"}, env)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "102" {
-		t.Errorf("expected only 102 (skip subtree pruned), got %q", strings.TrimSpace(out))
-	}
-}
-
-func TestStatusline_get_spawned_pids_empty_when_agent_spawned_nothing(t *testing.T) {
-	dir := t.TempDir()
-	mockCommand(t, dir, "pgrep", `exit 1`)
-	env := buildEnv(t, []string{filepath.Join(dir, "bin")})
-	out, code := runBashFunc(t, "lib/statusline.sh", "get_spawned_pids", []string{"100"}, env)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "" {
-		t.Errorf("expected no output for a childless root, got %q", strings.TrimSpace(out))
-	}
-}
-
-// --- get_spawned_rss_kb ---
-
-func TestStatusline_get_spawned_rss_kb_sums_descendants_only(t *testing.T) {
-	dir := t.TempDir()
-	mockCommand(t, dir, "pgrep", `
-pid="${@: -1}"
-case "$pid" in
-  100) printf '101\n102\n' ;;
-  101) printf '103\n' ;;
-  *) exit 1 ;;
-esac
-`)
-	mockCommand(t, dir, "ps", `
-pid="${@: -1}"
-case "$pid" in
-  100) echo "  51200" ;;
-  101) echo "  25600" ;;
-  102) echo "  10240" ;;
-  103) echo "  5120" ;;
-  *) echo "" ;;
-esac
-`)
-	env := buildEnv(t, []string{filepath.Join(dir, "bin")})
-	out, code := runBashFunc(t, "lib/statusline.sh", "get_spawned_rss_kb", []string{"100"}, env)
-	assertExitCode(t, code, 0)
-	// 25600 + 10240 + 5120 = 40960 — root's 51200 excluded
-	if strings.TrimSpace(out) != "40960" {
-		t.Errorf("expected 40960 (root excluded), got %q", strings.TrimSpace(out))
-	}
-}
-
-func TestStatusline_get_spawned_rss_kb_prunes_skip_pid_subtree(t *testing.T) {
-	dir := t.TempDir()
-	mockCommand(t, dir, "pgrep", `
-pid="${@: -1}"
-case "$pid" in
-  100) printf '101\n102\n' ;;
-  101) printf '103\n' ;;
-  *) exit 1 ;;
-esac
-`)
-	mockCommand(t, dir, "ps", `
-pid="${@: -1}"
-case "$pid" in
-  102) echo "  10240" ;;
-  *) echo "  99999" ;;
-esac
-`)
-	env := buildEnv(t, []string{filepath.Join(dir, "bin")})
-	out, code := runBashFunc(t, "lib/statusline.sh", "get_spawned_rss_kb", []string{"100", "101"}, env)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "10240" {
-		t.Errorf("expected 10240 (only 102 counted), got %q", strings.TrimSpace(out))
-	}
-}
-
-// --- get_spawned_footprint_kb ---
-
-func TestStatusline_get_spawned_footprint_kb_passes_only_descendant_pids(t *testing.T) {
-	dir := t.TempDir()
-	// 100 -> [101,102], 101 -> [103] => descendants are {101,102,103}
-	mockCommand(t, dir, "pgrep", `
-pid="${@: -1}"
-case "$pid" in
-  100) printf '101\n102\n' ;;
-  101) printf '103\n' ;;
-  *) exit 1 ;;
-esac
-`)
-	// One 10 MB line per pid argument: the total proves exactly 3 pids (no root).
-	mockCommand(t, dir, "footprint", `for _ in "$@"; do printf '    phys_footprint: 10 MB\n'; done`)
-	env := buildEnv(t, []string{filepath.Join(dir, "bin")})
-	out, code := runBashFunc(t, "lib/statusline.sh", "get_spawned_footprint_kb", []string{"100"}, env)
-	assertExitCode(t, code, 0)
-	// 3 pids * 10 MB = 30 MB = 30720 KB (root would make it 40960)
-	if strings.TrimSpace(out) != "30720" {
-		t.Errorf("expected 30720 (3 descendant pids x 10MB), got %q", strings.TrimSpace(out))
-	}
-}
-
-func TestStatusline_get_spawned_footprint_kb_empty_when_agent_spawned_nothing(t *testing.T) {
-	dir := t.TempDir()
-	mockCommand(t, dir, "pgrep", `exit 1`)
-	mockCommand(t, dir, "footprint", `printf '    phys_footprint: 10 MB\n'`)
-	env := buildEnv(t, []string{filepath.Join(dir, "bin")})
-	out, code := runBashFunc(t, "lib/statusline.sh", "get_spawned_footprint_kb", []string{"100"}, env)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "" {
-		t.Errorf("expected empty output when there are no descendants, got %q", strings.TrimSpace(out))
-	}
-}
-
-// --- get_spawned_cpu_pct ---
-
-func TestStatusline_get_spawned_cpu_pct_sums_descendants_only(t *testing.T) {
-	dir := t.TempDir()
-	mockCommand(t, dir, "pgrep", `
-pid="${@: -1}"
-case "$pid" in
-  100) printf '101\n102\n' ;;
-  *) exit 1 ;;
-esac
-`)
-	mockCommand(t, dir, "ps", `
-pid="${@: -1}"
-case "$pid" in
-  100) echo " 90.0" ;;
-  101) echo " 5.2" ;;
-  102) echo " 10.1" ;;
-  *) echo "" ;;
-esac
-`)
-	env := buildEnv(t, []string{filepath.Join(dir, "bin")})
-	out, code := runBashFunc(t, "lib/statusline.sh", "get_spawned_cpu_pct", []string{"100"}, env)
-	assertExitCode(t, code, 0)
-	// 5.2 + 10.1 = 15.3 -> 15; root's 90 excluded
-	if strings.TrimSpace(out) != "15" {
-		t.Errorf("expected 15 (root excluded), got %q", strings.TrimSpace(out))
-	}
-}
-
-func TestStatusline_get_spawned_cpu_pct_empty_when_agent_spawned_nothing(t *testing.T) {
-	dir := t.TempDir()
-	mockCommand(t, dir, "pgrep", `exit 1`)
-	mockCommand(t, dir, "ps", `echo " 90.0"`)
-	env := buildEnv(t, []string{filepath.Join(dir, "bin")})
-	out, code := runBashFunc(t, "lib/statusline.sh", "get_spawned_cpu_pct", []string{"100"}, env)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "" {
-		t.Errorf("expected empty output when there are no descendants, got %q", strings.TrimSpace(out))
-	}
-}
-
-// --- statusline-wrapper.sh: agent-spawned processes segment ---
-
-// Glyph the wrapper prefixes onto the spawned-processes segment. Kept in sync
-// with statusline-wrapper.sh.
-const spawnedIcon = "" // nf-fa-sitemap — spawned process tree
 
 // setupWrapperSpawnedTest builds a hermetic env where the claude ancestor has
 // two spawned children (201, 202). footprint emits 10 MB per pid argument, so
-// the session tree (root+201+202) reads 30M and the spawned subset 20M. CPU:
-// root 27%, children 5% + 10% => session 42%, spawned 15%.
+// the whole session tree (root+201+202) reads 30M. CPU: root 27%, children
+// 5% + 10% => 42%.
 func setupWrapperSpawnedTest(t *testing.T) []string {
 	t.Helper()
 	dir := t.TempDir()
@@ -2672,7 +2480,10 @@ esac
 	return buildEnv(t, []string{filepath.Join(dir, "bin")}, "HOME="+fakeHome)
 }
 
-func TestStatusline_wrapper_shows_spawned_segment_when_agent_has_children(t *testing.T) {
+// The agent-spawned processes are counted INSIDE the overall memory/CPU
+// figures (the tree walk covers every descendant) — they get no segment of
+// their own.
+func TestStatusline_wrapper_overall_metrics_include_agent_spawned_processes(t *testing.T) {
 	env := setupWrapperSpawnedTest(t)
 
 	root := projectRoot(t)
@@ -2682,24 +2493,9 @@ func TestStatusline_wrapper_shows_spawned_segment_when_agent_has_children(t *tes
 
 	out, code := runBashSnippet(t, script, env)
 	assertExitCode(t, code, 0)
-	// Session-tree segments stay intact...
+	// Overall figures cover claude + its two spawned children: 3 x 10MB, 27+5+10.
 	assertContains(t, out, memIcon+" 30M")
 	assertContains(t, out, cpuIcon+" 42%")
-	// ...and the spawned subset renders its own segment: 2 pids x 10MB, 5%+10%.
-	assertContains(t, out, spawnedIcon+" 20M 15%")
-}
-
-func TestStatusline_wrapper_hides_spawned_segment_when_agent_spawned_nothing(t *testing.T) {
-	// setupWrapperMemTest's pgrep reports no children at all.
-	env := setupWrapperMemTest(t, "/Users/test/.local/bin/claude", "50")
-
-	root := projectRoot(t)
-	wrapperPath := filepath.Join(root, "templates", "statusline-wrapper.sh")
-	stdinData := `{"workspace":{"current_dir":"/tmp"}}`
-	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, wrapperPath)
-
-	out, code := runBashSnippet(t, script, env)
-	assertExitCode(t, code, 0)
-	assertContains(t, out, "50M") // session segment still there
-	assertNotContains(t, out, spawnedIcon)
+	// No dedicated spawned-processes segment (nf-fa-sitemap glyph).
+	assertNotContains(t, out, "")
 }
