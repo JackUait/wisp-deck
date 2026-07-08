@@ -105,6 +105,7 @@ esac
 pid=$PPID
 mem_label=""
 cpu_label=""
+spawned_label=""
 while [ -n "$pid" ] && [ "$pid" != "1" ]; do
   comm=$(ps -o comm= -p "$pid" 2>/dev/null)
   # Recognize the Claude Code process even when comm is the resolved versioned
@@ -148,6 +149,29 @@ while [ -n "$pid" ] && [ "$pid" != "1" ]; do
     if [ -n "$cpu_pct" ]; then
       cpu_label="${cpu_pct}%"
     fi
+    # Memory + CPU of just the processes the agent itself started (claude's
+    # descendants, minus claude and minus this statusline's own subtree — $$
+    # prunes the measurement pipeline so an idle agent reads as spawning
+    # nothing). Rendered as one segment; absent entirely when the agent has no
+    # live spawned processes.
+    if type get_spawned_pids &>/dev/null \
+       && [ -n "$(get_spawned_pids "$pid" "$$")" ]; then
+      spawned_kb=$(get_spawned_footprint_kb "$pid" "$$")
+      [ -z "$spawned_kb" ] && spawned_kb=$(get_spawned_rss_kb "$pid" "$$")
+      if [ -n "$spawned_kb" ] && [ "$spawned_kb" -gt 0 ] 2>/dev/null; then
+        spawned_mb=$((spawned_kb / 1024))
+        if [ "$spawned_mb" -ge 1024 ]; then
+          spawned_gb=$(echo "scale=1; $spawned_mb / 1024" | bc)
+          spawned_label="${spawned_gb}G"
+        else
+          spawned_label="${spawned_mb}M"
+        fi
+      fi
+      spawned_cpu=$(get_spawned_cpu_pct "$pid" "$$")
+      if [ -n "$spawned_cpu" ]; then
+        spawned_label="${spawned_label:+$spawned_label }${spawned_cpu}%"
+      fi
+    fi
     break
   fi
   pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
@@ -163,6 +187,9 @@ if [ -n "$mem_label" ]; then
 fi
 if [ -n "$cpu_label" ]; then
   line="$line$(printf ' | \033[01;33m %s\033[00m' "$cpu_label")"
+fi
+if [ -n "$spawned_label" ]; then
+  line="$line$(printf ' | \033[01;36m\xef\x83\xa8 %s\033[00m' "$spawned_label")"
 fi
 if [ -n "$model_name" ]; then
   line="$line$(printf ' | \033[01;34m%s\033[00m' "$model_name")"

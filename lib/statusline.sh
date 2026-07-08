@@ -115,6 +115,96 @@ get_tree_cpu_pct() {
   '
 }
 
+# List the pids of the processes the agent itself started: every descendant of
+# root_pid, EXCLUDING root_pid (the agent's own runtime is not "spawned" work).
+# An optional skip_pid prunes that pid AND its whole subtree — the statusline
+# passes its own $$ here so the measurement pipeline (statusline-command.sh,
+# ccstatusline, ps/pgrep) never pollutes the reading. One pid per line; echoes
+# nothing when the agent has spawned nothing, so callers can hide the segment.
+# Usage: get_spawned_pids 12345 [67890]  =>  "12401\n12455"
+get_spawned_pids() {
+  local root_pid="$1" skip_pid="${2:-}"
+  local queue=("$root_pid")
+
+  while [ ${#queue[@]} -gt 0 ]; do
+    local pid="${queue[0]}"
+    queue=("${queue[@]:1}")
+    [ "$pid" != "$root_pid" ] && echo "$pid"
+
+    local children
+    children=$(pgrep -P "$pid" 2>/dev/null) || true
+    if [ -n "$children" ]; then
+      while IFS= read -r child; do
+        [ "$child" = "$skip_pid" ] && continue
+        queue+=("$child")
+      done <<< "$children"
+    fi
+  done
+}
+
+# Summed RSS in KB of the agent-spawned processes (see get_spawned_pids).
+# Usage: get_spawned_rss_kb 12345 [67890]  =>  "40960"
+get_spawned_rss_kb() {
+  local total=0 pid rss
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    rss=$(ps -o rss= -p "$pid" 2>/dev/null | tr -d ' ')
+    if [ -n "$rss" ] && [ "$rss" -gt 0 ] 2>/dev/null; then
+      total=$((total + rss))
+    fi
+  done < <(get_spawned_pids "$1" "${2:-}")
+  echo "$total"
+}
+
+# Summed phys_footprint in KB of the agent-spawned processes, via macOS
+# `footprint` (same parse as get_tree_footprint_kb — see there for why
+# phys_footprint beats RSS and why the parse is locale-pinned). Echoes nothing
+# when the agent has spawned nothing, or when `footprint` is unavailable or
+# yields no data, so callers can fall back to get_spawned_rss_kb.
+# Usage: get_spawned_footprint_kb 12345 [67890]  =>  "30720"
+get_spawned_footprint_kb() {
+  command -v footprint >/dev/null 2>&1 || return 0
+
+  local pids=() pid
+  while IFS= read -r pid; do
+    [ -n "$pid" ] && pids+=("$pid")
+  done < <(get_spawned_pids "$1" "${2:-}")
+  [ ${#pids[@]} -eq 0 ] && return 0
+
+  footprint "${pids[@]}" 2>/dev/null | LC_ALL=C awk '
+    /^[[:space:]]*phys_footprint:/ {
+      val = $2; unit = $3; mult = 1
+      gsub(/,/, ".", val)
+      if (unit == "B")  mult = 1 / 1024
+      else if (unit == "KB") mult = 1
+      else if (unit == "MB") mult = 1024
+      else if (unit == "GB") mult = 1024 * 1024
+      total += val * mult
+    }
+    END { if (total > 0) printf "%d\n", total }
+  '
+}
+
+# Summed `ps -o %cpu` (rounded to an integer) of the agent-spawned processes —
+# the spawned-subset analog of get_tree_cpu_pct (see there for the sampling and
+# locale caveats). Echoes nothing when no spawned pid yields a reading, so the
+# caller omits the segment rather than showing a stale value.
+# Usage: get_spawned_cpu_pct 12345 [67890]  =>  "15"
+get_spawned_cpu_pct() {
+  local cpus=() pid cpu
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    cpu=$(ps -o %cpu= -p "$pid" 2>/dev/null | tr -d ' ')
+    [ -n "$cpu" ] && cpus+=("$cpu")
+  done < <(get_spawned_pids "$1" "${2:-}")
+  [ ${#cpus[@]} -eq 0 ] && return 0
+
+  printf '%s\n' "${cpus[@]}" | LC_ALL=C awk '
+    { gsub(/,/, "."); total += $0 }
+    END { printf "%d\n", total + 0.5 }
+  '
+}
+
 # Stamp the current Claude conversation id into the enclosing tmux session's
 # environment (WISP_DECK_CLAUDE_SESSION). The statusline runs as a child of
 # claude inside the tmux pane, so this is the only reliable place where "this
