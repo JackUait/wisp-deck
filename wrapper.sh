@@ -11,6 +11,7 @@ _wrapper_dir_early="$(cd "$(dirname "$0")" && pwd)"
 # surplus and closes instead of showing the picker (see the interactive
 # branch below).
 _restore_participant=0
+_wd_launch_epoch="$(date +%s)"
 if [ -z "$1" ] && [ -f "$_wrapper_dir_early/lib/session-restore.sh" ]; then
   # shellcheck disable=SC1091  # Dynamic path
   source "$_wrapper_dir_early/lib/session-restore.sh"
@@ -157,7 +158,7 @@ else
   # is a surplus tab of the crash-resume storm — close it quietly instead of
   # littering the window with picker tabs. The queue builder is exempt: it is
   # the user's own window and keeps the picker fallback.
-  if restore_surplus_launch "$SHARE_DIR" "$_restore_participant" "${WISP_DECK_RESTORE_BUILDER:-0}"; then
+  if restore_surplus_launch "$SHARE_DIR" "$_restore_participant" "${WISP_DECK_RESTORE_BUILDER:-0}" "$_wd_launch_epoch"; then
     restore_log "$SHARE_DIR" "surplus restore launch closed (participant=$_restore_participant)"
     type stop_loading_screen &>/dev/null && stop_loading_screen
     exit 0

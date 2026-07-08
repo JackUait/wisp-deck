@@ -60,6 +60,21 @@ terminal_setup_config() {
     echo "$wrapper_line" >> "$config_path"
     success "Appended wrapper command to config"
   fi
+  terminal_disable_window_save_state "$config_path"
+}
+
+# Disable Ghostty's native window restoration in the managed config. Its
+# default saves window state when macOS resume triggers — i.e. exactly after a
+# crash — and every restored window re-runs the wrapper, colliding with
+# wisp-deck's own restore queue (the post-crash duplicated-tabs storm: more
+# wrapper launches than queue entries). The queue must be the single restore
+# mechanism. Appends only when NO window-save-state line exists — a value the
+# user set themselves is never overridden (the wrapper's surplus-launch guard
+# still contains the storm in that case).
+terminal_disable_window_save_state() {
+  local config_path="$1"
+  [ -f "$config_path" ] && grep -q '^window-save-state[[:space:]]*=' "$config_path" && return 0
+  echo "window-save-state = never" >> "$config_path"
 }
 
 # Pattern matching a command line WISP-DECK manages, in ANY historical form:

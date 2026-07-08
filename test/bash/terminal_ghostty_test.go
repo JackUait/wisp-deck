@@ -611,3 +611,64 @@ terminal_install </dev/null || true
 	calls, _ := os.ReadFile(openCalls)
 	assertContains(t, string(calls), "ghostty.org")
 }
+
+// After a macOS crash, Ghostty's default window-save-state restores every
+// saved window via macOS resume — each re-runs the wrapper, colliding with
+// wisp-deck's own restore queue (the duplicated-tabs storm). The managed
+// config must disable Ghostty's native restore so the queue is the single
+// restore mechanism; a user's own explicit window-save-state choice wins.
+func TestGhosttyAdapter_setup_config_disables_window_save_state(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config")
+	wrapperPath := filepath.Join(tmpDir, "wrapper.sh")
+
+	snippet := ghosttyAdapterSnippet(t,
+		fmt.Sprintf(`terminal_setup_config %q %q`, configFile, wrapperPath))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	assertContains(t, string(data), "window-save-state = never")
+}
+
+func TestGhosttyAdapter_setup_config_appends_save_state_to_existing(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := writeTempFile(t, tmpDir, "config", "font-size = 14\ncommand = /old/path\n")
+	wrapperPath := filepath.Join(tmpDir, "wrapper.sh")
+
+	snippet := ghosttyAdapterSnippet(t,
+		fmt.Sprintf(`terminal_setup_config %q %q`, configFile, wrapperPath))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	content := string(data)
+	assertContains(t, content, "window-save-state = never")
+	assertContains(t, content, "font-size = 14")
+}
+
+func TestGhosttyAdapter_setup_config_keeps_users_own_save_state(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := writeTempFile(t, tmpDir, "config",
+		"window-save-state = always\ncommand = /old/path\n")
+	wrapperPath := filepath.Join(tmpDir, "wrapper.sh")
+
+	snippet := ghosttyAdapterSnippet(t,
+		fmt.Sprintf(`terminal_setup_config %q %q`, configFile, wrapperPath))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	content := string(data)
+	assertContains(t, content, "window-save-state = always")
+	assertNotContains(t, content, "window-save-state = never")
+}

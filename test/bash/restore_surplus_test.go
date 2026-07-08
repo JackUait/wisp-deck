@@ -344,3 +344,28 @@ eval "$cmd"
 	}
 	assertContains(t, string(data), "CFG=[UNSET]")
 }
+
+func TestRestoreSurplusLaunch_started_before_drain_is_surplus_even_when_slow(t *testing.T) {
+	// A storm tab whose init stalls (e.g. a slow update check) can pop empty
+	// long after the 15s post-drain window. Its launch time is the precise
+	// signal: it STARTED while the restore was still draining, so it belongs
+	// to the storm and must close.
+	dir := t.TempDir()
+	writeDrainMarker(t, dir, time.Minute)
+	launchEpoch := strconv.FormatInt(time.Now().Add(-2*time.Minute).Unix(), 10)
+	_, code := runBashFunc(t, "lib/session-restore.sh", "restore_surplus_launch",
+		[]string{dir, "0", "0", launchEpoch}, nil)
+	assertExitCode(t, code, 0)
+}
+
+func TestRestoreSurplusLaunch_started_after_drain_is_not_surplus(t *testing.T) {
+	// A window the user opens after the restore finished must keep the picker.
+	dir := t.TempDir()
+	writeDrainMarker(t, dir, time.Minute)
+	launchEpoch := strconv.FormatInt(time.Now().Add(-30*time.Second).Unix(), 10)
+	_, code := runBashFunc(t, "lib/session-restore.sh", "restore_surplus_launch",
+		[]string{dir, "0", "0", launchEpoch}, nil)
+	if code == 0 {
+		t.Error("a launch begun after the drain must not be treated as surplus")
+	}
+}

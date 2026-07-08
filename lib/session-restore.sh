@@ -373,19 +373,27 @@ restore_queue_active() {
 # also spawns one tab per queue entry; launches beyond the queue length used
 # to fall through to the picker ("several wisp-deck tabs on the main page").
 # Surplus iff NOT the queue builder (the user's own window keeps its picker
-# fallback) AND either the launch saw an active current-boot queue at start
-# (participant=1) or the queue drained within the last 15 seconds. 15s covers
-# the Cmd+T-to-pop latency of the last chained tabs; a launch the user opens
-# later never trips it.
-# Usage: restore_surplus_launch <config_dir> <participant> <builder>
+# fallback) AND any of:
+#   - the launch saw an active current-boot queue at start (participant=1);
+#   - the launch STARTED before the drain finished (launch_epoch <= drained
+#     stamp) — the precise storm signal, immune to a slow init (an update
+#     check stalling past any post-drain window);
+#   - the queue drained within the last 15 seconds — covers a chained Cmd+T
+#     tab spawned just before the drain whose process started just after.
+# A launch the user opens after the restore completed matches none of these.
+# Usage: restore_surplus_launch <config_dir> <participant> <builder> [launch_epoch]
 restore_surplus_launch() {
-  local config_dir="$1" participant="${2:-0}" builder="${3:-0}"
+  local config_dir="$1" participant="${2:-0}" builder="${3:-0}" launch_epoch="${4:-}"
   [ "$builder" = "1" ] && return 1
   [ "$participant" = "1" ] && return 0
   local marker="$config_dir/restore-drained-at" drained now
   [ -f "$marker" ] || return 1
   drained="$(tr -d '[:space:]' < "$marker" 2>/dev/null)"
   case "$drained" in '' | *[!0-9]*) return 1 ;; esac
+  case "$launch_epoch" in
+    '' | *[!0-9]*) ;;
+    *) [ "$launch_epoch" -le "$drained" ] && return 0 ;;
+  esac
   now="$(date +%s)"
   [ $((now - drained)) -le 15 ]
 }
