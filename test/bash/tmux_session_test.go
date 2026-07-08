@@ -88,10 +88,10 @@ func TestBuildAiLaunchCmd_resume_flags(t *testing.T) {
 	// Claude resumes via a guarded chain: `-c` first, plain `claude` as the
 	// startup-failure fallback (project with no conversations yet).
 	got := aiCmd(t, "claude", true)
-	if !strings.Contains(got, "claude -c;") {
+	if !strings.Contains(got, "env -u CLAUDE_CONFIG_DIR claude -c;") {
 		t.Errorf("resume claude: %q must launch `claude -c` first", got)
 	}
-	if !strings.Contains(got, "then _wd_t0=$(date +%s); claude; _wd_rc=$?; fi") {
+	if !strings.Contains(got, "then _wd_t0=$(date +%s); env -u CLAUDE_CONFIG_DIR claude; _wd_rc=$?; fi") {
 		t.Errorf("resume claude: %q must fall back to plain claude", got)
 	}
 	if got := aiCmd(t, "opencode", true); got != "npx opencode-ai@latest --continue" {
@@ -108,15 +108,15 @@ func TestBuildAiLaunchCmd_resumes_specific_claude_session(t *testing.T) {
 		[]string{"claude", "claude", "npx opencode-ai@latest", "/p/app"}, env)
 	assertExitCode(t, code, 0)
 	got := strings.TrimSpace(out)
-	if !strings.Contains(got, "claude --resume sid-42;") {
+	if !strings.Contains(got, "env -u CLAUDE_CONFIG_DIR claude --resume sid-42;") {
 		t.Errorf("%q must launch `claude --resume sid-42` first", got)
 	}
 	// Guarded fallbacks: -c if the specific resume fails at startup, then
 	// plain claude if -c fails too.
-	if !strings.Contains(got, "then _wd_t0=$(date +%s); claude -c; _wd_rc=$?; fi") {
+	if !strings.Contains(got, "then _wd_t0=$(date +%s); env -u CLAUDE_CONFIG_DIR claude -c; _wd_rc=$?; fi") {
 		t.Errorf("%q must fall back to `claude -c`", got)
 	}
-	if !strings.Contains(got, "then _wd_t0=$(date +%s); claude; _wd_rc=$?; fi") {
+	if !strings.Contains(got, "then _wd_t0=$(date +%s); env -u CLAUDE_CONFIG_DIR claude; _wd_rc=$?; fi") {
 		t.Errorf("%q must fall back to plain claude last", got)
 	}
 
@@ -146,7 +146,7 @@ func TestBuildAiLaunchCmd_wraps_claude_with_filter(t *testing.T) {
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
 		[]string{"claude", "claude", "npx opencode-ai@latest", "/p/app"}, env)
 	assertExitCode(t, code, 0)
-	if got := strings.TrimSpace(out); got != `wisp-deck-tui screenshot-filter -- claude /p/app` {
+	if got := strings.TrimSpace(out); got != `env -u CLAUDE_CONFIG_DIR wisp-deck-tui screenshot-filter -- claude /p/app` {
 		t.Errorf("claude wrap: got %q", got)
 	}
 	out, _ = runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
@@ -164,8 +164,8 @@ func TestBuildAiLaunchCmd_wraps_claude_resume_with_filter(t *testing.T) {
 	assertExitCode(t, code, 0)
 	got := strings.TrimSpace(out)
 	// Every step of the fallback chain must be wrapped with the filter.
-	if !strings.Contains(got, `wisp-deck-tui screenshot-filter -- claude -c;`) ||
-		!strings.Contains(got, `then _wd_t0=$(date +%s); wisp-deck-tui screenshot-filter -- claude; _wd_rc=$?; fi`) {
+	if !strings.Contains(got, `env -u CLAUDE_CONFIG_DIR wisp-deck-tui screenshot-filter -- claude -c;`) ||
+		!strings.Contains(got, `then _wd_t0=$(date +%s); env -u CLAUDE_CONFIG_DIR wisp-deck-tui screenshot-filter -- claude; _wd_rc=$?; fi`) {
 		t.Errorf("claude resume wrap: got %q", got)
 	}
 }

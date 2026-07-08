@@ -254,7 +254,10 @@ printf '%%s\n' "$*" >> %q`, rec))
 	assertExitCode(t, code, 0)
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
 	assertContains(t, logOut, "respawn-pane")
-	assertNotContains(t, logOut, "CLAUDE_CONFIG_DIR")
+	// Default sheds any inherited config dir explicitly (env -u) but must not
+	// ASSIGN one.
+	assertNotContains(t, logOut, "CLAUDE_CONFIG_DIR=")
+	assertContains(t, logOut, "env -u CLAUDE_CONFIG_DIR")
 }
 
 func TestRelaunchAIPane_explicit_named_choice_overrides_pointer(t *testing.T) {

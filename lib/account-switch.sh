@@ -351,8 +351,15 @@ build_switch_launch_cmd() {
   fi
   # Fresh launch: no resume. claude takes no positional dir (its cwd is set by
   # respawn-pane's -c); opencode does, so only it gets project_dir as the extra.
+  # WISP_DECK_RESUME/WISP_DECK_RESUME_SESSION are explicitly blanked: every
+  # pane of a restored tab inherits the wrapper's launch-time exports, and
+  # build_ai_launch_cmd reads them from the environment — without the override
+  # a "fresh" switch would resume a stale conversation that was never this
+  # pane's.
   local extra=""
   [ "$tool" = "opencode" ] && extra="$project_dir"
+  WISP_DECK_RESUME='' \
+  WISP_DECK_RESUME_SESSION='' \
   WISP_DECK_CLAUDE_ACCOUNT_DIR="$new_account_dir" \
   WISP_DECK_CLAUDE_SETTINGS="$settings" \
   WISP_DECK_CLAUDE_FILTER="$filter" \

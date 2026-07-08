@@ -33,6 +33,13 @@ build_ai_launch_cmd() {
   local claude_account=""
   if [ -n "${WISP_DECK_CLAUDE_ACCOUNT_DIR:-}" ]; then
     claude_account="CLAUDE_CONFIG_DIR=\"${WISP_DECK_CLAUDE_ACCOUNT_DIR}\" "
+  else
+    # Default must MEAN the Keychain login: actively shed any CLAUDE_CONFIG_DIR
+    # the launching environment carries (a tmux server started from a shell
+    # inside another claude session inherits one), or "Default" would silently
+    # run that managed login. `env` also accepts the VAR=... assignments the
+    # proxy branch below may append.
+    claude_account="env -u CLAUDE_CONFIG_DIR "
   fi
 
   # Claude-only: when the account-rotation proxy is active, wrapper.sh exports the
