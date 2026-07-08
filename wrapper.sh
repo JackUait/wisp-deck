@@ -155,7 +155,13 @@ else
     SELECTED_AI_TOOL="$_q_tool"
     # This tab's own conversation id (may be empty on old snapshots);
     # build_ai_launch_cmd resumes it specifically instead of `claude -c`.
-    export WISP_DECK_RESUME_SESSION="$_q_sid"
+    # Deliberately NOT exported (same for the launch vars below): the tmux
+    # server inherits the env of whichever wrapper starts it first, and every
+    # pane of every later session inherits the server's env — an exported
+    # per-tab resume sid leaked ONE tab's conversation into ALL tabs, priming
+    # the account-switch stale-resume bug. build_ai_launch_cmd runs in this
+    # shell and sees plain variables just fine.
+    WISP_DECK_RESUME_SESSION="$_q_sid"
     # This tab's exact pane geometry at close time (may be empty on old
     # snapshots); replayed with select-layout after the panes are built so the
     # window reopens at the positions the user left it in.
@@ -309,7 +315,8 @@ cleanup() {
 trap cleanup EXIT HUP TERM INT
 
 if [ "$RESTORE_MODE" -eq 1 ]; then
-  export WISP_DECK_RESUME=1
+  # shellcheck disable=SC2034  # read by build_ai_launch_cmd, sourced into this shell
+  WISP_DECK_RESUME=1
 fi
 
 # Resolve active Claude config (settings file) and export for build_ai_launch_cmd.
@@ -318,7 +325,6 @@ WISP_DECK_CLAUDE_SETTINGS=""
 if [ "$SELECTED_AI_TOOL" = "claude" ]; then
   WISP_DECK_CLAUDE_SETTINGS="$(resolve_claude_config_path "$_gt_cfg_root/claude-configs" "$_gt_cfg_root/claude-config")"
 fi
-export WISP_DECK_CLAUDE_SETTINGS
 
 # Resolve the active native Claude account (its isolated CLAUDE_CONFIG_DIR) and
 # export for build_ai_launch_cmd. Default (empty) leaves CLAUDE_CONFIG_DIR unset
@@ -353,7 +359,6 @@ fi
 # (see auto_switch_maybe_trigger in lib/auto-switch.sh and auto_switch_relaunch
 # in lib/account-switch.sh). Nothing to start here — the trigger reads the
 # relaunch-context file written below.
-export WISP_DECK_CLAUDE_ACCOUNT_DIR
 
 # Resolve the active subscription/plan display name for the compact-view ledger.
 # Subscriptions are shared across agents, so this is resolved for every tool.
@@ -372,7 +377,6 @@ if [ "$SELECTED_AI_TOOL" = "claude" ]; then
   # install/update pays the ~40ms probe. See gt_claude_filter_prefix.
   WISP_DECK_CLAUDE_FILTER="$(gt_claude_filter_prefix "$SHARE_DIR")"
 fi
-export WISP_DECK_CLAUDE_FILTER
 
 # Build the AI tool launch command
 case "$SELECTED_AI_TOOL" in

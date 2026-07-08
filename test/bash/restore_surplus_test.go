@@ -745,3 +745,55 @@ func TestNextLaunchSeq_recovers_from_stale_lock(t *testing.T) {
 		t.Errorf("stale lock must be swept immediately, not waited out (took %v)", time.Since(start))
 	}
 }
+
+func TestWrapper_launch_vars_do_not_leak_into_tmux_server_env(t *testing.T) {
+	// The tmux SERVER inherits the environment of whichever wrapper starts it
+	// first, and every pane of every later session inherits the server's env.
+	// Exporting per-tab launch state (this tab's resume sid, account dir,
+	// settings, filter) therefore leaks ONE tab's state into ALL tabs — the
+	// observed incident: a wisp-deck pane carrying another project's
+	// WISP_DECK_RESUME_SESSION, which primed the account-switch resume bug.
+	// These vars are consumed inside the wrapper shell only and must not be
+	// exported to children.
+	home, confDir, _ := wrapperHomeWithMocks(t)
+	binDir := filepath.Join(home, ".local", "bin")
+	envRec := filepath.Join(home, "tmux-env-rec")
+	tmuxMock := "#!/bin/bash\n" +
+		"if [ \"$1\" = \"new-session\" ]; then env > \"$GT_ENV_REC\"; fi\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(binDir, "tmux"), []byte(tmuxMock), 0755); err != nil {
+		t.Fatalf("write tmux mock: %v", err)
+	}
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// A claude restore entry with a resume sid — the case whose leak was
+	// observed live.
+	writeTranscript(t, home, proj, "sid-42", time.Hour)
+	if err := os.WriteFile(filepath.Join(confDir, "restore-queue"),
+		[]byte("12345|"+proj+"|claude|sid-42||\n"), 0644); err != nil {
+		t.Fatalf("write queue: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(confDir, "last-restore-boot"),
+		[]byte("12345\n"), 0644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	env := buildEnv(t, nil, "HOME="+home, "GT_ENV_REC="+envRec)
+	_, code := runBashScript(t, "wrapper.sh", nil, env)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(envRec)
+	if err != nil {
+		t.Fatalf("new-session never invoked: %v", err)
+	}
+	for _, v := range []string{
+		"WISP_DECK_RESUME=", "WISP_DECK_RESUME_SESSION=",
+		"WISP_DECK_CLAUDE_ACCOUNT_DIR=", "WISP_DECK_CLAUDE_SETTINGS=",
+		"WISP_DECK_CLAUDE_FILTER=",
+	} {
+		if regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(v)).MatchString(string(data)) {
+			t.Errorf("%s leaked into the tmux server environment", strings.TrimSuffix(v, "="))
+		}
+	}
+}
