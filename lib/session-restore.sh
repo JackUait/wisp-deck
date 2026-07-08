@@ -56,6 +56,22 @@ restore_log() {
   echo "$(date '+%Y-%m-%dT%H:%M:%S') $*" >> "$config_dir/restore.log" 2>/dev/null || true
 }
 
+# Remove an mkdir mutex orphaned by a holder killed inside the critical
+# section (shutdown/crash SIGKILLs wrappers at any point). The config dir
+# survives reboots, so an orphaned lock would otherwise block its mutex
+# FOREVER — every restore_queue_pop would give up and return "empty", killing
+# restore silently. Real holds last milliseconds; anything older than 10s is
+# orphaned.
+# Usage: _sweep_stale_lock <lock_dir>
+_sweep_stale_lock() {
+  local lock="$1" now mtime
+  [ -d "$lock" ] || return 0
+  now="$(date +%s)"
+  mtime="$(stat -f %m "$lock" 2>/dev/null || echo 0)"
+  [ $((now - mtime)) -gt 10 ] && rmdir "$lock" 2>/dev/null
+  return 0
+}
+
 # Print a strictly-increasing launch sequence number and persist it. tmux's
 # #{session_created} has ONE-SECOND resolution: a restore chain (or any burst
 # of launches) creates several sessions within the same second, and the
@@ -70,6 +86,7 @@ next_launch_seq() {
   local config_dir="$1" lock i=0 prev next now
   local f="$config_dir/launch-seq"
   lock="$f.lock"
+  _sweep_stale_lock "$lock"
   until mkdir "$lock" 2>/dev/null; do
     i=$((i + 1))
     [ "$i" -ge 40 ] && break
@@ -374,6 +391,7 @@ restore_queue_pop() {
   # mkdir is the lock: the popping tab triggers the next one right away, so
   # two tabs can race on the queue; each entry must be consumed exactly once.
   local lock="$queue.lock" i=0
+  _sweep_stale_lock "$lock"
   until mkdir "$lock" 2>/dev/null; do
     i=$((i + 1))
     [ "$i" -ge 40 ] && return 0

@@ -676,3 +676,72 @@ func TestWrapperInteractive_stamps_launch_seq_into_session(t *testing.T) {
 		t.Errorf("new-session must stamp WISP_DECK_SEQ=<digits>, got:\n%s", data)
 	}
 }
+
+// --- stale mkdir-lock recovery ---
+
+// Both restore mutexes are mkdir locks. A wrapper SIGKILLed inside the
+// critical section (exactly what a crash or shutdown does) leaves the lock
+// directory behind — and the config dir survives reboots, so without a
+// staleness sweep every later pop would give up and return "empty": the
+// restore silently dies and (with the surplus guard) tabs close instead of
+// restoring. A lock older than 10s is orphaned — real holds last milliseconds.
+
+func TestRestoreQueuePop_recovers_from_stale_lock(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "restore-queue", "222|/p/app|claude\n")
+	lock := filepath.Join(dir, "restore-queue.lock")
+	if err := os.Mkdir(lock, 0755); err != nil {
+		t.Fatalf("mkdir lock: %v", err)
+	}
+	old := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(lock, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	out, code := runBashFunc(t, "lib/session-restore.sh", "restore_queue_pop",
+		[]string{dir, "222"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "/p/app|claude" {
+		t.Errorf("stale lock must not block the pop, got %q", strings.TrimSpace(out))
+	}
+}
+
+func TestRestoreQueuePop_respects_fresh_lock(t *testing.T) {
+	// A fresh lock is a live concurrent pop — this pop must yield (empty),
+	// leaving the queue intact for the holder.
+	dir := t.TempDir()
+	writeTempFile(t, dir, "restore-queue", "222|/p/app|claude\n")
+	if err := os.Mkdir(filepath.Join(dir, "restore-queue.lock"), 0755); err != nil {
+		t.Fatalf("mkdir lock: %v", err)
+	}
+	out, code := runBashFunc(t, "lib/session-restore.sh", "restore_queue_pop",
+		[]string{dir, "222"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("fresh lock must make the pop yield, got %q", strings.TrimSpace(out))
+	}
+	if _, err := os.Stat(filepath.Join(dir, "restore-queue")); err != nil {
+		t.Error("queue must be left intact for the lock holder")
+	}
+}
+
+func TestNextLaunchSeq_recovers_from_stale_lock(t *testing.T) {
+	dir := t.TempDir()
+	lock := filepath.Join(dir, "launch-seq.lock")
+	if err := os.Mkdir(lock, 0755); err != nil {
+		t.Fatalf("mkdir lock: %v", err)
+	}
+	old := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(lock, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	start := time.Now()
+	out, code := runBashFunc(t, "lib/session-restore.sh", "next_launch_seq",
+		[]string{dir}, nil)
+	assertExitCode(t, code, 0)
+	if v, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64); err != nil || v <= 0 {
+		t.Errorf("stale lock must not break seq issuance, got %q", out)
+	}
+	if time.Since(start) > 1500*time.Millisecond {
+		t.Errorf("stale lock must be swept immediately, not waited out (took %v)", time.Since(start))
+	}
+}
