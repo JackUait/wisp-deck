@@ -342,7 +342,7 @@ replay_ai_draft() {
   return 0
 }
 
-# build_switch_launch_cmd <tool> <claude_cmd> <opencode_cmd> <settings> <filter> \
+# build_switch_launch_cmd <tool> <tool_cmd> <settings> <filter> \
 #   <project_dir> <new_account_dir> [resume_session] — build the launch command that
 # respawns the AI pane under new_account_dir.
 #
@@ -359,15 +359,15 @@ replay_ai_draft() {
 # new_account_dir empty = the Default (Keychain) login, so CLAUDE_CONFIG_DIR is
 # left unset.
 build_switch_launch_cmd() {
-  local tool="$1" claude_cmd="$2" opencode_cmd="$3" settings="$4" filter="$5" \
-    project_dir="$6" new_account_dir="$7" resume_session="${8:-}"
+  local tool="$1" tool_cmd="$2" settings="$3" filter="$4" \
+    project_dir="$5" new_account_dir="$6" resume_session="${7:-}"
   if [ -n "$resume_session" ]; then
     WISP_DECK_RESUME=1 \
     WISP_DECK_RESUME_SESSION="$resume_session" \
     WISP_DECK_CLAUDE_ACCOUNT_DIR="$new_account_dir" \
     WISP_DECK_CLAUDE_SETTINGS="$settings" \
     WISP_DECK_CLAUDE_FILTER="$filter" \
-      build_ai_launch_cmd "$tool" "$claude_cmd" "$opencode_cmd" "$project_dir"
+      build_ai_launch_cmd "$tool" "$tool_cmd" "$project_dir"
     return 0
   fi
   # Fresh launch: no resume. claude takes no positional dir (its cwd is set by
@@ -384,7 +384,7 @@ build_switch_launch_cmd() {
   WISP_DECK_CLAUDE_ACCOUNT_DIR="$new_account_dir" \
   WISP_DECK_CLAUDE_SETTINGS="$settings" \
   WISP_DECK_CLAUDE_FILTER="$filter" \
-    build_ai_launch_cmd "$tool" "$claude_cmd" "$opencode_cmd" "$extra"
+    build_ai_launch_cmd "$tool" "$tool_cmd" "$extra"
 }
 
 # _read_relaunch_ctx <relaunch_file> — load the key=value relaunch context into the
@@ -395,8 +395,7 @@ _read_relaunch_ctx() {
   while IFS='=' read -r k v; do
     case "$k" in
       tool) _rc_tool="$v" ;;
-      claude_cmd) _rc_claude_cmd="$v" ;;
-      opencode_cmd) _rc_opencode_cmd="$v" ;;
+      tool_cmd) _rc_tool_cmd="$v" ;;
       settings) _rc_settings="$v" ;;
       filter) _rc_filter="$v" ;;
       project_dir) _rc_project_dir="$v" ;;
@@ -409,20 +408,19 @@ _read_relaunch_ctx() {
   done < "$file"
 }
 
-# write_relaunch_context <out_file> <tool> <claude_cmd> <opencode_cmd> <settings> \
+# write_relaunch_context <out_file> <tool> <tool_cmd> <settings> \
 #   <filter> <project_dir> <cfg_root> — persist everything the mid-session switch
 # needs to rebuild the AI launch and locate the account files. wrapper.sh writes it
 # once per launch (for an eligible claude session) and passes its path to the pane
 # as WISP_DECK_RELAUNCH_FILE. key=value, one per line — read back by
 # _read_relaunch_ctx with IFS='=' so a value's spaces (the filter prefix) survive.
 write_relaunch_context() {
-  local out="$1" tool="$2" claude_cmd="$3" opencode_cmd="$4" settings="$5" \
-    filter="$6" project_dir="$7" cfg_root="$8"
+  local out="$1" tool="$2" tool_cmd="$3" settings="$4" \
+    filter="$5" project_dir="$6" cfg_root="$7"
   mkdir -p "$(dirname "$out")" 2>/dev/null
   {
     printf 'tool=%s\n' "$tool"
-    printf 'claude_cmd=%s\n' "$claude_cmd"
-    printf 'opencode_cmd=%s\n' "$opencode_cmd"
+    printf 'tool_cmd=%s\n' "$tool_cmd"
     printf 'settings=%s\n' "$settings"
     printf 'filter=%s\n' "$filter"
     printf 'project_dir=%s\n' "$project_dir"
@@ -453,7 +451,7 @@ relaunch_ai_pane() {
     have_chosen=1
     chosen="$3"
   fi
-  local _rc_tool="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_settings="" \
+  local _rc_tool="" _rc_tool_cmd="" _rc_settings="" \
     _rc_filter="" _rc_project_dir="" _rc_accounts_dir="" _rc_pointer="" \
     _rc_list="" _rc_colors="" _rc_default_label=""
   [ -f "$relaunch_file" ] || return 0
@@ -488,7 +486,7 @@ relaunch_ai_pane() {
   # then launches a fresh claude rather than resuming (see build_switch_launch_cmd).
   local sid
   sid="$(current_ai_session "$tmux_cmd")"
-  cmd="$(build_switch_launch_cmd "$_rc_tool" "$_rc_claude_cmd" "$_rc_opencode_cmd" \
+  cmd="$(build_switch_launch_cmd "$_rc_tool" "$_rc_tool_cmd" \
     "$_rc_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir" "$sid")"
 
   "$tmux_cmd" respawn-pane -k -t "$pane" -c "$_rc_project_dir" "$cmd; exec bash"
@@ -557,7 +555,7 @@ _relaunch_preserving_draft() {
 # switch).
 auto_switch_relaunch() {
   local tmux_cmd="$1" relaunch_file="$2" target="$3"
-  local _rc_tool="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_settings="" \
+  local _rc_tool="" _rc_tool_cmd="" _rc_settings="" \
     _rc_filter="" _rc_project_dir="" _rc_accounts_dir="" _rc_pointer="" \
     _rc_list="" _rc_colors="" _rc_default_label=""
   [ -f "$relaunch_file" ] || return 0
@@ -587,7 +585,7 @@ auto_switch_relaunch() {
 # old login (the account appeared to "switch back").
 open_account_switcher() {
   local tmux_cmd="$1" relaunch_file="$2"
-  local _rc_tool="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_settings="" \
+  local _rc_tool="" _rc_tool_cmd="" _rc_settings="" \
     _rc_filter="" _rc_project_dir="" _rc_accounts_dir="" _rc_pointer="" \
     _rc_list="" _rc_colors="" _rc_default_label=""
   [ -f "$relaunch_file" ] || return 0

@@ -324,7 +324,7 @@ func autoSwitchRelaunchCtx(t *testing.T, dir string) string {
 	writeTempFile(t, filepath.Join(accountsDir, "personal"), ".keep", "")
 	writeTempFile(t, dir, "claude-accounts.list", "Work:work\nPersonal:personal\n")
 	return writeTempFile(t, dir, "relaunch", strings.Join([]string{
-		"tool=claude", "claude_cmd=claude", "opencode_cmd=opencode",
+		"tool=claude", "tool_cmd=claude",
 		"settings=", "filter=", "project_dir=/proj",
 		"accounts_dir=" + accountsDir,
 		"pointer=" + filepath.Join(dir, "claude-account"),

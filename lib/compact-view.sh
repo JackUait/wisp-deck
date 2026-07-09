@@ -1051,7 +1051,7 @@ compact_view() {
      && command -v _read_relaunch_ctx >/dev/null 2>&1; then
     # The account file paths live in the relaunch context, so the pill needs only
     # WISP_DECK_RELAUNCH_FILE in the pane env. (The unused _rc_* vars are set too.)
-    local _rc_tool="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_settings="" \
+    local _rc_tool="" _rc_tool_cmd="" _rc_settings="" \
       _rc_filter="" _rc_project_dir="" _rc_accounts_dir=""
     _read_relaunch_ctx "$_rc_relaunch"
   fi

@@ -224,7 +224,7 @@ func TestWrapper_restore_resolves_account_from_queue_entry(t *testing.T) {
 func relaunchCtx(t *testing.T, dir string) string {
 	t.Helper()
 	return writeTempFile(t, dir, "relaunch", strings.Join([]string{
-		"tool=claude", "claude_cmd=claude", "opencode_cmd=opencode",
+		"tool=claude", "tool_cmd=claude",
 		"settings=", "filter=", "project_dir=/proj",
 		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
 		"pointer=" + filepath.Join(dir, "claude-account"),

@@ -76,8 +76,8 @@ exit 0
 	}
 
 	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
-		"tool=claude", "claude_cmd=" + filepath.Join(binDir, "claude"),
-		"opencode_cmd=opencode", "settings=", "filter=",
+		"tool=claude", "tool_cmd=" + filepath.Join(binDir, "claude"),
+		"settings=", "filter=",
 		"project_dir=" + dir,
 		"accounts_dir=" + filepath.Join(cfg, "claude-accounts"),
 		"pointer=" + pointer,

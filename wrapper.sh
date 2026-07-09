@@ -91,12 +91,14 @@ warm_tui_binary
 TMUX_CMD="$(command -v tmux)"
 CLAUDE_CMD="$(command -v claude)"
 OPENCODE_CMD="$(resolve_opencode_cmd)"
+CODEX_CMD="$(command -v codex)"
 
 # AI tool preference
 AI_TOOL_PREF_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/ai-tool"
 AI_TOOLS_AVAILABLE=()
 [ -n "$CLAUDE_CMD" ] && AI_TOOLS_AVAILABLE+=("claude")
 [ -n "$OPENCODE_CMD" ] && AI_TOOLS_AVAILABLE+=("opencode")
+[ -n "$CODEX_CMD" ] && AI_TOOLS_AVAILABLE+=("codex")
 
 # Read saved preference, default to first available
 SELECTED_AI_TOOL=""
@@ -378,13 +380,19 @@ if [ "$SELECTED_AI_TOOL" = "claude" ]; then
   WISP_DECK_CLAUDE_FILTER="$(gt_claude_filter_prefix "$SHARE_DIR")"
 fi
 
-# Build the AI tool launch command
+# Build the AI tool launch command. Only opencode takes the project dir as a
+# positional arg; claude takes the wrapper's CLI args, and codex takes neither
+# (its pane cwd is already the project dir).
+AI_TOOL_CMD="$(resolve_ai_tool_cmd "$SELECTED_AI_TOOL" "$CLAUDE_CMD" "$OPENCODE_CMD" "$CODEX_CMD")"
 case "$SELECTED_AI_TOOL" in
   opencode)
-    AI_LAUNCH_CMD="$(build_ai_launch_cmd "$SELECTED_AI_TOOL" "$CLAUDE_CMD" "$OPENCODE_CMD" "$PROJECT_DIR")"
+    AI_LAUNCH_CMD="$(build_ai_launch_cmd "$SELECTED_AI_TOOL" "$AI_TOOL_CMD" "$PROJECT_DIR")"
+    ;;
+  codex)
+    AI_LAUNCH_CMD="$(build_ai_launch_cmd "$SELECTED_AI_TOOL" "$AI_TOOL_CMD")"
     ;;
   *)
-    AI_LAUNCH_CMD="$(build_ai_launch_cmd "$SELECTED_AI_TOOL" "$CLAUDE_CMD" "$OPENCODE_CMD" "$*")"
+    AI_LAUNCH_CMD="$(build_ai_launch_cmd "$SELECTED_AI_TOOL" "$AI_TOOL_CMD" "$*")"
     ;;
 esac
 
@@ -397,7 +405,7 @@ WISP_DECK_RELAUNCH_FILE=""
 if [ "$SELECTED_AI_TOOL" = "claude" ]; then
   WISP_DECK_RELAUNCH_FILE="$SHARE_DIR/relaunch-${SESSION_NAME}"
   write_relaunch_context "$WISP_DECK_RELAUNCH_FILE" "$SELECTED_AI_TOOL" \
-    "$CLAUDE_CMD" "$OPENCODE_CMD" "$WISP_DECK_CLAUDE_SETTINGS" \
+    "$AI_TOOL_CMD" "$WISP_DECK_CLAUDE_SETTINGS" \
     "$WISP_DECK_CLAUDE_FILTER" "$PROJECT_DIR" "$_gt_cfg_root"
 fi
 export WISP_DECK_RELAUNCH_FILE

@@ -311,7 +311,7 @@ func TestBuildSwitchLaunchCmd_fresh_launch_ignores_inherited_resume_env(t *testi
 		"WISP_DECK_RESUME=1",
 		"WISP_DECK_RESUME_SESSION=dead-beef-sid")
 	out, code := runBashSnippet(t, accountSwitchSnippet(t,
-		`build_switch_launch_cmd claude claude opencode "/cfg/settings.json" "" "/proj" "/cfg/claude-accounts/work"`), env)
+		`build_switch_launch_cmd claude claude "/cfg/settings.json" "" "/proj" "/cfg/claude-accounts/work"`), env)
 	assertExitCode(t, code, 0)
 	assertNotContains(t, out, "--resume")
 	assertNotContains(t, out, "claude -c")
@@ -334,7 +334,7 @@ func TestBuildAILaunchCmd_default_login_sheds_inherited_config_dir(t *testing.T)
 	root := projectRoot(t)
 	script := `
 source ` + quote(filepath.Join(root, "lib", "tmux-session.sh")) + `
-cmd="$(build_ai_launch_cmd claude claude opencode "")"
+cmd="$(build_ai_launch_cmd claude claude "")"
 eval "$cmd"
 `
 	_, code := runBashSnippet(t, script, env)

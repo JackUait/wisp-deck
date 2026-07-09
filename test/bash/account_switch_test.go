@@ -196,7 +196,7 @@ func TestOpenAccountSwitcher_launches_fullscreen_borderless_popup(t *testing.T) 
 	// is unchanged (before == after) and no relaunch is attempted.
 	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`printf '%%s\n' "$*" >> %q`, rec))
 	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
-		"tool=claude", "claude_cmd=claude", "opencode_cmd=opencode",
+		"tool=claude", "tool_cmd=claude",
 		"settings=/cfg/settings.json", "filter=", "project_dir=/proj",
 		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
 		"pointer=" + filepath.Join(dir, "claude-account"),
@@ -267,7 +267,7 @@ func TestBuildSwitchLaunchCmd_managed_account_sets_config_dir_and_launches_fresh
 	// (`claude -c`) — it launches a fresh claude under the new login instead,
 	// still with the account's config dir and settings.
 	out, code := runBashSnippet(t, accountSwitchSnippet(t,
-		`build_switch_launch_cmd claude claude opencode "/cfg/settings.json" "" "/proj" "/cfg/claude-accounts/work"`), nil)
+		`build_switch_launch_cmd claude claude "/cfg/settings.json" "" "/proj" "/cfg/claude-accounts/work"`), nil)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, `CLAUDE_CONFIG_DIR="/cfg/claude-accounts/work"`)
 	assertContains(t, out, `--settings "/cfg/settings.json"`)
@@ -279,7 +279,7 @@ func TestBuildSwitchLaunchCmd_default_account_launches_fresh_without_config_dir(
 	// No session and the Default (Keychain) login: fresh plain `claude`, no
 	// config dir, no `-c` resume.
 	out, code := runBashSnippet(t, accountSwitchSnippet(t,
-		`build_switch_launch_cmd claude claude opencode "/cfg/settings.json" "" "/proj" ""`), nil)
+		`build_switch_launch_cmd claude claude "/cfg/settings.json" "" "/proj" ""`), nil)
 	assertExitCode(t, code, 0)
 	assertNotContains(t, out, "CLAUDE_CONFIG_DIR=")
 	assertNotContains(t, out, "claude -c")
@@ -293,7 +293,7 @@ func TestBuildSwitchLaunchCmd_resumes_exact_session_when_stamped(t *testing.T) {
 	// the switched pane on ITS conversation in a multi-tab/window project, where
 	// bare `-c` (most-recent-in-cwd) could grab a sibling tab's conversation.
 	out, code := runBashSnippet(t, accountSwitchSnippet(t,
-		`build_switch_launch_cmd claude claude opencode "/cfg/settings.json" "" "/proj" "/cfg/claude-accounts/work" "sess-xyz-1"`), nil)
+		`build_switch_launch_cmd claude claude "/cfg/settings.json" "" "/proj" "/cfg/claude-accounts/work" "sess-xyz-1"`), nil)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "--resume sess-xyz-1")
 }
@@ -395,8 +395,7 @@ func TestRelaunchAIPane_resumes_exact_stamped_conversation(t *testing.T) {
 	writeTempFile(t, acctDir, ".keep", "")
 	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
 		"tool=claude",
-		"claude_cmd=claude",
-		"opencode_cmd=opencode",
+		"tool_cmd=claude",
 		"settings=/cfg/settings.json",
 		"filter=",
 		"project_dir=/proj",
@@ -434,8 +433,7 @@ func TestRelaunchAIPane_does_not_resume_closed_session_after_new(t *testing.T) {
 	writeTempFile(t, acctDir, ".keep", "")
 	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
 		"tool=claude",
-		"claude_cmd=claude",
-		"opencode_cmd=opencode",
+		"tool_cmd=claude",
 		"settings=/cfg/settings.json",
 		"filter=",
 		"project_dir=/proj",
@@ -472,13 +470,12 @@ func TestWriteRelaunchContext_writes_all_keys(t *testing.T) {
 	out := filepath.Join(dir, "relaunch")
 	cfg := filepath.Join(dir, "cfg")
 	_, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
-		`write_relaunch_context %q claude claude opencode "/cfg/settings.json" "flt -- " "/proj" %q`,
+		`write_relaunch_context %q claude claude "/cfg/settings.json" "flt -- " "/proj" %q`,
 		out, cfg)), nil)
 	assertExitCode(t, code, 0)
 	body, _ := runBashSnippet(t, fmt.Sprintf("cat %q", out), nil)
 	assertContains(t, body, "tool=claude")
-	assertContains(t, body, "claude_cmd=claude")
-	assertContains(t, body, "opencode_cmd=opencode")
+	assertContains(t, body, "tool_cmd=claude")
 	assertContains(t, body, "settings=/cfg/settings.json")
 	assertContains(t, body, "filter=flt -- ") // trailing space preserved
 	assertContains(t, body, "project_dir=/proj")
@@ -503,7 +500,7 @@ if [ "$1" = "list-panes" ]; then printf '%%s\n' "%%1 1"; exit 0; fi
 printf '%%s\n' "$*" >> %q`, rec))
 	env := buildEnv(t, []string{bin}, "HOME="+dir)
 	_, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
-		`write_relaunch_context %q claude claude opencode "/cfg/settings.json" "" "/proj" %q && relaunch_ai_pane tmux %q`,
+		`write_relaunch_context %q claude claude "/cfg/settings.json" "" "/proj" %q && relaunch_ai_pane tmux %q`,
 		out, cfg, out)), env)
 	assertExitCode(t, code, 0)
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
@@ -523,8 +520,7 @@ func TestRelaunchAIPane_respawns_fresh_with_new_account_when_no_active_session(t
 	writeTempFile(t, acctDir, ".keep", "")
 	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
 		"tool=claude",
-		"claude_cmd=claude",
-		"opencode_cmd=opencode",
+		"tool_cmd=claude",
 		"settings=/cfg/settings.json",
 		"filter=",
 		"project_dir=/proj",
@@ -582,7 +578,7 @@ func TestRelaunchAIPane_survives_full_path_under_zsh(t *testing.T) {
 	writeTempFile(t, filepath.Join(home, ".claude"), ".keep", "")
 
 	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
-		"tool=claude", "claude_cmd=claude", "opencode_cmd=opencode",
+		"tool=claude", "tool_cmd=claude",
 		"settings=/cfg/settings.json", "filter=", "project_dir=/proj",
 		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
 		"pointer=" + filepath.Join(dir, "claude-account"),
@@ -715,7 +711,7 @@ fi`)
 func switcherRelaunchCtx(t *testing.T, dir string) string {
 	t.Helper()
 	return writeTempFile(t, dir, "relaunch", strings.Join([]string{
-		"tool=claude", "claude_cmd=claude", "opencode_cmd=opencode",
+		"tool=claude", "tool_cmd=claude",
 		"settings=", "filter=", "project_dir=/proj",
 		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
 		"pointer=" + filepath.Join(dir, "claude-account"),

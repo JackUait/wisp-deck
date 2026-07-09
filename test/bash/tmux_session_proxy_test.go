@@ -15,7 +15,7 @@ func TestBuildAILaunchCmd_mitm_uses_https_proxy_and_ca(t *testing.T) {
 	// injects the account token upstream).
 	env := []string{"WISP_DECK_PROXY_PORT=54321", "WISP_DECK_PROXY_KEY=wd-abc", "WISP_DECK_PROXY_CA=/cfg/ca.pem"}
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{"claude", "claude", "opencode", "/proj"}, env)
+		[]string{"claude", "claude", "/proj"}, env)
 	assertExitCode(t, code, 0)
 	// The key is embedded in the proxy URL so claude sends Proxy-Authorization on
 	// CONNECT (loopback is not trusted; the proxy authenticates the tunnel).
@@ -29,7 +29,7 @@ func TestBuildAILaunchCmd_baseurl_mode_when_no_ca(t *testing.T) {
 	// Without a CA (--mitm=false), fall back to base-URL mode.
 	env := []string{"WISP_DECK_PROXY_PORT=54321", "WISP_DECK_PROXY_KEY=wd-abc"}
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{"claude", "claude", "opencode", "/proj"}, env)
+		[]string{"claude", "claude", "/proj"}, env)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, `ANTHROPIC_BASE_URL="http://127.0.0.1:54321"`)
 	assertContains(t, out, `ANTHROPIC_API_KEY="wd-abc"`)
@@ -40,7 +40,7 @@ func TestBuildAILaunchCmd_baseurl_mode_when_no_ca(t *testing.T) {
 func TestBuildAILaunchCmd_prefixes_proxy_env_on_resume(t *testing.T) {
 	env := []string{"WISP_DECK_RESUME=1", "WISP_DECK_PROXY_PORT=54321", "WISP_DECK_PROXY_KEY=wd-abc"}
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{"claude", "claude", "opencode"}, env)
+		[]string{"claude", "claude"}, env)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, `ANTHROPIC_BASE_URL="http://127.0.0.1:54321"`)
 	assertContains(t, out, "claude -c")
@@ -48,7 +48,7 @@ func TestBuildAILaunchCmd_prefixes_proxy_env_on_resume(t *testing.T) {
 
 func TestBuildAILaunchCmd_no_proxy_env_when_unset(t *testing.T) {
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{"claude", "claude", "opencode", "/proj"}, nil)
+		[]string{"claude", "claude", "/proj"}, nil)
 	assertExitCode(t, code, 0)
 	assertNotContains(t, out, "ANTHROPIC_BASE_URL")
 }
@@ -56,7 +56,7 @@ func TestBuildAILaunchCmd_no_proxy_env_when_unset(t *testing.T) {
 func TestBuildAILaunchCmd_proxy_env_ignored_for_opencode(t *testing.T) {
 	env := []string{"WISP_DECK_PROXY_PORT=54321", "WISP_DECK_PROXY_KEY=wd-abc"}
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{"opencode", "claude", "opencode", "/proj"}, env)
+		[]string{"opencode", "opencode", "/proj"}, env)
 	assertExitCode(t, code, 0)
 	assertNotContains(t, out, "ANTHROPIC_BASE_URL")
 }

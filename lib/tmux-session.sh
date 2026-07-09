@@ -8,16 +8,26 @@
 get_tool_accent() {
   case "${1:-}" in
     opencode) echo "141" ;;   # #af87ff brand purple
+    codex)    echo "36" ;;    # #00af87 brand teal
     *)        echo "209" ;;   # orange (claude default)
   esac
 }
 
 # Build the AI tool launch command string.
-# Usage: build_ai_launch_cmd <tool> <claude_cmd> <opencode_cmd> [extra_args_or_project_dir]
+# Usage: build_ai_launch_cmd <tool> <tool_cmd> [extra_args_or_project_dir]
+# tool_cmd is the binary for <tool> — resolve it with resolve_ai_tool_cmd.
 build_ai_launch_cmd() {
-  local tool="$1" claude_cmd="$2" opencode_cmd="$3"
-  shift 3
+  local tool="$1" tool_cmd="$2"
+  shift 2
   local extra="$*"
+
+  # codex takes no flags, no env plumbing and no positional dir (the pane's cwd
+  # is already the project dir), so it short-circuits ahead of the claude-only
+  # prefixes below — including in resume mode, where it relaunches fresh.
+  if [ "$tool" = "codex" ]; then
+    echo "$tool_cmd"
+    return 0
+  fi
 
   # Claude-only: append --settings when a config is active.
   local claude_settings=""
@@ -91,11 +101,11 @@ build_ai_launch_cmd() {
   # never relaunch then.
   if [ "${WISP_DECK_RESUME:-0}" = "1" ]; then
     if [ "$tool" = "opencode" ]; then
-      echo "$opencode_cmd --continue"
+      echo "$tool_cmd --continue"
       return 0
     fi
     local win="${WISP_DECK_RESUME_FALLBACK_WINDOW:-10}"
-    local base="${claude_account}${claude_filter}$claude_cmd"
+    local base="${claude_account}${claude_filter}$tool_cmd"
     local steps=("-c" "")
     if [ -n "${WISP_DECK_RESUME_SESSION:-}" ]; then
       steps=("--resume ${WISP_DECK_RESUME_SESSION}" "-c" "")
@@ -115,13 +125,13 @@ build_ai_launch_cmd() {
 
   case "$tool" in
     opencode)
-      echo "$opencode_cmd \"$extra\""
+      echo "$tool_cmd \"$extra\""
       ;;
     *)
       if [ -n "$extra" ]; then
-        echo "${claude_account}${claude_filter}$claude_cmd $extra${claude_settings}"
+        echo "${claude_account}${claude_filter}$tool_cmd $extra${claude_settings}"
       else
-        echo "${claude_account}${claude_filter}$claude_cmd${claude_settings}"
+        echo "${claude_account}${claude_filter}$tool_cmd${claude_settings}"
       fi
       ;;
   esac

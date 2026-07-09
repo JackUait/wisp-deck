@@ -19,6 +19,17 @@ resolve_opencode_cmd() {
   fi
 }
 
+# Map a tool identifier onto the command that launches it.
+# Usage: resolve_ai_tool_cmd <tool> <claude_cmd> <opencode_cmd> <codex_cmd>
+# Unknown identifiers resolve to claude, matching every other per-tool switch.
+resolve_ai_tool_cmd() {
+  case "${1:-}" in
+    opencode) echo "${3:-}" ;;
+    codex)    echo "${4:-}" ;;
+    *)        echo "${2:-}" ;;
+  esac
+}
+
 # Validates SELECTED_AI_TOOL against AI_TOOLS_AVAILABLE.
 # Falls back to first available if current selection is invalid.
 # Optional arg $1: path to preference file (writes corrected value if provided).

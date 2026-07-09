@@ -276,7 +276,7 @@ fi`, rec, rec, hist, respawned, respawned, sid))
 		t.Fatal(err)
 	}
 	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
-		"tool=claude", "claude_cmd=claude", "opencode_cmd=opencode",
+		"tool=claude", "tool_cmd=claude",
 		"settings=", "filter=", "project_dir=/proj",
 		"accounts_dir=" + accountsDir,
 		"pointer=" + filepath.Join(dir, "claude-account"),
@@ -338,7 +338,7 @@ if [ "$1" = "display-popup" ]; then eval "${@: -1}" >/dev/null 2>&1 || true; fi`
 		t.Fatal(err)
 	}
 	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
-		"tool=opencode", "claude_cmd=claude", "opencode_cmd=opencode",
+		"tool=opencode", "tool_cmd=npx opencode-ai@latest",
 		"settings=", "filter=", "project_dir=/proj",
 		"accounts_dir=" + accountsDir,
 		"pointer=" + filepath.Join(dir, "claude-account"),

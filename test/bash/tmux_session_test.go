@@ -19,7 +19,7 @@ func buildAndRunLaunchCmd(t *testing.T, sid, mockBody string, extraEnv ...string
 	env := buildEnv(t, []string{binDir},
 		append([]string{"WISP_DECK_RESUME=1", "WISP_DECK_RESUME_SESSION=" + sid}, extraEnv...)...)
 	cmd, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{"claude", "claude", "npx opencode-ai@latest", "/p/app"}, env)
+		[]string{"claude", "claude", "/p/app"}, env)
 	assertExitCode(t, code, 0)
 	_, _ = runBashSnippet(t, strings.TrimSpace(cmd), env)
 	data, _ := os.ReadFile(rec)
@@ -78,8 +78,12 @@ func aiCmd(t *testing.T, tool string, resume bool) string {
 	} else {
 		env = buildEnv(t, nil, "WISP_DECK_RESUME=0", "WISP_DECK_RESUME_SESSION=")
 	}
+	toolCmd := "claude"
+	if tool == "opencode" {
+		toolCmd = "npx opencode-ai@latest"
+	}
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{tool, "claude", "npx opencode-ai@latest", "/p/app"}, env)
+		[]string{tool, toolCmd, "/p/app"}, env)
 	assertExitCode(t, code, 0)
 	return strings.TrimSpace(out)
 }
@@ -105,7 +109,7 @@ func TestBuildAiLaunchCmd_resumes_specific_claude_session(t *testing.T) {
 	// most recent conversation.
 	env := buildEnv(t, nil, "WISP_DECK_RESUME=1", "WISP_DECK_RESUME_SESSION=sid-42")
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{"claude", "claude", "npx opencode-ai@latest", "/p/app"}, env)
+		[]string{"claude", "claude", "/p/app"}, env)
 	assertExitCode(t, code, 0)
 	got := strings.TrimSpace(out)
 	if !strings.Contains(got, "env -u CLAUDE_CONFIG_DIR claude --resume sid-42;") {
@@ -123,7 +127,7 @@ func TestBuildAiLaunchCmd_resumes_specific_claude_session(t *testing.T) {
 	// OpenCode has its own continue semantics; the Claude session id must
 	// not leak into its command.
 	out, code = runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{"opencode", "claude", "npx opencode-ai@latest", "/p/app"}, env)
+		[]string{"opencode", "npx opencode-ai@latest", "/p/app"}, env)
 	assertExitCode(t, code, 0)
 	if got := strings.TrimSpace(out); got != "npx opencode-ai@latest --continue" {
 		t.Errorf("opencode got %q, want %q", got, "npx opencode-ai@latest --continue")
@@ -144,13 +148,13 @@ func TestBuildAiLaunchCmd_wraps_claude_with_filter(t *testing.T) {
 	env := buildEnv(t, nil, "WISP_DECK_RESUME=0",
 		"WISP_DECK_CLAUDE_FILTER=wisp-deck-tui screenshot-filter -- ")
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{"claude", "claude", "npx opencode-ai@latest", "/p/app"}, env)
+		[]string{"claude", "claude", "/p/app"}, env)
 	assertExitCode(t, code, 0)
 	if got := strings.TrimSpace(out); got != `env -u CLAUDE_CONFIG_DIR wisp-deck-tui screenshot-filter -- claude /p/app` {
 		t.Errorf("claude wrap: got %q", got)
 	}
 	out, _ = runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{"opencode", "claude", "npx opencode-ai@latest", "/p/app"}, env)
+		[]string{"opencode", "npx opencode-ai@latest", "/p/app"}, env)
 	if strings.Contains(out, "screenshot-filter") {
 		t.Errorf("opencode must not be wrapped: %q", strings.TrimSpace(out))
 	}
@@ -160,7 +164,7 @@ func TestBuildAiLaunchCmd_wraps_claude_resume_with_filter(t *testing.T) {
 	env := buildEnv(t, nil, "WISP_DECK_RESUME=1",
 		"WISP_DECK_CLAUDE_FILTER=wisp-deck-tui screenshot-filter -- ")
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{"claude", "claude", "npx opencode-ai@latest", "/p/app"}, env)
+		[]string{"claude", "claude", "/p/app"}, env)
 	assertExitCode(t, code, 0)
 	got := strings.TrimSpace(out)
 	// Every step of the fallback chain must be wrapped with the filter.
@@ -178,7 +182,7 @@ func TestBuildAiLaunchCmd_prefixes_claude_config_dir(t *testing.T) {
 	env := buildEnv(t, nil, "WISP_DECK_RESUME=0",
 		"WISP_DECK_CLAUDE_ACCOUNT_DIR=/cfg/claude-accounts/work")
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{"claude", "claude", "npx opencode-ai@latest", "/p/app"}, env)
+		[]string{"claude", "claude", "/p/app"}, env)
 	assertExitCode(t, code, 0)
 	if got := strings.TrimSpace(out); got != `CLAUDE_CONFIG_DIR="/cfg/claude-accounts/work" claude /p/app` {
 		t.Errorf("claude account prefix: got %q", got)
@@ -189,7 +193,7 @@ func TestBuildAiLaunchCmd_account_dir_not_applied_to_opencode(t *testing.T) {
 	env := buildEnv(t, nil, "WISP_DECK_RESUME=0",
 		"WISP_DECK_CLAUDE_ACCOUNT_DIR=/cfg/claude-accounts/work")
 	out, _ := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{"opencode", "claude", "npx opencode-ai@latest", "/p/app"}, env)
+		[]string{"opencode", "npx opencode-ai@latest", "/p/app"}, env)
 	if strings.Contains(out, "CLAUDE_CONFIG_DIR") {
 		t.Errorf("opencode must not get CLAUDE_CONFIG_DIR: %q", strings.TrimSpace(out))
 	}
@@ -202,7 +206,7 @@ func TestBuildAiLaunchCmd_account_dir_composes_with_filter_and_resume(t *testing
 		"WISP_DECK_CLAUDE_ACCOUNT_DIR=/cfg/claude-accounts/work",
 		"WISP_DECK_CLAUDE_FILTER=wisp-deck-tui screenshot-filter -- ")
 	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-		[]string{"claude", "claude", "npx opencode-ai@latest", "/p/app"}, env)
+		[]string{"claude", "claude", "/p/app"}, env)
 	assertExitCode(t, code, 0)
 	got := strings.TrimSpace(out)
 	// Every step of the fallback chain carries the account prefix + filter.
