@@ -192,6 +192,16 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	usageState := "[" + usageBarsLabel(m.usageBars) + "]"
 	itemLines[5] = []string{m.renderSettingsItem(5, "Usage bars", usageState, usageStyle, primaryBoldStyle, leftBorder, rightBorder)}
 
+	// AI tools item — opens the tool panel (install a tool, pick the default).
+	// The state shows the current default; gray when nothing is selectable yet.
+	toolsColor := lipgloss.Color("114") // green
+	if m.CurrentAITool() == "" {
+		toolsColor = lipgloss.Color("241")
+	}
+	toolsStyle := lipgloss.NewStyle().Foreground(toolsColor)
+	toolsState := "[" + AIToolDisplayName(m.CurrentAITool()) + "]"
+	itemLines[rowAITools] = []string{m.renderSettingsItem(rowAITools, "AI tools", toolsState, toolsStyle, primaryBoldStyle, leftBorder, rightBorder)}
+
 	// Claude Config item (only for the claude tool)
 	if m.ClaudeConfigVisible() {
 		cfgName := m.CurrentClaudeConfigName()
@@ -268,20 +278,24 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	// Separator before help
 	lines = append(lines, separator)
 
-	// Help row — show ⏎ edit hint for the projects dir row, manage hints for the
-	// Login row, ← → cycle for everything else (Theme, Ghost, Tab, etc.).
+	// Help row — ⏎ edit for the projects dir, ⏎ manage for the rows that open a
+	// panel (Account, AI tools), ← → cycle for everything else (Theme, Ghost,
+	// Tab, …). Keyed off the row constants: the Account arm previously matched
+	// settingsItemCount()-1, which silently retargeted when a row was appended.
 	sep := dimStyle.Render(" · ")
 	var cycleOrEdit string
 	switch {
-	case m.settingsSelected == 4:
+	case m.settingsSelected == rowProjectsFolder:
 		cycleOrEdit = helpStyle.Render("⏎ edit")
-	case m.settingsSelected == 6 && m.ClaudeConfigVisible():
+	case m.settingsSelected == rowSubscription && m.ClaudeConfigVisible():
 		if m.selectedConfig > 0 {
 			cycleOrEdit = helpStyle.Render("←→ cycle") + sep + helpStyle.Render("⏎ map models")
 		} else {
 			cycleOrEdit = helpStyle.Render("←→ cycle")
 		}
-	case m.settingsSelected == m.settingsItemCount()-1:
+	case m.settingsSelected == rowAITools:
+		cycleOrEdit = helpStyle.Render("⏎ manage")
+	case m.settingsSelected == rowAccount:
 		if m.accountFocusable() {
 			cycleOrEdit = helpStyle.Render("←→ switch") + sep + helpStyle.Render("⏎ manage")
 		} else {

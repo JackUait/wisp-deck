@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -41,6 +42,7 @@ var (
 	mainMenuClaudeAccountsDir      string
 	mainMenuClaudeDefaultLabelFile string
 	mainMenuAutoSwitchFile         string
+	mainMenuLibDir                 string
 )
 
 func init() {
@@ -50,6 +52,7 @@ func init() {
 	mainMenuCmd.Flags().StringVar(&mainMenuAITool, "ai-tool", "claude", "Current AI tool name")
 	mainMenuCmd.Flags().StringVar(&mainMenuAITools, "ai-tools", "claude", "Comma-separated available tool names")
 	mainMenuCmd.Flags().StringVar(&mainMenuAIToolFile, "ai-tool-file", "", "Path to AI tool preference file for persistence")
+	mainMenuCmd.Flags().StringVar(&mainMenuLibDir, "lib-dir", "", "Path to wisp-deck lib/ (used to install AI tools); defaults to $WISP_DECK_LIB_DIR")
 	mainMenuCmd.Flags().StringVar(&mainMenuGhostDisplay, "ghost-display", "animated", "Ghost display mode (animated, static, none)")
 	mainMenuCmd.Flags().StringVar(&mainMenuUsageBars, "usage-bars", "7d", "Statusline usage bars (7d, 5h, both, none)")
 	mainMenuCmd.Flags().StringVar(&mainMenuTabTitle, "tab-title", "full", "Tab title mode (full, project)")
@@ -99,6 +102,12 @@ func runMainMenu(cmd *cobra.Command, args []string) error {
 	if mainMenuAIToolFile != "" {
 		model.SetAIToolFile(mainMenuAIToolFile)
 	}
+	// The session exports WISP_DECK_LIB_DIR; the flag wins when both are present.
+	libDir := mainMenuLibDir
+	if libDir == "" {
+		libDir = os.Getenv("WISP_DECK_LIB_DIR")
+	}
+	model.SetLibDir(libDir)
 	if mainMenuSettingsFile != "" {
 		model.SetSettingsFile(mainMenuSettingsFile)
 	}

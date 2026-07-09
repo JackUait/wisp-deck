@@ -87,7 +87,8 @@ func TestRenderSettingsBox_appearanceItemsGroupedAboveNotifications(t *testing.T
 func TestSettingsItemOrder_groupsAppearanceThenSections(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	got := m.settingsItemOrder()
-	want := []int{0, 1, 3, 5, 2, 4, 6, 7, 8}
+	// Appearance, Tools, Notifications, Projects, Account.
+	want := []int{0, 1, 3, 5, 9, 2, 4, 6, 7, 8}
 	if len(got) != len(want) {
 		t.Fatalf("settingsItemOrder len=%d want %d: %v", len(got), len(want), got)
 	}
@@ -102,8 +103,12 @@ func TestSettingsStep_movesInVisualOrder(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	m.settingsSelected = 5 // Usage bars — last Appearance item
 	m.settingsStep(1, false)
+	if m.settingsSelected != rowAITools {
+		t.Fatalf("down from Usage bars → %d, want %d (AI tools)", m.settingsSelected, rowAITools)
+	}
+	m.settingsStep(1, false)
 	if m.settingsSelected != 2 {
-		t.Fatalf("down from Usage bars → %d, want 2 (Idle sound)", m.settingsSelected)
+		t.Fatalf("down from AI tools → %d, want 2 (Idle sound)", m.settingsSelected)
 	}
 	m.settingsStep(1, false)
 	if m.settingsSelected != 4 {

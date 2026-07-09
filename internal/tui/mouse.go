@@ -265,7 +265,7 @@ func (m *MainMenuModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.modelMapOpen && !m.modelMapKeyMode {
 		return m.handleModelMapMouse(msg)
 	}
-	if m.modelMapOpen || m.accountMenuOpen || m.settingsInputMode ||
+	if m.modelMapOpen || m.accountMenuOpen || m.aiToolsPanelOpen || m.settingsInputMode ||
 		m.inputMode != "" || m.deleteMode || m.staleConfirmIdx >= 0 {
 		return m, nil
 	}
@@ -403,11 +403,13 @@ func (m *MainMenuModel) clickSettings(idx int) (tea.Model, tea.Cmd) {
 	m.settingsSelected = idx
 	m.focus = FocusBody
 	switch {
-	case idx == 4: // Default projects dir → inline edit
+	case idx == rowProjectsFolder: // Default projects dir → inline edit
 		return m.settingsEnter()
-	case idx == m.loginRowIndex(): // Login → account management
+	case idx == rowAccount: // Login → account management
 		return m.settingsEnter()
-	case idx == 6 && m.ClaudeConfigVisible() && m.selectedConfig > 0:
+	case idx == rowAITools: // AI tools → install / set default
+		return m.settingsEnter()
+	case idx == rowSubscription && m.ClaudeConfigVisible() && m.selectedConfig > 0:
 		// Plan row on a custom config → open the model map (its ⏎ action). Cycling
 		// the plan stays available via the top PLAN switcher row.
 		return m.settingsEnter()

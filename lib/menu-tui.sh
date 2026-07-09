@@ -59,6 +59,11 @@ select_project_interactive() {
   cmd_args+=("--usage-bars" "$usage_bars")
   cmd_args+=("--tab-title" "$tab_title")
   cmd_args+=("--settings-file" "$settings_file")
+  # The Settings → AI tools panel installs a tool by sourcing lib/install.sh, so
+  # tell the menu where lib/ lives. WISP_DECK_LIB_DIR is only exported inside a
+  # running session; the launcher path derives it from this module's location.
+  local _lib_dir="${WISP_DECK_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+  cmd_args+=("--lib-dir" "$_lib_dir")
   local sound_file="$gt_config_dir/${SELECTED_AI_TOOL:-claude}-features.json"
   cmd_args+=("--sound-file" "$sound_file")
   if [[ -n "$sound_name" ]]; then

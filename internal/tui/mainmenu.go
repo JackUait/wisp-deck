@@ -328,7 +328,18 @@ type MainMenuModel struct {
 
 	// Login-management panel, opened from the LOGIN row (mirrors the model-map
 	// panel that Plan opens). Lists Default + managed logins + an add row.
-	accountMenuOpen      bool
+	accountMenuOpen bool
+
+	// AI-tools panel (Settings → Tools → AI tools): install a missing tool and
+	// choose the default. detectAITools is an injectable seam so tests never
+	// depend on the machine's PATH; nil means models.DetectAITools.
+	aiToolsPanelOpen     bool
+	aiToolsCursor        int
+	aiToolRows           []models.AITool
+	aiToolInstalling     string
+	aiToolsErr           error
+	libDir               string
+	detectAITools        func() []models.AITool
 	accountMenuCursor    int  // 0=Default, 1..len=managed logins, len+1=add row
 	accountMenuConfirm   bool // delete confirmation showing for the cursor login
 	accountMenuInputMode bool // inline label entry (add or rename) is showing
@@ -1319,24 +1330,33 @@ func (m *MainMenuModel) CycleTab(direction string) {
 	}
 }
 
-// settingsItemCount returns the number of settings rows: 6 base (Ghost, Tab,
-// Sound, Theme, Dir, Usage bars) + the Plan row when the Claude config
-// control is visible + the always-present Login row + the Auto-switch toggle.
-func (m *MainMenuModel) settingsItemCount() int {
-	n := 6
-	if m.ClaudeConfigVisible() {
-		n++ // Plan
-	}
-	n++ // Login
-	n++ // Auto-switch accounts
-	return n
-}
+// Settings rows are keyed by a stable handler index shared by the renderer
+// (render_settings.go), the key handlers (settingsEnter / settingsValueLeft /
+// settingsValueRight) and the section grouping (settingsSections). Naming them
+// keeps those three in step: the handlers previously hardcoded 6 and 7 while the
+// tail rows were derived arithmetically from the row count, so appending a row
+// silently aimed ↵-on-Account at the Auto-switch toggle.
+const (
+	rowMascot         = 0
+	rowTabTitle       = 1
+	rowIdleSound      = 2
+	rowTheme          = 3
+	rowProjectsFolder = 4
+	rowUsageBars      = 5
+	rowSubscription   = 6
+	rowAccount        = 7
+	rowAutoSwitch     = 8
+	rowAITools        = 9
+)
 
-// loginRowIndex is the fixed index of the Login row (Plan is always present).
-func (m *MainMenuModel) loginRowIndex() int { return m.settingsItemCount() - 2 }
+// settingsItemCount returns the number of settings rows.
+func (m *MainMenuModel) settingsItemCount() int { return rowAITools + 1 }
 
-// autoSwitchRowIndex is the index of the Auto-switch toggle (last row).
-func (m *MainMenuModel) autoSwitchRowIndex() int { return m.settingsItemCount() - 1 }
+// loginRowIndex is the index of the Login row.
+func (m *MainMenuModel) loginRowIndex() int { return rowAccount }
+
+// autoSwitchRowIndex is the index of the Auto-switch toggle.
+func (m *MainMenuModel) autoSwitchRowIndex() int { return rowAutoSwitch }
 
 // settingsSectionTitle labels the section headers the settings items are grouped
 // under, in visual (top-to-bottom) order.
@@ -1350,16 +1370,17 @@ type settingsSection struct {
 // which do NOT match visual order: Idle sound (2) and Projects folder (4) move
 // out of the Appearance block into their own sections.
 func (m *MainMenuModel) settingsSections() []settingsSection {
-	appearance := []int{0, 1, 3, 5} // Mascot, Tab title, Theme, Usage bars
+	appearance := []int{rowMascot, rowTabTitle, rowTheme, rowUsageBars}
 	account := []int{}
 	if m.ClaudeConfigVisible() {
-		account = append(account, 6) // Subscription
+		account = append(account, rowSubscription)
 	}
-	account = append(account, m.loginRowIndex(), m.autoSwitchRowIndex())
+	account = append(account, rowAccount, rowAutoSwitch)
 	return []settingsSection{
 		{title: "Appearance", indices: appearance},
-		{title: "Notifications", indices: []int{2}}, // Idle sound
-		{title: "Projects", indices: []int{4}},      // Projects folder
+		{title: "Tools", indices: []int{rowAITools}},
+		{title: "Notifications", indices: []int{rowIdleSound}},
+		{title: "Projects", indices: []int{rowProjectsFolder}},
 		{title: "Account", indices: account},
 	}
 }
@@ -1680,6 +1701,10 @@ func (m *MainMenuModel) LoadProjectsRoot() {
 // SetAIToolFile sets the file path for AI tool preference persistence.
 // When set, CycleAITool writes the new tool to this file immediately.
 func (m *MainMenuModel) SetAIToolFile(path string) { m.aiToolFile = path }
+
+// SetLibDir points the AI-tools panel at wisp-deck's lib/ directory, which it
+// sources to run the existing bash installers.
+func (m *MainMenuModel) SetLibDir(path string) { m.libDir = path }
 
 // AIToolFile returns the file path for AI tool preference persistence.
 func (m *MainMenuModel) AIToolFile() string { return m.aiToolFile }
@@ -2069,6 +2094,10 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return worktreeDoneMsg{path: worktreePath}
 		}
 
+	case aiToolInstallDoneMsg:
+		m.applyAIToolInstallDone(msg)
+		return m, nil
+
 	case worktreeDoneMsg:
 		if msg.err != nil {
 			m.feedbackMsg = "Failed to create worktree: " + msg.err.Error()
@@ -2109,6 +2138,9 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.accountMenuOpen {
 			return m.updateAccountMenu(msg)
+		}
+		if m.aiToolsPanelOpen {
+			return m.updateAIToolsPanel(msg)
 		}
 		if m.settingsInputMode {
 			return m.updateSettingsInput(msg)
@@ -2566,9 +2598,12 @@ func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 		if m.selectedConfig > 0 {
 			m.openModelMap()
 		}
-	case 7:
+	case rowAccount:
 		// Open the login-management panel (switch / add / remove logins).
 		m.openAccountMenu()
+		return m, nil
+	case rowAITools:
+		m.openAIToolsPanel()
 		return m, nil
 	case m.autoSwitchRowIndex():
 		m.CycleAutoSwitch()
@@ -3591,6 +3626,9 @@ func (m *MainMenuModel) View() string {
 		}
 		if m.accountMenuOpen {
 			appendModal(m.renderAccountMenuPanel())
+		}
+		if m.aiToolsPanelOpen {
+			appendModal(m.renderAIToolsPanel())
 		}
 	case m.activeTab == TabStats:
 		menuBox = m.renderStatsBox()
