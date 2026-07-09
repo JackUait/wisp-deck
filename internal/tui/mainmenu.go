@@ -337,6 +337,7 @@ type MainMenuModel struct {
 	aiToolsCursor        int
 	aiToolRows           []models.AITool
 	aiToolInstalling     string
+	aiToolInstallPct     float64
 	aiToolsErr           error
 	libDir               string
 	detectAITools        func() []models.AITool
@@ -2096,6 +2097,12 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case aiToolInstallDoneMsg:
 		m.applyAIToolInstallDone(msg)
+		return m, nil
+
+	case installTickMsg:
+		if m.applyInstallTick() {
+			return m, installTickCmd()
+		}
 		return m, nil
 
 	case worktreeDoneMsg:

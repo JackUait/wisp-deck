@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -17,6 +18,73 @@ import (
 type aiToolInstallDoneMsg struct {
 	tool string
 	err  error
+}
+
+// installTickMsg drives the install progress bar. The bar needs its own ticker:
+// bobTickCmd is armed only in Init and only when the mascot is animated, so a bar
+// hung off it would sit frozen for anyone running Mascot [None].
+type installTickMsg struct{}
+
+const (
+	// installPctCeiling caps the progress bar below 100%. `npm install -g` reports
+	// no usable progress when run detached, so the percentage is driven by elapsed
+	// ticks rather than by work done. Holding short of 100% means a wedged install
+	// parks at the ceiling instead of claiming to have finished; the row only
+	// leaves the bar behind when npm actually returns.
+	installPctCeiling = 0.9
+	// installPctEase is the fraction of the remaining distance covered per tick,
+	// giving a fast start that slows as it approaches the ceiling. Tuned against a
+	// real `npm install -g`, which takes tens of seconds: at 0.06 the bar hit the
+	// ceiling in under 6s and then sat pinned for the rest of the install. At
+	// 0.008 it passes ~35% at 5s and ~85% at 30s. See the pacing test.
+	installPctEase = 0.008
+	// installTickInterval is the bar's refresh period.
+	installTickInterval = 80 * time.Millisecond
+	// installBarWidth is the bar's cell count, sized to fit the panel's right
+	// column beside the longest tool name.
+	installBarWidth = 24
+)
+
+// advanceInstallPct eases pct toward installPctCeiling without ever reaching it.
+func advanceInstallPct(pct float64) float64 {
+	if pct >= installPctCeiling {
+		return installPctCeiling
+	}
+	return pct + (installPctCeiling-pct)*installPctEase
+}
+
+// installTickCmd schedules the next progress-bar frame.
+func installTickCmd() tea.Cmd {
+	return tea.Tick(installTickInterval, func(time.Time) tea.Msg { return installTickMsg{} })
+}
+
+// applyInstallTick advances the bar and reports whether the ticker should re-arm.
+// It stops as soon as no install is running, so no ticker outlives its work.
+func (m *MainMenuModel) applyInstallTick() bool {
+	if m.aiToolInstalling == "" {
+		return false
+	}
+	m.aiToolInstallPct = advanceInstallPct(m.aiToolInstallPct)
+	return true
+}
+
+// renderProgressBar draws a width-cell bar followed by the percentage.
+func renderProgressBar(pct float64, width int) string {
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 1 {
+		pct = 1
+	}
+	filled := int(pct * float64(width))
+	if filled > width {
+		filled = width
+	}
+	fillStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
+	restStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	bar := fillStyle.Render(strings.Repeat("█", filled)) +
+		restStyle.Render(strings.Repeat("░", width-filled))
+	return bar + restStyle.Render(fmt.Sprintf(" %3.0f%%", pct*100))
 }
 
 // installableTools are the tools this panel may install. Claude Code is
@@ -119,13 +187,15 @@ func (m *MainMenuModel) installFocusedTool() tea.Cmd {
 	}
 	name := tool.Name
 	m.aiToolInstalling = name
+	m.aiToolInstallPct = 0
 	m.aiToolsErr = nil
-	return func() tea.Msg {
+	install := func() tea.Msg {
 		if err := cmd.Run(); err != nil {
 			return aiToolInstallDoneMsg{tool: name, err: err}
 		}
 		return aiToolInstallDoneMsg{tool: name}
 	}
+	return tea.Batch(install, installTickCmd())
 }
 
 // setFocusedToolDefault makes the highlighted tool the default for new sessions,
@@ -149,14 +219,19 @@ func (m *MainMenuModel) setFocusedToolDefault() {
 // applyAIToolInstallDone folds an install result back into the model.
 func (m *MainMenuModel) applyAIToolInstallDone(msg aiToolInstallDoneMsg) {
 	m.aiToolInstalling = ""
+	m.aiToolInstallPct = 0
 	display := models.DisplayName(msg.tool)
 
 	if msg.err != nil {
+		// feedbackMsg is only rendered on the Projects tab, so the panel carries
+		// its own error line — otherwise a failure here would be invisible.
+		m.aiToolsErr = fmt.Errorf("Failed to install %s: %w", display, msg.err)
 		m.feedbackMsg = "Failed to install " + display + ": " + msg.err.Error()
 		m.feedbackStyle = "error"
 		return
 	}
 
+	m.aiToolsErr = nil
 	m.aiToolRows = m.detect()
 	// The menu is the project selector shown before tmux launches, so a
 	// just-installed tool must become selectable for the session about to start.
@@ -215,7 +290,7 @@ func (m *MainMenuModel) renderAIToolsPanel() string {
 		var right string
 		switch {
 		case m.aiToolInstalling == tool.Name:
-			right = grayStyle.Render("installing…")
+			right = renderProgressBar(m.aiToolInstallPct, installBarWidth)
 		case tool.Installed && tool.Name == m.CurrentAITool():
 			right = greenStyle.Render("default")
 		case tool.Installed:
