@@ -399,8 +399,8 @@ esac
 # Mid-session account switch: for every claude session, persist the launch
 # context so the compact-view ledger's account pill — and the auto-switch
 # trigger — can relaunch the AI pane under another login (continue mode). The
-# pill's own 2+-logins gate lives in the ledger; here we only skip opencode.
-# Cleared by cleanup() on window close.
+# pill's own 2+-logins gate lives in the ledger; here we skip every non-claude
+# tool (opencode, codex). Cleared by cleanup() on window close.
 WISP_DECK_RELAUNCH_FILE=""
 if [ "$SELECTED_AI_TOOL" = "claude" ]; then
   WISP_DECK_RELAUNCH_FILE="$SHARE_DIR/relaunch-${SESSION_NAME}"
