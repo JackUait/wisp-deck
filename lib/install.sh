@@ -211,6 +211,31 @@ ensure_opencode() {
   warn "OpenCode requires Node.js — install from https://nodejs.org"
 }
 
+# Ensure the Codex CLI is available.
+#
+# Unlike OpenCode there is no npx fallback: wrapper.sh detects codex with a plain
+# `command -v codex`, so a codex that only exists behind npx would never be
+# offered as a tool. Install it globally or not at all.
+ensure_codex() {
+  if command -v codex &>/dev/null; then
+    success "Codex already installed"
+    return 0
+  fi
+
+  if command -v npm &>/dev/null; then
+    info "Installing Codex..."
+    if npm install -g @openai/codex &>/dev/null; then
+      success "Codex installed"
+      return 0
+    fi
+    warn "Global Codex install failed"
+    return 1
+  fi
+
+  warn "Codex requires Node.js — install from https://nodejs.org"
+  return 1
+}
+
 # Install a command-line tool if not already on PATH.
 # Usage: ensure_command "cmd" "install_cmd" "post_msg" "display_name"
 ensure_command() {

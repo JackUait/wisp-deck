@@ -165,6 +165,7 @@ var actionLabels = []struct {
 var aiToolDisplayNames = map[string]string{
 	"claude":   "Claude Code",
 	"opencode": "OpenCode",
+	"codex":    "Codex",
 }
 
 // SystemSounds is the ordered list of macOS system sounds available for notification.

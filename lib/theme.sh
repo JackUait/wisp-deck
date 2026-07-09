@@ -17,6 +17,7 @@ gt_resolve_theme() {
   esac
   case "$tool" in
     opencode) echo "purple" ;;
+    codex)    echo "teal" ;;
     *)        echo "orange" ;;
   esac
 }
@@ -31,6 +32,7 @@ get_theme_accent() {
     blue)   echo "75" ;;
     rose)   echo "211" ;;
     cyan)   echo "80" ;;
+    teal)   echo "36" ;;
     *)      echo "209" ;; # orange (default)
   esac
 }
@@ -44,6 +46,7 @@ get_theme_palette() {
     blue)   echo "17 18 25 26 31 32 75 117" ;;
     rose)   echo "52 89 125 161 168 205 211 218" ;;
     cyan)   echo "23 30 37 43 44 80 116 123" ;;
+    teal)   echo "23 29 30 36 43 49 86 158" ;;
     *)      echo "130 166 172 208 209 214 215 220" ;; # orange (default)
   esac
 }

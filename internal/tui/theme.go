@@ -69,6 +69,33 @@ var themes = map[string]AIToolTheme{
 		SleepCap:      lipgloss.Color("146"), // #afafd7 — dim rim
 		Text:          lipgloss.Color("189"), // #d7d7ff
 	},
+	// Primary 36 (#00af87) is the nearest 256-color match to OpenAI's #10a37f.
+	// Deliberately neither 78 (the `green` preset) nor 80 (`cyan`): reusing a
+	// preset's Primary would make codex's auto theme indistinguishable from a
+	// manually-selected preset.
+	//
+	// The codex mascot is drawn against the CLAUDE slot semantics (Accent is a
+	// bright belly emblem, Bright the darker lower body), so a codex user who
+	// picks a named preset gets presetThemesClaude and it recolors correctly.
+	"codex": {
+		Name:          "codex",
+		Primary:       lipgloss.Color("36"),  // #00af87 brand teal — head + upper body
+		Dim:           lipgloss.Color("29"),  // #00875f — stats border
+		Bright:        lipgloss.Color("30"),  // #008787 — darker lower body
+		Accent:        lipgloss.Color("86"),  // #5fd7d7 — bright `>_` prompt emblem
+		Cap:           lipgloss.Color("158"), // #afffd7 — pale mint crown
+		DarkFeet:      lipgloss.Color("23"),  // #005f5f — feet
+		EyeWhite:      lipgloss.Color("255"),
+		EyePupil:      lipgloss.Color("232"),
+		UIAccent:      lipgloss.Color("36"),  // teal — the popup chrome color
+		SleepPrimary:  lipgloss.Color("29"),  // #00875f — dim body
+		SleepAccent:   lipgloss.Color("66"),  // #5f8787
+		SleepBlush:    lipgloss.Color("72"),  // #5faf87 — cheeks
+		SleepDim:      lipgloss.Color("23"),  // #005f5f
+		SleepDarkFeet: lipgloss.Color("22"),  // #005f00 — dim feet
+		SleepCap:      lipgloss.Color("108"), // #87af87 — dim rim
+		Text:          lipgloss.Color("158"), // #afffd7
+	},
 }
 
 // Each preset color ships TWO tunings — one per mascot shape — because the two

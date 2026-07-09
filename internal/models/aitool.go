@@ -19,6 +19,8 @@ func (t AITool) String() string {
 		displayName = "Claude Code"
 	case "opencode":
 		displayName = "OpenCode"
+	case "codex":
+		displayName = "Codex"
 	}
 
 	if t.Installed {
@@ -32,6 +34,7 @@ func DetectAITools() []AITool {
 	tools := []AITool{
 		{Name: "claude", Command: "claude"},
 		{Name: "opencode", Command: "npx opencode-ai@latest"},
+		{Name: "codex", Command: "codex"},
 	}
 
 	for i := range tools {
@@ -59,6 +62,8 @@ func DisplayName(tool string) string {
 		return "Claude Code"
 	case "opencode":
 		return "OpenCode"
+	case "codex":
+		return "Codex"
 	default:
 		return tool
 	}

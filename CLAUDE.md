@@ -113,11 +113,11 @@ Scroll up to "IMMEDIATE COMPLETION CHECKLIST" and verify ALL items before declar
 
 ## Project Overview
 
-Wisp Deck is a terminal + tmux wrapper that launches a three-pane dev session with AI coding tools (Claude Code, OpenCode), lazygit, and a spare terminal. It runs on Ghostty and handles complete process cleanup when windows close (no zombie processes).
+Wisp Deck is a terminal + tmux wrapper that launches a three-pane dev session with AI coding tools (Claude Code, OpenCode, Codex), lazygit, and a spare terminal. It runs on Ghostty and handles complete process cleanup when windows close (no zombie processes).
 
 **Key Features:**
 - Interactive project selector with TUI
-- Multi-AI tool support (Claude Code, OpenCode)
+- Multi-AI tool support (Claude Code, OpenCode, Codex)
 - Custom status lines showing git info and context usage
 - Sound notifications on AI idle
 - Auto-cleanup of entire process trees

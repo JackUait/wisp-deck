@@ -27,6 +27,7 @@ ART
 get_tool_palette() {
   case "${1:-}" in
     opencode) echo "60 61 62 99 135 141 147 183" ;;       # violet ramp (OpenCode mascot)
+    codex)    echo "23 29 30 36 43 49 86 158" ;;          # teal ramp (Codex mascot)
     *)        echo "130 166 172 208 209 214 215 220" ;;   # orange/amber (claude default)
   esac
 }

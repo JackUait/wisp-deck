@@ -83,6 +83,9 @@ if select_ai_tool_interactive; then
     opencode)
       ensure_opencode
       ;;
+    codex)
+      ensure_codex
+      ;;
   esac
 else
   info "AI tool selection cancelled"
@@ -231,7 +234,7 @@ echo ""
 success "Wrapper script:  ~/.config/wisp-deck/wrapper.sh (symlink)"
 success "Terminal:        Ghostty"
 _ai_default="$(cat "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/ai-tool" 2>/dev/null)"
-success "AI tool:         $(echo "$_ai_default" | sed 's/claude/Claude Code/;s/opencode/OpenCode/')"
+success "AI tool:         $(echo "$_ai_default" | sed 's/claude/Claude Code/;s/opencode/OpenCode/;s/codex/Codex/')"
 success "Projects file:   $PROJECTS_FILE"
 success "Config command:  wisp-deck (in ~/.local/bin/)"
 if [ -f ~/.claude/statusline-wrapper.sh ]; then

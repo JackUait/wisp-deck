@@ -84,15 +84,17 @@ func TestDetectAITools_AllToolsDetected(t *testing.T) {
 
 	tools := models.DetectAITools()
 
-	if len(tools) != 2 {
-		t.Fatalf("Expected 2 tools, got %d", len(tools))
+	if len(tools) != 3 {
+		t.Fatalf("Expected 3 tools, got %d", len(tools))
 	}
 
 	// claude and opencode should be installed (claude is a single binary,
-	// opencode is detected via the npx binary)
+	// opencode is detected via the npx binary). codex is a plain PATH binary
+	// and was not mocked above, so it is listed but not installed.
 	expected := map[string]bool{
 		"claude":   true,
 		"opencode": true,
+		"codex":    false,
 	}
 
 	for _, tool := range tools {

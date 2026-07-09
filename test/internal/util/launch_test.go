@@ -204,3 +204,20 @@ func TestBuildAILaunchCmdTable(t *testing.T) {
 		})
 	}
 }
+
+// Codex takes no positional project dir (the pane's cwd is already the project
+// dir) and none of claude's flags. It needs its own case rather than the
+// default arm, which appends args.
+func TestBuildAILaunchCmd_codex(t *testing.T) {
+	t.Run("bare command, project dir ignored", func(t *testing.T) {
+		if got := util.BuildAILaunchCmd("codex", "/usr/bin/codex", "/my/project", nil); got != "/usr/bin/codex" {
+			t.Errorf("got %q, want %q", got, "/usr/bin/codex")
+		}
+	})
+
+	t.Run("extra args are not appended", func(t *testing.T) {
+		if got := util.BuildAILaunchCmd("codex", "codex", "", []string{"--resume"}); got != "codex" {
+			t.Errorf("got %q, want %q", got, "codex")
+		}
+	})
+}

@@ -25,7 +25,7 @@ On first launch you'll pick your AI assistant and add your projects. After that,
 
 Pick a project and Wisp Deck drops you into a three-pane workspace:
 
-- **AI assistant** — Claude Code or OpenCode, focused and ready. Just start typing your prompt.
+- **AI assistant** — Claude Code, OpenCode or Codex, focused and ready. Just start typing your prompt.
 - **Changes view** — a live, auto-refreshing summary of what's changed in your branch (added/removed lines per file), or the full **lazygit** interface if you prefer.
 - **Spare terminal** — a tabbed shell for running commands, with its own tab bar so you can open as many as you need.
 
@@ -83,7 +83,7 @@ Press **S** in the selector to open Settings. Changes apply immediately and reac
 - **Panel** — use the lightweight live **Changes** view or the full **lazygit** interface.
 - **Tab title** — what the window tab shows: the project name, the AI tool's own title, or both.
 - **Default projects folder** — the folder Wisp Deck starts in when you add a new project.
-- **AI tool** — switch between Claude Code and OpenCode.
+- **AI tool** — switch between Claude Code, OpenCode and Codex.
 
 ---
 
