@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 )
 
-// cacheVersion is 5: ParseFile now attributes each billed iteration of a turn to
-// its own model (model-fallback rounds were previously dropped), so v4 caches must
-// rebuild from on-disk transcripts to capture them. LoadCache rejects a mismatched
-// version.
-const cacheVersion = 5
+// cacheVersion is 6: ParseCodexRollout now backfills token_count events that
+// precede a rollout's first turn_context (replayed history in forked/resumed
+// sessions) to that first model instead of "unknown", so v5 caches must rebuild.
+// LoadCache rejects a mismatched version.
+const cacheVersion = 6
 
 // fileCacheEntry stores one transcript file's identity and its parsed months.
 type fileCacheEntry struct {

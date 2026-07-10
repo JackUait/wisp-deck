@@ -42,8 +42,11 @@ type codexTokens struct {
 // usage by month and by model, matching ParseFile's contract so the Aggregate cache
 // can treat Codex, Claude, and OpenCode sources uniformly. Non-token records and
 // malformed lines are skipped. Each token_count event is attributed to the most
-// recent turn_context model seen in the file (or "unknown" if a token_count precedes
-// any turn_context). Codex reports no cache-write tokens, so CacheWrite stays 0.
+// recent turn_context model seen in the file. Forked/resumed sessions replay the
+// parent's token_count events before the new rollout's first turn_context, so
+// events preceding it are buffered and backfilled to that first model ("unknown"
+// only when the whole file has no turn_context). Codex reports no cache-write
+// tokens, so CacheWrite stays 0.
 //
 // Like ParseFile, dedup is per-file only. Codex can replay early token_count events
 // into a resumed session's new rollout file; those cross-file duplicates are
@@ -65,6 +68,28 @@ func ParseCodexRollout(path string) (map[string]*MonthlyUsage, FileMeta, error) 
 	acc := map[string]map[string]*ModelUsage{}
 	currentModel := ""
 
+	// Events seen before the first turn_context, held until the model is known.
+	type pendingCount struct {
+		month  string
+		counts usageCounts
+	}
+	var pending []pendingCount
+
+	record := func(month, model string, c usageCounts) {
+		byModel := acc[month]
+		if byModel == nil {
+			byModel = map[string]*ModelUsage{}
+			acc[month] = byModel
+		}
+		addCounts(byModel, model, c)
+	}
+	flushPending := func(model string) {
+		for _, p := range pending {
+			record(p.month, model, p.counts)
+		}
+		pending = nil
+	}
+
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
 	for sc.Scan() {
@@ -73,6 +98,9 @@ func ParseCodexRollout(path string) (map[string]*MonthlyUsage, FileMeta, error) 
 			continue
 		}
 		if rec.Type == "turn_context" && rec.Payload.Model != "" {
+			if currentModel == "" {
+				flushPending(rec.Payload.Model)
+			}
 			currentModel = rec.Payload.Model
 			continue
 		}
@@ -83,29 +111,26 @@ func ParseCodexRollout(path string) (map[string]*MonthlyUsage, FileMeta, error) 
 			continue
 		}
 		lt := rec.Payload.Info.Last
-		model := currentModel
-		if model == "" {
-			model = "unknown"
-		}
 		fresh := lt.Input - lt.Cached
 		if fresh < 0 {
 			fresh = 0
 		}
 		month := rec.Timestamp[:7]
-		byModel := acc[month]
-		if byModel == nil {
-			byModel = map[string]*ModelUsage{}
-			acc[month] = byModel
-		}
-		addCounts(byModel, model, usageCounts{
+		counts := usageCounts{
 			Input:     fresh,
 			Output:    lt.Output,
 			CacheRead: lt.Cached,
-		})
+		}
+		if currentModel == "" {
+			pending = append(pending, pendingCount{month: month, counts: counts})
+			continue
+		}
+		record(month, currentModel, counts)
 	}
 	if err := sc.Err(); err != nil {
 		return nil, meta, err
 	}
+	flushPending("unknown")
 
 	months := make(map[string]*MonthlyUsage, len(acc))
 	for month, byModel := range acc {

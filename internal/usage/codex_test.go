@@ -110,6 +110,7 @@ func TestParseCodexRollout_modelSwitchMidSession(t *testing.T) {
 }
 
 func TestParseCodexRollout_tokenCountBeforeModelIsUnknown(t *testing.T) {
+	// A file with no turn_context at all has nothing to backfill from.
 	tok := `{"timestamp":"2026-07-10T00:35:23Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":2,"total_tokens":12}}}}`
 	path := writeCodexRollout(t, tok)
 
@@ -119,6 +120,34 @@ func TestParseCodexRollout_tokenCountBeforeModelIsUnknown(t *testing.T) {
 	}
 	if m := modelIn(months["2026-07"], "unknown"); m == nil || m.Input != 10 {
 		t.Errorf("unknown model Input: got %+v, want 10", m)
+	}
+}
+
+func TestParseCodexRollout_backfillsReplayedTokenCountsToFirstModel(t *testing.T) {
+	// Forked/resumed sessions replay the parent's token_count events at the top of
+	// the new rollout, before any turn_context. Those must be attributed to the
+	// file's first turn_context model, not "unknown".
+	tokReplayed := `{"timestamp":"2026-07-10T00:35:23Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":60,"output_tokens":7,"total_tokens":107}}}}`
+	turn := `{"timestamp":"2026-07-10T00:36:00Z","type":"turn_context","payload":{"model":"gpt-5.6-sol"}}`
+	tokLive := `{"timestamp":"2026-07-10T00:36:10Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"cached_input_tokens":0,"output_tokens":5,"total_tokens":55}}}}`
+	path := writeCodexRollout(t, tokReplayed, turn, tokLive)
+
+	months, _, err := ParseCodexRollout(path)
+	if err != nil {
+		t.Fatalf("ParseCodexRollout: %v", err)
+	}
+	m := modelIn(months["2026-07"], "gpt-5.6-sol")
+	if m == nil {
+		t.Fatalf("no usage for gpt-5.6-sol; got %+v", months)
+	}
+	if m.Input != 90 { // (100-60) replayed + 50 live
+		t.Errorf("Input = %d, want 90", m.Input)
+	}
+	if m.CacheRead != 60 {
+		t.Errorf("CacheRead = %d, want 60", m.CacheRead)
+	}
+	if u := modelIn(months["2026-07"], "unknown"); u != nil {
+		t.Errorf("unknown bucket should be empty, got %+v", u)
 	}
 }
 
