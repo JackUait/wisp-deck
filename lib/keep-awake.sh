@@ -37,8 +37,12 @@ keep_awake_enabled() {
 }
 
 # Return 0 when the sudoers rule is in place (passwordless pmset works).
+# The probe MUST be one of the exact commands the rule grants — anything else
+# (e.g. `pmset -g`) fails `sudo -n` even with the rule installed, which made
+# every launch re-ask for the password. `-l` asks sudo whether the command is
+# allowed without running it, so the probe never touches the kernel flag.
 keep_awake_can_sudo() {
-  "$(keep_awake_sudo)" -n "$(keep_awake_pmset)" -g >/dev/null 2>&1
+  "$(keep_awake_sudo)" -n -l "$(keep_awake_pmset)" -a disablesleep 1 >/dev/null 2>&1
 }
 
 # Echo the current kernel flag: "1" when sleep is disabled, else "0".

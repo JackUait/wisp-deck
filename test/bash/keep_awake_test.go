@@ -36,10 +36,24 @@ if [ "$1" = "-a" ] && [ "$2" = "disablesleep" ]; then
 fi
 exit 64
 `)
+	// Emulates real sudo with ONLY the wisp-deck sudoers rule installed:
+	// the two disablesleep invocations run passwordless, `sudo -l <cmd>`
+	// answers whether a command is granted, everything else is denied.
+	// A permissive exec-anything mock is exactly what hid the bug where
+	// the can_sudo probe used a command the rule does not grant.
 	mockCommand(t, dir, "sudo", `
 echo "sudo $*" >> "$KA_LOG"
 [ "$1" = "-n" ] && shift
-exec "$@"
+list=0
+if [ "$1" = "-l" ]; then list=1; shift; fi
+case "$2 $3 $4" in
+  "-a disablesleep 0" | "-a disablesleep 1")
+    [ "$list" = "1" ] && exit 0
+    exec "$@"
+    ;;
+esac
+echo "sudo: a password is required" >&2
+exit 1
 `)
 
 	env = buildEnv(t, []string{binDir},
@@ -216,6 +230,23 @@ func TestKeepAwakeCanSudo_reflects_sudoers_rule(t *testing.T) {
 		_, code := runBashFunc(t, "lib/keep-awake.sh", "keep_awake_can_sudo", nil, env)
 		assertExitCode(t, code, 1)
 	})
+}
+
+// Regression: the sudoers rule grants exactly two pmset invocations. The
+// can_sudo probe must succeed with ONLY those granted — probing with any
+// other command (e.g. `sudo -n pmset -g`) fails against the real rule, so
+// every launch re-concluded "rule missing" and asked for the password again.
+func TestKeepAwakeCanSudo_probe_uses_only_granted_commands(t *testing.T) {
+	dir := t.TempDir()
+	env, stateFile, _ := keepAwakeEnv(t, dir)
+
+	_, code := runBashFunc(t, "lib/keep-awake.sh", "keep_awake_can_sudo", nil, env)
+	assertExitCode(t, code, 0)
+
+	// The probe must not flip the kernel flag as a side effect.
+	if got := readFileTrim(t, stateFile); got != "" {
+		t.Errorf("can_sudo probe mutated SleepDisabled to %q; probing must be read-only", got)
+	}
 }
 
 // keep_awake_tick is what the watcher calls every 0.5s. It maps the agent's
