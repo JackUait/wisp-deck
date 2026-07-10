@@ -72,6 +72,53 @@ func TestLoading_get_loading_art_has_equal_line_widths(t *testing.T) {
 	}
 }
 
+// --- get_loading_art: per-tool mascot art ---
+
+func TestLoading_get_loading_art_opencode_shows_brace_mascot(t *testing.T) {
+	out, code := runBashFunc(t, "lib/loading.sh", "get_loading_art", []string{"opencode"}, nil)
+	assertExitCode(t, code, 0)
+	// Brace the moth: curly-brace wings and the ( o   o ) face.
+	assertContains(t, out, "{{{")
+	assertContains(t, out, "( o   o )")
+	// Not the generic Wisp Deck wordmark.
+	assertNotContains(t, out, "d8888b")
+}
+
+func TestLoading_get_loading_art_opencode_has_equal_line_widths(t *testing.T) {
+	out, code := runBashFunc(t, "lib/loading.sh", "get_loading_art", []string{"opencode"}, nil)
+	assertExitCode(t, code, 0)
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) < 10 {
+		t.Fatalf("art has %d lines, want >= 10", len(lines))
+	}
+	expected := len(lines[0])
+	for i, line := range lines {
+		if len(line) != expected {
+			t.Errorf("line %d has %d chars, want %d (same as line 0)", i, len(line), expected)
+		}
+	}
+}
+
+func TestLoading_get_loading_art_claude_keeps_wordmark(t *testing.T) {
+	for _, tool := range []string{"claude", "codex", "unknown"} {
+		out, code := runBashFunc(t, "lib/loading.sh", "get_loading_art", []string{tool}, nil)
+		assertExitCode(t, code, 0)
+		assertContains(t, out, "d8888b")
+		assertNotContains(t, out, "( o   o )")
+	}
+}
+
+func TestLoading_render_loading_frame_opencode_renders_mascot(t *testing.T) {
+	root := projectRoot(t)
+	script := fmt.Sprintf(
+		`source %q/lib/loading.sh && render_loading_frame opencode 0 120 40`,
+		root)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "( o   o )")
+}
+
 // --- _detect_term_size ---
 
 func TestLoading_detect_term_size_returns_two_positive_numbers(t *testing.T) {
