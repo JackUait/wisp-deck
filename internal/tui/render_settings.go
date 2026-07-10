@@ -252,6 +252,19 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	autoStyle := lipgloss.NewStyle().Foreground(autoColor)
 	itemLines[m.autoSwitchRowIndex()] = []string{m.renderSettingsItem(m.autoSwitchRowIndex(), "Auto-switch accounts", autoState, autoStyle, primaryBoldStyle, leftBorder, rightBorder)}
 
+	// Keep-awake item: holds the kernel sleep veto while an agent is mid-turn so
+	// a closed lid does not suspend the machine.
+	var wakeColor lipgloss.Color
+	wakeState := "[Off]"
+	if m.KeepAwakeEnabled() {
+		wakeColor = lipgloss.Color("114") // green when on
+		wakeState = "[On]"
+	} else {
+		wakeColor = lipgloss.Color("241") // gray when off
+	}
+	wakeStyle := lipgloss.NewStyle().Foreground(wakeColor)
+	itemLines[m.keepAwakeRowIndex()] = []string{m.renderSettingsItem(m.keepAwakeRowIndex(), "Keep awake while working", wakeState, wakeStyle, primaryBoldStyle, leftBorder, rightBorder)}
+
 	// Emit each section: a header row (blank-separated from the prior section)
 	// followed by its item rows in visual order. The initial emptyRow above stands
 	// in for the blank before the first header.

@@ -279,6 +279,14 @@ start_tab_title_watcher() {
       local state
       state=$(check_ai_tool_state "$ai_tool" "$session_name" "$tmux_cmd" "$marker_file" "$ai_pane")
 
+      # Hold the machine awake while the agent is mid-turn so a closed lid does
+      # not suspend it. $$ is the wrapper's PID (not this subshell's), which is
+      # what keep_awake_reap uses to detect a crashed session's stale holder.
+      # Guarded by declare -f: older wrapper versions may not source the module.
+      if [ -n "$config_dir" ] && declare -f keep_awake_tick >/dev/null 2>&1; then
+        keep_awake_tick "$config_dir" "$session_name" "$$" "$state" || true
+      fi
+
       # In model mode the AI tool owns the title: read the AI pane's title each
       # poll and mirror it to the tab (falling back to the project name before
       # the model has set one). The waiting/sound logic below still runs.

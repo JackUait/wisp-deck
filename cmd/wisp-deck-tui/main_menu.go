@@ -42,6 +42,7 @@ var (
 	mainMenuClaudeAccountsDir      string
 	mainMenuClaudeDefaultLabelFile string
 	mainMenuAutoSwitchFile         string
+	mainMenuKeepAwake              string
 	mainMenuLibDir                 string
 	mainMenuDisabledToolsFile      string
 )
@@ -58,6 +59,7 @@ func init() {
 	mainMenuCmd.Flags().StringVar(&mainMenuGhostDisplay, "ghost-display", "animated", "Ghost display mode (animated, static, none)")
 	mainMenuCmd.Flags().StringVar(&mainMenuUsageBars, "usage-bars", "7d", "Statusline usage bars (7d, 5h, both, none)")
 	mainMenuCmd.Flags().StringVar(&mainMenuTabTitle, "tab-title", "full", "Tab title mode (full, project)")
+	mainMenuCmd.Flags().StringVar(&mainMenuKeepAwake, "keep-awake", "off", "Hold the machine awake while an agent works (on, off)")
 	mainMenuCmd.Flags().StringVar(&mainMenuUpdateVer, "update-version", "", "Optional update notification version")
 	mainMenuCmd.Flags().StringVar(&mainMenuSoundName, "sound-name", "", "Sound name for notifications (empty = off)")
 	mainMenuCmd.Flags().StringVar(&mainMenuSettingsFile, "settings-file", "", "Path to settings file for persistence")
@@ -95,6 +97,7 @@ func runMainMenu(cmd *cobra.Command, args []string) error {
 	model.SetUsageBars(mainMenuUsageBars)
 	model.SetStatsMode(readStatsModePref())
 	model.SetTabTitle(mainMenuTabTitle)
+	model.SetKeepAwake(mainMenuKeepAwake)
 	model.SetSoundName(mainMenuSoundName)
 	model.SetProjectsFile(mainMenuProjectsFile)
 	if mainMenuProjectsRootFile != "" {

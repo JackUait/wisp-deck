@@ -87,8 +87,8 @@ func TestRenderSettingsBox_appearanceItemsGroupedAboveNotifications(t *testing.T
 func TestSettingsItemOrder_groupsAppearanceThenSections(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	got := m.settingsItemOrder()
-	// Appearance, Tools, Notifications, Projects, Account.
-	want := []int{0, 1, 3, 5, 9, 2, 4, 6, 7, 8}
+	// Appearance, Tools, Notifications, Power, Projects, Account.
+	want := []int{0, 1, 3, 5, 9, 2, 10, 4, 6, 7, 8}
 	if len(got) != len(want) {
 		t.Fatalf("settingsItemOrder len=%d want %d: %v", len(got), len(want), got)
 	}
@@ -111,12 +111,16 @@ func TestSettingsStep_movesInVisualOrder(t *testing.T) {
 		t.Fatalf("down from AI tools → %d, want 2 (Idle sound)", m.settingsSelected)
 	}
 	m.settingsStep(1, false)
+	if m.settingsSelected != rowKeepAwake {
+		t.Fatalf("down from Idle sound → %d, want %d (Keep awake)", m.settingsSelected, rowKeepAwake)
+	}
+	m.settingsStep(1, false)
 	if m.settingsSelected != 4 {
-		t.Fatalf("down from Idle sound → %d, want 4 (Projects folder)", m.settingsSelected)
+		t.Fatalf("down from Keep awake → %d, want 4 (Projects folder)", m.settingsSelected)
 	}
 	m.settingsStep(-1, false)
-	if m.settingsSelected != 2 {
-		t.Fatalf("up from Projects folder → %d, want 2 (Idle sound)", m.settingsSelected)
+	if m.settingsSelected != rowKeepAwake {
+		t.Fatalf("up from Projects folder → %d, want %d (Keep awake)", m.settingsSelected, rowKeepAwake)
 	}
 }
 

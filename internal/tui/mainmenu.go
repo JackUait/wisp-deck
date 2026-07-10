@@ -325,6 +325,7 @@ type MainMenuModel struct {
 	// on/off flag file, shared with wrapper.sh and lib/auto-switch.sh.
 	autoSwitch     string // "on" or "off"
 	autoSwitchFile string // flag file path for persistence
+	keepAwake      string // "on" or "off" — hold the kernel sleep veto while an agent works
 
 	// Login-management panel, opened from the LOGIN row (mirrors the model-map
 	// panel that Plan opens). Lists Default + managed logins + an add row.
@@ -1351,10 +1352,11 @@ const (
 	rowAccount        = 7
 	rowAutoSwitch     = 8
 	rowAITools        = 9
+	rowKeepAwake      = 10
 )
 
 // settingsItemCount returns the number of settings rows.
-func (m *MainMenuModel) settingsItemCount() int { return rowAITools + 1 }
+func (m *MainMenuModel) settingsItemCount() int { return rowKeepAwake + 1 }
 
 // loginRowIndex is the index of the Login row.
 func (m *MainMenuModel) loginRowIndex() int { return rowAccount }
@@ -1384,6 +1386,7 @@ func (m *MainMenuModel) settingsSections() []settingsSection {
 		{title: "Appearance", indices: appearance},
 		{title: "Tools", indices: []int{rowAITools}},
 		{title: "Notifications", indices: []int{rowIdleSound}},
+		{title: "Power", indices: []int{rowKeepAwake}},
 		{title: "Projects", indices: []int{rowProjectsFolder}},
 		{title: "Account", indices: account},
 	}
@@ -1451,6 +1454,33 @@ func (m *MainMenuModel) CycleAutoSwitch() {
 		_ = os.MkdirAll(filepath.Dir(m.autoSwitchFile), 0o755)
 		_ = os.WriteFile(m.autoSwitchFile, []byte(m.autoSwitch+"\n"), 0o644)
 	}
+}
+
+// keepAwakeRowIndex is the index of the Keep-awake toggle.
+func (m *MainMenuModel) keepAwakeRowIndex() int { return rowKeepAwake }
+
+// KeepAwakeEnabled reports whether a working agent should hold the machine awake.
+func (m *MainMenuModel) KeepAwakeEnabled() bool { return m.keepAwake == "on" }
+
+// SetKeepAwake records the launch-time value; anything but "on" reads as off.
+func (m *MainMenuModel) SetKeepAwake(v string) {
+	if v == "on" {
+		m.keepAwake = "on"
+		return
+	}
+	m.keepAwake = "off"
+}
+
+// CycleKeepAwake toggles keep-awake and persists it. The bash side re-reads the
+// setting each watcher tick, so turning it off releases a mid-turn session at
+// once; turning it on prompts for the sudo rule when the menu closes.
+func (m *MainMenuModel) CycleKeepAwake() {
+	if m.keepAwake == "on" {
+		m.keepAwake = "off"
+	} else {
+		m.keepAwake = "on"
+	}
+	m.persistSetting("keep_awake", m.keepAwake)
 }
 
 // readAutoSwitch reads the on/off flag file; anything other than "on" is off.
@@ -2625,6 +2655,8 @@ func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 		return m, nil
 	case m.autoSwitchRowIndex():
 		m.CycleAutoSwitch()
+	case m.keepAwakeRowIndex():
+		m.CycleKeepAwake()
 	}
 	return m, nil
 }
@@ -2648,6 +2680,8 @@ func (m *MainMenuModel) settingsValueRight() {
 		m.CycleAccount("next")
 	case m.autoSwitchRowIndex():
 		m.CycleAutoSwitch()
+	case m.keepAwakeRowIndex():
+		m.CycleKeepAwake()
 	}
 }
 
@@ -2670,6 +2704,8 @@ func (m *MainMenuModel) settingsValueLeft() {
 		m.CycleAccount("prev")
 	case m.autoSwitchRowIndex():
 		m.CycleAutoSwitch()
+	case m.keepAwakeRowIndex():
+		m.CycleKeepAwake()
 	}
 }
 

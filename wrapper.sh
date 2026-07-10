@@ -70,7 +70,7 @@ if [ ! -d "$_WRAPPER_DIR/lib" ]; then
   exit 1
 fi
 
-_gt_libs=(theme ai-tools projects process input tui menu-tui project-actions tmux-session settings-json notification-setup tab-title-watcher terminals/ghostty session-restore claude-configs claude-accounts claude-shared-settings auto-switch account-switch compact-view screenshot spare-tabs)
+_gt_libs=(theme ai-tools projects process input tui menu-tui project-actions tmux-session settings-json notification-setup keep-awake tab-title-watcher terminals/ghostty session-restore claude-configs claude-accounts claude-shared-settings auto-switch account-switch compact-view screenshot spare-tabs)
 for _gt_lib in "${_gt_libs[@]}"; do
   if [ ! -f "$_WRAPPER_DIR/lib/${_gt_lib}.sh" ]; then
     printf '\033[31mError:\033[0m Missing library %s/lib/%s.sh\n' "$_WRAPPER_DIR" "$_gt_lib" >&2
@@ -209,6 +209,9 @@ else
       # not just newly-launched ones. This window's own session does not exist
       # yet, so it is untouched here.
       apply_settings_to_all_sessions_if_changed "$TMUX_CMD" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" "$_settings_before" 2>/dev/null || true
+      # If the user just turned keep-awake on, grant the sudo rule now, while a
+      # terminal is still attached and a password prompt can be answered.
+      keep_awake_ensure_sudoers "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" || true
       # Update AI tool if user cycled it in the menu (for all actions)
       if [[ -n "${_selected_ai_tool:-}" ]]; then
         SELECTED_AI_TOOL="$_selected_ai_tool"
@@ -295,8 +298,16 @@ fi
 gt_focus_ai_pane_when_ready "$TMUX_CMD" "$SESSION_NAME" &
 WATCHER_PID=$!
 
+# Reap holders left by sessions that died without running their trap (SIGKILL,
+# panic, power loss). Without this a single crash pins SleepDisabled on until
+# some later session happens to go active and then idle again.
+keep_awake_sync "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" 2>/dev/null || true
+
 cleanup() {
   stop_tab_title_watcher "$WISP_DECK_MARKER_FILE"
+  # Release before anything else: whatever follows may fail, and leaving the
+  # machine unable to sleep is worse than leaving a temp file behind.
+  keep_awake_drop "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" "$SESSION_NAME" 2>/dev/null || true
   [ -n "${HEARTBEAT_PID:-}" ] && kill_tree "$HEARTBEAT_PID" TERM 2>/dev/null || true
   # Remove waiting indicator hooks if no other Wisp Deck sessions are running
   if [ "$SELECTED_AI_TOOL" = "claude" ]; then

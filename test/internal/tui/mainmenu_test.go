@@ -1506,7 +1506,7 @@ func TestMainMenu_SettingsNavigationWraps(t *testing.T) {
 	// The settings list has 10 rows. Note the last VISUAL row is Auto-switch
 	// (handler index 8), not index 9 (AI tools) — the visual order groups rows
 	// into sections, so position and handler index are not the same thing.
-	const numItems = 10
+	const numItems = 11
 	const lastVisualRow = 8 // Auto-switch accounts
 
 	jKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
@@ -5042,31 +5042,32 @@ func TestSettings_ProjectsRootItem_ShowsCurrentValue(t *testing.T) {
 }
 
 func TestSettings_NavWrapsWithAllItems(t *testing.T) {
-	// claude tool shows 10 settings items (Mascot, Tab title, Sound, Theme,
-	// Default projects dir, Usage bars, AI tools, Plan, Login, Auto-switch)
+	// claude tool shows 11 settings items (Mascot, Tab title, Sound, Theme,
+	// Default projects dir, Usage bars, AI tools, Plan, Login, Auto-switch,
+	// Keep awake)
 	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
 	m.EnterSettings()
-	// j 10 times — wraps back to 0 (vim accelerator wraps within the list)
-	for i := 0; i < 10; i++ {
+	// j 11 times — wraps back to 0 (vim accelerator wraps within the list)
+	for i := 0; i < 11; i++ {
 		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	}
 	if m.SettingsSelected() != 0 {
-		t.Errorf("expected settingsSelected=0 after wrapping past 10 items, got %d", m.SettingsSelected())
+		t.Errorf("expected settingsSelected=0 after wrapping past 11 items, got %d", m.SettingsSelected())
 	}
 }
 
 func TestSettings_NavWrapsWithAllItems_NonClaude(t *testing.T) {
-	// The Plan + Login rows are shared across agents, so opencode also shows 10
+	// The Plan + Login rows are shared across agents, so opencode also shows 11
 	// settings items (Mascot, Tab title, Sound, Theme, Default projects dir,
-	// Usage bars, AI tools, Plan, Login, Auto-switch).
+	// Usage bars, AI tools, Plan, Login, Auto-switch, Keep awake).
 	m := tui.NewMainMenu(nil, []string{"opencode"}, "opencode", "animated")
 	m.EnterSettings()
-	// j 10 times — wraps back to 0 (vim accelerator wraps within the list)
-	for i := 0; i < 10; i++ {
+	// j 11 times — wraps back to 0 (vim accelerator wraps within the list)
+	for i := 0; i < 11; i++ {
 		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	}
 	if m.SettingsSelected() != 0 {
-		t.Errorf("expected settingsSelected=0 after wrapping past 10 items, got %d", m.SettingsSelected())
+		t.Errorf("expected settingsSelected=0 after wrapping past 11 items, got %d", m.SettingsSelected())
 	}
 }
 
