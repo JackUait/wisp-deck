@@ -2,29 +2,7 @@
 # Loading screen with ASCII art, tool-specific color palettes, and animation.
 
 # Print the loading screen ASCII art to stdout.
-# Args: [tool] — opencode gets its mascot (Brace the moth); everything else
-# gets the Wisp Deck wordmark.
 get_loading_art() {
-  if [[ "${1:-}" == "opencode" ]]; then
-    cat << 'ART'
-+--------------------------------------------------------------------------------------+
-|                                                                                      |
-|                              .                       .                               |
-|                               \                     /                                |
-|                                \      _______      /                                 |
-|                                 \    ( o   o )    /                                  |
-|                               {{     )  ___  (     }}                                |
-|                              {{{      | ::: |      }}}                               |
-|                               {{      | ::: |      }}                                |
-|                                 (     |_____|     )                                  |
-|                                  (               )                                   |
-|                                                                                      |
-|                          { b r a c e }  -  O p e n C o d e                           |
-|                                                                                      |
-+--------------------------------------------------------------------------------------+
-ART
-    return
-  fi
   cat << 'ART'
 +--------------------------------------------------------------------------------------+
 |                                                                                      |
@@ -65,7 +43,7 @@ render_loading_frame() {
 
   # Get art lines into array
   local art
-  art="$(get_loading_art "$tool")"
+  art="$(get_loading_art)"
   local -a lines=()
   while IFS= read -r line; do
     lines+=("$line")
