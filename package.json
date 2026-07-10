@@ -27,7 +27,10 @@
     "ai",
     "coding"
   ],
-  "author": "JackUait",
+  "author": {
+    "name": "Evgeniy Pyatkov",
+    "url": "https://t.me/that_ai_guy"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
