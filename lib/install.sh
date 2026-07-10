@@ -251,6 +251,33 @@ ensure_codex() {
   return 1
 }
 
+# Uninstall an npm-installed tool and clean up the ~/.local/bin launcher link
+# ensure_* may have created (only when it points into npm's global prefix —
+# never delete a launcher the user put there themselves).
+_remove_npm_tool() {
+  local tool="$1" pkg="$2" display="$3"
+  if ! command -v npm &>/dev/null; then
+    warn "npm not found — cannot remove $display"
+    return 1
+  fi
+  info "Removing $display..."
+  if ! npm uninstall -g "$pkg" &>/dev/null; then
+    warn "Failed to remove $display"
+    return 1
+  fi
+  local link="$HOME/.local/bin/$tool" npm_prefix
+  npm_prefix="$(npm prefix -g 2>/dev/null)"
+  if [ -L "$link" ] && [ -n "$npm_prefix" ]; then
+    case "$(readlink "$link")" in
+      "$npm_prefix"/*) rm -f "$link" ;;
+    esac
+  fi
+  success "$display removed"
+}
+
+remove_opencode() { _remove_npm_tool "opencode" "opencode-ai" "OpenCode"; }
+remove_codex()    { _remove_npm_tool "codex" "@openai/codex" "Codex"; }
+
 # Install a command-line tool if not already on PATH.
 # Usage: ensure_command "cmd" "install_cmd" "post_msg" "display_name"
 ensure_command() {

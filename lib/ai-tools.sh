@@ -30,6 +30,27 @@ resolve_ai_tool_cmd() {
   esac
 }
 
+# Filter a tool list against the disabled-tools file (one name per line).
+# Usage: filter_disabled_ai_tools <disabled_file> <tool>...
+# Echoes surviving tools one per line. If filtering would leave nothing,
+# the disable list is ignored so a launch can never end up tool-less.
+filter_disabled_ai_tools() {
+  local disabled_file="$1"; shift
+  local survivors=() _t
+  for _t in "$@"; do
+    if [ -f "$disabled_file" ] && grep -qx "$_t" "$disabled_file" 2>/dev/null; then
+      continue
+    fi
+    survivors+=("$_t")
+  done
+  if [ ${#survivors[@]} -eq 0 ] && [ $# -gt 0 ]; then
+    echo "wisp-deck: all AI tools disabled — ignoring disable list" >&2
+    printf '%s\n' "$@"
+    return 0
+  fi
+  printf '%s\n' "${survivors[@]}"
+}
+
 # Validates SELECTED_AI_TOOL against AI_TOOLS_AVAILABLE.
 # Falls back to first available if current selection is invalid.
 # Optional arg $1: path to preference file (writes corrected value if provided).
