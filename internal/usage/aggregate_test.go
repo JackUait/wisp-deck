@@ -274,7 +274,7 @@ func TestAggregateAll_mergesMultipleClaudeDirs(t *testing.T) {
 	writeFixture(t, dirB, "b.jsonl",
 		`{"type":"assistant","timestamp":"2026-05-02T10:00:00Z","message":{"id":"b","model":"claude-opus-4-8","usage":{"input_tokens":5,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`+"\n")
 
-	out, err := AggregateAll([]string{dirA, dirB}, "", filepath.Join(t.TempDir(), "cache.json"))
+	out, err := AggregateAll([]string{dirA, dirB}, "", "", filepath.Join(t.TempDir(), "cache.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,12 +297,12 @@ func TestAggregateAll_sealingIgnoresOtherRootsFiles(t *testing.T) {
 	writeFixture(t, dirB, "b.jsonl",
 		`{"type":"assistant","timestamp":"2026-05-02T10:00:00Z","message":{"id":"b","model":"claude-opus-4-8","usage":{"input_tokens":5,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`+"\n")
 
-	if _, err := AggregateAll([]string{dirA, dirB}, "", cachePath); err != nil {
+	if _, err := AggregateAll([]string{dirA, dirB}, "", "", cachePath); err != nil {
 		t.Fatal(err)
 	}
 	// Second pass over both roots; nothing deleted, so totals must be unchanged
 	// and no path may be sealed.
-	out, err := AggregateAll([]string{dirA, dirB}, "", cachePath)
+	out, err := AggregateAll([]string{dirA, dirB}, "", "", cachePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +375,7 @@ func TestClaudeAccountProjectDirs_honorsXDGConfigHome(t *testing.T) {
 
 func TestDefaultPaths_opencodeMessageDir(t *testing.T) {
 	t.Setenv("OPENCODE_DATA_DIR", "")
-	_, ocDir, _ := DefaultPaths("/home/u")
+	_, ocDir, _, _ := DefaultPaths("/home/u")
 	want := filepath.Join("/home/u", ".local", "share", "opencode", "storage", "message")
 	if ocDir != want {
 		t.Errorf("opencodeDir = %q, want %q", ocDir, want)
@@ -384,7 +384,7 @@ func TestDefaultPaths_opencodeMessageDir(t *testing.T) {
 
 func TestDefaultPaths_opencodeDataDirEnvOverride(t *testing.T) {
 	t.Setenv("OPENCODE_DATA_DIR", "/custom/oc")
-	_, ocDir, _ := DefaultPaths("/home/u")
+	_, ocDir, _, _ := DefaultPaths("/home/u")
 	want := filepath.Join("/custom/oc", "storage", "message")
 	if ocDir != want {
 		t.Errorf("opencodeDir = %q, want %q", ocDir, want)
@@ -394,9 +394,88 @@ func TestDefaultPaths_opencodeDataDirEnvOverride(t *testing.T) {
 func TestDefaultPaths_opencodeDataDirCommaList(t *testing.T) {
 	// OPENCODE_DATA_DIR may be a comma-separated list; we use the first entry.
 	t.Setenv("OPENCODE_DATA_DIR", "/first/oc,/second/oc")
-	_, ocDir, _ := DefaultPaths("/home/u")
+	_, ocDir, _, _ := DefaultPaths("/home/u")
 	want := filepath.Join("/first/oc", "storage", "message")
 	if ocDir != want {
 		t.Errorf("opencodeDir = %q, want %q (first of comma list)", ocDir, want)
+	}
+}
+
+func TestDefaultPaths_codexSessionsDir(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	_, _, codexDir, _ := DefaultPaths("/home/u")
+	want := filepath.Join("/home/u", ".codex", "sessions")
+	if codexDir != want {
+		t.Errorf("codexDir = %q, want %q", codexDir, want)
+	}
+}
+
+func TestCodexSessionsDir_honorsCodexHome(t *testing.T) {
+	t.Setenv("CODEX_HOME", "/custom/codex")
+	got := CodexSessionsDir("/home/u")
+	want := filepath.Join("/custom/codex", "sessions")
+	if got != want {
+		t.Errorf("CodexSessionsDir = %q, want %q", got, want)
+	}
+}
+
+func TestCodexSessionsDir_defaultsToHomeCodex(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	got := CodexSessionsDir("/home/u")
+	want := filepath.Join("/home/u", ".codex", "sessions")
+	if got != want {
+		t.Errorf("CodexSessionsDir = %q, want %q", got, want)
+	}
+}
+
+func TestAggregateAll_includesCodexUsage(t *testing.T) {
+	// A Codex rollout file's usage must merge into the same month as Claude usage.
+	claudeDir := t.TempDir()
+	codexDir := t.TempDir()
+	writeFixture(t, claudeDir, "a.jsonl",
+		`{"type":"assistant","timestamp":"2026-07-01T10:00:00Z","message":{"id":"a","model":"claude-opus-4-8","usage":{"input_tokens":10,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`+"\n")
+	// Codex rollout lives under a nested YYYY/MM/DD dir; the walk must recurse.
+	nested := filepath.Join(codexDir, "2026", "07", "10")
+	mkdirAll(t, nested)
+	writeFixture(t, nested, "rollout.jsonl",
+		`{"timestamp":"2026-07-10T00:35:10Z","type":"turn_context","payload":{"model":"gpt-5.6-sol"}}`+"\n"+
+			`{"timestamp":"2026-07-10T00:35:23Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":20,"total_tokens":120}}}}`+"\n")
+
+	out, err := AggregateAll([]string{claudeDir}, "", codexDir, filepath.Join(t.TempDir(), "cache.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].Month != "2026-07" {
+		t.Fatalf("out = %+v, want one 2026-07 row", out)
+	}
+	var claudeRow, codexRow *ModelUsage
+	for i := range out[0].Models {
+		switch out[0].Models[i].Model {
+		case "claude-opus-4-8":
+			claudeRow = &out[0].Models[i]
+		case "gpt-5.6-sol":
+			codexRow = &out[0].Models[i]
+		}
+	}
+	if claudeRow == nil || claudeRow.Input != 10 {
+		t.Errorf("claude row = %+v, want input 10", claudeRow)
+	}
+	if codexRow == nil || codexRow.Input != 100 || codexRow.Output != 20 {
+		t.Errorf("codex row = %+v, want input 100 output 20", codexRow)
+	}
+}
+
+func TestAggregateAll_emptyCodexDirSkipped(t *testing.T) {
+	// No Codex dir (Codex not installed) must be tolerated, not error.
+	claudeDir := t.TempDir()
+	writeFixture(t, claudeDir, "a.jsonl",
+		`{"type":"assistant","timestamp":"2026-07-01T10:00:00Z","message":{"id":"a","model":"claude-opus-4-8","usage":{"input_tokens":10,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`+"\n")
+
+	out, err := AggregateAll([]string{claudeDir}, "", "", filepath.Join(t.TempDir(), "cache.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].Input != 10 {
+		t.Fatalf("out = %+v, want 2026-07 input 10", out)
 	}
 }

@@ -44,22 +44,27 @@ var modelRates = map[string]modelRate{
 	// not-yet-listed newer variant falls back to its base prefix (a close estimate).
 
 	// OpenAI
-	"gpt-5":        {1.25, 10},
-	"gpt-5-mini":   {0.25, 2},
-	"gpt-5-nano":   {0.05, 0.4},
-	"gpt-5.1":      {1.25, 10},
-	"gpt-5.2":      {1.75, 14},
-	"gpt-5.3":      {1.75, 14}, // covers gpt-5.3-codex / -spark / -chat
-	"gpt-5.4":      {2.5, 15},
-	"gpt-5.5":      {5, 30},
-	"gpt-4.1":      {2, 8},
-	"gpt-4.1-mini": {0.4, 1.6},
-	"gpt-4.1-nano": {0.1, 0.4},
-	"gpt-4o":       {2.5, 10},
-	"gpt-4o-mini":  {0.15, 0.6},
-	"o3":           {2, 8},
-	"o3-mini":      {1.1, 4.4},
-	"o4-mini":      {1.1, 4.4},
+	"gpt-5":       {1.25, 10},
+	"gpt-5-mini":  {0.25, 2},
+	"gpt-5-nano":  {0.05, 0.4},
+	"gpt-5.1":     {1.25, 10},
+	"gpt-5.2":     {1.75, 14},
+	"gpt-5.3":     {1.75, 14}, // covers gpt-5.3-codex / -spark / -chat
+	"gpt-5.4":     {2.5, 15},
+	"gpt-5.5":     {5, 30},
+	"gpt-5.6-sol": {5, 30}, // Codex sol tier; without this it would fall to gpt-5
+	// Codex "-codex" variants share their base gpt-5.x rate via prefix match, EXCEPT
+	// the mini tier, which is 5x cheaper and needs its own longer-prefix entry so it
+	// is not priced at the full gpt-5.1 rate.
+	"gpt-5.1-codex-mini": {0.25, 2},
+	"gpt-4.1":            {2, 8},
+	"gpt-4.1-mini":       {0.4, 1.6},
+	"gpt-4.1-nano":       {0.1, 0.4},
+	"gpt-4o":             {2.5, 10},
+	"gpt-4o-mini":        {0.15, 0.6},
+	"o3":                 {2, 8},
+	"o3-mini":            {1.1, 4.4},
+	"o4-mini":            {1.1, 4.4},
 
 	// Google Gemini
 	"gemini-2.5-pro":        {1.25, 10},

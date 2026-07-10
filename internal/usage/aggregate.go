@@ -78,7 +78,7 @@ type parseFunc func(path string) (map[string]*MonthlyUsage, FileMeta, error)
 // that track usage across multiple native accounts should use AggregateAll with
 // ClaudeAccountProjectDirs instead.
 func Aggregate(claudeDir, opencodeDir, cachePath string) ([]MonthlyUsage, error) {
-	return AggregateAll([]string{claudeDir}, opencodeDir, cachePath)
+	return AggregateAll([]string{claudeDir}, opencodeDir, "", cachePath)
 }
 
 // AggregateAll walks each dir in claudeDirs for *.jsonl transcripts and
@@ -92,8 +92,10 @@ func Aggregate(claudeDir, opencodeDir, cachePath string) ([]MonthlyUsage, error)
 // vanishes from ALL walked roots, its totals are sealed into a durable per-month
 // Archive so the history survives the tool's transcript pruning; sealed paths are
 // never re-counted. A missing/empty opencodeDir (e.g. OpenCode not installed) is
-// simply skipped. Best-effort saves the updated cache.
-func AggregateAll(claudeDirs []string, opencodeDir, cachePath string) ([]MonthlyUsage, error) {
+// simply skipped. codexDir is walked for *.jsonl Codex rollout files (recursing its
+// YYYY/MM/DD layout) parsed by ParseCodexRollout; an empty codexDir is likewise
+// skipped. Best-effort saves the updated cache.
+func AggregateAll(claudeDirs []string, opencodeDir, codexDir, cachePath string) ([]MonthlyUsage, error) {
 	cache := LoadCache(cachePath)
 	next := &Cache{
 		Version: cacheVersion,
@@ -151,6 +153,9 @@ func AggregateAll(claudeDirs []string, opencodeDir, cachePath string) ([]Monthly
 	if err := walk(opencodeDir, ".json", ParseOpenCodeMessage); err != nil {
 		return nil, err
 	}
+	if err := walk(codexDir, ".jsonl", ParseCodexRollout); err != nil {
+		return nil, err
+	}
 
 	// Seal transcripts that were cached but have vanished from disk: fold their
 	// months into the durable archive so the history outlives the source file.
@@ -186,10 +191,12 @@ func AggregateAll(claudeDirs []string, opencodeDir, cachePath string) ([]Monthly
 }
 
 // DefaultPaths returns the production Claude transcript dir, the OpenCode message
-// storage dir, and the cache file path. The OpenCode storage root honors
-// OPENCODE_DATA_DIR (which may be a comma-separated list — the first entry wins),
-// falling back to ~/.local/share/opencode; messages live under <root>/storage/message.
-func DefaultPaths(home string) (claudeDir, opencodeDir, cachePath string) {
+// storage dir, the Codex sessions dir, and the cache file path. The OpenCode storage
+// root honors OPENCODE_DATA_DIR (which may be a comma-separated list — the first entry
+// wins), falling back to ~/.local/share/opencode; messages live under
+// <root>/storage/message. The Codex sessions dir honors CODEX_HOME (see
+// CodexSessionsDir).
+func DefaultPaths(home string) (claudeDir, opencodeDir, codexDir, cachePath string) {
 	dataDir := strings.TrimSpace(os.Getenv("OPENCODE_DATA_DIR"))
 	if dataDir == "" {
 		dataDir = filepath.Join(home, ".local", "share", "opencode")
@@ -198,7 +205,19 @@ func DefaultPaths(home string) (claudeDir, opencodeDir, cachePath string) {
 	}
 	return filepath.Join(home, ".claude", "projects"),
 		filepath.Join(dataDir, "storage", "message"),
+		CodexSessionsDir(home),
 		filepath.Join(home, ".config", "wisp-deck", "usage-cache.json")
+}
+
+// CodexSessionsDir returns the Codex rollout sessions root. Codex stores per-session
+// rollout-*.jsonl files under <CODEX_HOME>/sessions/YYYY/MM/DD/. CODEX_HOME defaults
+// to ~/.codex, matching the Codex CLI's own resolution.
+func CodexSessionsDir(home string) string {
+	codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
+	if codexHome == "" {
+		codexHome = filepath.Join(home, ".codex")
+	}
+	return filepath.Join(codexHome, "sessions")
 }
 
 // ClaudeAccountProjectDirs returns every Claude transcript root whose usage must

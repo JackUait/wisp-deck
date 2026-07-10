@@ -168,6 +168,31 @@ func TestRateFor_exported(t *testing.T) {
 	}
 }
 
+func TestRateFor_codexModelsUseRealPrices(t *testing.T) {
+	// Codex model ids surfaced by the stats collector must resolve to their real
+	// published OpenAI API prices (per models.dev), not a coarser prefix fallback.
+	cases := []struct {
+		model           string
+		wantIn, wantOut float64
+	}{
+		{"gpt-5-codex", 1.25, 10},       // == gpt-5
+		{"gpt-5.1-codex", 1.25, 10},     // == gpt-5.1
+		{"gpt-5.1-codex-max", 1.25, 10}, // == gpt-5.1
+		{"gpt-5.1-codex-mini", 0.25, 2}, // mini tier, NOT the gpt-5.1 rate
+		{"gpt-5.2-codex", 1.75, 14},     // == gpt-5.2
+		{"gpt-5.3-codex", 1.75, 14},     // == gpt-5.3
+		{"gpt-5.6-sol", 5, 30},          // its own tier, NOT the gpt-5 fallback
+	}
+	for _, c := range cases {
+		for i := 0; i < 30; i++ { // map order is randomized; hammer it
+			in, out, ok := RateFor(c.model)
+			if !ok || !approx(in, c.wantIn) || !approx(out, c.wantOut) {
+				t.Fatalf("RateFor(%s) = %v/%v ok=%v, want %v/%v", c.model, in, out, ok, c.wantIn, c.wantOut)
+			}
+		}
+	}
+}
+
 func TestModelCostUSD_openCodeProviders(t *testing.T) {
 	// Non-Anthropic models routed through OpenCode, priced at their models.dev
 	// (the catalog OpenCode uses) input+output rates. Each case is 1M input +
