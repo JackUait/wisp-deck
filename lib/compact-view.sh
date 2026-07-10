@@ -1434,16 +1434,19 @@ compact_view() {
     # valid-path set. Runs on the build tick only, never on the hover hot path.
     SELECTED=$(prune_selection "$SELECTED" "$body_map")
 
-    # Account pill: recompute so the bottom bar reflects the login THIS
-    # session's pane is running (the tmux-stamped session account — the global
-    # pointer alone would flip the pill whenever another session or the
-    # launcher rewrites it). Empty when the session is ineligible (no relaunch
-    # context, <2 logins, or the helpers aren't loaded).
+    # Agent/account pill: recompute so the bottom bar reflects what THIS
+    # session's pane is running — the claude login (tmux-stamped session
+    # account) or, for another agent, that agent's name. Empty when the
+    # session is ineligible (no relaunch context, nothing to switch to, or the
+    # helpers aren't loaded).
     account_pill_str=""; account_pill_cols=0; account_pill_hover_str=""
     if [ -n "$_rc_relaunch" ] && command -v account_pill_enabled >/dev/null 2>&1 \
        && account_pill_enabled "$_rc_relaunch" "$_rc_list"; then
+      # Re-read the running tool each tick: a mid-session agent switch
+      # rewrites the context's tool= while this ledger keeps running.
+      _rc_tool="$(sed -n 's/^tool=//p' "$_rc_relaunch" 2>/dev/null)"
       IFS=$'\t' read -r _pill_label _pill_color \
-        < <(account_current "$_rc_pointer" "$_rc_list" "$_rc_default_label" "$_rc_colors" tmux)
+        < <(pill_current "${_rc_tool:-claude}" "$_rc_pointer" "$_rc_list" "$_rc_default_label" "$_rc_colors" tmux)
       _pill="$(account_pill "$_pill_label" "$_pill_color")"
       account_pill_str="${_pill%$'\n'*}"
       account_pill_cols="${_pill##*$'\n'}"

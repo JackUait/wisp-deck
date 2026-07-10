@@ -424,18 +424,16 @@ case "$SELECTED_AI_TOOL" in
     ;;
 esac
 
-# Mid-session account switch: for every claude session, persist the launch
-# context so the compact-view ledger's account pill — and the auto-switch
-# trigger — can relaunch the AI pane under another login (continue mode). The
-# pill's own 2+-logins gate lives in the ledger; here we skip every non-claude
-# tool (opencode, codex). Cleared by cleanup() on window close.
-WISP_DECK_RELAUNCH_FILE=""
-if [ "$SELECTED_AI_TOOL" = "claude" ]; then
-  WISP_DECK_RELAUNCH_FILE="$SHARE_DIR/relaunch-${SESSION_NAME}"
-  write_relaunch_context "$WISP_DECK_RELAUNCH_FILE" "$SELECTED_AI_TOOL" \
-    "$AI_TOOL_CMD" "$WISP_DECK_CLAUDE_SETTINGS" \
-    "$WISP_DECK_CLAUDE_FILTER" "$PROJECT_DIR" "$_gt_cfg_root"
-fi
+# Mid-session agent/account switch: for EVERY session (any tool), persist the
+# launch context so the compact-view ledger's pill — and the auto-switch
+# trigger — can relaunch the AI pane under another claude login OR another
+# agent entirely. The pill's own eligibility gate (2+ logins or 2+ tools)
+# lives in the ledger. Cleared by cleanup() on window close.
+WISP_DECK_RELAUNCH_FILE="$SHARE_DIR/relaunch-${SESSION_NAME}"
+write_relaunch_context "$WISP_DECK_RELAUNCH_FILE" "$SELECTED_AI_TOOL" \
+  "$AI_TOOL_CMD" "$WISP_DECK_CLAUDE_SETTINGS" \
+  "$WISP_DECK_CLAUDE_FILTER" "$PROJECT_DIR" "$_gt_cfg_root" \
+  "${AI_TOOLS_AVAILABLE[*]}" "$CLAUDE_CMD" "$OPENCODE_CMD" "$CODEX_CMD"
 export WISP_DECK_RELAUNCH_FILE
 
 # Start tab title watcher before tmux (which blocks until session ends)

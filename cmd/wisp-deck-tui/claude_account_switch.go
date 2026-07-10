@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jackuait/wisp-deck/internal/claudeaccount"
+	"github.com/jackuait/wisp-deck/internal/models"
 	"github.com/jackuait/wisp-deck/internal/tui"
 	"github.com/jackuait/wisp-deck/internal/util"
 )
@@ -33,13 +34,18 @@ var (
 	casBackdrop     string
 	casActive       string
 	casResultFile   string
+	casTools        string
+	casActiveTool   string
 )
 
-// switchRow is one selectable login in the switcher. Dir is "" for the implicit
-// Default (Keychain) login.
+// switchRow is one selectable entry in the switcher: a claude login (Dir set,
+// "" = the implicit Default/Keychain login) or another AI agent (Tool set,
+// e.g. "opencode"). Exactly one dimension is meaningful per row — claude
+// account rows carry no Tool, agent rows carry no Dir.
 type switchRow struct {
 	Label string
 	Dir   string
+	Tool  string
 }
 
 // switchRowsForActive builds the ordered row list — Default first, then each
@@ -50,18 +56,51 @@ type switchRow struct {
 // launcher) flips it without changing what this pane runs — the popup would
 // mark the wrong login and read as the account having "switched back".
 func switchRowsForActive(listFile, defaultLabelFile, active string) ([]switchRow, int) {
+	return switchRowsForSession(listFile, defaultLabelFile, active, "", nil)
+}
+
+// switchRowsForSession is switchRowsForActive extended with agent rows: after
+// the claude account rows, one row per other available AI tool (bash passes
+// them via --tools). "claude" never gets an agent row — the account rows ARE
+// claude. activeTool is the tool THIS pane runs; when it is a non-claude
+// agent, the cursor (and active dot) lands on that agent's row instead of a
+// claude account.
+func switchRowsForSession(listFile, defaultLabelFile, active, activeTool string, tools []string) ([]switchRow, int) {
 	rows := []switchRow{{Label: claudeaccount.GetDefaultLabel(defaultLabelFile), Dir: ""}}
 	for _, acc := range claudeaccount.Load(listFile) {
 		rows = append(rows, switchRow{Label: acc.Label, Dir: acc.Dir})
 	}
+	for _, tool := range tools {
+		if tool == "" || tool == "claude" {
+			continue
+		}
+		rows = append(rows, switchRow{Label: models.DisplayName(tool), Tool: tool})
+	}
 	cursor := 0
 	for i, r := range rows {
-		if r.Dir == active {
+		if activeTool != "" && activeTool != "claude" {
+			if r.Tool == activeTool {
+				cursor = i
+				break
+			}
+			continue
+		}
+		if r.Tool == "" && r.Dir == active {
 			cursor = i
 			break
 		}
 	}
 	return rows, cursor
+}
+
+// switchResultValue is the line a chosen row reports through the result file:
+// the account dir for claude login rows, "tool:<name>" for agent rows — the
+// prefix is what lets the bash side tell an agent switch apart from a dir.
+func switchResultValue(r switchRow) string {
+	if r.Tool != "" {
+		return "tool:" + r.Tool
+	}
+	return r.Dir
 }
 
 // loadSwitchRows is switchRowsForActive keyed on the global pointer — the
@@ -101,6 +140,22 @@ func selectResultJSON(pointerFile, chosenDir, prevActive string) (string, error)
 	return string(out), nil
 }
 
+// selectToolResultJSON is the JSON for an agent-row choice. Unlike an account
+// choice it never touches the claude account pointer — the account stays
+// whatever it was for the next claude launch. changed reports whether the
+// chosen agent differs from the tool the pane was running.
+func selectToolResultJSON(tool, activeTool string) (string, error) {
+	out, err := json.Marshal(struct {
+		Selected bool   `json:"selected"`
+		Tool     string `json:"tool"`
+		Changed  bool   `json:"changed"`
+	}{Selected: true, Tool: tool, Changed: tool != activeTool})
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 // cancelResultJSON returns the JSON emitted when the user cancels (no pointer
 // write).
 func cancelResultJSON() string {
@@ -128,7 +183,19 @@ func runClaudeAccountSwitch(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("active") {
 		active = casActive
 	}
-	rows, cursor := switchRowsForActive(casList, casDefaultLabel, active)
+	// Other available agents (comma-separated) and the tool this pane runs.
+	// Absent flags mean an older bash lib: claude-only rows, as before.
+	var tools []string
+	for _, tool := range strings.Split(casTools, ",") {
+		if tool = strings.TrimSpace(tool); tool != "" {
+			tools = append(tools, tool)
+		}
+	}
+	activeTool := casActiveTool
+	if activeTool == "" {
+		activeTool = "claude"
+	}
+	rows, cursor := switchRowsForSession(casList, casDefaultLabel, active, activeTool, tools)
 	prevActive := claudeaccount.GetActive(casPointer)
 
 	model := newAccountSwitchModel(rows, cursor, casColors)
@@ -157,11 +224,17 @@ func runClaudeAccountSwitch(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(cmd.OutOrStdout(), cancelResultJSON())
 		return nil
 	}
-	out, err := selectResultJSON(casPointer, rows[m.cursor].Dir, prevActive)
+	chosen := rows[m.cursor]
+	var out string
+	if chosen.Tool != "" {
+		out, err = selectToolResultJSON(chosen.Tool, activeTool)
+	} else {
+		out, err = selectResultJSON(casPointer, chosen.Dir, prevActive)
+	}
 	if err != nil {
 		return err
 	}
-	if err := writeSwitchResult(casResultFile, rows[m.cursor].Dir); err != nil {
+	if err := writeSwitchResult(casResultFile, switchResultValue(chosen)); err != nil {
 		return err
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), out)
@@ -276,17 +349,33 @@ func (m accountSwitchModel) innerLines() []string {
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	activeDot := lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Render("●")
 
-	lines := []string{titleStyle.Render("Switch Claude login"), ""}
+	// With agent rows present the popup switches between agents, not just
+	// claude logins — the title says so.
+	title := "Switch Claude login"
+	for _, r := range m.rows {
+		if r.Tool != "" {
+			title = "Switch agent"
+			break
+		}
+	}
+	lines := []string{titleStyle.Render(title), ""}
 
 	for i, r := range m.rows {
 		color := claudeaccount.ColorFor(m.colorsFile, r.Dir)
+		glyph := "󰀄"
+		if r.Tool != "" {
+			// Agent rows: the tool's brand hue (mirrors get_tool_accent in
+			// lib/tmux-session.sh) and a robot glyph instead of the person.
+			color = toolRowColor(r.Tool)
+			glyph = "󰚩"
+		}
 		labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(color)))
 
 		marker := "  "
-		label := labelStyle.Render("󰀄 " + r.Label)
+		label := labelStyle.Render(glyph + " " + r.Label)
 		if i == m.cursor {
 			marker = lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(color))).Bold(true).Render("▌ ")
-			label = labelStyle.Bold(true).Render("󰀄 " + r.Label)
+			label = labelStyle.Bold(true).Render(glyph + " " + r.Label)
 		}
 		line := marker + label
 		if i == m.active {
@@ -297,6 +386,20 @@ func (m accountSwitchModel) innerLines() []string {
 
 	lines = append(lines, "", dimStyle.Render("↑↓ move · ⏎ switch · esc cancel"))
 	return lines
+}
+
+// toolRowColor is the 256-color hue for an agent row — kept in sync with
+// get_tool_accent in lib/tmux-session.sh so the row matches the tool's pane
+// border accent.
+func toolRowColor(tool string) int {
+	switch tool {
+	case "opencode":
+		return 141 // brand purple
+	case "codex":
+		return 36 // brand teal
+	default:
+		return 209 // orange (claude default)
+	}
 }
 
 // contentWidth is the width of the widest inner line, used to size and center the
@@ -405,5 +508,7 @@ func init() {
 	claudeAccountSwitchCmd.Flags().StringVar(&casBackdrop, "backdrop-file", "", "File with a serialized screen capture shown dimmed behind the popup")
 	claudeAccountSwitchCmd.Flags().StringVar(&casActive, "active", "", "Dir of the account THIS pane is running (empty = Default); marks the active row")
 	claudeAccountSwitchCmd.Flags().StringVar(&casResultFile, "result-file", "", "File to write the chosen dir to on selection (absent on cancel)")
+	claudeAccountSwitchCmd.Flags().StringVar(&casTools, "tools", "", "Comma-separated other available AI tools, each shown as an agent row after the logins")
+	claudeAccountSwitchCmd.Flags().StringVar(&casActiveTool, "active-tool", "", "Tool THIS pane is running (default claude); marks the active row for non-claude agents")
 	rootCmd.AddCommand(claudeAccountSwitchCmd)
 }

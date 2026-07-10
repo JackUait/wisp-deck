@@ -460,9 +460,9 @@ printf '%%s\n' "$*" >> %q`, rec))
 		fmt.Sprintf("relaunch_ai_pane tmux %q", relaunch)), env)
 	assertExitCode(t, code, 0)
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
-	assertContains(t, logOut, "respawn-pane")             // the switch still happens
-	assertNotContains(t, logOut, "--resume sess-old")     // never the closed session
-	assertNotContains(t, logOut, "--resume")              // fresh launch, no resume at all
+	assertContains(t, logOut, "respawn-pane")         // the switch still happens
+	assertNotContains(t, logOut, "--resume sess-old") // never the closed session
+	assertNotContains(t, logOut, "--resume")          // fresh launch, no resume at all
 }
 
 func TestWriteRelaunchContext_writes_all_keys(t *testing.T) {
@@ -963,5 +963,257 @@ func TestWrapper_stamps_session_account_on_new_session(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("wrapper.sh must pass WISP_DECK_CLAUDE_ACCOUNT to tmux new-session via -e")
+	}
+}
+
+// The mid-session agent switch needs to know every available tool and its
+// binary, plus where the ai-tool preference lives — the context must carry
+// them (extra trailing args keep older call sites valid).
+func TestWriteRelaunchContext_writes_tool_switch_keys(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "relaunch")
+	cfg := filepath.Join(dir, "cfg")
+	_, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+		`write_relaunch_context %q claude claude "" "" "/proj" %q "claude opencode codex" claude /opt/opencode /opt/codex`,
+		out, cfg)), nil)
+	assertExitCode(t, code, 0)
+	body, _ := runBashSnippet(t, fmt.Sprintf("cat %q", out), nil)
+	assertContains(t, body, "tools=claude opencode codex")
+	assertContains(t, body, "claude_cmd=claude")
+	assertContains(t, body, "opencode_cmd=/opt/opencode")
+	assertContains(t, body, "codex_cmd=/opt/codex")
+	assertContains(t, body, "tool_pref="+filepath.Join(cfg, "ai-tool"))
+}
+
+// _read_relaunch_ctx must surface the new keys to callers.
+func TestReadRelaunchCtx_reads_tool_switch_keys(t *testing.T) {
+	dir := t.TempDir()
+	ctx := writeTempFile(t, dir, "relaunch", strings.Join([]string{
+		"tool=codex", "tool_cmd=codex", "tools=claude codex",
+		"claude_cmd=/opt/claude", "opencode_cmd=", "codex_cmd=codex",
+		"tool_pref=" + filepath.Join(dir, "ai-tool"), "",
+	}, "\n"))
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+		`_rc_tool="" _rc_tools="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_codex_cmd="" _rc_tool_pref=""
+_read_relaunch_ctx %q
+printf '%%s|%%s|%%s|%%s\n' "$_rc_tools" "$_rc_claude_cmd" "$_rc_codex_cmd" "$_rc_tool_pref"`,
+		ctx)), nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "claude codex|/opt/claude|codex|"+filepath.Join(dir, "ai-tool"))
+}
+
+// The relaunch context must be written for EVERY tool — opencode/codex
+// sessions need it so their ledger pill can switch agents too. The old
+// claude-only gate around the WISP_DECK_RELAUNCH_FILE block must be gone, and
+// the call must hand the available tools + per-tool commands to the context.
+func TestWrapper_writes_relaunch_context_for_all_tools(t *testing.T) {
+	root := projectRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "wrapper.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := strings.Index(string(data), `WISP_DECK_RELAUNCH_FILE="$SHARE_DIR/relaunch-`)
+	end := strings.Index(string(data), "export WISP_DECK_RELAUNCH_FILE")
+	if start < 0 || end < 0 || end < start {
+		t.Fatal("wrapper.sh must still build WISP_DECK_RELAUNCH_FILE before exporting it")
+	}
+	block := string(data[start:end])
+	if strings.Contains(block, `= "claude"`) {
+		t.Fatal("relaunch-context block must not be gated on the claude tool")
+	}
+	if !strings.Contains(block, "AI_TOOLS_AVAILABLE") {
+		t.Fatal("write_relaunch_context must receive the available tools")
+	}
+	if !strings.Contains(block, "OPENCODE_CMD") || !strings.Contains(block, "CODEX_CMD") {
+		t.Fatal("write_relaunch_context must receive the per-tool commands")
+	}
+}
+
+// switcherToolCtx writes a relaunch context for the agent-switch tests: the
+// running tool, the available tools, and per-tool binaries.
+func switcherToolCtx(t *testing.T, dir, tool, tools string) string {
+	t.Helper()
+	return writeTempFile(t, dir, "relaunch", strings.Join([]string{
+		"tool=" + tool, "tool_cmd=" + tool,
+		"settings=", "filter=", "project_dir=/proj",
+		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
+		"pointer=" + filepath.Join(dir, "claude-account"),
+		"list=" + filepath.Join(dir, "claude-accounts.list"),
+		"colors=" + filepath.Join(dir, "claude-account-colors"),
+		"default_label=" + filepath.Join(dir, "claude-account-default-label"),
+		"tools=" + tools,
+		"claude_cmd=/opt/claude", "opencode_cmd=/opt/opencode", "codex_cmd=/opt/codex",
+		"tool_pref=" + filepath.Join(dir, "ai-tool"),
+		"",
+	}, "\n"))
+}
+
+// mockSwitcherBinary mocks wisp-deck-tui so the capability probes see a binary
+// supporting the session AND agent-row flags — the developer machine's real
+// (possibly older) binary must not decide what these tests exercise.
+func mockSwitcherBinary(t *testing.T, dir string) string {
+	t.Helper()
+	return mockCommand(t, dir, "wisp-deck-tui",
+		`printf 'claude-account-switch\n --result-file\n --tools\n'`)
+}
+
+// switcherToolMockTmux mocks tmux for the agent-switch flow: the popup writes
+// chosen (e.g. "tool:codex" or an account dir) to the result file; the pane's
+// input line reads empty (so the draft stash fast-path skips its slow poll);
+// everything else is logged.
+func switcherToolMockTmux(t *testing.T, dir, sessionAcctLine, chosen, rec string) string {
+	t.Helper()
+	return mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_ACCOUNT" ]; then
+  printf '%%s\n' %q; exit 0
+fi
+if [ "$1" = "show-environment" ]; then printf -- '-WISP_DECK_CLAUDE_SESSION\n'; exit 0; fi
+if [ "$1" = "list-panes" ]; then printf '%%s\n' "%%1 1"; exit 0; fi
+if [ "$1" = "capture-pane" ]; then printf '❯\n'; exit 0; fi
+if [ "$1" = "display-popup" ]; then
+  rf=$(printf '%%s' "$*" | sed -n 's/.*--result-file \([^ ]*\).*/\1/p')
+  [ -n "$rf" ] && printf '%%s\n' %q > "$rf"
+  exit 0
+fi
+printf '%%s\n' "$*" >> %q`, sessionAcctLine, chosen, rec))
+}
+
+// The popup must be told which OTHER agents exist (--tools) and which tool the
+// pane runs (--active-tool), or it can only ever offer claude logins.
+func TestOpenAccountSwitcher_passes_tools_and_active_tool(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "popup.log")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "show-environment" ]; then printf -- '-WISP_DECK_CLAUDE_ACCOUNT\n'; exit 0; fi
+if [ "$1" = "display-popup" ]; then printf '%%s\n' "$*" >> %q; exit 0; fi
+exit 0`, rec))
+	mockSwitcherBinary(t, dir)
+	relaunch := switcherToolCtx(t, dir, "codex", "claude opencode codex")
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "--tools claude,opencode,codex")
+	assertContains(t, logOut, "--active-tool codex")
+}
+
+// Picking an agent row relaunches the AI pane under that tool's binary, stamps
+// the session's tool, persists the launcher preference, and rewrites the
+// relaunch context so the NEXT switch knows what the pane now runs.
+func TestOpenAccountSwitcher_tool_result_switches_agent(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherToolMockTmux(t, dir, "WISP_DECK_CLAUDE_ACCOUNT=", "tool:codex", rec)
+	mockSwitcherBinary(t, dir)
+	relaunch := switcherToolCtx(t, dir, "claude", "claude codex")
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "respawn-pane")
+	assertContains(t, logOut, "/opt/codex")
+	assertContains(t, logOut, "set-environment WISP_DECK_TOOL codex")
+	pref, _ := runBashSnippet(t, fmt.Sprintf("cat %q", filepath.Join(dir, "ai-tool")), nil)
+	assertContains(t, pref, "codex")
+	ctx, _ := runBashSnippet(t, fmt.Sprintf("cat %q", relaunch), nil)
+	assertContains(t, ctx, "tool=codex")
+	assertContains(t, ctx, "tool_cmd=/opt/codex")
+}
+
+// Picking the agent the pane already runs is a no-op — relaunching would kill
+// the running tool for nothing.
+func TestOpenAccountSwitcher_tool_result_same_agent_skips(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherToolMockTmux(t, dir, "-WISP_DECK_CLAUDE_ACCOUNT", "tool:codex", rec)
+	mockSwitcherBinary(t, dir)
+	relaunch := switcherToolCtx(t, dir, "codex", "claude codex")
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q 2>/dev/null || true", rec), nil)
+	assertNotContains(t, logOut, "respawn-pane")
+}
+
+// Picking a claude LOGIN while the pane runs another agent must switch back to
+// claude under that login — the account rows are claude, whatever runs now.
+func TestOpenAccountSwitcher_account_pick_on_other_agent_switches_to_claude(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, filepath.Join(dir, "claude-accounts", "personal"), ".keep", "")
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherToolMockTmux(t, dir, "-WISP_DECK_CLAUDE_ACCOUNT", "personal", rec)
+	mockSwitcherBinary(t, dir)
+	relaunch := switcherToolCtx(t, dir, "codex", "claude codex")
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "respawn-pane")
+	assertContains(t, logOut, "/opt/claude")
+	assertContains(t, logOut, `CLAUDE_CONFIG_DIR="`+filepath.Join(dir, "claude-accounts", "personal")+`"`)
+	assertContains(t, logOut, "set-environment WISP_DECK_TOOL claude")
+	assertContains(t, logOut, "set-environment WISP_DECK_CLAUDE_ACCOUNT personal")
+}
+
+// One claude login but several agents: the pill must still show — it is the
+// only way into the agent switcher.
+func TestAccountPillEnabled_shows_with_one_account_but_two_tools(t *testing.T) {
+	dir := t.TempDir()
+	list := writeTempFile(t, dir, "claude-accounts.list", "")
+	relaunch := writeTempFile(t, dir, "relaunch", "tool=claude\ntools=claude codex\n")
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("account_pill_enabled %q %q", relaunch, list)), nil)
+	if code != 0 {
+		t.Fatalf("expected pill enabled (exit 0), got %d: %s", code, out)
+	}
+}
+
+// One login AND one tool: nothing to switch to — no pill.
+func TestAccountPillEnabled_hidden_with_one_account_and_one_tool(t *testing.T) {
+	dir := t.TempDir()
+	list := writeTempFile(t, dir, "claude-accounts.list", "")
+	relaunch := writeTempFile(t, dir, "relaunch", "tool=claude\ntools=claude\n")
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("account_pill_enabled %q %q", relaunch, list)), nil)
+	if code == 0 {
+		t.Fatalf("expected pill disabled (non-zero), got 0: %s", out)
+	}
+}
+
+// The pill shows the running AGENT when it is not claude — its display name in
+// the tool's accent color; for claude it keeps showing the account.
+func TestPillCurrent_shows_agent_name_for_non_claude_tool(t *testing.T) {
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		`pill_current codex "" "" "" "" ""`), nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "Codex\t36")
+}
+
+func TestPillCurrent_delegates_to_account_for_claude(t *testing.T) {
+	dir := t.TempDir()
+	list := writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	pointer := writeTempFile(t, dir, "claude-account", "work\n")
+	colors := writeTempFile(t, dir, "claude-account-colors", "work:1\n")
+	defLabel := filepath.Join(dir, "claude-account-default-label")
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+		`pill_current claude %q %q %q %q`, pointer, list, defLabel, colors)), nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "Work\t")
+}
+
+// The ledger must render the pill through the agent-aware helper, or an
+// opencode/codex session's pill would claim a claude login.
+func TestCompactView_renders_pill_via_pill_current(t *testing.T) {
+	root := projectRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "lib", "compact-view.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `pill_current "${_rc_tool`) {
+		t.Fatal("compact-view.sh must build the pill via pill_current with the running tool")
 	}
 }

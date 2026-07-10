@@ -46,15 +46,58 @@ switcher_supports_session_flags() {
   [ "$_GT_SWITCHER_FLAGS_PROBE" = ok ]
 }
 
-# account_pill_enabled <relaunch_file> <list_file> — exit 0 when the ledger should
-# show the switch pill. The tool/proxy eligibility gate lives in wrapper.sh, which
-# only writes the relaunch-context file for a claude session with the rotation
-# proxy OFF; so here it is enough that the relaunch file exists AND there are 2+
-# accounts to switch between (a single managed login + the implicit Default).
+# switcher_supports_agent_rows — exit 0 when the installed wisp-deck-tui
+# accepts --tools/--active-tool on claude-account-switch (agent rows). Same
+# legacy-detection contract as switcher_supports_session_flags: only a help
+# output that positively shows the command WITHOUT --tools counts as legacy.
+switcher_supports_agent_rows() {
+  if [ -z "${_GT_SWITCHER_TOOLS_PROBE:-}" ]; then
+    local help
+    help="$(wisp-deck-tui claude-account-switch --help 2>&1)" || help=""
+    if printf '%s' "$help" | grep -q 'claude-account-switch' \
+       && ! printf '%s' "$help" | grep -q -- '--tools'; then
+      _GT_SWITCHER_TOOLS_PROBE=legacy
+    else
+      _GT_SWITCHER_TOOLS_PROBE=ok
+    fi
+  fi
+  [ "$_GT_SWITCHER_TOOLS_PROBE" = ok ]
+}
+
+# account_pill_enabled <relaunch_file> <list_file> — exit 0 when the ledger
+# should show the switch pill: the relaunch file exists AND there is anything
+# to switch to — 2+ claude logins (a single managed login + the implicit
+# Default) OR 2+ agents in the context's tools list (the switcher offers other
+# agents even with a single claude login).
 account_pill_enabled() {
   local relaunch_file="$1" list_file="$2"
   [ -n "$relaunch_file" ] && [ -f "$relaunch_file" ] || return 1
-  gt_multiple_claude_accounts "$list_file"
+  gt_multiple_claude_accounts "$list_file" && return 0
+  # wc -w, not `set -- $tools`: this runs inside the compact-view pane's zsh,
+  # which does not word-split an unquoted expansion.
+  local tools
+  tools="$(sed -n 's/^tools=//p' "$relaunch_file" 2>/dev/null)"
+  [ "$(printf '%s\n' "$tools" | wc -w)" -ge 2 ]
+}
+
+# pill_current <tool> <pointer_file> <list_file> <default_label_file> \
+#   <colors_file> [tmux_cmd] — agent-aware pill content: for a non-claude tool
+# print its display name in the tool's accent color (the pane runs that agent;
+# a claude login label would lie); for claude, delegate to account_current.
+pill_current() {
+  local tool="$1"
+  shift
+  if [ -n "$tool" ] && [ "$tool" != "claude" ]; then
+    local label
+    case "$tool" in
+      opencode) label="OpenCode" ;;
+      codex) label="Codex" ;;
+      *) label="$tool" ;;
+    esac
+    printf '%s\t%s\n' "$label" "$(get_tool_accent "$tool")"
+  else
+    account_current "$@"
+  fi
 }
 
 # account_pill <label> <color> [hover] — render the account pill for the ledger
@@ -404,19 +447,30 @@ _read_relaunch_ctx() {
       list) _rc_list="$v" ;;
       colors) _rc_colors="$v" ;;
       default_label) _rc_default_label="$v" ;;
+      tools) _rc_tools="$v" ;;
+      claude_cmd) _rc_claude_cmd="$v" ;;
+      opencode_cmd) _rc_opencode_cmd="$v" ;;
+      codex_cmd) _rc_codex_cmd="$v" ;;
+      tool_pref) _rc_tool_pref="$v" ;;
     esac
   done < "$file"
 }
 
 # write_relaunch_context <out_file> <tool> <tool_cmd> <settings> \
-#   <filter> <project_dir> <cfg_root> — persist everything the mid-session switch
-# needs to rebuild the AI launch and locate the account files. wrapper.sh writes it
-# once per launch (for an eligible claude session) and passes its path to the pane
-# as WISP_DECK_RELAUNCH_FILE. key=value, one per line — read back by
-# _read_relaunch_ctx with IFS='=' so a value's spaces (the filter prefix) survive.
+#   <filter> <project_dir> <cfg_root> [tools] [claude_cmd] [opencode_cmd] \
+#   [codex_cmd] — persist everything the mid-session switch needs to rebuild
+# the AI launch and locate the account files. wrapper.sh writes it once per
+# launch (every tool) and passes its path to the pane as
+# WISP_DECK_RELAUNCH_FILE. key=value, one per line — read back by
+# _read_relaunch_ctx with IFS='=' so a value's spaces (the filter prefix)
+# survive. tools is the space-separated available-tool list and the *_cmd
+# trailers each tool's binary — what lets the switcher offer OTHER agents and
+# relaunch the pane under one of them; tool_pref is where the launcher reads
+# its default tool, so a switch can steer future launches too.
 write_relaunch_context() {
   local out="$1" tool="$2" tool_cmd="$3" settings="$4" \
-    filter="$5" project_dir="$6" cfg_root="$7"
+    filter="$5" project_dir="$6" cfg_root="$7" tools="${8:-}" \
+    claude_cmd="${9:-}" opencode_cmd="${10:-}" codex_cmd="${11:-}"
   mkdir -p "$(dirname "$out")" 2>/dev/null
   {
     printf 'tool=%s\n' "$tool"
@@ -429,6 +483,11 @@ write_relaunch_context() {
     printf 'list=%s\n' "$cfg_root/claude-accounts.list"
     printf 'colors=%s\n' "$cfg_root/claude-account-colors"
     printf 'default_label=%s\n' "$cfg_root/claude-account-default-label"
+    printf 'tools=%s\n' "$tools"
+    printf 'claude_cmd=%s\n' "$claude_cmd"
+    printf 'opencode_cmd=%s\n' "$opencode_cmd"
+    printf 'codex_cmd=%s\n' "$codex_cmd"
+    printf 'tool_pref=%s\n' "$cfg_root/ai-tool"
   } > "$out"
 }
 
@@ -453,7 +512,9 @@ relaunch_ai_pane() {
   fi
   local _rc_tool="" _rc_tool_cmd="" _rc_settings="" \
     _rc_filter="" _rc_project_dir="" _rc_accounts_dir="" _rc_pointer="" \
-    _rc_list="" _rc_colors="" _rc_default_label=""
+    _rc_list="" _rc_colors="" _rc_default_label="" \
+    _rc_tools="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_codex_cmd="" \
+    _rc_tool_pref=""
   [ -f "$relaunch_file" ] || return 0
   _read_relaunch_ctx "$relaunch_file"
 
@@ -545,6 +606,96 @@ _relaunch_preserving_draft() {
   return 0
 }
 
+# _tool_cmd_for <tool> — the tool's binary, from the relaunch context's *_cmd
+# keys (caller scope, via _read_relaunch_ctx), falling back to PATH lookup for
+# a context written before the keys existed. Empty when unresolvable.
+_tool_cmd_for() {
+  local tool="$1" cmd=""
+  case "$tool" in
+    claude) cmd="${_rc_claude_cmd:-}" ;;
+    opencode) cmd="${_rc_opencode_cmd:-}" ;;
+    codex) cmd="${_rc_codex_cmd:-}" ;;
+  esac
+  [ -n "$cmd" ] || cmd="$(command -v "$tool" 2>/dev/null)" || cmd=""
+  printf '%s\n' "$cmd"
+}
+
+# relaunch_switch_tool <tmux_cmd> <relaunch_file> <target_tool> [chosen_account]
+# — respawn the AI pane under ANOTHER agent (the popup's "tool:<name>" result,
+# or a claude login picked while a different agent runs — then target_tool is
+# claude and chosen_account the login). Beyond the respawn it keeps every
+# tool-identity surface consistent: the tmux session env (WISP_DECK_TOOL — the
+# pill and the next switch read it), the pane border accent, the launcher's
+# ai-tool preference (a switch steers future launches, mirroring how an
+# account pick writes the global pointer), and the relaunch context itself
+# (the next switch must know what the pane NOW runs). Leaving claude first
+# makes it persist any unsent draft into prompt history (Esc-Esc) — there is
+# no replay into a different agent's input, so the draft stays one Up-press
+# away for the user's next claude stint. Switching TO claude resumes the
+# conversation an earlier claude stint stamped, under chosen_account (or the
+# Default login). Fail-open everywhere.
+relaunch_switch_tool() {
+  local tmux_cmd="$1" relaunch_file="$2" target="$3" chosen_acct="${4:-}"
+  local _rc_tool="" _rc_tool_cmd="" _rc_settings="" \
+    _rc_filter="" _rc_project_dir="" _rc_accounts_dir="" _rc_pointer="" \
+    _rc_list="" _rc_colors="" _rc_default_label="" \
+    _rc_tools="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_codex_cmd="" \
+    _rc_tool_pref=""
+  [ -f "$relaunch_file" ] || return 0
+  _read_relaunch_ctx "$relaunch_file"
+
+  local tool_cmd pane
+  tool_cmd="$(_tool_cmd_for "$target")"
+  [ -n "$tool_cmd" ] || return 0
+  pane="$(find_ai_pane "$tmux_cmd")"
+  [ -n "$pane" ] || return 0
+
+  if [ "$_rc_tool" = "claude" ]; then
+    stash_ai_draft "$tmux_cmd" "$pane" \
+      "${WISP_DECK_HISTORY_FILE:-$HOME/.claude/history.jsonl}" \
+      "$_rc_project_dir" >/dev/null 2>&1 || true
+  fi
+
+  local new_dir="" sid=""
+  if [ "$target" = "claude" ]; then
+    if [ -n "$chosen_acct" ] && [ "$chosen_acct" != "default" ] \
+       && [ -d "$_rc_accounts_dir/$chosen_acct" ]; then
+      new_dir="$_rc_accounts_dir/$chosen_acct"
+    fi
+    if [ -n "$new_dir" ]; then
+      command -v sync_claude_shared_state >/dev/null 2>&1 \
+        && sync_claude_shared_state "$HOME/.claude" "$new_dir"
+      command -v sync_claude_shared_settings >/dev/null 2>&1 \
+        && sync_claude_shared_settings "$HOME/.claude" "$new_dir"
+    fi
+    # Resume the conversation an earlier claude stint of THIS pane stamped
+    # (claude → codex → claude carries the session over); unstamped = fresh.
+    sid="$(current_ai_session "$tmux_cmd")"
+  fi
+
+  local cmd
+  cmd="$(build_switch_launch_cmd "$target" "$tool_cmd" \
+    "$_rc_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir" "$sid")"
+  "$tmux_cmd" respawn-pane -k -t "$pane" -c "$_rc_project_dir" "$cmd; exec bash"
+
+  "$tmux_cmd" set-environment WISP_DECK_TOOL "$target" 2>/dev/null
+  if [ "$target" = "claude" ]; then
+    "$tmux_cmd" set-environment WISP_DECK_CLAUDE_ACCOUNT "${new_dir##*/}" 2>/dev/null
+  fi
+  if command -v get_tool_accent >/dev/null 2>&1; then
+    "$tmux_cmd" set-option pane-active-border-style \
+      "fg=colour$(get_tool_accent "$target")" 2>/dev/null
+  fi
+  if [ -n "$_rc_tool_pref" ]; then
+    printf '%s\n' "$target" > "$_rc_tool_pref" 2>/dev/null || true
+  fi
+  write_relaunch_context "$relaunch_file" "$target" "$tool_cmd" \
+    "$_rc_settings" "$_rc_filter" "$_rc_project_dir" \
+    "${_rc_accounts_dir%/claude-accounts}" "$_rc_tools" \
+    "$_rc_claude_cmd" "$_rc_opencode_cmd" "$_rc_codex_cmd"
+  return 0
+}
+
 # auto_switch_relaunch <tmux_cmd> <relaunch_file> <target> — the automatic
 # quota-rotation entry point (fired by auto_switch_maybe_trigger via `tmux
 # run-shell -b`). Reuses the exact mid-session switch the ledger pill drives —
@@ -557,7 +708,9 @@ auto_switch_relaunch() {
   local tmux_cmd="$1" relaunch_file="$2" target="$3"
   local _rc_tool="" _rc_tool_cmd="" _rc_settings="" \
     _rc_filter="" _rc_project_dir="" _rc_accounts_dir="" _rc_pointer="" \
-    _rc_list="" _rc_colors="" _rc_default_label=""
+    _rc_list="" _rc_colors="" _rc_default_label="" \
+    _rc_tools="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_codex_cmd="" \
+    _rc_tool_pref=""
   [ -f "$relaunch_file" ] || return 0
   _read_relaunch_ctx "$relaunch_file"
   local session_acct want
@@ -587,7 +740,9 @@ open_account_switcher() {
   local tmux_cmd="$1" relaunch_file="$2"
   local _rc_tool="" _rc_tool_cmd="" _rc_settings="" \
     _rc_filter="" _rc_project_dir="" _rc_accounts_dir="" _rc_pointer="" \
-    _rc_list="" _rc_colors="" _rc_default_label=""
+    _rc_list="" _rc_colors="" _rc_default_label="" \
+    _rc_tools="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_codex_cmd="" \
+    _rc_tool_pref=""
   [ -f "$relaunch_file" ] || return 0
   _read_relaunch_ctx "$relaunch_file"
 
@@ -604,6 +759,14 @@ open_account_switcher() {
     [ -n "$result_file" ] && rm -f "$result_file"
     [ -n "$result_file" ] && session_flags="--active $(printf '%q' "$session_acct") \
 --result-file $(printf '%q' "$result_file") "
+  fi
+
+  # Offer the other agents as rows too (the popup filters "claude" out — the
+  # account rows ARE claude). Comma-joined for the flag; skipped for a legacy
+  # binary or a context written before the tools key existed.
+  if [ -n "$_rc_tools" ] && switcher_supports_agent_rows; then
+    session_flags="${session_flags}--tools $(printf '%s' "$_rc_tools" | tr ' ' ',') \
+--active-tool $(printf '%q' "$_rc_tool") "
   fi
 
   # Snapshot the screen behind the popup so the switcher can show it DIMMED in the
@@ -648,9 +811,25 @@ ${session_flags}${backdrop_arg}" 2>/dev/null || true
     if [ -f "$result_file" ]; then
       IFS= read -r chosen < "$result_file" || chosen=""
       rm -f "$result_file"
-      # Hand the CHOICE itself to the relaunch: re-resolving the global
-      # pointer there would race another session's concurrent switch.
-      [ "$chosen" != "$session_acct" ] && _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" "$session_acct" "$chosen"
+      case "$chosen" in
+        tool:*)
+          # An agent row: switch the pane to that tool (no-op when it already
+          # runs it — relaunching would kill the running tool for nothing).
+          [ "${chosen#tool:}" != "$_rc_tool" ] \
+            && relaunch_switch_tool "$tmux_cmd" "$relaunch_file" "${chosen#tool:}"
+          ;;
+        *)
+          if [ "$_rc_tool" != "claude" ]; then
+            # A claude login picked while another agent runs: switch back to
+            # claude under that login, whatever the stamped account says.
+            relaunch_switch_tool "$tmux_cmd" "$relaunch_file" claude "$chosen"
+          else
+            # Hand the CHOICE itself to the relaunch: re-resolving the global
+            # pointer there would race another session's concurrent switch.
+            [ "$chosen" != "$session_acct" ] && _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" "$session_acct" "$chosen"
+          fi
+          ;;
+      esac
     fi
   else
     # Legacy binary (no result-file contract): fall back to the pointer-diff

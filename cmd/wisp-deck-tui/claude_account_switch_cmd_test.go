@@ -365,3 +365,107 @@ func TestAccountSwitch_activeAndResultFileFlagsRegistered(t *testing.T) {
 		t.Fatal("claude-account-switch must register --result-file")
 	}
 }
+
+// The switcher is no longer claude-only: bash passes the other available AI
+// tools via --tools and the popup appends one agent row per tool AFTER the
+// account rows. "claude" never gets its own agent row — the account rows ARE
+// claude.
+func TestAccountSwitch_switchRowsForSession_appendsToolRows(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "claude-accounts.list")
+	defLabel := filepath.Join(dir, "claude-account-default-label")
+	if err := os.WriteFile(list, []byte("Work:work\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, cursor := switchRowsForSession(list, defLabel, "work", "claude", []string{"claude", "opencode", "codex"})
+	if len(rows) != 4 {
+		t.Fatalf("rows = %d, want 4 (Default, Work, OpenCode, Codex)", len(rows))
+	}
+	if rows[2].Tool != "opencode" || rows[2].Label != "OpenCode" {
+		t.Fatalf("row2 = %+v, want the OpenCode agent row", rows[2])
+	}
+	if rows[3].Tool != "codex" || rows[3].Label != "Codex" {
+		t.Fatalf("row3 = %+v, want the Codex agent row", rows[3])
+	}
+	if rows[0].Tool != "" || rows[1].Tool != "" {
+		t.Fatalf("account rows must carry no Tool, got %+v / %+v", rows[0], rows[1])
+	}
+	if cursor != 1 {
+		t.Fatalf("cursor = %d, want 1 (the running claude account)", cursor)
+	}
+}
+
+// When the pane runs a non-claude agent, the cursor (and active dot) must land
+// on that agent's row, not on any claude account.
+func TestAccountSwitch_switchRowsForSession_cursorOnActiveTool(t *testing.T) {
+	dir := t.TempDir()
+	list := filepath.Join(dir, "claude-accounts.list")
+	defLabel := filepath.Join(dir, "claude-account-default-label")
+	if err := os.WriteFile(list, []byte("Work:work\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, cursor := switchRowsForSession(list, defLabel, "", "codex", []string{"opencode", "codex"})
+	if len(rows) != 4 {
+		t.Fatalf("rows = %d, want 4", len(rows))
+	}
+	if rows[cursor].Tool != "codex" {
+		t.Fatalf("cursor row = %+v, want the codex agent row", rows[cursor])
+	}
+}
+
+// Agent rows report through the result file as "tool:<name>" so the bash side
+// can tell an agent switch apart from a claude account dir.
+func TestAccountSwitch_switchResultValue(t *testing.T) {
+	if got := switchResultValue(switchRow{Label: "Work", Dir: "work"}); got != "work" {
+		t.Fatalf("account row result = %q, want work", got)
+	}
+	if got := switchResultValue(switchRow{Label: "OpenCode", Tool: "opencode"}); got != "tool:opencode" {
+		t.Fatalf("agent row result = %q, want tool:opencode", got)
+	}
+}
+
+// Choosing an agent row emits tool JSON and must NOT touch the claude account
+// pointer — the account stays whatever it was for the next claude launch.
+func TestAccountSwitch_selectToolResultJSON(t *testing.T) {
+	got, err := selectToolResultJSON("opencode", "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != `{"selected":true,"tool":"opencode","changed":true}` {
+		t.Fatalf("json = %s", got)
+	}
+	got, err = selectToolResultJSON("codex", "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != `{"selected":true,"tool":"codex","changed":false}` {
+		t.Fatalf("json = %s", got)
+	}
+}
+
+// With agent rows present the popup is an agent switcher, so the title says so;
+// without them it keeps the claude-only wording.
+func TestAccountSwitch_titleSwitchAgentWithToolRows(t *testing.T) {
+	rows := []switchRow{{Label: "Default"}, {Label: "OpenCode", Tool: "opencode"}}
+	m := newAccountSwitchModel(rows, 0, "")
+	joined := strings.Join(m.innerLines(), "\n")
+	if !strings.Contains(joined, "Switch agent") {
+		t.Fatalf("title must read Switch agent, got:\n%s", joined)
+	}
+	m2 := newAccountSwitchModel([]switchRow{{Label: "Default"}}, 0, "")
+	joined2 := strings.Join(m2.innerLines(), "\n")
+	if !strings.Contains(joined2, "Switch Claude login") {
+		t.Fatalf("account-only title must stay Switch Claude login, got:\n%s", joined2)
+	}
+}
+
+func TestAccountSwitch_toolFlagsRegistered(t *testing.T) {
+	if claudeAccountSwitchCmd.Flags().Lookup("tools") == nil {
+		t.Fatal("claude-account-switch must register --tools")
+	}
+	if claudeAccountSwitchCmd.Flags().Lookup("active-tool") == nil {
+		t.Fatal("claude-account-switch must register --active-tool")
+	}
+}
