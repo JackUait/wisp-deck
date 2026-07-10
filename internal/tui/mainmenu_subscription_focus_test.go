@@ -48,32 +48,34 @@ func subFocusMenu(t *testing.T, tool string, withConfigs bool) *MainMenuModel {
 	return m
 }
 
-func TestSubFocus_downFromAIGoesToSubscription(t *testing.T) {
+func TestSubFocus_upFromAIGoesToSubscription(t *testing.T) {
 	m := subFocusMenu(t, "claude", true)
 	m.SetFocus(FocusAI)
-	m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	if m.Focus() != FocusSubscription {
-		t.Errorf("Down from AI = %v, want FocusSubscription", m.Focus())
+		t.Errorf("Up from AI = %v, want FocusSubscription", m.Focus())
 	}
 }
 
-func TestSubFocus_downFromAISkipsWhenNoConfigs(t *testing.T) {
+// The PLAN row still renders with a single subscription, but it is not a focus
+// stop — the AGENT row is then the top of the ring and ↑ leaves focus put.
+func TestSubFocus_upFromAIStaysWhenNoConfigs(t *testing.T) {
 	m := subFocusMenu(t, "claude", false)
 	m.SetFocus(FocusAI)
-	m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	if m.Focus() != FocusTabs {
-		t.Errorf("Down from AI (no configs) = %v, want FocusTabs", m.Focus())
+	m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if m.Focus() != FocusAI {
+		t.Errorf("Up from AI (no configs) = %v, want FocusAI", m.Focus())
 	}
 }
 
 // Subscriptions are shared across agents, so the PLAN row is a reachable focus
 // stop for non-Claude agents too (when a keyed config exists).
-func TestSubFocus_downFromAIReachesSubscriptionNonClaude(t *testing.T) {
+func TestSubFocus_upFromAIReachesSubscriptionNonClaude(t *testing.T) {
 	m := subFocusMenu(t, "opencode", true)
 	m.SetFocus(FocusAI)
-	m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	if m.Focus() != FocusSubscription {
-		t.Errorf("Down from AI (opencode) = %v, want FocusSubscription", m.Focus())
+		t.Errorf("Up from AI (opencode) = %v, want FocusSubscription", m.Focus())
 	}
 }
 
@@ -88,55 +90,51 @@ func TestSubFocus_reachableOnNonProjectTabs(t *testing.T) {
 			t.Errorf("tab %v: subscription should be focusable now its row renders on every tab", tab)
 		}
 
-		// Down from AI must stop on the subscription row.
+		// Up from AI must stop on the subscription row.
 		m.SetFocus(FocusAI)
-		m.Update(tea.KeyMsg{Type: tea.KeyDown})
-		if m.Focus() != FocusSubscription {
-			t.Errorf("tab %v: Down from AI = %v, want FocusSubscription", tab, m.Focus())
-		}
-
-		// Up from the tab bar must stop on the subscription row.
-		m.SetFocus(FocusTabs)
 		m.Update(tea.KeyMsg{Type: tea.KeyUp})
 		if m.Focus() != FocusSubscription {
-			t.Errorf("tab %v: Up from tabs = %v, want FocusSubscription", tab, m.Focus())
+			t.Errorf("tab %v: Up from AI = %v, want FocusSubscription", tab, m.Focus())
+		}
+
+		// Down from the subscription row must return to the AI switcher.
+		m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		if m.Focus() != FocusAI {
+			t.Errorf("tab %v: Down from subscription = %v, want FocusAI", tab, m.Focus())
 		}
 	}
 }
 
-func TestSubFocus_downFromSubscriptionGoesToTabs(t *testing.T) {
+func TestSubFocus_downFromSubscriptionGoesToAI(t *testing.T) {
 	m := subFocusMenu(t, "claude", true)
 	m.SetFocus(FocusSubscription)
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	if m.Focus() != FocusTabs {
-		t.Errorf("Down from subscription = %v, want FocusTabs", m.Focus())
+	if m.Focus() != FocusAI {
+		t.Errorf("Down from subscription = %v, want FocusAI", m.Focus())
 	}
 }
 
-func TestSubFocus_upFromTabsGoesToSubscription(t *testing.T) {
+// The subscription row sits two stops above the tab bar, behind the AI switcher.
+func TestSubFocus_upFromTabsReachesSubscriptionViaAI(t *testing.T) {
 	m := subFocusMenu(t, "claude", true)
 	m.SetFocus(FocusTabs)
 	m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	if m.Focus() != FocusSubscription {
-		t.Errorf("Up from tabs = %v, want FocusSubscription", m.Focus())
-	}
-}
-
-func TestSubFocus_upFromTabsSkipsWhenNoConfigs(t *testing.T) {
-	m := subFocusMenu(t, "claude", false)
-	m.SetFocus(FocusTabs)
-	m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	if m.Focus() != FocusAI {
-		t.Errorf("Up from tabs (no configs) = %v, want FocusAI", m.Focus())
+		t.Fatalf("Up from tabs = %v, want FocusAI", m.Focus())
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if m.Focus() != FocusSubscription {
+		t.Errorf("Up from AI = %v, want FocusSubscription", m.Focus())
 	}
 }
 
-func TestSubFocus_upFromSubscriptionGoesToAI(t *testing.T) {
+// With no account row above it, the subscription row is the top of the ring.
+func TestSubFocus_upFromSubscriptionStaysPut(t *testing.T) {
 	m := subFocusMenu(t, "claude", true)
 	m.SetFocus(FocusSubscription)
 	m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	if m.Focus() != FocusAI {
-		t.Errorf("Up from subscription = %v, want FocusAI", m.Focus())
+	if m.Focus() != FocusSubscription {
+		t.Errorf("Up from subscription = %v, want FocusSubscription (top stop)", m.Focus())
 	}
 }
 
@@ -205,9 +203,9 @@ func TestMainSub_keylessConfigNotFocusable(t *testing.T) {
 	m.SetClaudeConfigs([]ClaudeConfig{{Name: "NoKey", File: "nokey.json"}})
 
 	m.SetFocus(FocusAI)
-	m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	if m.Focus() != FocusTabs {
-		t.Errorf("Down from AI with only a keyless config = %v, want FocusTabs (not focusable)", m.Focus())
+	m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if m.Focus() != FocusAI {
+		t.Errorf("Up from AI with only a keyless config = %v, want FocusAI (not focusable)", m.Focus())
 	}
 }
 

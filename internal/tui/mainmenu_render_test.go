@@ -22,49 +22,40 @@ func newTestMenu() *MainMenuModel {
 	return m
 }
 
-func TestMenuBox_AIToolRightAligned(t *testing.T) {
+// The topmost header row is the PLAN switcher: its caption and subscription name
+// sit on the left, with "Wisp Deck" right-aligned across a run of padding. The
+// AGENT switcher then holds the row below.
+func TestMenuBox_TopRowIsPlanWithRightAlignedWordmark(t *testing.T) {
 	m := newTestMenu()
-	box := m.renderMenuBox()
-	lines := strings.Split(box, "\n")
+	lines := strings.Split(m.renderMenuBox(), "\n")
 
-	// Title row is the second line (index 1), after top border
-	if len(lines) < 2 {
-		t.Fatal("renderMenuBox produced fewer than 2 lines")
+	if len(lines) < 3 {
+		t.Fatal("renderMenuBox produced fewer than 3 lines")
 	}
-	titleRow := lines[1]
+	planRow, titleRow := lines[1], lines[2]
 
-	// The AGENT switcher sits on the left and "Wisp Deck" is right-aligned, with
-	// padding between the switcher cluster and the title.
-	if !strings.Contains(titleRow, "Wisp Deck") {
-		t.Error("title row missing 'Wisp Deck'")
-	}
 	if !strings.Contains(titleRow, "Claude Code") {
-		t.Error("title row missing 'Claude Code'")
+		t.Errorf("row below PLAN should be the AGENT switcher, got %q", stripAnsi(titleRow))
+	}
+	if strings.Contains(titleRow, "Wisp Deck") {
+		t.Errorf("AGENT row should not carry the wordmark, got %q", stripAnsi(titleRow))
 	}
 
-	// Strip ANSI codes to check raw layout
-	raw := stripAnsi(titleRow)
-	agentIdx := strings.Index(raw, iconAgent)
-	ghostIdx := strings.Index(raw, "Wisp Deck")
-	if agentIdx < 0 || ghostIdx < 0 {
-		t.Fatal("could not find AGENT icon or Wisp Deck in stripped title row")
+	// Strip ANSI codes to check raw layout.
+	raw := stripAnsi(planRow)
+	planIdx := strings.Index(raw, iconPlan)
+	nameIdx := strings.Index(raw, "Standard Claude")
+	// The title leads with the ghost icon, so the padding runs up to that icon
+	// rather than to the "Wisp Deck" wordmark itself.
+	ghostIdx := strings.Index(raw, iconGhost)
+	if planIdx < 0 || nameIdx < 0 || ghostIdx < 0 {
+		t.Fatalf("could not find PLAN icon, subscription name and wordmark in %q", raw)
 	}
-	// AGENT switcher comes first (left), Wisp Deck after it (right).
-	if agentIdx > ghostIdx {
-		t.Errorf("expected AGENT switcher left of Wisp Deck, got agent=%d ghost=%d in %q", agentIdx, ghostIdx, raw)
+	// PLAN switcher comes first (left), Wisp Deck after it (right).
+	if !(planIdx < nameIdx && nameIdx < ghostIdx) {
+		t.Errorf("expected PLAN switcher left of Wisp Deck, got plan=%d name=%d ghost=%d in %q", planIdx, nameIdx, ghostIdx, raw)
 	}
-	// There should be significant whitespace padding between the switcher's last
-	// chevron and the right-aligned title. The title now leads with the ghost icon,
-	// so the gap runs up to that icon (not the "Wisp Deck" wordmark).
-	titleStart := strings.Index(raw, iconGhost)
-	if titleStart < 0 {
-		titleStart = ghostIdx
-	}
-	lastArrow := strings.LastIndex(raw, iconChevronRight)
-	if lastArrow < 0 || lastArrow > titleStart {
-		t.Fatalf("could not find switcher chevron left of Wisp Deck in %q", raw)
-	}
-	gap := raw[lastArrow+len(iconChevronRight) : titleStart]
+	gap := raw[nameIdx+len("Standard Claude") : ghostIdx]
 	if len(strings.TrimSpace(gap)) != 0 {
 		t.Errorf("expected only whitespace between the switcher and Wisp Deck, got %q", gap)
 	}

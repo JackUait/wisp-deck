@@ -116,10 +116,10 @@ const (
 	FocusBody focusRegion = iota
 	FocusTabs
 	FocusAI
-	// FocusSubscription is the optional stop between the AI switcher and the tab
-	// bar, reachable only when the Claude subscription line is changeable.
+	// FocusSubscription is the optional stop directly above the AI switcher,
+	// reachable only when the Claude subscription line is changeable.
 	FocusSubscription
-	// FocusAccount is the optional top stop, above the AI switcher, reachable
+	// FocusAccount is the optional top stop, above the subscription row, reachable
 	// only when the user has at least one managed native Claude login account.
 	FocusAccount
 )
@@ -2287,18 +2287,18 @@ func (m *MainMenuModel) focusUp() tea.Cmd {
 	switch m.focus {
 	case FocusAccount:
 		// already the top stop
-	case FocusAI:
+	case FocusSubscription:
 		if m.accountFocusable() {
 			m.focus = FocusAccount
 		}
-	case FocusSubscription:
-		m.focus = FocusAI
-	case FocusTabs:
+	case FocusAI:
 		if m.subscriptionFocusable() {
 			m.focus = FocusSubscription
-		} else {
-			m.focus = FocusAI
+		} else if m.accountFocusable() {
+			m.focus = FocusAccount
 		}
+	case FocusTabs:
+		m.focus = FocusAI
 	case FocusBody:
 		switch m.activeTab {
 		case TabSettings:
@@ -2328,14 +2328,14 @@ func (m *MainMenuModel) focusUp() tea.Cmd {
 func (m *MainMenuModel) focusDown() tea.Cmd {
 	switch m.focus {
 	case FocusAccount:
-		m.focus = FocusAI
-	case FocusAI:
 		if m.subscriptionFocusable() {
 			m.focus = FocusSubscription
 		} else {
-			m.focus = FocusTabs
+			m.focus = FocusAI
 		}
 	case FocusSubscription:
+		m.focus = FocusAI
+	case FocusAI:
 		m.focus = FocusTabs
 	case FocusTabs:
 		m.focus = FocusBody

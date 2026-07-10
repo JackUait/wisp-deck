@@ -57,22 +57,22 @@ func (m *MainMenuModel) accountRowIndex() int {
 	return -1
 }
 
-// titleRowIndex returns the box-relative row of the AGENT/title row.
-func (m *MainMenuModel) titleRowIndex() int {
-	return 1 + m.accountRowCount()
-}
-
 // subscriptionRowIndex returns the box-relative row of the PLAN switcher, or -1
 // when it is not shown.
 func (m *MainMenuModel) subscriptionRowIndex() int {
 	if m.subscriptionRowCount() > 0 {
-		return m.titleRowIndex() + 1
+		return 1 + m.accountRowCount()
 	}
 	return -1
 }
 
+// titleRowIndex returns the box-relative row of the AGENT/title row.
+func (m *MainMenuModel) titleRowIndex() int {
+	return 1 + m.accountRowCount() + m.subscriptionRowCount()
+}
+
 // tabBarRowIndex returns the box-relative row of the Projects · Settings · Stats
-// tab bar. Layout: top(0) → [account] → title → [subscription] → spacer → tabs.
+// tab bar. Layout: top(0) → [account] → [subscription] → title → spacer → tabs.
 func (m *MainMenuModel) tabBarRowIndex() int {
 	return 3 + m.accountRowCount() + m.subscriptionRowCount()
 }

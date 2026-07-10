@@ -76,7 +76,7 @@ func (m *MainMenuModel) renderActionBar(leftBorder, rightBorder string) string {
 
 // ghostWordmark renders the right-aligned "Wisp Deck" wordmark with its ghost
 // icon. It captions the header's topmost row — the account row when accounts
-// exist, otherwise the AGENT row.
+// exist, then the PLAN row, falling back to the AGENT row.
 func (m *MainMenuModel) ghostWordmark() string {
 	return lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true).Render(iconGhost + " Wisp Deck")
 }
@@ -93,8 +93,8 @@ func (m *MainMenuModel) headerRow(content, title, leftBorder, rightBorder string
 }
 
 // renderTitleRow renders the left-aligned AGENT tool chooser. It carries the
-// right-aligned "Wisp Deck" wordmark only when no account row sits above it;
-// otherwise the wordmark lives on that top account row.
+// right-aligned "Wisp Deck" wordmark only when no account or PLAN row sits above
+// it; otherwise the wordmark lives on whichever of those is topmost.
 func (m *MainMenuModel) renderTitleRow(leftBorder, rightBorder string) string {
 	primaryStyle := lipgloss.NewStyle().Foreground(m.theme.Primary)
 
@@ -117,9 +117,9 @@ func (m *MainMenuModel) renderTitleRow(leftBorder, rightBorder string) string {
 		aiPart = agentLabel + nameStyle.Render(aiDisplay)
 	}
 	// AGENT switcher on the left; the wordmark right-aligns here only when there
-	// is no account row above to host it.
+	// is no account or PLAN row above to host it.
 	var title string
-	if m.accountRowCount() == 0 {
+	if m.accountRowCount() == 0 && m.subscriptionRowCount() == 0 {
 		title = m.ghostWordmark()
 	}
 	return m.headerRow(aiPart, title, leftBorder, rightBorder)
@@ -181,7 +181,7 @@ func (m *MainMenuModel) renderAccountRow(leftBorder, rightBorder string) string 
 }
 
 // renderSubscriptionRow renders the current Claude subscription, left-aligned
-// directly beneath the agent picker in the title row.
+// directly above the agent picker in the title row.
 func (m *MainMenuModel) renderSubscriptionRow(leftBorder, rightBorder string) string {
 	name := m.CurrentClaudeConfigName()
 	var valColor lipgloss.Color
@@ -198,7 +198,7 @@ func (m *MainMenuModel) renderSubscriptionRow(leftBorder, rightBorder string) st
 	}
 
 	// The crown glyph captions the subscription, mirroring the AGENT/LOGIN icons
-	// above it so the three switcher chevrons line up vertically.
+	// around it so the three switcher chevrons line up vertically.
 	planLabel := m.settingsCaption(iconPlan, m.focus == FocusSubscription || m.isHovered(regionSubscription))
 	// Show cycle chevrons only when there is something to switch to. Idle chevrons
 	// are neutral gray; they brighten only when this row holds focus.
@@ -213,12 +213,13 @@ func (m *MainMenuModel) renderSubscriptionRow(leftBorder, rightBorder string) st
 		content = planLabel + nameStyle.Render(name)
 	}
 
-	pad := menuContentWidth - lipgloss.Width(content) - 1 // -1 for leading space
-	if pad < 1 {
-		pad = 1
+	// The PLAN switcher is the topmost header row unless an account row sits above
+	// it, so it hosts the right-aligned wordmark in that case.
+	var title string
+	if m.accountRowCount() == 0 {
+		title = m.ghostWordmark()
 	}
-	// Left-aligned so the PLAN switcher sits directly under the AGENT switcher.
-	return leftBorder + " " + content + strings.Repeat(" ", pad) + rightBorder
+	return m.headerRow(content, title, leftBorder, rightBorder)
 }
 
 // renderUpdateRow renders the "Update available" notification row.
@@ -633,11 +634,11 @@ func (m *MainMenuModel) renderHelpRow() string {
 func (m *MainMenuModel) focusHint() string {
 	switch m.focus {
 	case FocusAccount:
-		return "←→ switch login · ↵ manage · ↓ agent"
+		return "←→ switch login · ↵ manage · ↓ subscription"
+	case FocusSubscription:
+		return "←→ switch subscription · ↓ agent"
 	case FocusAI:
 		return "←→ switch agent · ↓ sections"
-	case FocusSubscription:
-		return "←→ switch subscription · ↑ agent · ↓ sections"
 	case FocusTabs:
 		return "←→ switch section · ↑ agent · ↓ enter"
 	default: // FocusBody
@@ -672,13 +673,13 @@ func (m *MainMenuModel) renderMenuBox() string {
 		lines = append(lines, m.renderAccountRow(leftBorder, rightBorder))
 	}
 
-	// Title row
-	lines = append(lines, m.renderTitleRow(leftBorder, rightBorder))
-
-	// Current subscription, under the agent picker (Claude only)
+	// Current subscription, above the agent picker (Claude only)
 	if m.subscriptionRowCount() > 0 {
 		lines = append(lines, m.renderSubscriptionRow(leftBorder, rightBorder))
 	}
+
+	// Title row
+	lines = append(lines, m.renderTitleRow(leftBorder, rightBorder))
 
 	// Blank spacer separating the agent/plan switchers from the tab bar.
 	lines = append(lines, m.emptyMenuRow(leftBorder, rightBorder))
