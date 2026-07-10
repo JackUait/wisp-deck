@@ -88,6 +88,67 @@ func TestGhostForTool_sleeping_body_has_color_variation(t *testing.T) {
 	}
 }
 
+// stripAnsiSeq removes ANSI escape sequences so tests can measure the
+// visible glyphs of a ghost line.
+func stripAnsiSeq(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == 0x1b {
+			for i < len(s) && s[i] != 'm' {
+				i++
+			}
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+// The OpenCode mascot is Brace the moth: a slim body with curly-brace wings,
+// not the old wide ghost. The old ghost had solid 18-26 block rows; the moth's
+// widest run is the 12-cell head band.
+func TestGhostForTool_opencode_awake_is_brace_moth(t *testing.T) {
+	lines := GhostForTool("opencode", false)
+	for i, line := range lines {
+		visible := stripAnsiSeq(line)
+		if strings.Contains(visible, strings.Repeat("█", 14)) {
+			t.Errorf("line %d has a block run >= 14 — that's the old ghost, not Brace the moth", i)
+		}
+	}
+	// Antenna dots: the first line has exactly 2 visible cells.
+	top := strings.TrimSpace(stripAnsiSeq(lines[0]))
+	if len([]rune(strings.ReplaceAll(top, " ", ""))) != 2 {
+		t.Errorf("expected 2 antenna-dot cells on line 0, got %q", top)
+	}
+	// Wings are separate from the body: the wing-point row has a gap
+	// (spaces) between the wing blocks and the body blocks.
+	point := stripAnsiSeq(lines[7])
+	if !strings.Contains(point, "█    ") && !strings.Contains(point, "█     ") {
+		t.Errorf("expected a gap between wing and body on the wing-point row, got %q", point)
+	}
+}
+
+func TestGhostForTool_opencode_moth_visible_width_is_28(t *testing.T) {
+	for _, sleeping := range []bool{false, true} {
+		for i, line := range GhostForTool("opencode", sleeping) {
+			w := len([]rune(stripAnsiSeq(line)))
+			if w != 28 {
+				t.Errorf("sleeping=%v line %d visible width = %d, want 28", sleeping, i, w)
+			}
+		}
+	}
+}
+
+func TestGhostForTool_opencode_moth_has_blush(t *testing.T) {
+	// Brace always blushes: the mauve blush color (139) appears awake AND asleep.
+	for _, sleeping := range []bool{false, true} {
+		joined := strings.Join(GhostForTool("opencode", sleeping), "\n")
+		if !strings.Contains(joined, "\033[38;5;139m") {
+			t.Errorf("sleeping=%v: Brace should have mauve blush (139)", sleeping)
+		}
+	}
+}
+
 func TestGhostForTool_opencode_awake_is_purple(t *testing.T) {
 	// The OpenCode ghost should wear the purple palette, not the old grayscale.
 	joined := strings.Join(GhostForTool("opencode", false), "\n")

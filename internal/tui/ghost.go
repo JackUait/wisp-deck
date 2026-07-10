@@ -65,65 +65,96 @@ func ghostClaudeSleeping(theme AIToolTheme) []string {
 	}
 }
 
-// ghostOpencode returns the awake OpenCode ghost ASCII art.
-func ghostOpencode(theme AIToolTheme) []string {
-	W := AnsiFromThemeColor(theme.Bright)    // white (upper body)
-	VL := AnsiFromThemeColor(theme.Cap)      // very light gray
-	ML := AnsiFromThemeColor(theme.Primary)  // medium light gray
-	M := AnsiFromThemeColor(theme.Dim)       // medium gray
-	MD := AnsiFromThemeColor(theme.Accent)   // medium dark gray
-	D := AnsiFromThemeColor(theme.DarkFeet)  // dark gray
-	K := AnsiFromThemeColor(theme.EyePupil)  // near-black
-	SM := AnsiFromThemeColor(theme.DarkFeet) // smile color
-
-	return []string{
-		r + "       " + VL + "\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584" + r + "       ",
-		r + "     " + VL + "\u2584" + W + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + VL + "\u2584" + r + "     ",
-		r + "    " + VL + "\u2584" + W + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + VL + "\u2584" + r + "    ",
-		r + "   " + W + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "   ",
-		r + "  " + W + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + ML + "\u2588\u2588\u2588\u2588" + W + "\u2588\u2588\u2588" + K + "\u2588\u2588" + ML + "\u2588\u2588\u2588\u2588\u2588\u2588" + W + "\u2588\u2588\u2588" + K + "\u2588\u2588" + ML + "\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + ML + "\u2588\u2588\u2588\u2588" + W + "\u2588\u2588\u2588" + K + "\u2588\u2588" + ML + "\u2588\u2588\u2588\u2588\u2588\u2588" + W + "\u2588\u2588\u2588" + K + "\u2588\u2588" + ML + "\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + M + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + M + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + M + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + SM + "\u2588\u2580\u2580\u2588" + M + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + M + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + MD + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + MD + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + D + "\u2588\u2588 \u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588 \u2588\u2588" + r + "  ",
-		r + "  " + D + "\u2588" + r + "  " + D + "\u2580\u2588\u2588\u2588\u2588\u2580" + r + " " + D + "\u2588\u2588\u2588\u2588" + r + " " + D + "\u2580\u2588\u2588\u2588\u2588\u2580" + r + "  " + D + "\u2588" + r + "  ",
+// paintRows converts pixel-map rows ('.' = transparent, letters = color slots)
+// into ANSI art lines: each cell becomes a full block in its slot's color.
+func paintRows(rows []string, colors map[byte]string) []string {
+	out := make([]string, len(rows))
+	for i, row := range rows {
+		var b strings.Builder
+		b.WriteString(r)
+		var cur byte
+		for j := 0; j < len(row); j++ {
+			ch := row[j]
+			if ch == '.' {
+				b.WriteByte(' ')
+				continue
+			}
+			if ch != cur {
+				b.WriteString(colors[ch])
+				cur = ch
+			}
+			b.WriteString("\u2588")
+		}
+		b.WriteString(r)
+		out[i] = b.String()
 	}
+	return out
 }
 
-// ghostOpencodeSleeping returns the sleeping OpenCode ghost (dimmed, closed eyes, rosy cheeks).
-func ghostOpencodeSleeping(theme AIToolTheme) []string {
-	W := AnsiFromThemeColor(theme.SleepPrimary)  // dimmed white
-	VL := AnsiFromThemeColor(theme.SleepCap)     // dimmed very light
-	ML := AnsiFromThemeColor(theme.SleepDim)     // dimmed medium light
-	M := AnsiFromThemeColor(theme.SleepDim)      // dimmed medium
-	MD := AnsiFromThemeColor(theme.SleepAccent)  // dimmed medium dark
-	D := AnsiFromThemeColor(theme.SleepDarkFeet) // dimmed dark
-	K := AnsiFromThemeColor(theme.EyePupil)      // black
-	P := AnsiFromThemeColor(theme.SleepBlush)    // rosy cheeks
+// ghostOpencode returns Brace the moth, OpenCode's mascot: curly-brace wings
+// around a stout block-cursor body (28 cols, 15 rows). Slot letters:
+// P wings/eye band, B head/body, C antenna dots, D stripes, A lower body,
+// F feet+smile, L blush, W eye white, K pupils.
+func ghostOpencode(theme AIToolTheme) []string {
+	return paintRows([]string{
+		".......C............C.......",
+		"........P..........P........",
+		".........BBBBBBBBBB.........",
+		"....PPP.BBBBBBBBBBBB.PPP....",
+		"...PPP..PWWKKPPWWKKP..PPP...",
+		"...PPP..PWWKKPPWWKKP..PPP...",
+		"..PPP...LBBBBFFBBBBL...PPP..",
+		".PPP.....BBBBBBBBBB.....PPP.",
+		"..PPP....DDDDDDDDDD....PPP..",
+		"...PPP...BBBBBBBBBB...PPP...",
+		"...PPP....DDDDDDDD....PPP...",
+		"....PPP...AAAAAAAA...PPP....",
+		"..........AAAAAAAA..........",
+		"............AAAA............",
+		"...........FF..FF...........",
+	}, map[byte]string{
+		'P': AnsiFromThemeColor(theme.Primary),
+		'B': AnsiFromThemeColor(theme.Bright),
+		'C': AnsiFromThemeColor(theme.Cap),
+		'D': AnsiFromThemeColor(theme.Dim),
+		'A': AnsiFromThemeColor(theme.Accent),
+		'F': AnsiFromThemeColor(theme.DarkFeet),
+		'L': AnsiFromThemeColor(theme.SleepBlush),
+		'W': AnsiFromThemeColor(theme.EyeWhite),
+		'K': AnsiFromThemeColor(theme.EyePupil),
+	})
+}
 
-	return []string{
-		r + "       " + VL + "\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584\u2584" + r + "       ",
-		r + "     " + VL + "\u2584" + W + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + VL + "\u2584" + r + "     ",
-		r + "    " + VL + "\u2584" + W + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + VL + "\u2584" + r + "    ",
-		r + "   " + W + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "   ",
-		r + "  " + W + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + ML + "\u2588\u2588\u2588\u2588" + K + "\u25ac\u25ac\u25ac\u25ac\u25ac" + ML + "\u2588\u2588\u2588\u2588\u2588\u2588" + K + "\u25ac\u25ac\u25ac\u25ac\u25ac" + ML + "\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + ML + "\u2588\u2588\u2588\u2588" + P + "\u2588\u2588" + ML + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + P + "\u2588\u2588" + ML + "\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + ML + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + M + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + M + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + M + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + M + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + MD + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + MD + "\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588" + r + "  ",
-		r + "  " + D + "\u2588\u2588 \u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588 \u2588\u2588" + r + "  ",
-		r + "  " + D + "\u2588" + r + "  " + D + "\u2580\u2588\u2588\u2588\u2588\u2580" + r + " " + D + "\u2588\u2588\u2588\u2588" + r + " " + D + "\u2580\u2588\u2588\u2588\u2588\u2580" + r + "  " + D + "\u2588" + r + "  ",
-	}
+// ghostOpencodeSleeping returns the sleeping Brace (dimmed, closed eyes,
+// blush, 16 rows \u2014 the extra row is the blush line, matching the other tools).
+func ghostOpencodeSleeping(theme AIToolTheme) []string {
+	return paintRows([]string{
+		".......C............C.......",
+		"........P..........P........",
+		".........BBBBBBBBBB.........",
+		"....PPP.BBBBBBBBBBBB.PPP....",
+		"...PPP..PKKKPPPPKKKP..PPP...",
+		"...PPP..LLBBBBBBBBLL..PPP...",
+		"..PPP...BBBBBFFBBBBB...PPP..",
+		".PPP.....BBBBBBBBBB.....PPP.",
+		"..PPP....DDDDDDDDDD....PPP..",
+		"...PPP...BBBBBBBBBB...PPP...",
+		"...PPP...BBBBBBBBBB...PPP...",
+		"...PPP....DDDDDDDD....PPP...",
+		"....PPP...AAAAAAAA...PPP....",
+		"..........AAAAAAAA..........",
+		"............AAAA............",
+		"...........FF..FF...........",
+	}, map[byte]string{
+		'P': AnsiFromThemeColor(theme.SleepPrimary),
+		'B': AnsiFromThemeColor(theme.SleepPrimary),
+		'C': AnsiFromThemeColor(theme.SleepCap),
+		'D': AnsiFromThemeColor(theme.SleepDim),
+		'A': AnsiFromThemeColor(theme.SleepAccent),
+		'F': AnsiFromThemeColor(theme.SleepDarkFeet),
+		'L': AnsiFromThemeColor(theme.SleepBlush),
+		'K': AnsiFromThemeColor(theme.EyePupil),
+	})
 }
 
 // blk returns n full-block characters.
