@@ -126,10 +126,12 @@ func (m *MainMenuModel) renderTitleRow(leftBorder, rightBorder string) string {
 }
 
 // subscriptionRowCount returns 1 when the PLAN/subscription line is shown, else
-// 0. The row renders in the header chrome of every tab; layout math (height,
-// scroll header, click mapping) all add this so the body rows stay aligned.
+// 0. The line names a Claude subscription, so it only appears while Claude is the
+// active agent — other agents get a header without it. It renders in the header
+// chrome of every tab; layout math (height, scroll header, click mapping) all add
+// this so the body rows stay aligned.
 func (m *MainMenuModel) subscriptionRowCount() int {
-	if m.ClaudeConfigVisible() {
+	if m.ClaudeConfigVisible() && m.CurrentAITool() == "claude" {
 		return 1
 	}
 	return 0

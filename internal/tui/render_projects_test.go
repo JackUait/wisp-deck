@@ -85,8 +85,8 @@ func TestRenderMenuBox_emptyState(t *testing.T) {
 
 func TestCalculateLayout_accountsForTabBar(t *testing.T) {
 	projects := []models.Project{{Name: "a", Path: "/tmp/a"}}
-	// The subscription row is shared across agents, so it is present for opencode too.
-	m := NewMainMenu(projects, []string{"opencode"}, "opencode", "none")
+	// Claude carries the subscription row, so this is the tallest header.
+	m := NewMainMenu(projects, []string{"claude"}, "claude", "none")
 	layout := m.CalculateLayout(120, 40)
 	// Rendered line count for 1 project = 15 (box 14 + help 1), including the
 	// subscription row and the add-project hint subtitle row. MenuHeight must equal that.
@@ -97,8 +97,8 @@ func TestCalculateLayout_accountsForTabBar(t *testing.T) {
 
 func TestCalculateLayout_emptyStateAddsRow(t *testing.T) {
 	// 0 projects: renderMenuBox emits empty-state row plus the add-project hint
-	// subtitle → 14 total lines, including the shared subscription row.
-	m := NewMainMenu(nil, []string{"opencode"}, "opencode", "none")
+	// subtitle → 14 total lines, including Claude's subscription row.
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	layout := m.CalculateLayout(120, 40)
 	if layout.MenuHeight != 14 {
 		t.Errorf("MenuHeight (0 proj) = %d, want 14", layout.MenuHeight)
@@ -110,17 +110,17 @@ func TestMapRowToItem_matchesRenderedLayout(t *testing.T) {
 		{Name: "alpha", Path: "/tmp/a"},
 		{Name: "beta", Path: "/tmp/b"},
 	}
-	// The subscription row is shared across agents, present for opencode too.
-	m := NewMainMenu(projects, []string{"opencode"}, "opencode", "none")
+	// Claude carries the subscription row, so this is the full-height header.
+	m := NewMainMenu(projects, []string{"claude"}, "claude", "none")
 	m.width = 100
 	m.height = 60
 
-	// Layout (see render_projects.go): top(0) title(1) subscription(2) switcher-gap(3)
+	// Layout (see render_projects.go): top(0) subscription(1) title(2) switcher-gap(3)
 	// tabbar(4) sep(5) blank(6) alpha-name(7) alpha-path(8) beta-name(9) beta-path(10)
 	// blank(11) add-project(12) add-hint(13) sep(14) actionbar(15) bottom(16) help(17)
 	cases := map[int]int{
 		0:  -1, // top border
-		2:  -1, // subscription row
+		2:  -1, // title row
 		3:  -1, // switcher gap
 		4:  -1, // tab bar
 		5:  -1, // separator

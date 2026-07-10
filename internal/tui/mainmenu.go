@@ -631,6 +631,11 @@ func (m *MainMenuModel) CycleAITool(direction string) {
 		m.selectedAI = (m.selectedAI - 1 + n) % n
 	}
 	m.theme = ResolveTheme(m.aiTools[m.selectedAI], m.themePref)
+	// The PLAN row only renders for Claude, so cycling to another agent can pull
+	// the row out from under the focus ring. Drop focus to the AGENT row below it.
+	if m.focus == FocusSubscription && !m.subscriptionFocusable() {
+		m.focus = FocusAI
+	}
 	m.persistAITool()
 }
 
@@ -1041,18 +1046,19 @@ func (m *MainMenuModel) CurrentClaudeConfigFile() string {
 	return m.claudeConfigs[m.selectedConfig-1].File
 }
 
-// ClaudeConfigVisible reports whether the subscription control should be shown.
-// Subscriptions are shared across every agent — the active plan selects Claude's
-// --settings file AND drives OpenCode's default model via the sync — so the
-// control is shown regardless of the selected agent.
+// ClaudeConfigVisible reports whether the Settings › Subscription row should be
+// shown. Subscriptions are shared across every agent — the active plan selects
+// Claude's --settings file AND drives OpenCode's default model via the sync — so
+// the setting stays editable regardless of the selected agent. The header PLAN
+// line is narrower: it names a Claude subscription, so it only renders under
+// Claude (see subscriptionRowCount).
 func (m *MainMenuModel) ClaudeConfigVisible() bool { return true }
 
 // subscriptionFocusable reports whether the PLAN/subscription row is a reachable
-// focus stop. Its row renders in the header chrome of every tab, so the only
-// gates are that the control is visible and that it offers something to switch
-// to beyond Standard — i.e. at least one custom config with an API key.
+// focus stop: its header row must actually render, and it must offer something to
+// switch to beyond Standard — i.e. at least one custom config with an API key.
 func (m *MainMenuModel) subscriptionFocusable() bool {
-	return m.ClaudeConfigVisible() && len(m.mainSubscriptionRing()) > 1
+	return m.subscriptionRowCount() > 0 && len(m.mainSubscriptionRing()) > 1
 }
 
 // configHasKey reports whether the custom config file carries an API key.

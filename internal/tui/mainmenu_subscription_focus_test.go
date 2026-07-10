@@ -68,14 +68,14 @@ func TestSubFocus_upFromAIStaysWhenNoConfigs(t *testing.T) {
 	}
 }
 
-// Subscriptions are shared across agents, so the PLAN row is a reachable focus
-// stop for non-Claude agents too (when a keyed config exists).
-func TestSubFocus_upFromAIReachesSubscriptionNonClaude(t *testing.T) {
+// The PLAN row is Claude-only, so a non-Claude agent has no stop above the AGENT
+// switcher even when a keyed config exists.
+func TestSubFocus_upFromAIStaysForNonClaude(t *testing.T) {
 	m := subFocusMenu(t, "opencode", true)
 	m.SetFocus(FocusAI)
 	m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	if m.Focus() != FocusSubscription {
-		t.Errorf("Up from AI (opencode) = %v, want FocusSubscription", m.Focus())
+	if m.Focus() != FocusAI {
+		t.Errorf("Up from AI (opencode) = %v, want FocusAI", m.Focus())
 	}
 }
 

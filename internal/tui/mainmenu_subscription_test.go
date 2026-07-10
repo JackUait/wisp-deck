@@ -67,42 +67,37 @@ func TestMainPage_ShowsActiveSubscriptionName(t *testing.T) {
 	}
 }
 
-// Subscriptions are shared across agents, so the PLAN line is shown for non-Claude
-// tools too.
-func TestMainPage_ShowsSubscription_NonClaude(t *testing.T) {
+// The PLAN line names a Claude subscription, so it is hidden for other agents.
+func TestMainPage_HidesSubscription_NonClaude(t *testing.T) {
 	m := subTestMenu("opencode")
 	out := stripAnsi(m.renderMenuBox())
-	if !strings.Contains(out, "Standard Claude") {
-		t.Errorf("non-claude main page should also show the subscription line:\n%s", out)
+	if strings.Contains(out, "Standard Claude") {
+		t.Errorf("non-claude main page should not show the subscription line:\n%s", out)
 	}
 }
 
 // The subscription row shifts the project rows down by one; click mapping and
-// the layout height must stay in sync. The row is present for every agent.
+// the layout height must stay in sync.
 func TestMapRowToItem_accountsForSubscriptionRow(t *testing.T) {
-	// Header rows: top, title, subscription, switcher-gap, tab bar, separator,
-	// leading blank(6) — so the first project lands at row 7 for every agent.
+	// Header rows: top, subscription, title, switcher-gap, tab bar, separator,
+	// leading blank(6) — so the first project lands at row 7 under Claude.
 	// Asserting row 6 maps to -1 (and row 7 to item 0) is what makes this catch a
 	// regression: without the subscription row the first project would sit at row 6.
-	for _, tool := range []string{"claude", "opencode"} {
-		m := subTestMenu(tool)
-		if got := m.MapRowToItem(6); got != -1 {
-			t.Errorf("%s: row 6 should be the leading blank (-1) once the subscription row is present, got %d", tool, got)
-		}
-		if got := m.MapRowToItem(7); got != 0 {
-			t.Errorf("%s: first project should be at row 7, MapRowToItem(7)=%d", tool, got)
-		}
+	m := subTestMenu("claude")
+	if got := m.MapRowToItem(6); got != -1 {
+		t.Errorf("row 6 should be the leading blank (-1) once the subscription row is present, got %d", got)
+	}
+	if got := m.MapRowToItem(7); got != 0 {
+		t.Errorf("first project should be at row 7, MapRowToItem(7)=%d", got)
 	}
 }
 
-// The subscription row is now present for every agent, so claude and a non-claude
-// agent compute the same menu height (the row is no longer tool-gated).
-func TestCalculateLayout_subscriptionRowSharedAcrossAgents(t *testing.T) {
-	mClaude := subTestMenu("claude")
-	mOpencode := subTestMenu("opencode")
-	lc := mClaude.CalculateLayout(120, 50)
-	lx := mOpencode.CalculateLayout(120, 50)
-	if lc.MenuHeight != lx.MenuHeight {
-		t.Errorf("claude menu height %d should equal opencode height %d (subscription row shared)", lc.MenuHeight, lx.MenuHeight)
+// Claude's header carries one extra row (the subscription line), so its menu is
+// exactly one line taller than a non-Claude agent's.
+func TestCalculateLayout_subscriptionRowAddsHeightForClaudeOnly(t *testing.T) {
+	lc := subTestMenu("claude").CalculateLayout(120, 50)
+	lx := subTestMenu("opencode").CalculateLayout(120, 50)
+	if lc.MenuHeight != lx.MenuHeight+1 {
+		t.Errorf("claude menu height %d should be one more than opencode height %d (subscription row)", lc.MenuHeight, lx.MenuHeight)
 	}
 }

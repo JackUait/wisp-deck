@@ -251,9 +251,9 @@ func TestMainMenu_LayoutCalculation(t *testing.T) {
 func TestMainMenu_LayoutCalculation_MenuHeight(t *testing.T) {
 	// 3 projects (2 rows each). Chrome = 13 fixed lines (tab-bar + action-bar +
 	// add-project hint included in the constant; old 4 action-item rows removed).
-	// The subscription row is shared across agents, so it is included for opencode too.
+	// Claude carries the subscription row, so this is the full-height header.
 	projects := testProjects()
-	m := tui.NewMainMenu(projects, testAITools(), "opencode", "animated")
+	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
 	layout := m.CalculateLayout(100, 40)
 
 	// MenuHeight = 13 (chrome, incl. subscription row) + 3*2 (projects) = 19
@@ -264,7 +264,7 @@ func TestMainMenu_LayoutCalculation_MenuHeight(t *testing.T) {
 
 	// 0 projects: empty-state row adds 1 line.
 	// MenuHeight = 13 (chrome, incl. subscription row) + 1 (empty-state row) = 14
-	m2 := tui.NewMainMenu(nil, testAITools(), "opencode", "animated")
+	m2 := tui.NewMainMenu(nil, testAITools(), "claude", "animated")
 	layout2 := m2.CalculateLayout(100, 40)
 	expectedHeight2 := 13 + 1
 	if layout2.MenuHeight != expectedHeight2 {
@@ -1013,8 +1013,8 @@ func TestMainMenu_MapRowToItem_Projects(t *testing.T) {
 		{Name: "p1", Path: "/p1"},
 		{Name: "p2", Path: "/p2"},
 	}
-	// The subscription row is shared across agents, so projects start at row 7.
-	m := tui.NewMainMenu(projects, []string{"opencode"}, "opencode", "animated")
+	// Claude carries the subscription row, so projects start at row 7.
+	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 
 	// Layout: row 0 border, 1 title, 2 subscription, 3 switcher gap, 4 tab bar,
@@ -1038,8 +1038,8 @@ func TestMainMenu_MapRowToItem_AddProjectRow(t *testing.T) {
 	projects := []models.Project{
 		{Name: "p1", Path: "/p1"},
 	}
-	// The subscription row is shared across agents, present for opencode too.
-	m := tui.NewMainMenu(projects, []string{"opencode"}, "opencode", "animated")
+	// Claude carries the subscription row, which shifts the body rows down by one.
+	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 
 	// Layout: 1 project at rows 7-8, blank spacer at row 9, add-project label at
@@ -1062,8 +1062,8 @@ func TestMainMenu_MapRowToItem_AddProjectRow(t *testing.T) {
 
 func TestMainMenu_MapRowToItem_Invalid(t *testing.T) {
 	projects := []models.Project{{Name: "p1", Path: "/p1"}}
-	// The subscription row is shared across agents, present for opencode too.
-	m := tui.NewMainMenu(projects, []string{"opencode"}, "opencode", "animated")
+	// Claude carries the subscription row, which shifts the body rows down by one.
+	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 
 	// Row 0 is border
@@ -1105,11 +1105,11 @@ func TestMainMenu_MapRowToItem_Invalid(t *testing.T) {
 }
 
 func TestMainMenu_MapRowToItem_NoProjects(t *testing.T) {
-	// The subscription row is shared across agents, present for opencode too.
-	m := tui.NewMainMenu(nil, []string{"opencode"}, "opencode", "animated")
+	// Claude carries the subscription row, which shifts the body rows down by one.
+	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 
-	// No projects: row 0 border, 1 title, 2 subscription, 3 switcher gap, 4 tab bar,
+	// No projects: row 0 border, 1 subscription, 2 title, 3 switcher gap, 4 tab bar,
 	// 5 separator, 6 empty, 7 blank spacer, 8 add-project row (the only selectable item).
 	if m.MapRowToItem(8) != 0 {
 		t.Errorf("add-project row at row 8 should map to item 0, got %d", m.MapRowToItem(8))
@@ -1121,8 +1121,8 @@ func TestMainMenu_MapRowToItem_NoProjects(t *testing.T) {
 
 func TestMainMenu_MapRowToItem_WithUpdateVersion(t *testing.T) {
 	projects := []models.Project{{Name: "p1", Path: "/p1"}}
-	// The subscription row is shared across agents, present for opencode too.
-	m := tui.NewMainMenu(projects, []string{"opencode"}, "opencode", "animated")
+	// Claude carries the subscription row, which shifts the body rows down by one.
+	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetUpdateVersion("v1.2.3")
 	m.SetSize(80, 30)
 
@@ -1142,8 +1142,8 @@ func TestMainMenu_MouseClickSelectsItem(t *testing.T) {
 		{Name: "p1", Path: "/p1"},
 		{Name: "p2", Path: "/p2"},
 	}
-	// The subscription row is shared across agents, present for opencode too.
-	m := tui.NewMainMenu(projects, []string{"opencode"}, "opencode", "animated")
+	// Claude carries the subscription row, which shifts the body rows down by one.
+	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 	_ = m.View() // compute the vertical centering offset
 
@@ -1171,8 +1171,8 @@ func TestMainMenu_MouseDoubleClickActivates(t *testing.T) {
 		{Name: "p1", Path: "/p1"},
 		{Name: "p2", Path: "/p2"},
 	}
-	// The subscription row is shared across agents, present for opencode too.
-	m := tui.NewMainMenu(projects, []string{"opencode"}, "opencode", "animated")
+	// Claude carries the subscription row, which shifts the body rows down by one.
+	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 	_ = m.View() // compute the vertical centering offset
 
@@ -2060,8 +2060,8 @@ func TestMainMenu_MouseClickWorksWithCentering(t *testing.T) {
 		{Name: "p1", Path: "/p1"},
 		{Name: "p2", Path: "/p2"},
 	}
-	// The subscription row is shared across agents, present for opencode too.
-	m := tui.NewMainMenu(projects, []string{"opencode"}, "opencode", "none")
+	// Claude carries the subscription row, which shifts the body rows down by one.
+	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "none")
 	m.SetSize(80, 40) // Large terminal -> centering will offset content
 
 	// Need to call View() first so centerOffsetY is calculated
@@ -3868,9 +3868,9 @@ func TestMainMenu_SelectWorktree(t *testing.T) {
 
 func TestMainMenu_MapRowToItemWithWorktrees(t *testing.T) {
 	projects := testProjectsWithWorktrees()
-	// The subscription row is shared across agents, present for opencode too — it
-	// shifts every row below the title down by one.
-	m := tui.NewMainMenu(projects, testAITools(), "opencode", "animated")
+	// Claude carries the subscription row, which shifts every row below the header
+	// down by one.
+	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
 	m.SetSize(100, 40)
 
 	// Expand first project (2 worktrees)
@@ -3919,8 +3919,8 @@ func TestMainMenu_MapRowToItemWithWorktrees(t *testing.T) {
 
 func TestMainMenu_CalculateLayoutWithWorktrees(t *testing.T) {
 	projects := testProjectsWithWorktrees()
-	// The subscription row is shared across agents, so chrome includes it for opencode too.
-	m := tui.NewMainMenu(projects, testAITools(), "opencode", "animated")
+	// Claude carries the subscription row, so chrome includes it here.
+	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
 	m.SetSize(100, 40)
 
 	layout1 := m.CalculateLayout(100, 40)
@@ -4093,9 +4093,9 @@ func TestMainMenu_CollapseWithAddWorktreeAdjustsSelection(t *testing.T) {
 
 func TestMainMenu_MapRowToItemWithAddWorktree(t *testing.T) {
 	projects := testProjectsWithWorktrees()
-	// The subscription row is shared across agents, present for opencode too — it
-	// shifts every project/worktree row down by one.
-	m := tui.NewMainMenu(projects, testAITools(), "opencode", "animated")
+	// Claude carries the subscription row, which shifts every project/worktree row
+	// down by one.
+	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
 	m.SetSize(100, 40)
 
 	m.ToggleWorktrees(0)
@@ -4110,8 +4110,8 @@ func TestMainMenu_MapRowToItemWithAddWorktree(t *testing.T) {
 
 func TestMainMenu_CalculateLayoutWithAddWorktree(t *testing.T) {
 	projects := testProjectsWithWorktrees()
-	// The subscription row is shared across agents, so chrome includes it for opencode too.
-	m := tui.NewMainMenu(projects, testAITools(), "opencode", "animated")
+	// Claude carries the subscription row, so chrome includes it here.
+	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
 
 	m.ToggleWorktrees(0)
 	m.ToggleWorktrees(2)
