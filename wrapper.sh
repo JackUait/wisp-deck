@@ -203,6 +203,10 @@ else
     # Fingerprint the settings file so the (expensive, all-session) propagation
     # below only runs when the menu actually changed a setting.
     _settings_before="$(settings_fingerprint "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings")"
+    # Remember whether keep-awake was on going into the menu: turning it off
+    # in there is the in-app path to revoking the sudo rule (offered below).
+    _keep_awake_was_on=0
+    keep_awake_enabled "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" && _keep_awake_was_on=1
     if select_project_interactive "$PROJECTS_FILE"; then
       # The menu just closed: push any settings change (theme, panel mode) to
       # every OTHER already-running session so a toggle reaches all open windows,
@@ -212,6 +216,8 @@ else
       # If the user just turned keep-awake on, grant the sudo rule now, while a
       # terminal is still attached and a password prompt can be answered.
       keep_awake_ensure_sudoers "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" || true
+      # And if they just turned it off, offer to revoke the sudo rule too.
+      keep_awake_offer_revoke "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" "$_keep_awake_was_on" || true
       # Update AI tool if user cycled it in the menu (for all actions)
       if [[ -n "${_selected_ai_tool:-}" ]]; then
         SELECTED_AI_TOOL="$_selected_ai_tool"

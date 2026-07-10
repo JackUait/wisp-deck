@@ -153,14 +153,13 @@ $user ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 1
 EOF
 }
 
-# Render the one-time password window: a centered, theme-accented rounded box
-# that explains why root is needed, exactly what the sudoers rule grants, and
-# how to revoke it. Clears the screen first — the launch splash is still up
-# when this runs, and sudo's bare prompt spilling over it is exactly what this
-# window replaces. sudo's Password prompt lands directly beneath the box.
-# Usage: keep_awake_prompt_window <config_dir>
-keep_awake_prompt_window() {
+# Clear the screen and draw a centered, theme-accented rounded box. The first
+# line is rendered bold as the title. Used for the two moments keep-awake talks
+# to the user directly: granting the sudo rule and revoking it.
+# Usage: keep_awake_window <config_dir> <title> <body line>...
+keep_awake_window() {
   local config_dir="$1"
+  shift
   local inner=62
 
   # Border in the theme accent when theme.sh is loaded (the wrapper sources it
@@ -184,31 +183,10 @@ keep_awake_prompt_window() {
   local hr="" i
   for ((i = 0; i < inner + 2; i++)); do hr+='─'; done
 
-  # ASCII-only body: padding is computed from ${#line}, which counts bytes
-  # under a C locale — a multibyte character would knock the border loose.
-  local body=(
-    "Keep the Mac awake - one-time setup"
-    ""
-    "\"Keep awake while working\" is now on. While an agent is"
-    "busy, wisp-deck holds a system flag so closing the lid does"
-    "not put the Mac to sleep and stall the agent mid-turn."
-    ""
-    "Setting that flag needs root, so wisp-deck installs a sudo"
-    "rule. It allows ONLY these two commands, nothing else:"
-    ""
-    "    pmset -a disablesleep 1"
-    "    pmset -a disablesleep 0"
-    ""
-    "Revoke it anytime:  sudo rm /etc/sudoers.d/wisp-deck"
-    ""
-    "Enter your macOS password to finish, or press Ctrl-C to"
-    "skip - keep-awake will simply stay off."
-  )
-
   printf '\033[2J\033[H\n\n'
   printf '%s%s╭%s╮%s\n' "$margin" "$c" "$hr" "$n"
   local idx=0 line style
-  for line in "${body[@]}"; do
+  for line in "$@"; do
     style=""
     [ "$idx" -eq 0 ] && style="$b"
     printf '%s%s│%s %s%s%s%*s %s│%s\n' \
@@ -216,6 +194,34 @@ keep_awake_prompt_window() {
     idx=$((idx + 1))
   done
   printf '%s%s╰%s╯%s\n\n' "$margin" "$c" "$hr" "$n"
+}
+
+# Render the one-time password window: why root is needed, exactly what the
+# sudoers rule grants, and how to revoke it. Clears the screen first — the
+# launch splash is still up when this runs, and sudo's bare prompt spilling
+# over it is exactly what this window replaces. sudo's Password prompt lands
+# directly beneath the box.
+# Body lines are ASCII-only: padding is computed from ${#line}, which counts
+# bytes under a C locale — a multibyte character would knock the border loose.
+# Usage: keep_awake_prompt_window <config_dir>
+keep_awake_prompt_window() {
+  keep_awake_window "$1" \
+    "Keep the Mac awake - one-time setup" \
+    "" \
+    "\"Keep awake while working\" is now on. While an agent is" \
+    "busy, wisp-deck holds a system flag so closing the lid does" \
+    "not put the Mac to sleep and stall the agent mid-turn." \
+    "" \
+    "Setting that flag needs root, so wisp-deck installs a sudo" \
+    "rule. It allows ONLY these two commands, nothing else:" \
+    "" \
+    "    pmset -a disablesleep 1" \
+    "    pmset -a disablesleep 0" \
+    "" \
+    "Revoke it anytime:  sudo rm /etc/sudoers.d/wisp-deck" \
+    "" \
+    "Enter your macOS password to finish, or press Ctrl-C to" \
+    "skip - keep-awake will simply stay off."
 }
 
 # Grant the sudoers rule if the feature is on and the rule is missing. Called
@@ -235,6 +241,51 @@ keep_awake_ensure_sudoers() {
     return 0
   }
   printf '\n  Keep-awake is ready.\n'
+}
+
+# The in-app path to revoke the standing root grant: offer to remove the
+# sudoers rule right after the user turns the keep-awake toggle OFF in the
+# Settings menu. Fires only on the on→off flip while the rule is still
+# granted — every launch passes through this call site, so any other
+# combination must stay silent. Anything but an explicit yes keeps the rule:
+# it is access the user consciously granted, so "keep" is the default.
+# Usage: keep_awake_offer_revoke <config_dir> <was_on 0|1>
+keep_awake_offer_revoke() {
+  local config_dir="$1" was_on="$2"
+  [ "$was_on" = "1" ] || return 0
+  keep_awake_enabled "$config_dir/settings" && return 0
+  keep_awake_can_sudo || return 0
+
+  keep_awake_window "$config_dir" \
+    "Keep-awake is off - revoke its sudo access?" \
+    "" \
+    "The sudo rule that let wisp-deck hold the machine awake is" \
+    "still installed. It grants only these two commands:" \
+    "" \
+    "    pmset -a disablesleep 1" \
+    "    pmset -a disablesleep 0" \
+    "" \
+    "Removing it asks for your macOS password once. Keeping it" \
+    "is harmless while the feature is off, and you can always" \
+    "remove it later:  sudo rm /etc/sudoers.d/wisp-deck"
+
+  local answer=""
+  printf '  Remove the rule now? [y/N] '
+  read -r answer || true
+  case "$answer" in
+    y | Y | yes | YES) ;;
+    *) return 0 ;;
+  esac
+
+  # Clear the kernel flag while the rule still permits it — revoking with
+  # SleepDisabled stuck at 1 would leave a machine that can never sleep.
+  keep_awake_set 0
+  if "$(keep_awake_sudo)" -p $'  \033[1mPassword:\033[0m ' rm -f "$(keep_awake_sudoers_path)" 2>/dev/null; then
+    printf '\n  Sudo access revoked.\n'
+  else
+    printf '\n  Could not remove the rule — it is still installed.\n' >&2
+    return 0
+  fi
 }
 
 keep_awake_sudoers_path() { echo "${WISP_DECK_SUDOERS:-/etc/sudoers.d/wisp-deck}"; }

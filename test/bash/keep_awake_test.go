@@ -1,6 +1,7 @@
 package bash_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -520,28 +521,11 @@ exec "$@"`)
 	assertContains(t, out, "Ctrl-C")
 }
 
-// Every line of the window body must fit the box: a line longer than the inner
-// width would push the right border out of column and shred the frame.
-func TestKeepAwakeEnsureSudoers_window_lines_are_flush(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, "sudoers.d", "wisp-deck")
-	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-		t.Fatal(err)
-	}
-	binDir := mockCommand(t, dir, "visudo", `exit 0`)
-	mockCommand(t, dir, "sudo", `[ "$1" = "-n" ] && exit 1
-while [ "$1" = "-p" ]; do shift 2; done
-exec "$@"`)
-	env := buildEnv(t, []string{binDir},
-		"WISP_DECK_SUDO="+filepath.Join(binDir, "sudo"),
-		"WISP_DECK_VISUDO="+filepath.Join(binDir, "visudo"),
-		"WISP_DECK_SUDOERS="+target,
-	)
-	cfg := filepath.Join(dir, "config")
-	writeTempFile(t, cfg, "settings", "keep_awake=on\n")
-
-	out, _ := runBashFunc(t, "lib/keep-awake.sh", "keep_awake_ensure_sudoers", []string{cfg}, env)
-
+// assertBoxFlush fails when the framed window lines are not all the same
+// width: a body line longer than the inner width pushes the right border out
+// of column and shreds the frame.
+func assertBoxFlush(t *testing.T, out string) {
+	t.Helper()
 	stripANSI := func(s string) string {
 		var b strings.Builder
 		inEsc := false
@@ -574,6 +558,160 @@ exec "$@"`)
 		if w != widths[0] {
 			t.Errorf("box line %d is %d columns wide, want %d — right border out of column", i, w, widths[0])
 		}
+	}
+}
+
+// Every line of the window body must fit the box: a line longer than the inner
+// width would push the right border out of column and shred the frame.
+func TestKeepAwakeEnsureSudoers_window_lines_are_flush(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "sudoers.d", "wisp-deck")
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		t.Fatal(err)
+	}
+	binDir := mockCommand(t, dir, "visudo", `exit 0`)
+	mockCommand(t, dir, "sudo", `[ "$1" = "-n" ] && exit 1
+while [ "$1" = "-p" ]; do shift 2; done
+exec "$@"`)
+	env := buildEnv(t, []string{binDir},
+		"WISP_DECK_SUDO="+filepath.Join(binDir, "sudo"),
+		"WISP_DECK_VISUDO="+filepath.Join(binDir, "visudo"),
+		"WISP_DECK_SUDOERS="+target,
+	)
+	cfg := filepath.Join(dir, "config")
+	writeTempFile(t, cfg, "settings", "keep_awake=on\n")
+
+	out, _ := runBashFunc(t, "lib/keep-awake.sh", "keep_awake_ensure_sudoers", []string{cfg}, env)
+	assertBoxFlush(t, out)
+}
+
+// revokeEnv builds an environment where the sudoers rule IS installed: a real
+// file at the target path, a stateful fake pmset, and a fake sudo that accepts
+// -n / -p and execs the rest — so `sudo rm <target>` really removes the file.
+func revokeEnv(t *testing.T, dir string) (env []string, target, stateFile string) {
+	t.Helper()
+	stateFile = filepath.Join(dir, "sleepdisabled")
+	target = filepath.Join(dir, "sudoers.d", "wisp-deck")
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("rule\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	binDir := mockCommand(t, dir, "pmset", `
+state="$KA_STATE"
+if [ "$1" = "-g" ]; then
+  cur=0
+  [ -f "$state" ] && cur="$(cat "$state")"
+  [ "$cur" = "1" ] && echo " SleepDisabled        1"
+  exit 0
+fi
+if [ "$1" = "-a" ] && [ "$2" = "disablesleep" ]; then
+  echo "$3" > "$state"
+  exit 0
+fi
+exit 64
+`)
+	mockCommand(t, dir, "sudo", `[ "$1" = "-n" ] && shift
+while [ "$1" = "-p" ]; do shift 2; done
+exec "$@"`)
+	env = buildEnv(t, []string{binDir},
+		"WISP_DECK_PMSET="+filepath.Join(binDir, "pmset"),
+		"WISP_DECK_SUDO="+filepath.Join(binDir, "sudo"),
+		"WISP_DECK_SUDOERS="+target,
+		"KA_STATE="+stateFile,
+	)
+	return env, target, stateFile
+}
+
+// Turning the toggle off is the in-app path to revoke the standing sudo rule:
+// on an on→off flip with the rule still granted, a window must explain what is
+// still installed and, on "y", clear the kernel flag and remove the rule.
+func TestKeepAwakeOfferRevoke_removes_rule_on_yes(t *testing.T) {
+	dir := t.TempDir()
+	env, target, stateFile := revokeEnv(t, dir)
+	if err := os.WriteFile(stateFile, []byte("1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(dir, "config")
+	writeTempFile(t, cfg, "settings", "keep_awake=off\n")
+
+	out, code := runBashFuncWithStdin(t, "lib/keep-awake.sh", "keep_awake_offer_revoke",
+		[]string{cfg, "1"}, env, "y\n")
+	assertExitCode(t, code, 0)
+
+	// A real window that explains the decision.
+	assertContains(t, out, "╭")
+	assertContains(t, out, "pmset -a disablesleep")
+	assertContains(t, out, "password")
+	assertContains(t, out, "y/N")
+	assertBoxFlush(t, out)
+
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Error("sudoers rule still installed after user confirmed revoke")
+	}
+	// The kernel flag must be released too — revoking with SleepDisabled stuck
+	// at 1 would leave a laptop that can never sleep and no rule to fix it.
+	if got := readFileTrim(t, stateFile); got != "0" {
+		t.Errorf("SleepDisabled = %q after revoke, want 0", got)
+	}
+}
+
+// Anything except an explicit yes keeps the rule: this is standing root access
+// the user consciously granted, so the default answer must be "keep it".
+func TestKeepAwakeOfferRevoke_keeps_rule_unless_yes(t *testing.T) {
+	for _, answer := range []string{"\n", "n\n", ""} {
+		t.Run(fmt.Sprintf("answer %q", answer), func(t *testing.T) {
+			dir := t.TempDir()
+			env, target, _ := revokeEnv(t, dir)
+			cfg := filepath.Join(dir, "config")
+			writeTempFile(t, cfg, "settings", "keep_awake=off\n")
+
+			_, code := runBashFuncWithStdin(t, "lib/keep-awake.sh", "keep_awake_offer_revoke",
+				[]string{cfg, "1"}, env, answer)
+			assertExitCode(t, code, 0)
+
+			if _, err := os.Stat(target); err != nil {
+				t.Error("sudoers rule removed without an explicit yes")
+			}
+		})
+	}
+}
+
+// The offer fires ONLY on the on→off flip with a rule to remove. Every launch
+// passes through this call site, so any other combination must stay silent.
+func TestKeepAwakeOfferRevoke_silent_when_not_flipped_off(t *testing.T) {
+	tests := []struct {
+		name    string
+		setting string
+		wasOn   string
+		granted bool
+	}{
+		{"was already off", "keep_awake=off\n", "0", true},
+		{"still on", "keep_awake=on\n", "1", true},
+		{"no rule installed", "keep_awake=off\n", "1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			env, target, _ := revokeEnv(t, dir)
+			if !tt.granted {
+				// `sudo -n` denied — the rule is not actually installed.
+				binDir := mockCommand(t, dir, "sudo-denied", `[ "$1" = "-n" ] && exit 1; exec "$@"`)
+				env = append(env, "WISP_DECK_SUDO="+filepath.Join(binDir, "sudo-denied"))
+			}
+			cfg := filepath.Join(dir, "config")
+			writeTempFile(t, cfg, "settings", tt.setting)
+
+			out, code := runBashFuncWithStdin(t, "lib/keep-awake.sh", "keep_awake_offer_revoke",
+				[]string{cfg, tt.wasOn}, env, "y\n")
+			assertExitCode(t, code, 0)
+			assertNotContains(t, out, "╭")
+			assertNotContains(t, out, "\x1b[2J")
+			if _, err := os.Stat(target); err != nil {
+				t.Error("sudoers rule removed on a silent path")
+			}
+		})
 	}
 }
 
