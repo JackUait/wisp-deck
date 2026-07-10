@@ -6,9 +6,9 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/spf13/cobra"
 	"github.com/jackuait/wisp-deck/internal/tui"
 	"github.com/jackuait/wisp-deck/internal/util"
+	"github.com/spf13/cobra"
 )
 
 var (
