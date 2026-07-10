@@ -225,8 +225,23 @@ ensure_codex() {
   if command -v npm &>/dev/null; then
     info "Installing Codex..."
     if npm install -g @openai/codex &>/dev/null; then
-      success "Codex installed"
-      return 0
+      # Under lazy-nvm setups npm's global prefix bin is off PATH, so the
+      # launcher npm just wrote can be invisible to `command -v`. Link it into
+      # ~/.local/bin (on PATH wherever wisp-deck runs) before declaring victory.
+      if ! command -v codex &>/dev/null; then
+        local npm_codex
+        npm_codex="$(npm prefix -g 2>/dev/null)/bin/codex"
+        if [ -x "$npm_codex" ]; then
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$npm_codex" "$HOME/.local/bin/codex"
+        fi
+      fi
+      if command -v codex &>/dev/null; then
+        success "Codex installed"
+        return 0
+      fi
+      warn "Codex installed by npm but not reachable on PATH"
+      return 1
     fi
     warn "Global Codex install failed"
     return 1

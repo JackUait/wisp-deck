@@ -85,13 +85,36 @@ func TestEnsureCodex_skips_install_when_already_present(t *testing.T) {
 	assertContains(t, out, "Codex already installed")
 }
 
+// mockNpmWithPrefix builds an npm mock that mimics a real npm: `install -g`
+// writes the launcher into <prefix>/bin, `prefix -g` prints the prefix. The
+// prefix directory is deliberately NOT on PATH — exactly the lazy-nvm setup
+// where npm's global bin dir is invisible to `command -v`.
+func mockNpmWithPrefix(t *testing.T, dir string) (binDir, npmPrefix, npmLog string) {
+	t.Helper()
+	npmPrefix = filepath.Join(dir, "nvm-prefix")
+	if err := os.MkdirAll(filepath.Join(npmPrefix, "bin"), 0755); err != nil {
+		t.Fatalf("failed to create npm prefix bin: %v", err)
+	}
+	npmLog = filepath.Join(dir, "npm_calls")
+	binDir = mockCommand(t, dir, "npm", fmt.Sprintf(`echo "$@" >> %q
+if [ "$1" = "prefix" ]; then echo %q; exit 0; fi
+if [ "$1" = "install" ]; then
+  printf '#!/bin/bash\nexit 0\n' > %q
+  chmod +x %q
+fi
+exit 0`, npmLog, npmPrefix,
+		filepath.Join(npmPrefix, "bin", "codex"), filepath.Join(npmPrefix, "bin", "codex")))
+	return binDir, npmPrefix, npmLog
+}
+
 func TestEnsureCodex_installs_globally_via_npm_when_absent(t *testing.T) {
 	dir := t.TempDir()
-	npmLog := filepath.Join(dir, "npm_calls")
+	home := t.TempDir()
 	// codex is NOT mocked → not yet installed. npm is available.
-	binDir := mockCommand(t, dir, "npm", fmt.Sprintf(`echo "$@" >> %q; exit 0`, npmLog))
-	symlinkUsrBinTools(t, binDir, "grep", "sed", "tr")
-	env := buildEnv(t, nil, "PATH="+binDir+":/bin")
+	binDir, _, npmLog := mockNpmWithPrefix(t, dir)
+	symlinkUsrBinTools(t, binDir, "grep", "sed", "tr", "dirname", "mkdir", "chmod")
+	env := buildEnv(t, nil, "HOME="+home,
+		"PATH="+binDir+":"+filepath.Join(home, ".local", "bin")+":/bin")
 	out, code := runBashSnippet(t, installSnippet(t, `ensure_codex`), env)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "Codex installed")
@@ -99,6 +122,55 @@ func TestEnsureCodex_installs_globally_via_npm_when_absent(t *testing.T) {
 	calls, _ := os.ReadFile(npmLog)
 	if !strings.Contains(string(calls), "install -g @openai/codex") {
 		t.Errorf("npm calls = %q, want an `install -g @openai/codex`", string(calls))
+	}
+}
+
+// Regression: under lazy-nvm setups `npm install -g` exits 0 but drops the
+// launcher into npm's global prefix, which is not on PATH. ensure_codex used
+// to declare success anyway, leaving `command -v codex` failing forever — the
+// settings panel showed the install as failed no matter how often it ran. The
+// fix links the launcher into ~/.local/bin so codex is actually reachable.
+func TestEnsureCodex_links_launcher_into_local_bin_when_npm_prefix_off_path(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	binDir, npmPrefix, _ := mockNpmWithPrefix(t, dir)
+	symlinkUsrBinTools(t, binDir, "grep", "sed", "tr", "dirname", "mkdir", "chmod")
+	env := buildEnv(t, nil, "HOME="+home,
+		"PATH="+binDir+":"+filepath.Join(home, ".local", "bin")+":/bin")
+
+	out, code := runBashSnippet(t,
+		installSnippet(t, `ensure_codex && command -v codex`), env)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "Codex installed")
+
+	link := filepath.Join(home, ".local", "bin", "codex")
+	target, err := os.Readlink(link)
+	if err != nil {
+		t.Fatalf("expected %s to be a symlink to the npm launcher: %v", link, err)
+	}
+	if want := filepath.Join(npmPrefix, "bin", "codex"); target != want {
+		t.Errorf("symlink target = %q, want %q", target, want)
+	}
+}
+
+// A codex that IS reachable after `npm install -g` (global bin already on
+// PATH) must not get a redundant ~/.local/bin link.
+func TestEnsureCodex_skips_link_when_install_lands_on_path(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	// npm "installs" codex straight into the mock bin dir, which is on PATH.
+	binDir := mockCommand(t, dir, "npm", fmt.Sprintf(
+		`if [ "$1" = "install" ]; then printf '#!/bin/bash\nexit 0\n' > %q; chmod +x %q; fi; exit 0`,
+		filepath.Join(dir, "bin", "codex"), filepath.Join(dir, "bin", "codex")))
+	symlinkUsrBinTools(t, binDir, "grep", "sed", "tr", "dirname", "mkdir", "chmod")
+	env := buildEnv(t, nil, "HOME="+home, "PATH="+binDir+":/bin")
+
+	out, code := runBashSnippet(t, installSnippet(t, `ensure_codex`), env)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "Codex installed")
+
+	if _, err := os.Lstat(filepath.Join(home, ".local", "bin", "codex")); err == nil {
+		t.Error("no ~/.local/bin/codex link should be created when codex is already reachable")
 	}
 }
 
