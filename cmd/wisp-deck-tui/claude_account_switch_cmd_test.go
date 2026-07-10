@@ -138,11 +138,12 @@ func TestAccountSwitch_loadSwitchRows_defaultActiveCursorZero(t *testing.T) {
 }
 
 func TestAccountSwitchLayout_centersAndLocatesFirstRow(t *testing.T) {
-	// contentW=20, 3 rows, in a 48x18 terminal (title on the border, header=0):
+	// contentW=20, 3 rows, in a 48x18 terminal (title on the border, header=0,
+	// no bottom padding — the help footer hugs the border):
 	//   cardWidth  = 20 + 2*3(pad) + 2*1(border) = 28
-	//   cardHeight = (0 header + 3 rows + 2 footer) + 2*1(pad) + 2*1(border) = 9
-	//   cardLeft   = (48-28)/2 = 10 ; cardTop = (18-9)/2 = 4
-	//   firstRowY  = cardTop + border + padY + header = 4 + 1 + 1 + 0 = 6
+	//   cardHeight = (0 header + 3 rows + 2 footer) + 1(padTop) + 0 + 2*1(border) = 8
+	//   cardLeft   = (48-28)/2 = 10 ; cardTop = (18-8)/2 = 5
+	//   firstRowY  = cardTop + border + padY + header = 5 + 1 + 1 + 0 = 7
 	firstRowY, cardLeft, cardWidth := accountSwitchLayout(48, 18, 3, 20)
 	if cardWidth != 28 {
 		t.Errorf("cardWidth = %d, want 28", cardWidth)
@@ -150,8 +151,8 @@ func TestAccountSwitchLayout_centersAndLocatesFirstRow(t *testing.T) {
 	if cardLeft != 10 {
 		t.Errorf("cardLeft = %d, want 10", cardLeft)
 	}
-	if firstRowY != 6 {
-		t.Errorf("firstRowY = %d, want 6", firstRowY)
+	if firstRowY != 7 {
+		t.Errorf("firstRowY = %d, want 7", firstRowY)
 	}
 }
 
@@ -700,5 +701,31 @@ func TestAccountSwitchModel_titleEmbeddedInTopBorder(t *testing.T) {
 	// header + 1 login + 1 agent + blank + help = 5 lines
 	if len(lines) != 5 {
 		t.Errorf("expected 5 content lines, got %d:\n%s", len(lines), strings.Join(lines, "\n"))
+	}
+}
+
+// The help footer hugs the bottom of the card: no padding row between it and
+// the bottom border.
+func TestAccountSwitchModel_helpLineDirectlyAboveBottomBorder(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.Ascii)
+	rows := []switchRow{{Label: "Work", Dir: "work"}, {Label: "OpenCode", Tool: "opencode"}}
+	m := newAccountSwitchModel(rows, 0, "")
+	sized, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+	m = sized.(accountSwitchModel)
+	lines := strings.Split(m.View(), "\n")
+	helpIdx, borderIdx := -1, -1
+	for i, l := range lines {
+		if strings.Contains(l, "cancel") {
+			helpIdx = i
+		}
+		if strings.Contains(l, "╰") {
+			borderIdx = i
+		}
+	}
+	if helpIdx == -1 || borderIdx == -1 {
+		t.Fatalf("help or bottom border not found in view:\n%s", m.View())
+	}
+	if borderIdx != helpIdx+1 {
+		t.Errorf("bottom border at line %d, help at %d — help must sit directly above the border", borderIdx, helpIdx)
 	}
 }

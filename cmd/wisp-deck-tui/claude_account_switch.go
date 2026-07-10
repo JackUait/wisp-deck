@@ -341,11 +341,15 @@ func (m accountSwitchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // block is a title line, a blank line, one line per login, a blank line, and a
 // help line.
 const (
-	accountSwitchPadX   = 3
-	accountSwitchPadY   = 1
-	accountSwitchBorder = 1
-	accountSwitchHeader = 0 // the title sits on the border, rows start at the top
-	accountSwitchFooter = 2 // blank line + help below the rows
+	accountSwitchPadX = 3
+	accountSwitchPadY = 1 // top only — the help footer hugs the bottom border
+	// accountSwitchPadBottom is 0: the dim help line reads as the card's
+	// closing chrome, so it sits directly above the border instead of
+	// floating a padding row above it.
+	accountSwitchPadBottom = 0
+	accountSwitchBorder    = 1
+	accountSwitchHeader    = 0 // the title sits on the border, rows start at the top
+	accountSwitchFooter    = 2 // blank line + help below the rows
 )
 
 // accountSwitchLayout maps the centered card onto screen coordinates so a mouse
@@ -354,7 +358,7 @@ const (
 func accountSwitchLayout(termW, termH, numRows, contentW int) (firstRowY, cardLeft, cardWidth int) {
 	cardWidth = contentW + 2*accountSwitchPadX + 2*accountSwitchBorder
 	innerH := accountSwitchHeader + numRows + accountSwitchFooter
-	cardHeight := innerH + 2*accountSwitchPadY + 2*accountSwitchBorder
+	cardHeight := innerH + accountSwitchPadY + accountSwitchPadBottom + 2*accountSwitchBorder
 	cardLeft = (termW - cardWidth) / 2
 	if cardLeft < 0 {
 		cardLeft = 0
@@ -497,7 +501,7 @@ func accountSwitchCardStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("245")).
-		Padding(accountSwitchPadY, accountSwitchPadX)
+		Padding(accountSwitchPadY, accountSwitchPadX, accountSwitchPadBottom, accountSwitchPadX)
 }
 
 func (m accountSwitchModel) View() string {
