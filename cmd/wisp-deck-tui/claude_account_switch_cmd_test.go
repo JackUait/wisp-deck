@@ -557,12 +557,12 @@ func TestAccountSwitchModel_clickWithGroupHeaderMapsRows(t *testing.T) {
 	}
 }
 
-// Each tool renders its own icon instead of a generic robot: Clawd the crab
-// for Claude, the six-spoked OpenAI mark for Codex, and OpenCode's boxed
+// Each tool renders its own icon instead of a generic robot: the Claude
+// starburst spark, the six-spoked OpenAI mark for Codex, and OpenCode's boxed
 // square. Unknown tools keep the robot fallback.
 func TestAccountSwitch_toolRowGlyph_perTool(t *testing.T) {
 	tests := []struct{ tool, want string }{
-		{"claude", "🦀"},
+		{"claude", "󰵲"},
 		{"codex", "󰛄"},
 		{"opencode", "▣"},
 		{"mystery", "󰚩"},
@@ -575,7 +575,7 @@ func TestAccountSwitch_toolRowGlyph_perTool(t *testing.T) {
 }
 
 // The rendered rows carry the per-tool icons: the Claude subgroup header shows
-// the crab, each agent row its own mark — no generic robot anywhere.
+// the starburst, each agent row its own mark — no generic robot anywhere.
 func TestAccountSwitch_innerLines_perToolIcons(t *testing.T) {
 	lipgloss.SetColorProfile(termenv.Ascii)
 	rows := []switchRow{
@@ -585,8 +585,8 @@ func TestAccountSwitch_innerLines_perToolIcons(t *testing.T) {
 	}
 	m := newAccountSwitchModel(rows, 0, "")
 	lines := m.innerLines()
-	if header := lines[2]; !strings.Contains(header, "🦀 Claude") {
-		t.Errorf("Claude header must show the crab icon, got %q", header)
+	if header := lines[2]; !strings.Contains(header, "󰵲 Claude") {
+		t.Errorf("Claude header must show the starburst icon, got %q", header)
 	}
 	if !strings.Contains(lines[4], "▣ OpenCode") {
 		t.Errorf("OpenCode row must show its boxed-square icon, got %q", lines[4])

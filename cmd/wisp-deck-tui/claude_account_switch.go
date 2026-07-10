@@ -413,14 +413,14 @@ func (m accountSwitchModel) innerLines() []string {
 
 // toolRowGlyph is a tool's icon in the switcher. The real brand logos don't
 // exist as Nerd Font glyphs, so each tool gets the closest evocative mark:
-// Clawd the crab for Claude (color emoji, so it stays crab-orange regardless
-// of row styling), the six-spoked asterisk for Codex (the OpenAI knot has six
-// loops), and a boxed square for OpenCode (its square terminal logo). Unknown
-// tools fall back to the old generic robot.
+// a radiating flare for Claude (its starburst-spark logo), the six-spoked
+// asterisk for Codex (the OpenAI knot has six loops), and a boxed square for
+// OpenCode (its square terminal logo). Unknown tools fall back to the old
+// generic robot.
 func toolRowGlyph(tool string) string {
 	switch tool {
 	case "claude":
-		return "🦀"
+		return "󰵲"
 	case "codex":
 		return "󰛄"
 	case "opencode":
