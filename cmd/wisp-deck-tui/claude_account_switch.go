@@ -269,6 +269,19 @@ func (m accountSwitchModel) withBackdrop(rows []string) accountSwitchModel {
 	return m
 }
 
+// headerLines is the number of non-selectable group-header lines rendered
+// inside the rows block: 1 for the "󰚩 Claude" subgroup header when agent rows
+// are present, 0 for the legacy claude-only popup. Layout and mouse mapping
+// must both add it, or clicks land one row off.
+func (m accountSwitchModel) headerLines() int {
+	for _, r := range m.rows {
+		if r.Tool != "" {
+			return 1
+		}
+	}
+	return 0
+}
+
 func (m accountSwitchModel) Init() tea.Cmd { return nil }
 
 func (m accountSwitchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -294,8 +307,10 @@ func (m accountSwitchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			firstRowY, cardLeft, cardWidth := accountSwitchLayout(m.width, m.height, len(m.rows), m.contentWidth())
-			idx := msg.Y - firstRowY
+			firstRowY, cardLeft, cardWidth := accountSwitchLayout(m.width, m.height, len(m.rows)+m.headerLines(), m.contentWidth())
+			// The group header line (when present) sits at firstRowY and is not
+			// selectable — the first real row is one line below it.
+			idx := msg.Y - firstRowY - m.headerLines()
 			onCard := msg.X >= cardLeft && msg.X < cardLeft+cardWidth
 			if onCard && idx >= 0 && idx < len(m.rows) {
 				m.cursor = idx
@@ -350,15 +365,19 @@ func (m accountSwitchModel) innerLines() []string {
 	activeDot := lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Render("●")
 
 	// With agent rows present the popup switches between agents, not just
-	// claude logins — the title says so.
+	// claude logins — the title says so, and the claude logins render as a
+	// subgroup under a non-selectable "󰚩 Claude" header so they visibly belong
+	// to the Claude agent while the other agents stay top-level rows.
+	grouped := m.headerLines() > 0
 	title := "Switch Claude login"
-	for _, r := range m.rows {
-		if r.Tool != "" {
-			title = "Switch agent"
-			break
-		}
+	if grouped {
+		title = "Switch agent"
 	}
 	lines := []string{titleStyle.Render(title), ""}
+	if grouped {
+		headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(toolRowColor("claude"))))
+		lines = append(lines, "  "+headerStyle.Render("󰚩 Claude"))
+	}
 
 	for i, r := range m.rows {
 		color := claudeaccount.ColorFor(m.colorsFile, r.Dir)
@@ -377,7 +396,11 @@ func (m accountSwitchModel) innerLines() []string {
 			marker = lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(color))).Bold(true).Render("▌ ")
 			label = labelStyle.Bold(true).Render(glyph + " " + r.Label)
 		}
-		line := marker + label
+		indent := ""
+		if grouped && r.Tool == "" {
+			indent = "  "
+		}
+		line := marker + indent + label
 		if i == m.active {
 			line += "  " + activeDot
 		}
@@ -446,7 +469,7 @@ func (m accountSwitchModel) View() string {
 		return ""
 	}
 	card := accountSwitchCardStyle().Render(strings.Join(m.innerLines(), "\n"))
-	firstRowY, cardLeft, cardWidth := accountSwitchLayout(m.width, m.height, len(m.rows), m.contentWidth())
+	firstRowY, cardLeft, cardWidth := accountSwitchLayout(m.width, m.height, len(m.rows)+m.headerLines(), m.contentWidth())
 	cardTop := firstRowY - accountSwitchBorder - accountSwitchPadY - accountSwitchHeader
 	return m.composite(card, cardLeft, cardTop, cardWidth)
 }

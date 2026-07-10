@@ -469,3 +469,90 @@ func TestAccountSwitch_toolFlagsRegistered(t *testing.T) {
 		t.Fatal("claude-account-switch must register --active-tool")
 	}
 }
+
+// With agent rows present, the claude logins render as a subgroup: a
+// non-selectable "󰚩 Claude" header line above them, with the login rows
+// indented beneath it, so the logins visibly belong to the Claude agent while
+// OpenCode/Codex stay top-level rows.
+func TestAccountSwitch_innerLines_groupsClaudeLoginsUnderHeader(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.Ascii)
+	rows := []switchRow{
+		{Label: "Work", Dir: "work"},
+		{Label: "Personal", Dir: "personal"},
+		{Label: "OpenCode", Tool: "opencode"},
+		{Label: "Codex", Tool: "codex"},
+	}
+	m := newAccountSwitchModel(rows, 1, "")
+	lines := m.innerLines()
+	// title, blank, header, 2 logins, 2 agents, blank, help = 9 lines
+	if len(lines) != 9 {
+		t.Fatalf("expected 9 lines (with Claude header), got %d:\n%s", len(lines), strings.Join(lines, "\n"))
+	}
+	header := lines[2]
+	if !strings.Contains(header, "Claude") || !strings.Contains(header, "󰚩") {
+		t.Fatalf("line 2 must be the 󰚩 Claude group header, got %q", header)
+	}
+	// Login rows sit under the header, indented past the agent rows.
+	if !strings.HasPrefix(lines[3], "    ") {
+		t.Errorf("login row must be indented under the Claude header, got %q", lines[3])
+	}
+	if !strings.Contains(lines[3], "Work") || !strings.Contains(lines[4], "Personal") {
+		t.Errorf("login rows must follow the Claude header, got %q / %q", lines[3], lines[4])
+	}
+	// Agent rows stay top-level (marker column + glyph, no extra indent).
+	if strings.HasPrefix(lines[5], "    ") {
+		t.Errorf("agent row must not be indented, got %q", lines[5])
+	}
+	if !strings.Contains(lines[5], "OpenCode") || !strings.Contains(lines[6], "Codex") {
+		t.Errorf("agent rows must follow the login subgroup, got %q / %q", lines[5], lines[6])
+	}
+}
+
+// Without agent rows (legacy claude-only popup) there is no subgroup header.
+func TestAccountSwitch_innerLines_noHeaderWithoutToolRows(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.Ascii)
+	rows := []switchRow{{Label: "Default"}, {Label: "Work", Dir: "work"}}
+	m := newAccountSwitchModel(rows, 0, "")
+	lines := m.innerLines()
+	if len(lines) != 6 {
+		t.Fatalf("expected 6 lines (no header), got %d:\n%s", len(lines), strings.Join(lines, "\n"))
+	}
+	for _, l := range lines {
+		if strings.Contains(l, "󰚩") {
+			t.Errorf("claude-only popup must not render a group header, got %q", l)
+		}
+	}
+}
+
+// The header line shifts every selectable row down by one on screen: clicks
+// must account for it, both for login rows and agent rows.
+func TestAccountSwitchModel_clickWithGroupHeaderMapsRows(t *testing.T) {
+	rows := []switchRow{
+		{Label: "Work", Dir: "work"},
+		{Label: "Personal", Dir: "personal"},
+		{Label: "OpenCode", Tool: "opencode"},
+	}
+	m := newAccountSwitchModel(rows, 0, "")
+	sized, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+	m = sized.(accountSwitchModel)
+
+	firstRowY, cardLeft, _ := accountSwitchLayout(m.width, m.height, len(rows)+1, m.contentWidth())
+	// firstRowY is the header line; the agent row is 3 lines below it.
+	click := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: cardLeft + 2, Y: firstRowY + 3}
+	out, cmd := m.Update(click)
+	mm := out.(accountSwitchModel)
+	if !mm.chosen || mm.cursor != 2 {
+		t.Fatalf("click on agent row: chosen=%v cursor=%d, want chosen row 2", mm.chosen, mm.cursor)
+	}
+	if !isQuitCmd(t, cmd) {
+		t.Errorf("expected Quit cmd after selecting a row")
+	}
+
+	// Clicking the header itself selects nothing — it dismisses like any other
+	// non-row click on the card.
+	headerClick := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: cardLeft + 2, Y: firstRowY}
+	out2, _ := m.Update(headerClick)
+	if out2.(accountSwitchModel).chosen {
+		t.Fatalf("clicking the Claude group header must not choose a row")
+	}
+}
