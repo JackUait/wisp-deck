@@ -91,34 +91,33 @@ func paintRows(rows []string, colors map[byte]string) []string {
 	return out
 }
 
-// ghostOpencode returns Brace, OpenCode's mascot: a ghost-family figure
-// (wide rounded body, scalloped feet, matching the Claude/Codex silhouette)
-// with moth traits \u2014 antennae, curly-brace wings, blush, segment stripe.
-// Slot letters: P wings/antenna stalks, B body, C crown+antenna dots,
-// D segment stripe, A lower band, F feet+smile, L blush, W eye white, K pupils.
+// ghostOpencode returns Brace, OpenCode's mascot: a ghost first \u2014 a solid
+// teardrop body in the Claude/Codex family (24-wide, scalloped feet), topped
+// with a pale wisp tip. OpenCode identity lives in the accents: a { } bracket
+// emblem on the belly, blush cheeks, and the violet palette.
+// Slot letters: P body, C wisp tip + emblem, D lower body, F feet+smile,
+// L blush, W eye white, K pupils.
 func ghostOpencode(theme AIToolTheme) []string {
 	return paintRows([]string{
-		"........C..........C........",
-		".........P........P.........",
-		".........CCCCCCCCCC.........",
-		".......BBBBBBBBBBBBBB.......",
-		"..PP.BBBBBBBBBBBBBBBBBB.PP..",
-		".PP..BBBWWWKKBBWWWKKBBB..PP.",
-		".PP..BBBWWWKKBBWWWKKBBB..PP.",
-		"PP...BBLBBBBBFFBBBBBLBB...PP",
-		".PP..BBBBBBBBBBBBBBBBBB..PP.",
-		".PP..BBDDDDDDDDDDDDDDBB..PP.",
-		"..PP.BBBBBBBBBBBBBBBBBB.PP..",
-		".....AAAAAAAAAAAAAAAAAA.....",
-		".....AAAAAAAAAAAAAAAAAA.....",
-		".....FF.FFF.FFFF.FFF.FF.....",
-		".....F..FFFF.FF.FFFF..F.....",
+		".............CC.............",
+		"...........CCCCCC...........",
+		".........PPPPPPPPPP.........",
+		".......PPPPPPPPPPPPPP.......",
+		".....PPPPPPPPPPPPPPPPPP.....",
+		"...PPPPPPPPPPPPPPPPPPPPPP...",
+		"..PPPPPPPPPPPPPPPPPPPPPPPP..",
+		"..PPPPWWWKKPPPPPPWWWKKPPPP..",
+		"..PPPPWWWKKPPPPPPWWWKKPPPP..",
+		"..PPLLPPPPPPPFFPPPPPPPLLPP..",
+		"..DDDDDDDDDDCDDCDDDDDDDDDD..",
+		"..DDDDDDDDDCDDDDCDDDDDDDDD..",
+		"..DDDDDDDDDDCDDCDDDDDDDDDD..",
+		"..FF.FFFFF.FFFFFF.FFFFF.FF..",
+		"..F..FFFF...FFFF...FFFF..F..",
 	}, map[byte]string{
 		'P': AnsiFromThemeColor(theme.Primary),
-		'B': AnsiFromThemeColor(theme.Bright),
 		'C': AnsiFromThemeColor(theme.Cap),
 		'D': AnsiFromThemeColor(theme.Dim),
-		'A': AnsiFromThemeColor(theme.Accent),
 		'F': AnsiFromThemeColor(theme.DarkFeet),
 		'L': AnsiFromThemeColor(theme.SleepBlush),
 		'W': AnsiFromThemeColor(theme.EyeWhite),
@@ -127,31 +126,29 @@ func ghostOpencode(theme AIToolTheme) []string {
 }
 
 // ghostOpencodeSleeping returns the sleeping Brace (dimmed, closed eyes,
-// blush, drooped wings, 16 rows \u2014 one extra for the blush line, matching
+// blush row, no emblem \u2014 16 rows, one extra for the blush line, matching
 // the other tools).
 func ghostOpencodeSleeping(theme AIToolTheme) []string {
 	return paintRows([]string{
-		"........C..........C........",
-		".........P........P.........",
-		".........CCCCCCCCCC.........",
-		".......BBBBBBBBBBBBBB.......",
-		".....BBBBBBBBBBBBBBBBBB.....",
-		"..PP.BBBKKKKBBBBKKKKBBB.PP..",
-		".PP..BBLLBBBBBBBBBBLLBB..PP.",
-		".PP..BBBBBBBBFFBBBBBBBB..PP.",
-		"PP...BBBBBBBBBBBBBBBBBB...PP",
-		".PP..BBBBBBBBBBBBBBBBBB..PP.",
-		".PP..BBBBBBBBBBBBBBBBBB..PP.",
-		"..PP.AAAAAAAAAAAAAAAAAA.PP..",
-		".....AAAAAAAAAAAAAAAAAA.....",
-		".....AAAAAAAAAAAAAAAAAA.....",
-		".....FF.FFF.FFFF.FFF.FF.....",
-		".....F..FFFF.FF.FFFF..F.....",
+		".............CC.............",
+		"...........CCCCCC...........",
+		".........PPPPPPPPPP.........",
+		".......PPPPPPPPPPPPPP.......",
+		".....PPPPPPPPPPPPPPPPPP.....",
+		"...PPPPPPPPPPPPPPPPPPPPPP...",
+		"..PPPPPPPPPPPPPPPPPPPPPPPP..",
+		"..PPPPKKKKKPPPPPPKKKKKPPPP..",
+		"..PPPPLLPPPPPPPPPPPPLLPPPP..",
+		"..PPPPPPPPPPPFFPPPPPPPPPPP..",
+		"..PPPPPPPPPPPPPPPPPPPPPPPP..",
+		"..PPPPPPPPPPPPPPPPPPPPPPPP..",
+		"..AAAAAAAAAAAAAAAAAAAAAAAA..",
+		"..AAAAAAAAAAAAAAAAAAAAAAAA..",
+		"..FF.FFFFF.FFFFFF.FFFFF.FF..",
+		"..F..FFFF...FFFF...FFFF..F..",
 	}, map[byte]string{
 		'P': AnsiFromThemeColor(theme.SleepPrimary),
-		'B': AnsiFromThemeColor(theme.SleepPrimary),
 		'C': AnsiFromThemeColor(theme.SleepCap),
-		'D': AnsiFromThemeColor(theme.SleepDim),
 		'A': AnsiFromThemeColor(theme.SleepAccent),
 		'F': AnsiFromThemeColor(theme.SleepDarkFeet),
 		'L': AnsiFromThemeColor(theme.SleepBlush),

@@ -104,30 +104,35 @@ func stripAnsiSeq(s string) string {
 	return b.String()
 }
 
-// The OpenCode mascot is Brace: a ghost-family figure (wide body, at most
-// 18-cell runs vs the old ghost's 22-26) with moth traits — antenna dots on
-// top and curly-brace wings separated from the body by a gap.
-func TestGhostForTool_opencode_awake_is_brace_moth(t *testing.T) {
+// The OpenCode mascot is Brace: a ghost first — a solid teardrop body in the
+// Claude/Codex family (full-width block runs, no detached wings), topped with
+// a pointed wisp tip and finished with scalloped feet. OpenCode identity
+// lives in accents (belly emblem, blush, violet palette), not the silhouette.
+func TestGhostForTool_opencode_awake_is_ghost(t *testing.T) {
 	lines := GhostForTool("opencode", false)
-	for i, line := range lines {
-		visible := stripAnsiSeq(line)
-		if strings.Contains(visible, strings.Repeat("█", 20)) {
-			t.Errorf("line %d has a block run >= 20 — that's the old ghost, not Brace", i)
+	// Full ghost body: at least one row is a solid 24-block run, like the
+	// Claude ghost. (The moth's widest run was 18.)
+	wide := false
+	for _, line := range lines {
+		if strings.Contains(stripAnsiSeq(line), strings.Repeat("█", 24)) {
+			wide = true
+			break
 		}
 	}
-	// Antenna dots: the first line has exactly 2 visible cells.
+	if !wide {
+		t.Error("expected a solid 24-block body row — Brace must be a full ghost, not a slim moth")
+	}
+	// No detached wings: the widest body row is one solid run, no interior gaps.
+	body := strings.TrimSpace(stripAnsiSeq(lines[6]))
+	if strings.Contains(body, " ") {
+		t.Errorf("body row must be solid (no wing gaps), got %q", body)
+	}
+	// Pointed wisp tip: the top row is a single centered 2-block tip.
 	top := strings.TrimSpace(stripAnsiSeq(lines[0]))
-	if len([]rune(strings.ReplaceAll(top, " ", ""))) != 2 {
-		t.Errorf("expected 2 antenna-dot cells on line 0, got %q", top)
+	if top != "██" {
+		t.Errorf("expected a single 2-block wisp tip on line 0, got %q", top)
 	}
-	// Wings are separate from the body: the wing-point row has a gap of
-	// spaces between the wing blocks and the body blocks.
-	point := stripAnsiSeq(lines[7])
-	if !strings.Contains(point, "█   ") {
-		t.Errorf("expected a gap between wing and body on the wing-point row, got %q", point)
-	}
-	// Ghost-family feet: the bottom row is scalloped (blocks with gaps),
-	// like the Claude and Codex ghosts.
+	// Ghost-family feet: the bottom row is scalloped (blocks with gaps).
 	feet := strings.TrimSpace(stripAnsiSeq(lines[len(lines)-1]))
 	if !strings.Contains(feet, "█ ") && !strings.Contains(feet, "█  ") {
 		t.Errorf("expected scalloped ghost feet on the bottom row, got %q", feet)
