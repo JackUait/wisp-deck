@@ -600,3 +600,25 @@ func TestAccountSwitch_innerLines_perToolIcons(t *testing.T) {
 		}
 	}
 }
+
+// On an indented login row the cursor bar moves in with the row instead of
+// hugging the card's left edge — the indent comes before the marker, so the
+// bar sits right next to the nested label.
+func TestAccountSwitch_innerLines_cursorBarFollowsNestedIndent(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.Ascii)
+	rows := []switchRow{
+		{Label: "Work", Dir: "work"},
+		{Label: "Personal", Dir: "personal"},
+		{Label: "OpenCode", Tool: "opencode"},
+	}
+	m := newAccountSwitchModel(rows, 1, "")
+	lines := m.innerLines()
+	if !strings.HasPrefix(lines[4], "  ▌ ") {
+		t.Errorf("cursor bar must be indented with the nested login row, got %q", lines[4])
+	}
+	// Agent rows stay flush: cursor there renders the bar at the left edge.
+	m2 := newAccountSwitchModel(rows, 2, "")
+	if l := m2.innerLines()[5]; !strings.HasPrefix(l, "▌ ") {
+		t.Errorf("cursor bar on an agent row must stay at the left edge, got %q", l)
+	}
+}

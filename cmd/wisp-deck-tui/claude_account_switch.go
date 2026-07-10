@@ -396,11 +396,13 @@ func (m accountSwitchModel) innerLines() []string {
 			marker = lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(color))).Bold(true).Render("▌ ")
 			label = labelStyle.Bold(true).Render(glyph + " " + r.Label)
 		}
+		// Nested login rows indent BEFORE the marker so the cursor bar moves in
+		// with the row instead of floating at the card's left edge.
 		indent := ""
 		if grouped && r.Tool == "" {
 			indent = "  "
 		}
-		line := marker + indent + label
+		line := indent + marker + label
 		if i == m.active {
 			line += "  " + activeDot
 		}
