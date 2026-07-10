@@ -374,8 +374,17 @@ func (m accountSwitchModel) innerLines() []string {
 		title = "Switch agent"
 	}
 	lines := []string{titleStyle.Render(title), ""}
+	// Inactive rows gray out so the brand colors highlight only the running
+	// row and the cursor. The 244 matches the footer's dim gray.
+	const grayRow = 244
 	if grouped {
-		headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(toolRowColor("claude"))))
+		// The header is "active" while the pane runs claude or the cursor sits
+		// on one of its nested logins; otherwise it grays with the rest.
+		headerColor := grayRow
+		if m.rows[m.active].Tool == "" || m.rows[m.cursor].Tool == "" {
+			headerColor = toolRowColor("claude")
+		}
+		headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(headerColor)))
 		lines = append(lines, "  "+headerStyle.Render(toolRowGlyph("claude")+" Claude"))
 	}
 
@@ -387,6 +396,9 @@ func (m accountSwitchModel) innerLines() []string {
 			// lib/tmux-session.sh) and the tool's own icon instead of the person.
 			color = toolRowColor(r.Tool)
 			glyph = toolRowGlyph(r.Tool)
+		}
+		if i != m.cursor && i != m.active {
+			color = grayRow
 		}
 		labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(color)))
 

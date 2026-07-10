@@ -622,3 +622,50 @@ func TestAccountSwitch_innerLines_cursorBarFollowsNestedIndent(t *testing.T) {
 		t.Errorf("cursor bar on an agent row must stay at the left edge, got %q", l)
 	}
 }
+
+// Rows that are neither active nor under the cursor render gray, so the brand
+// colors highlight only where you are and what is running. The Claude group
+// header keeps its orange only while the active or cursored row is one of its
+// nested logins.
+func TestAccountSwitch_innerLines_inactiveRowsGrayed(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	defer lipgloss.SetColorProfile(termenv.Ascii)
+	rows := []switchRow{
+		{Label: "Work", Dir: "work"},
+		{Label: "Personal", Dir: "personal"},
+		{Label: "OpenCode", Tool: "opencode"},
+		{Label: "Codex", Tool: "codex"},
+	}
+	// Active = Personal (row 1); cursor moved down to Codex (row 3).
+	m := newAccountSwitchModel(rows, 1, "")
+	for i := 0; i < 2; i++ {
+		out, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = out.(accountSwitchModel)
+	}
+	lines := m.innerLines()
+	const gray = "38;5;244m"
+	if !strings.Contains(lines[3], gray) {
+		t.Errorf("inactive login row must be grayed, got %q", lines[3])
+	}
+	if !strings.Contains(lines[5], gray) {
+		t.Errorf("inactive agent row must be grayed, got %q", lines[5])
+	}
+	if strings.Contains(lines[4], gray) {
+		t.Errorf("active row must keep its color, got %q", lines[4])
+	}
+	if strings.Contains(lines[6], gray) {
+		t.Errorf("cursor row must keep its color, got %q", lines[6])
+	}
+	// Active login is nested under Claude, so the header keeps its orange.
+	if strings.Contains(lines[2], gray) {
+		t.Errorf("header must stay colored while a nested login is active, got %q", lines[2])
+	}
+
+	// With the pane running codex (active row 3, cursor there too), the whole
+	// claude subgroup — header included — is inactive and grays out.
+	m2 := newAccountSwitchModel(rows, 3, "")
+	lines2 := m2.innerLines()
+	if !strings.Contains(lines2[2], gray) {
+		t.Errorf("header must gray out when no nested login is active or cursored, got %q", lines2[2])
+	}
+}
