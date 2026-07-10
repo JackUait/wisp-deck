@@ -91,27 +91,28 @@ func paintRows(rows []string, colors map[byte]string) []string {
 	return out
 }
 
-// ghostOpencode returns Brace the moth, OpenCode's mascot: curly-brace wings
-// around a stout block-cursor body (28 cols, 15 rows). Slot letters:
-// P wings/eye band, B head/body, C antenna dots, D stripes, A lower body,
-// F feet+smile, L blush, W eye white, K pupils.
+// ghostOpencode returns Brace, OpenCode's mascot: a ghost-family figure
+// (wide rounded body, scalloped feet, matching the Claude/Codex silhouette)
+// with moth traits \u2014 antennae, curly-brace wings, blush, segment stripe.
+// Slot letters: P wings/antenna stalks, B body, C crown+antenna dots,
+// D segment stripe, A lower band, F feet+smile, L blush, W eye white, K pupils.
 func ghostOpencode(theme AIToolTheme) []string {
 	return paintRows([]string{
-		".......C............C.......",
-		"........P..........P........",
-		".........BBBBBBBBBB.........",
-		"....PPP.BBBBBBBBBBBB.PPP....",
-		"...PPP..PWWKKPPWWKKP..PPP...",
-		"...PPP..PWWKKPPWWKKP..PPP...",
-		"..PPP...LBBBBFFBBBBL...PPP..",
-		".PPP.....BBBBBBBBBB.....PPP.",
-		"..PPP....DDDDDDDDDD....PPP..",
-		"...PPP...BBBBBBBBBB...PPP...",
-		"...PPP....DDDDDDDD....PPP...",
-		"....PPP...AAAAAAAA...PPP....",
-		"..........AAAAAAAA..........",
-		"............AAAA............",
-		"...........FF..FF...........",
+		"........C..........C........",
+		".........P........P.........",
+		".........CCCCCCCCCC.........",
+		".......BBBBBBBBBBBBBB.......",
+		"..PP.BBBBBBBBBBBBBBBBBB.PP..",
+		".PP..BBBWWWKKBBWWWKKBBB..PP.",
+		".PP..BBBWWWKKBBWWWKKBBB..PP.",
+		"PP...BBLBBBBBFFBBBBBLBB...PP",
+		".PP..BBBBBBBBBBBBBBBBBB..PP.",
+		".PP..BBDDDDDDDDDDDDDDBB..PP.",
+		"..PP.BBBBBBBBBBBBBBBBBB.PP..",
+		".....AAAAAAAAAAAAAAAAAA.....",
+		".....AAAAAAAAAAAAAAAAAA.....",
+		".....FF.FFF.FFFF.FFF.FF.....",
+		".....F..FFFF.FF.FFFF..F.....",
 	}, map[byte]string{
 		'P': AnsiFromThemeColor(theme.Primary),
 		'B': AnsiFromThemeColor(theme.Bright),
@@ -126,25 +127,26 @@ func ghostOpencode(theme AIToolTheme) []string {
 }
 
 // ghostOpencodeSleeping returns the sleeping Brace (dimmed, closed eyes,
-// blush, 16 rows \u2014 the extra row is the blush line, matching the other tools).
+// blush, drooped wings, 16 rows \u2014 one extra for the blush line, matching
+// the other tools).
 func ghostOpencodeSleeping(theme AIToolTheme) []string {
 	return paintRows([]string{
-		".......C............C.......",
-		"........P..........P........",
-		".........BBBBBBBBBB.........",
-		"....PPP.BBBBBBBBBBBB.PPP....",
-		"...PPP..PKKKPPPPKKKP..PPP...",
-		"...PPP..LLBBBBBBBBLL..PPP...",
-		"..PPP...BBBBBFFBBBBB...PPP..",
-		".PPP.....BBBBBBBBBB.....PPP.",
-		"..PPP....DDDDDDDDDD....PPP..",
-		"...PPP...BBBBBBBBBB...PPP...",
-		"...PPP...BBBBBBBBBB...PPP...",
-		"...PPP....DDDDDDDD....PPP...",
-		"....PPP...AAAAAAAA...PPP....",
-		"..........AAAAAAAA..........",
-		"............AAAA............",
-		"...........FF..FF...........",
+		"........C..........C........",
+		".........P........P.........",
+		".........CCCCCCCCCC.........",
+		".......BBBBBBBBBBBBBB.......",
+		".....BBBBBBBBBBBBBBBBBB.....",
+		"..PP.BBBKKKKBBBBKKKKBBB.PP..",
+		".PP..BBLLBBBBBBBBBBLLBB..PP.",
+		".PP..BBBBBBBBFFBBBBBBBB..PP.",
+		"PP...BBBBBBBBBBBBBBBBBB...PP",
+		".PP..BBBBBBBBBBBBBBBBBB..PP.",
+		".PP..BBBBBBBBBBBBBBBBBB..PP.",
+		"..PP.AAAAAAAAAAAAAAAAAA.PP..",
+		".....AAAAAAAAAAAAAAAAAA.....",
+		".....AAAAAAAAAAAAAAAAAA.....",
+		".....FF.FFF.FFFF.FFF.FF.....",
+		".....F..FFFF.FF.FFFF..F.....",
 	}, map[byte]string{
 		'P': AnsiFromThemeColor(theme.SleepPrimary),
 		'B': AnsiFromThemeColor(theme.SleepPrimary),
