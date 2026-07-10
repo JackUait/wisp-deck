@@ -139,17 +139,17 @@ func TestAccountSwitch_loadSwitchRows_defaultActiveCursorZero(t *testing.T) {
 
 func TestAccountSwitchLayout_centersAndLocatesFirstRow(t *testing.T) {
 	// contentW=20, 3 rows, in a 48x18 terminal (title on the border, header=0,
-	// no bottom padding — the help footer hugs the border):
-	//   cardWidth  = 20 + 2*3(pad) + 2*1(border) = 28
+	// slim padX=1, no bottom padding — the help footer hugs the border):
+	//   cardWidth  = 20 + 2*1(pad) + 2*1(border) = 24
 	//   cardHeight = (0 header + 3 rows + 2 footer) + 1(padTop) + 0 + 2*1(border) = 8
-	//   cardLeft   = (48-28)/2 = 10 ; cardTop = (18-8)/2 = 5
+	//   cardLeft   = (48-24)/2 = 12 ; cardTop = (18-8)/2 = 5
 	//   firstRowY  = cardTop + border + padY + header = 5 + 1 + 1 + 0 = 7
 	firstRowY, cardLeft, cardWidth := accountSwitchLayout(48, 18, 3, 20)
-	if cardWidth != 28 {
-		t.Errorf("cardWidth = %d, want 28", cardWidth)
+	if cardWidth != 24 {
+		t.Errorf("cardWidth = %d, want 24", cardWidth)
 	}
-	if cardLeft != 10 {
-		t.Errorf("cardLeft = %d, want 10", cardLeft)
+	if cardLeft != 12 {
+		t.Errorf("cardLeft = %d, want 12", cardLeft)
 	}
 	if firstRowY != 7 {
 		t.Errorf("firstRowY = %d, want 7", firstRowY)
@@ -612,7 +612,7 @@ func TestAccountSwitch_innerLines_cursorBarFollowsNestedIndent(t *testing.T) {
 	}
 	m := newAccountSwitchModel(rows, 1, "")
 	lines := m.innerLines()
-	if !strings.HasPrefix(lines[2], "  ▌ ") {
+	if !strings.HasPrefix(lines[2], "    ▌ ") {
 		t.Errorf("cursor bar must be indented with the nested login row, got %q", lines[2])
 	}
 	// Agent rows stay flush: cursor there renders the bar at the left edge.
@@ -727,5 +727,53 @@ func TestAccountSwitchModel_helpLineDirectlyAboveBottomBorder(t *testing.T) {
 	}
 	if borderIdx != helpIdx+1 {
 		t.Errorf("bottom border at line %d, help at %d — help must sit directly above the border", borderIdx, helpIdx)
+	}
+}
+
+// Agent rows hug the card's left edge (small padding + the 2-col cursor
+// gutter) while nested logins indent 4 columns past them, so the hierarchy
+// reads clearly.
+func TestAccountSwitchModel_agentRowsLeftNestedDeeper(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.Ascii)
+	rows := []switchRow{
+		{Label: "Work", Dir: "work"},
+		{Label: "OpenCode", Tool: "opencode"},
+	}
+	m := newAccountSwitchModel(rows, 0, "")
+	sized, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+	m = sized.(accountSwitchModel)
+	cellsPastBorder := func(line string, glyph rune) int {
+		cells, from := 0, -1
+		for _, r := range line {
+			if r == '│' && from == -1 {
+				from = 0
+				continue
+			}
+			if from == -1 {
+				continue
+			}
+			if r == glyph {
+				return cells
+			}
+			cells++
+		}
+		return -1
+	}
+	var agentLine, nestedLine string
+	for _, l := range strings.Split(m.View(), "\n") {
+		if strings.Contains(l, "OpenCode") {
+			agentLine = l
+		}
+		if strings.Contains(l, "Work") {
+			nestedLine = l
+		}
+	}
+	// "│" + 1 padding col + 2-col gutter puts the agent glyph 3 cells past the border.
+	if gap := cellsPastBorder(agentLine, '▣'); gap != 3 {
+		t.Errorf("agent glyph must sit 3 cells past the border (pad 1 + gutter 2), got %d in %q", gap, agentLine)
+	}
+	// Nested logins go 4 columns deeper than agent rows.
+	if gap := cellsPastBorder(nestedLine, '\U000F0004'); gap != 7 {
+		t.Errorf("nested glyph must sit 7 cells past the border (pad 1 + indent 4 + gutter 2), got %d in %q", gap, nestedLine)
 	}
 }

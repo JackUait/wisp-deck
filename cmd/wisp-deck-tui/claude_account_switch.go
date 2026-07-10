@@ -341,7 +341,7 @@ func (m accountSwitchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // block is a title line, a blank line, one line per login, a blank line, and a
 // help line.
 const (
-	accountSwitchPadX = 3
+	accountSwitchPadX = 1 // slim — agent rows hug the card's left edge
 	accountSwitchPadY = 1 // top only — the help footer hugs the bottom border
 	// accountSwitchPadBottom is 0: the dim help line reads as the card's
 	// closing chrome, so it sits directly above the border instead of
@@ -419,10 +419,11 @@ func (m accountSwitchModel) innerLines() []string {
 			label = labelStyle.Bold(true).Render(glyph + " " + r.Label)
 		}
 		// Nested login rows indent BEFORE the marker so the cursor bar moves in
-		// with the row instead of floating at the card's left edge.
+		// with the row instead of floating at the card's left edge. Four
+		// columns past the agent rows, so the hierarchy reads clearly.
 		indent := ""
 		if grouped && r.Tool == "" {
-			indent = "  "
+			indent = "    "
 		}
 		line := indent + marker + label
 		if i == m.active {
