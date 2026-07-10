@@ -376,7 +376,7 @@ func (m accountSwitchModel) innerLines() []string {
 	lines := []string{titleStyle.Render(title), ""}
 	if grouped {
 		headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(toolRowColor("claude"))))
-		lines = append(lines, "  "+headerStyle.Render("󰚩 Claude"))
+		lines = append(lines, "  "+headerStyle.Render(toolRowGlyph("claude")+" Claude"))
 	}
 
 	for i, r := range m.rows {
@@ -384,9 +384,9 @@ func (m accountSwitchModel) innerLines() []string {
 		glyph := "󰀄"
 		if r.Tool != "" {
 			// Agent rows: the tool's brand hue (mirrors get_tool_accent in
-			// lib/tmux-session.sh) and a robot glyph instead of the person.
+			// lib/tmux-session.sh) and the tool's own icon instead of the person.
 			color = toolRowColor(r.Tool)
-			glyph = "󰚩"
+			glyph = toolRowGlyph(r.Tool)
 		}
 		labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(color)))
 
@@ -409,6 +409,25 @@ func (m accountSwitchModel) innerLines() []string {
 
 	lines = append(lines, "", dimStyle.Render("↑↓ move · ⏎ switch · esc cancel"))
 	return lines
+}
+
+// toolRowGlyph is a tool's icon in the switcher. The real brand logos don't
+// exist as Nerd Font glyphs, so each tool gets the closest evocative mark:
+// Clawd the crab for Claude (color emoji, so it stays crab-orange regardless
+// of row styling), the six-spoked asterisk for Codex (the OpenAI knot has six
+// loops), and a boxed square for OpenCode (its square terminal logo). Unknown
+// tools fall back to the old generic robot.
+func toolRowGlyph(tool string) string {
+	switch tool {
+	case "claude":
+		return "🦀"
+	case "codex":
+		return "󰛄"
+	case "opencode":
+		return "▣"
+	default:
+		return "󰚩"
+	}
 }
 
 // toolRowColor is the 256-color hue for an agent row — kept in sync with

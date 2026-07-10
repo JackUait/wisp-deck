@@ -489,8 +489,8 @@ func TestAccountSwitch_innerLines_groupsClaudeLoginsUnderHeader(t *testing.T) {
 		t.Fatalf("expected 9 lines (with Claude header), got %d:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
 	header := lines[2]
-	if !strings.Contains(header, "Claude") || !strings.Contains(header, "󰚩") {
-		t.Fatalf("line 2 must be the 󰚩 Claude group header, got %q", header)
+	if !strings.Contains(header, "Claude") || !strings.Contains(header, toolRowGlyph("claude")) {
+		t.Fatalf("line 2 must be the Claude group header with its icon, got %q", header)
 	}
 	// Login rows sit under the header, indented past the agent rows.
 	if !strings.HasPrefix(lines[3], "    ") {
@@ -554,5 +554,49 @@ func TestAccountSwitchModel_clickWithGroupHeaderMapsRows(t *testing.T) {
 	out2, _ := m.Update(headerClick)
 	if out2.(accountSwitchModel).chosen {
 		t.Fatalf("clicking the Claude group header must not choose a row")
+	}
+}
+
+// Each tool renders its own icon instead of a generic robot: Clawd the crab
+// for Claude, the six-spoked OpenAI mark for Codex, and OpenCode's boxed
+// square. Unknown tools keep the robot fallback.
+func TestAccountSwitch_toolRowGlyph_perTool(t *testing.T) {
+	tests := []struct{ tool, want string }{
+		{"claude", "🦀"},
+		{"codex", "󰛄"},
+		{"opencode", "▣"},
+		{"mystery", "󰚩"},
+	}
+	for _, tt := range tests {
+		if got := toolRowGlyph(tt.tool); got != tt.want {
+			t.Errorf("toolRowGlyph(%q) = %q, want %q", tt.tool, got, tt.want)
+		}
+	}
+}
+
+// The rendered rows carry the per-tool icons: the Claude subgroup header shows
+// the crab, each agent row its own mark — no generic robot anywhere.
+func TestAccountSwitch_innerLines_perToolIcons(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.Ascii)
+	rows := []switchRow{
+		{Label: "Work", Dir: "work"},
+		{Label: "OpenCode", Tool: "opencode"},
+		{Label: "Codex", Tool: "codex"},
+	}
+	m := newAccountSwitchModel(rows, 0, "")
+	lines := m.innerLines()
+	if header := lines[2]; !strings.Contains(header, "🦀 Claude") {
+		t.Errorf("Claude header must show the crab icon, got %q", header)
+	}
+	if !strings.Contains(lines[4], "▣ OpenCode") {
+		t.Errorf("OpenCode row must show its boxed-square icon, got %q", lines[4])
+	}
+	if !strings.Contains(lines[5], "󰛄 Codex") {
+		t.Errorf("Codex row must show the OpenAI mark, got %q", lines[5])
+	}
+	for _, l := range lines {
+		if strings.Contains(l, "󰚩") {
+			t.Errorf("generic robot glyph must be gone, got %q", l)
+		}
 	}
 }
