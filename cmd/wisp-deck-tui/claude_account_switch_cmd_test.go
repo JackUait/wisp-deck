@@ -138,11 +138,11 @@ func TestAccountSwitch_loadSwitchRows_defaultActiveCursorZero(t *testing.T) {
 }
 
 func TestAccountSwitchLayout_centersAndLocatesFirstRow(t *testing.T) {
-	// contentW=20, 3 rows, in a 48x18 terminal:
+	// contentW=20, 3 rows, in a 48x18 terminal (title on the border, header=0):
 	//   cardWidth  = 20 + 2*3(pad) + 2*1(border) = 28
-	//   cardHeight = (2 header + 3 rows + 2 footer) + 2*1(pad) + 2*1(border) = 11
-	//   cardLeft   = (48-28)/2 = 10 ; cardTop = (18-11)/2 = 3
-	//   firstRowY  = cardTop + border + padY + header = 3 + 1 + 1 + 2 = 7
+	//   cardHeight = (0 header + 3 rows + 2 footer) + 2*1(pad) + 2*1(border) = 9
+	//   cardLeft   = (48-28)/2 = 10 ; cardTop = (18-9)/2 = 4
+	//   firstRowY  = cardTop + border + padY + header = 4 + 1 + 1 + 0 = 6
 	firstRowY, cardLeft, cardWidth := accountSwitchLayout(48, 18, 3, 20)
 	if cardWidth != 28 {
 		t.Errorf("cardWidth = %d, want 28", cardWidth)
@@ -150,8 +150,8 @@ func TestAccountSwitchLayout_centersAndLocatesFirstRow(t *testing.T) {
 	if cardLeft != 10 {
 		t.Errorf("cardLeft = %d, want 10", cardLeft)
 	}
-	if firstRowY != 7 {
-		t.Errorf("firstRowY = %d, want 7", firstRowY)
+	if firstRowY != 6 {
+		t.Errorf("firstRowY = %d, want 6", firstRowY)
 	}
 }
 
@@ -450,14 +450,12 @@ func TestAccountSwitch_selectToolResultJSON(t *testing.T) {
 func TestAccountSwitch_titleSwitchAgentWithToolRows(t *testing.T) {
 	rows := []switchRow{{Label: "Default"}, {Label: "OpenCode", Tool: "opencode"}}
 	m := newAccountSwitchModel(rows, 0, "")
-	joined := strings.Join(m.innerLines(), "\n")
-	if !strings.Contains(joined, "Switch agent") {
-		t.Fatalf("title must read Switch agent, got:\n%s", joined)
+	if got := m.titleText(); got != "Switch agent" {
+		t.Fatalf("title must read Switch agent, got %q", got)
 	}
 	m2 := newAccountSwitchModel([]switchRow{{Label: "Default"}}, 0, "")
-	joined2 := strings.Join(m2.innerLines(), "\n")
-	if !strings.Contains(joined2, "Switch Claude login") {
-		t.Fatalf("account-only title must stay Switch Claude login, got:\n%s", joined2)
+	if got := m2.titleText(); got != "Switch Claude login" {
+		t.Fatalf("account-only title must stay Switch Claude login, got %q", got)
 	}
 }
 
@@ -484,27 +482,27 @@ func TestAccountSwitch_innerLines_groupsClaudeLoginsUnderHeader(t *testing.T) {
 	}
 	m := newAccountSwitchModel(rows, 1, "")
 	lines := m.innerLines()
-	// title, blank, header, 2 logins, 2 agents, blank, help = 9 lines
-	if len(lines) != 9 {
-		t.Fatalf("expected 9 lines (with Claude header), got %d:\n%s", len(lines), strings.Join(lines, "\n"))
+	// header, 2 logins, 2 agents, blank, help = 7 lines
+	if len(lines) != 7 {
+		t.Fatalf("expected 7 lines (with Claude header), got %d:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
-	header := lines[2]
+	header := lines[0]
 	if !strings.Contains(header, "Claude") || !strings.Contains(header, toolRowGlyph("claude")) {
-		t.Fatalf("line 2 must be the Claude group header with its icon, got %q", header)
+		t.Fatalf("line 0 must be the Claude group header with its icon, got %q", header)
 	}
 	// Login rows sit under the header, indented past the agent rows.
-	if !strings.HasPrefix(lines[3], "    ") {
-		t.Errorf("login row must be indented under the Claude header, got %q", lines[3])
+	if !strings.HasPrefix(lines[1], "    ") {
+		t.Errorf("login row must be indented under the Claude header, got %q", lines[1])
 	}
-	if !strings.Contains(lines[3], "Work") || !strings.Contains(lines[4], "Personal") {
-		t.Errorf("login rows must follow the Claude header, got %q / %q", lines[3], lines[4])
+	if !strings.Contains(lines[1], "Work") || !strings.Contains(lines[2], "Personal") {
+		t.Errorf("login rows must follow the Claude header, got %q / %q", lines[1], lines[2])
 	}
 	// Agent rows stay top-level (marker column + glyph, no extra indent).
-	if strings.HasPrefix(lines[5], "    ") {
-		t.Errorf("agent row must not be indented, got %q", lines[5])
+	if strings.HasPrefix(lines[3], "    ") {
+		t.Errorf("agent row must not be indented, got %q", lines[3])
 	}
-	if !strings.Contains(lines[5], "OpenCode") || !strings.Contains(lines[6], "Codex") {
-		t.Errorf("agent rows must follow the login subgroup, got %q / %q", lines[5], lines[6])
+	if !strings.Contains(lines[3], "OpenCode") || !strings.Contains(lines[4], "Codex") {
+		t.Errorf("agent rows must follow the login subgroup, got %q / %q", lines[3], lines[4])
 	}
 }
 
@@ -514,8 +512,8 @@ func TestAccountSwitch_innerLines_noHeaderWithoutToolRows(t *testing.T) {
 	rows := []switchRow{{Label: "Default"}, {Label: "Work", Dir: "work"}}
 	m := newAccountSwitchModel(rows, 0, "")
 	lines := m.innerLines()
-	if len(lines) != 6 {
-		t.Fatalf("expected 6 lines (no header), got %d:\n%s", len(lines), strings.Join(lines, "\n"))
+	if len(lines) != 4 {
+		t.Fatalf("expected 4 lines (no header), got %d:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
 	for _, l := range lines {
 		if strings.Contains(l, "󰚩") {
@@ -585,14 +583,14 @@ func TestAccountSwitch_innerLines_perToolIcons(t *testing.T) {
 	}
 	m := newAccountSwitchModel(rows, 0, "")
 	lines := m.innerLines()
-	if header := lines[2]; !strings.Contains(header, "󰵲 Claude") {
+	if header := lines[0]; !strings.Contains(header, "󰵲 Claude") {
 		t.Errorf("Claude header must show the starburst icon, got %q", header)
 	}
-	if !strings.Contains(lines[4], "▣ OpenCode") {
-		t.Errorf("OpenCode row must show its boxed-square icon, got %q", lines[4])
+	if !strings.Contains(lines[2], "▣ OpenCode") {
+		t.Errorf("OpenCode row must show its boxed-square icon, got %q", lines[2])
 	}
-	if !strings.Contains(lines[5], "󰛄 Codex") {
-		t.Errorf("Codex row must show the OpenAI mark, got %q", lines[5])
+	if !strings.Contains(lines[3], "󰛄 Codex") {
+		t.Errorf("Codex row must show the OpenAI mark, got %q", lines[3])
 	}
 	for _, l := range lines {
 		if strings.Contains(l, "󰚩") {
@@ -613,12 +611,12 @@ func TestAccountSwitch_innerLines_cursorBarFollowsNestedIndent(t *testing.T) {
 	}
 	m := newAccountSwitchModel(rows, 1, "")
 	lines := m.innerLines()
-	if !strings.HasPrefix(lines[4], "  ▌ ") {
-		t.Errorf("cursor bar must be indented with the nested login row, got %q", lines[4])
+	if !strings.HasPrefix(lines[2], "  ▌ ") {
+		t.Errorf("cursor bar must be indented with the nested login row, got %q", lines[2])
 	}
 	// Agent rows stay flush: cursor there renders the bar at the left edge.
 	m2 := newAccountSwitchModel(rows, 2, "")
-	if l := m2.innerLines()[5]; !strings.HasPrefix(l, "▌ ") {
+	if l := m2.innerLines()[3]; !strings.HasPrefix(l, "▌ ") {
 		t.Errorf("cursor bar on an agent row must stay at the left edge, got %q", l)
 	}
 }
@@ -644,28 +642,63 @@ func TestAccountSwitch_innerLines_inactiveRowsGrayed(t *testing.T) {
 	}
 	lines := m.innerLines()
 	const gray = "38;5;244m"
-	if !strings.Contains(lines[3], gray) {
-		t.Errorf("inactive login row must be grayed, got %q", lines[3])
+	if !strings.Contains(lines[1], gray) {
+		t.Errorf("inactive login row must be grayed, got %q", lines[1])
 	}
-	if !strings.Contains(lines[5], gray) {
-		t.Errorf("inactive agent row must be grayed, got %q", lines[5])
+	if !strings.Contains(lines[3], gray) {
+		t.Errorf("inactive agent row must be grayed, got %q", lines[3])
+	}
+	if strings.Contains(lines[2], gray) {
+		t.Errorf("active row must keep its color, got %q", lines[2])
 	}
 	if strings.Contains(lines[4], gray) {
-		t.Errorf("active row must keep its color, got %q", lines[4])
-	}
-	if strings.Contains(lines[6], gray) {
-		t.Errorf("cursor row must keep its color, got %q", lines[6])
+		t.Errorf("cursor row must keep its color, got %q", lines[4])
 	}
 	// Active login is nested under Claude, so the header keeps its orange.
-	if strings.Contains(lines[2], gray) {
-		t.Errorf("header must stay colored while a nested login is active, got %q", lines[2])
+	if strings.Contains(lines[0], gray) {
+		t.Errorf("header must stay colored while a nested login is active, got %q", lines[0])
 	}
 
 	// With the pane running codex (active row 3, cursor there too), the whole
 	// claude subgroup — header included — is inactive and grays out.
 	m2 := newAccountSwitchModel(rows, 3, "")
 	lines2 := m2.innerLines()
-	if !strings.Contains(lines2[2], gray) {
-		t.Errorf("header must gray out when no nested login is active or cursored, got %q", lines2[2])
+	if !strings.Contains(lines2[0], gray) {
+		t.Errorf("header must gray out when no nested login is active or cursored, got %q", lines2[0])
+	}
+}
+
+// The title lives on the card's top border ("╭─ Switch agent ───╮"), not in
+// the content block, so the rows start right at the top of the card.
+func TestAccountSwitchModel_titleEmbeddedInTopBorder(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.Ascii)
+	rows := []switchRow{
+		{Label: "Work", Dir: "work"},
+		{Label: "OpenCode", Tool: "opencode"},
+	}
+	m := newAccountSwitchModel(rows, 0, "")
+	sized, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+	m = sized.(accountSwitchModel)
+	var borderLine string
+	for _, l := range strings.Split(m.View(), "\n") {
+		if strings.Contains(l, "╭") {
+			borderLine = l
+			break
+		}
+	}
+	if !strings.Contains(borderLine, "─ Switch agent ") {
+		t.Errorf("top border must carry the title, got %q", borderLine)
+	}
+	// The content block no longer holds the title: it starts at the rows.
+	lines := m.innerLines()
+	if strings.Contains(strings.Join(lines, "\n"), "Switch agent") {
+		t.Errorf("title must not be in the content block:\n%s", strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(lines[0], "Claude") {
+		t.Errorf("content must start at the group header, got %q", lines[0])
+	}
+	// header + 1 login + 1 agent + blank + help = 5 lines
+	if len(lines) != 5 {
+		t.Errorf("expected 5 content lines, got %d:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
 }

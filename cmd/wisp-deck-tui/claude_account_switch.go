@@ -282,6 +282,16 @@ func (m accountSwitchModel) headerLines() int {
 	return 0
 }
 
+// titleText is the popup's title, rendered on the card's top border: with
+// agent rows present the popup switches between agents, not just claude
+// logins — the title says so.
+func (m accountSwitchModel) titleText() string {
+	if m.headerLines() > 0 {
+		return "Switch agent"
+	}
+	return "Switch Claude login"
+}
+
 func (m accountSwitchModel) Init() tea.Cmd { return nil }
 
 func (m accountSwitchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -334,7 +344,7 @@ const (
 	accountSwitchPadX   = 3
 	accountSwitchPadY   = 1
 	accountSwitchBorder = 1
-	accountSwitchHeader = 2 // title + blank line above the rows
+	accountSwitchHeader = 0 // the title sits on the border, rows start at the top
 	accountSwitchFooter = 2 // blank line + help below the rows
 )
 
@@ -360,20 +370,16 @@ func accountSwitchLayout(termW, termH, numRows, contentW int) (firstRowY, cardLe
 // innerLines renders the card's content block (title, blank, rows, blank, help),
 // shared by View and contentWidth so their geometry can never drift apart.
 func (m accountSwitchModel) innerLines() []string {
-	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	activeDot := lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Render("●")
 
-	// With agent rows present the popup switches between agents, not just
-	// claude logins — the title says so, and the claude logins render as a
-	// subgroup under a non-selectable "󰚩 Claude" header so they visibly belong
-	// to the Claude agent while the other agents stay top-level rows.
+	// The title lives on the card's top border (see View), so the content
+	// block starts right at the rows. With agent rows present the claude
+	// logins render as a subgroup under a non-selectable "Claude" header so
+	// they visibly belong to the Claude agent while the other agents stay
+	// top-level rows.
 	grouped := m.headerLines() > 0
-	title := "Switch Claude login"
-	if grouped {
-		title = "Switch agent"
-	}
-	lines := []string{titleStyle.Render(title), ""}
+	var lines []string
 	// Inactive rows gray out so the brand colors highlight only the running
 	// row and the cursor. The 244 matches the footer's dim gray.
 	const grayRow = 244
@@ -502,9 +508,28 @@ func (m accountSwitchModel) View() string {
 		return ""
 	}
 	card := accountSwitchCardStyle().Render(strings.Join(m.innerLines(), "\n"))
+	card = embedBorderTitle(card, m.titleText(), m.contentWidth()+2*accountSwitchPadX)
 	firstRowY, cardLeft, cardWidth := accountSwitchLayout(m.width, m.height, len(m.rows)+m.headerLines(), m.contentWidth())
 	cardTop := firstRowY - accountSwitchBorder - accountSwitchPadY - accountSwitchHeader
 	return m.composite(card, cardLeft, cardTop, cardWidth)
+}
+
+// embedBorderTitle rewrites the card's top border line as
+// "╭─ <title> ─────╮" — lipgloss has no border-title support, so the line is
+// reconstructed by hand. innerW is the width between the two corner glyphs; a
+// title too wide to fit (with its dashes and spaces) leaves the border as-is.
+func embedBorderTitle(card, title string, innerW int) string {
+	rest := innerW - lipgloss.Width(title) - 3 // "─ " before, " " after
+	if rest < 1 {
+		return card
+	}
+	borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	top := borderStyle.Render("╭─") + " " + titleStyle.Render(title) + " " +
+		borderStyle.Render(strings.Repeat("─", rest)+"╮")
+	lines := strings.Split(card, "\n")
+	lines[0] = top
+	return strings.Join(lines, "\n")
 }
 
 // composite lays the card over the dimmed backdrop at (cardLeft, cardTop). Rows
