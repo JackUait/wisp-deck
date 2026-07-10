@@ -379,7 +379,9 @@ func sudoersInstallEnv(t *testing.T, dir string, visudoOK bool) (env []string, t
 		visudoBody = `echo ">>> syntax error near line 3" >&2; exit 1`
 	}
 	binDir := mockCommand(t, dir, "visudo", visudoBody)
-	mockCommand(t, dir, "sudo", `[ "$1" = "-n" ] && shift; exec "$@"`)
+	mockCommand(t, dir, "sudo", `[ "$1" = "-n" ] && shift
+while [ "$1" = "-p" ]; do shift 2; done
+exec "$@"`)
 	env = buildEnv(t, []string{binDir},
 		"WISP_DECK_SUDO="+filepath.Join(binDir, "sudo"),
 		"WISP_DECK_VISUDO="+filepath.Join(binDir, "visudo"),
@@ -444,8 +446,12 @@ func TestKeepAwakeEnsureSudoers(t *testing.T) {
 				t.Fatal(err)
 			}
 			// `sudo -n` succeeds only when the rule is already granted.
-			denied := `[ "$1" = "-n" ] && exit 1; exec "$@"`
-			granted := `[ "$1" = "-n" ] && exit 0; exec "$@"`
+			denied := `[ "$1" = "-n" ] && exit 1
+while [ "$1" = "-p" ]; do shift 2; done
+exec "$@"`
+			granted := `[ "$1" = "-n" ] && exit 0
+while [ "$1" = "-p" ]; do shift 2; done
+exec "$@"`
 			body := denied
 			if tt.alreadyOK {
 				body = granted
@@ -469,6 +475,177 @@ func TestKeepAwakeEnsureSudoers(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The password request is the first thing a user sees after enabling
+// keep-awake. It must render as a proper bordered window on a cleared screen —
+// explaining WHY root is needed, exactly WHAT the rule grants, and HOW to
+// revoke it — not as raw text spilled over the splash.
+func TestKeepAwakeEnsureSudoers_renders_explanation_window(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "sudoers.d", "wisp-deck")
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		t.Fatal(err)
+	}
+	binDir := mockCommand(t, dir, "visudo", `exit 0`)
+	// `sudo -n` fails (rule missing); the interactive install call may carry a
+	// custom `-p <prompt>` — skip it before exec'ing the real command.
+	mockCommand(t, dir, "sudo", `[ "$1" = "-n" ] && exit 1
+while [ "$1" = "-p" ]; do shift 2; done
+exec "$@"`)
+	env := buildEnv(t, []string{binDir},
+		"WISP_DECK_SUDO="+filepath.Join(binDir, "sudo"),
+		"WISP_DECK_VISUDO="+filepath.Join(binDir, "visudo"),
+		"WISP_DECK_SUDOERS="+target,
+	)
+	cfg := filepath.Join(dir, "config")
+	writeTempFile(t, cfg, "settings", "keep_awake=on\n")
+
+	out, code := runBashFunc(t, "lib/keep-awake.sh", "keep_awake_ensure_sudoers", []string{cfg}, env)
+	assertExitCode(t, code, 0)
+
+	// The splash is still on screen when this runs — it must clear first.
+	assertContains(t, out, "\x1b[2J")
+	// A real window: rounded box borders, not bare printf lines.
+	assertContains(t, out, "╭")
+	assertContains(t, out, "╰")
+	// Why root is needed: lid-close sleep would stall a working agent.
+	assertContains(t, out, "lid")
+	assertContains(t, out, "sleep")
+	// Exactly what is granted.
+	assertContains(t, out, "pmset -a disablesleep")
+	// How to revoke it.
+	assertContains(t, out, "sudo rm /etc/sudoers.d/wisp-deck")
+	// How to bail out without entering a password.
+	assertContains(t, out, "Ctrl-C")
+}
+
+// Every line of the window body must fit the box: a line longer than the inner
+// width would push the right border out of column and shred the frame.
+func TestKeepAwakeEnsureSudoers_window_lines_are_flush(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "sudoers.d", "wisp-deck")
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		t.Fatal(err)
+	}
+	binDir := mockCommand(t, dir, "visudo", `exit 0`)
+	mockCommand(t, dir, "sudo", `[ "$1" = "-n" ] && exit 1
+while [ "$1" = "-p" ]; do shift 2; done
+exec "$@"`)
+	env := buildEnv(t, []string{binDir},
+		"WISP_DECK_SUDO="+filepath.Join(binDir, "sudo"),
+		"WISP_DECK_VISUDO="+filepath.Join(binDir, "visudo"),
+		"WISP_DECK_SUDOERS="+target,
+	)
+	cfg := filepath.Join(dir, "config")
+	writeTempFile(t, cfg, "settings", "keep_awake=on\n")
+
+	out, _ := runBashFunc(t, "lib/keep-awake.sh", "keep_awake_ensure_sudoers", []string{cfg}, env)
+
+	stripANSI := func(s string) string {
+		var b strings.Builder
+		inEsc := false
+		for _, r := range s {
+			switch {
+			case inEsc:
+				if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+					inEsc = false
+				}
+			case r == '\x1b':
+				inEsc = true
+			default:
+				b.WriteRune(r)
+			}
+		}
+		return b.String()
+	}
+
+	var widths []int
+	for _, line := range strings.Split(stripANSI(out), "\n") {
+		line = strings.TrimRight(line, " ")
+		if strings.ContainsAny(line, "│╭╰") {
+			widths = append(widths, len([]rune(strings.TrimLeft(line, " "))))
+		}
+	}
+	if len(widths) < 5 {
+		t.Fatalf("expected a multi-line box, got %d framed lines\noutput:\n%s", len(widths), out)
+	}
+	for i, w := range widths {
+		if w != widths[0] {
+			t.Errorf("box line %d is %d columns wide, want %d — right border out of column", i, w, widths[0])
+		}
+	}
+}
+
+// With theme.sh loaded (as in the wrapper) but no ai-tool file yet, the window
+// must not leak a "No such file or directory" from the tool lookup.
+func TestKeepAwakePromptWindow_tolerates_missing_ai_tool_file(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "config")
+	if err := os.MkdirAll(cfg, 0755); err != nil {
+		t.Fatal(err)
+	}
+	root := projectRoot(t)
+	out, code := runBashSnippet(t,
+		"source "+root+"/lib/theme.sh && source "+root+"/lib/keep-awake.sh && keep_awake_prompt_window "+cfg, nil)
+	assertExitCode(t, code, 0)
+	assertNotContains(t, out, "No such file")
+	assertContains(t, out, "╭")
+}
+
+// When nothing needs installing there must be no window and no screen clear —
+// this path runs on every single launch.
+func TestKeepAwakeEnsureSudoers_no_window_when_silent(t *testing.T) {
+	tests := []struct {
+		name    string
+		setting string
+		sudo    string
+	}{
+		{"feature off", "keep_awake=off\n", `[ "$1" = "-n" ] && exit 1; exec "$@"`},
+		{"rule already granted", "keep_awake=on\n", `[ "$1" = "-n" ] && exit 0; exec "$@"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			binDir := mockCommand(t, dir, "sudo", tt.sudo)
+			env := buildEnv(t, []string{binDir},
+				"WISP_DECK_SUDO="+filepath.Join(binDir, "sudo"),
+			)
+			cfg := filepath.Join(dir, "config")
+			writeTempFile(t, cfg, "settings", tt.setting)
+
+			out, code := runBashFunc(t, "lib/keep-awake.sh", "keep_awake_ensure_sudoers", []string{cfg}, env)
+			assertExitCode(t, code, 0)
+			assertNotContains(t, out, "╭")
+			assertNotContains(t, out, "\x1b[2J")
+		})
+	}
+}
+
+// The interactive sudo call must carry a custom prompt so the password line
+// under the window reads as part of it, not as sudo's bare default.
+func TestKeepAwakeInstallSudoers_styles_the_password_prompt(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "sudoers.d", "wisp-deck")
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		t.Fatal(err)
+	}
+	argsLog := filepath.Join(dir, "sudo-args")
+	binDir := mockCommand(t, dir, "visudo", `exit 0`)
+	mockCommand(t, dir, "sudo", `printf '%s\n' "$@" >> "`+argsLog+`"
+while [ "$1" = "-p" ]; do shift 2; done
+exec "$@"`)
+	env := buildEnv(t, []string{binDir},
+		"WISP_DECK_SUDO="+filepath.Join(binDir, "sudo"),
+		"WISP_DECK_VISUDO="+filepath.Join(binDir, "visudo"),
+		"WISP_DECK_SUDOERS="+target,
+	)
+
+	_, code := runBashFunc(t, "lib/keep-awake.sh", "keep_awake_install_sudoers", []string{"alice"}, env)
+	assertExitCode(t, code, 0)
+
+	got := readFileTrim(t, argsLog)
+	assertContains(t, got, "-p")
+	assertContains(t, got, "Password")
 }
 
 // The sudoers content is what grants standing root. It must be exactly two

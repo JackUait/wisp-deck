@@ -153,6 +153,71 @@ $user ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 1
 EOF
 }
 
+# Render the one-time password window: a centered, theme-accented rounded box
+# that explains why root is needed, exactly what the sudoers rule grants, and
+# how to revoke it. Clears the screen first — the launch splash is still up
+# when this runs, and sudo's bare prompt spilling over it is exactly what this
+# window replaces. sudo's Password prompt lands directly beneath the box.
+# Usage: keep_awake_prompt_window <config_dir>
+keep_awake_prompt_window() {
+  local config_dir="$1"
+  local inner=62
+
+  # Border in the theme accent when theme.sh is loaded (the wrapper sources it
+  # before this runs); plain when the module is used standalone.
+  local c="" b=$'\033[1m' n=$'\033[0m'
+  if declare -f get_theme_accent >/dev/null 2>&1; then
+    local _pref _tool
+    _pref="$(grep '^theme=' "$config_dir/settings" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+    _tool="$({ tr -d '[:space:]' < "$config_dir/ai-tool"; } 2>/dev/null || true)"
+    c=$'\033[38;5;'"$(get_theme_accent "$(gt_resolve_theme "$_pref" "$_tool")")m"
+  fi
+
+  local cols margin pad
+  cols="$(tput cols 2>/dev/null)" || cols=80
+  [ -n "$cols" ] || cols=80
+  pad=$(( (cols - inner - 4) / 2 ))
+  [ "$pad" -gt 0 ] || pad=0
+  margin="$(printf '%*s' "$pad" '')"
+
+  # Built by loop, not tr: tr is byte-wise and mangles the multibyte '─'.
+  local hr="" i
+  for ((i = 0; i < inner + 2; i++)); do hr+='─'; done
+
+  # ASCII-only body: padding is computed from ${#line}, which counts bytes
+  # under a C locale — a multibyte character would knock the border loose.
+  local body=(
+    "Keep the Mac awake - one-time setup"
+    ""
+    "\"Keep awake while working\" is now on. While an agent is"
+    "busy, wisp-deck holds a system flag so closing the lid does"
+    "not put the Mac to sleep and stall the agent mid-turn."
+    ""
+    "Setting that flag needs root, so wisp-deck installs a sudo"
+    "rule. It allows ONLY these two commands, nothing else:"
+    ""
+    "    pmset -a disablesleep 1"
+    "    pmset -a disablesleep 0"
+    ""
+    "Revoke it anytime:  sudo rm /etc/sudoers.d/wisp-deck"
+    ""
+    "Enter your macOS password to finish, or press Ctrl-C to"
+    "skip - keep-awake will simply stay off."
+  )
+
+  printf '\033[2J\033[H\n\n'
+  printf '%s%s╭%s╮%s\n' "$margin" "$c" "$hr" "$n"
+  local idx=0 line style
+  for line in "${body[@]}"; do
+    style=""
+    [ "$idx" -eq 0 ] && style="$b"
+    printf '%s%s│%s %s%s%s%*s %s│%s\n' \
+      "$margin" "$c" "$n" "$style" "$line" "$n" "$((inner - ${#line}))" "" "$c" "$n"
+    idx=$((idx + 1))
+  done
+  printf '%s%s╰%s╯%s\n\n' "$margin" "$c" "$hr" "$n"
+}
+
 # Grant the sudoers rule if the feature is on and the rule is missing. Called
 # once, right after the Settings menu closes — a password prompt belongs there,
 # not inside the tmux session where nothing is listening on the terminal.
@@ -164,12 +229,12 @@ keep_awake_ensure_sudoers() {
   keep_awake_enabled "$config_dir/settings" || return 0
   keep_awake_can_sudo && return 0
 
-  printf 'Keep-awake needs a one-time sudo rule so agents can hold the lid-close\n'
-  printf 'sleep veto. It grants only: pmset -a disablesleep 0|1\n'
+  keep_awake_prompt_window "$config_dir"
   keep_awake_install_sudoers || {
-    printf 'Could not install the rule — keep-awake stays inactive.\n' >&2
+    printf '\n  Could not install the rule — keep-awake stays inactive.\n' >&2
     return 0
   }
+  printf '\n  Keep-awake is ready.\n'
 }
 
 keep_awake_sudoers_path() { echo "${WISP_DECK_SUDOERS:-/etc/sudoers.d/wisp-deck}"; }
@@ -198,7 +263,9 @@ keep_awake_install_sudoers() {
 
   # 0440 — sudo ignores sudoers.d entries that are group- or world-writable.
   # Ownership needs no flags: install runs as root here, so the file is root's.
-  if ! "$(keep_awake_sudo)" install -m 0440 "$tmp" "$target" 2>/dev/null; then
+  # -p: this is the one interactive sudo in the module; the prompt sits right
+  # under the explanation window, so style it to read as part of it.
+  if ! "$(keep_awake_sudo)" -p $'  \033[1mPassword:\033[0m ' install -m 0440 "$tmp" "$target" 2>/dev/null; then
     rm -f "$tmp"
     return 1
   fi
