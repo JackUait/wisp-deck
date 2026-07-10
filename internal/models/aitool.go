@@ -9,6 +9,9 @@ type AITool struct {
 	Name      string
 	Command   string
 	Installed bool
+	// Disabled means wisp-deck ignores the tool (hidden from selectors) even
+	// though it may be installed. Persisted in the disabled-tools file.
+	Disabled bool
 }
 
 // String returns display string for AI tool

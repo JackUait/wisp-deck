@@ -100,6 +100,17 @@ AI_TOOLS_AVAILABLE=()
 [ -n "$OPENCODE_CMD" ] && AI_TOOLS_AVAILABLE+=("opencode")
 [ -n "$CODEX_CMD" ] && AI_TOOLS_AVAILABLE+=("codex")
 
+# Drop tools the user disabled in Settings → AI tools. No mapfile — this
+# script runs under macOS's stock bash 3.2.
+WISP_DECK_DISABLED_TOOLS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/disabled-tools"
+if [ ${#AI_TOOLS_AVAILABLE[@]} -gt 0 ]; then
+  _gt_filtered=()
+  while IFS= read -r _gt_tool; do _gt_filtered+=("$_gt_tool"); done \
+    < <(filter_disabled_ai_tools "$WISP_DECK_DISABLED_TOOLS_FILE" "${AI_TOOLS_AVAILABLE[@]}")
+  AI_TOOLS_AVAILABLE=("${_gt_filtered[@]}")
+  unset _gt_filtered _gt_tool
+fi
+
 # Read saved preference, default to first available
 SELECTED_AI_TOOL=""
 if [ -f "$AI_TOOL_PREF_FILE" ]; then

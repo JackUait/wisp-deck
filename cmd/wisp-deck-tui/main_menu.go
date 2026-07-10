@@ -43,6 +43,7 @@ var (
 	mainMenuClaudeDefaultLabelFile string
 	mainMenuAutoSwitchFile         string
 	mainMenuLibDir                 string
+	mainMenuDisabledToolsFile      string
 )
 
 func init() {
@@ -53,6 +54,7 @@ func init() {
 	mainMenuCmd.Flags().StringVar(&mainMenuAITools, "ai-tools", "claude", "Comma-separated available tool names")
 	mainMenuCmd.Flags().StringVar(&mainMenuAIToolFile, "ai-tool-file", "", "Path to AI tool preference file for persistence")
 	mainMenuCmd.Flags().StringVar(&mainMenuLibDir, "lib-dir", "", "Path to wisp-deck lib/ (used to install AI tools); defaults to $WISP_DECK_LIB_DIR")
+	mainMenuCmd.Flags().StringVar(&mainMenuDisabledToolsFile, "disabled-tools-file", "", "Path to the disabled AI tools file (one name per line)")
 	mainMenuCmd.Flags().StringVar(&mainMenuGhostDisplay, "ghost-display", "animated", "Ghost display mode (animated, static, none)")
 	mainMenuCmd.Flags().StringVar(&mainMenuUsageBars, "usage-bars", "7d", "Statusline usage bars (7d, 5h, both, none)")
 	mainMenuCmd.Flags().StringVar(&mainMenuTabTitle, "tab-title", "full", "Tab title mode (full, project)")
@@ -108,6 +110,9 @@ func runMainMenu(cmd *cobra.Command, args []string) error {
 		libDir = os.Getenv("WISP_DECK_LIB_DIR")
 	}
 	model.SetLibDir(libDir)
+	if mainMenuDisabledToolsFile != "" {
+		model.SetDisabledToolsFile(mainMenuDisabledToolsFile)
+	}
 	if mainMenuSettingsFile != "" {
 		model.SetSettingsFile(mainMenuSettingsFile)
 	}

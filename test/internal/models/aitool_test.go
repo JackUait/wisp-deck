@@ -22,7 +22,9 @@ func TestDetectAITools(t *testing.T) {
 
 	// Update PATH for test
 	oldPath := os.Getenv("PATH")
-	os.Setenv("PATH", binDir+":"+oldPath)
+	// Mock dir ONLY — inheriting the real PATH would flip expectations on any
+	// machine that actually has the unmocked tools installed.
+	os.Setenv("PATH", binDir)
 	defer os.Setenv("PATH", oldPath)
 
 	tools := models.DetectAITools()
@@ -79,7 +81,9 @@ func TestDetectAITools_AllToolsDetected(t *testing.T) {
 	}
 
 	oldPath := os.Getenv("PATH")
-	os.Setenv("PATH", binDir+":"+oldPath)
+	// Mock dir ONLY — inheriting the real PATH would flip expectations on any
+	// machine that actually has the unmocked tools installed.
+	os.Setenv("PATH", binDir)
 	defer os.Setenv("PATH", oldPath)
 
 	tools := models.DetectAITools()

@@ -64,6 +64,7 @@ select_project_interactive() {
   # running session; the launcher path derives it from this module's location.
   local _lib_dir="${WISP_DECK_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
   cmd_args+=("--lib-dir" "$_lib_dir")
+  cmd_args+=("--disabled-tools-file" "$gt_config_dir/disabled-tools")
   local sound_file="$gt_config_dir/${SELECTED_AI_TOOL:-claude}-features.json"
   cmd_args+=("--sound-file" "$sound_file")
   if [[ -n "$sound_name" ]]; then

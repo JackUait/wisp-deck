@@ -340,6 +340,9 @@ type MainMenuModel struct {
 	aiToolInstallPct     float64
 	aiToolsErr           error
 	libDir               string
+	disabledToolsFile    string
+	aiToolRemovePending  string
+	aiToolRemoving       string
 	detectAITools        func() []models.AITool
 	accountMenuCursor    int  // 0=Default, 1..len=managed logins, len+1=add row
 	accountMenuConfirm   bool // delete confirmation showing for the cursor login
@@ -1707,6 +1710,10 @@ func (m *MainMenuModel) SetAIToolFile(path string) { m.aiToolFile = path }
 // sources to run the existing bash installers.
 func (m *MainMenuModel) SetLibDir(path string) { m.libDir = path }
 
+// SetDisabledToolsFile points the AI-tools panel at the disabled-tools file
+// (one tool name per line) shared with wrapper.sh.
+func (m *MainMenuModel) SetDisabledToolsFile(path string) { m.disabledToolsFile = path }
+
 // AIToolFile returns the file path for AI tool preference persistence.
 func (m *MainMenuModel) AIToolFile() string { return m.aiToolFile }
 
@@ -2097,6 +2104,10 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case aiToolInstallDoneMsg:
 		m.applyAIToolInstallDone(msg)
+		return m, nil
+
+	case aiToolRemoveDoneMsg:
+		m.applyAIToolRemoveDone(msg)
 		return m, nil
 
 	case installTickMsg:
