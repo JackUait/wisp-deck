@@ -51,6 +51,22 @@ func TestRenderSettingsBox_preservesSettingsRows(t *testing.T) {
 	}
 }
 
+func TestRenderSettingsBox_showsAuthorCredit(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabSettings)
+	out := m.renderSettingsBox()
+
+	for _, want := range []string{"Made by Evgeniy Pyatkov (@jackuait)", "@that_ai_guy"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("settings box missing credit %q:\n%s", want, out)
+		}
+	}
+	// The credit is decorative, not a selectable row.
+	if got := m.settingsItemCount(); got != rowKeepAwake+1 {
+		t.Errorf("settingsItemCount changed to %d; credit must not be a selectable row", got)
+	}
+}
+
 func TestRenderSettingsBox_hasSectionHeadersInOrder(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	m.SetActiveTab(TabSettings)
