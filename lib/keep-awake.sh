@@ -68,6 +68,15 @@ keep_awake_set() {
 # Liveness is `ps -p`, not `kill -0`: kill(2) returns EPERM for a live process
 # owned by another user, which would read as "dead" and let one user's session
 # silently release the flag another user's session is holding.
+#
+# Every live session reaps the whole directory twice a second, so two reapers
+# routinely race: one rm's a holder between the other's glob and its read. The
+# read must therefore stay silent when the file is already gone — an open
+# failure IS the other reaper doing this one's job. The redirect is wrapped in a
+# group so stderr is rerouted BEFORE the input redirect runs; a trailing
+# `2>/dev/null` on the assignment is applied left-to-right and comes too late,
+# so the failure printed straight to the session terminal, on top of the AI
+# tool's UI.
 # Usage: keep_awake_reap <config_dir>
 keep_awake_reap() {
   local holders
@@ -76,9 +85,9 @@ keep_awake_reap() {
   local f pid
   for f in "$holders"/*; do
     [ -e "$f" ] || continue
-    pid="$(tr -d '[:space:]' < "$f" 2>/dev/null)"
+    { pid="$(tr -d '[:space:]' < "$f")"; } 2>/dev/null || pid=""
     if [ -z "$pid" ] || ! ps -p "$pid" >/dev/null 2>&1; then
-      rm -f "$f"
+      rm -f "$f" 2>/dev/null || true
     fi
   done
 }

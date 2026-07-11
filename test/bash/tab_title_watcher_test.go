@@ -1025,3 +1025,45 @@ func TestTabTitleWatcher_loop_mirrors_ai_pane_title_in_model_mode(t *testing.T) 
 		t.Error("watcher loop should read #{pane_title} of the AI pane in model mode")
 	}
 }
+
+// The watcher loop runs in a background subshell that inherits wrapper.sh's
+// stderr — which is the session terminal, the one the AI tool is painting a
+// full-screen UI onto. So a single stray stderr byte from anything the loop
+// calls (tmux, keep_awake_tick, a future addition) lands on top of that UI; the
+// keep-awake reap race showed up as a "No such file or directory" line sitting
+// in Claude's input box. Silencing the source is necessary but not sufficient:
+// nothing in this loop has any business writing to that terminal, so the loop
+// must be muted at the boundary too. Mock tmux writes to stderr on every call
+// to stand in for any such future leak.
+func TestTabTitleWatcher_background_loop_never_writes_to_the_session_terminal(t *testing.T) {
+	tmpDir := t.TempDir()
+	markerFile := filepath.Join(tmpDir, "marker")
+	binDir := mockCommand(t, tmpDir, "tmux", `
+case "$1" in
+  list-panes) echo "1 80" ;;
+  capture-pane) printf 'idle\n> \n' ;;
+esac
+exit 0
+`)
+	env := buildEnv(t, []string{binDir})
+	tmuxPath := filepath.Join(binDir, "tmux")
+
+	// A per-tick helper that writes to stderr, standing in for the real leak
+	// (keep_awake_tick's failing read) and for any future one. The loop's own
+	// tmux calls each redirect their stderr already; the hole is that a *function*
+	// it calls has a direct line to the terminal.
+	//
+	// stdout is the watcher's legitimate channel (tab-title escape codes), so
+	// send it to /dev/null: whatever the test captures is stderr, i.e. a leak.
+	snippet := tabTitleSnippet(t, fmt.Sprintf(
+		`keep_awake_tick() { echo "WATCHER-NOISE: a helper wrote to stderr" >&2; }
+start_tab_title_watcher "dev-test-1" "claude" "proj" "static" %q %q %q >/dev/null
+sleep 2
+stop_tab_title_watcher %q`,
+		tmuxPath, markerFile, tmpDir, markerFile))
+
+	out, _ := runBashSnippet(t, snippet, env)
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("watcher leaked stderr onto the session terminal, over the AI tool's UI:\n%s", out)
+	}
+}

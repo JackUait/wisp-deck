@@ -839,3 +839,86 @@ func TestKeepAwakeSudoersContent_is_narrowly_scoped(t *testing.T) {
 		}
 	}
 }
+
+// --- reap must never write to the terminal ---
+//
+// Every live session's tab-title watcher ticks keep_awake_reap twice a second,
+// and reap walks the WHOLE holders directory — not just its own entry. So N
+// sessions means N reapers racing over one shared directory: reaper A globs a
+// holder and passes the -e check, reaper B rm's it (dead PID, or the owning
+// session dropping it on exit), and A's read then opens a path that is gone.
+//
+// That is a normal, expected outcome of the race — reap's whole job is to
+// remove those files, and someone else already did it. It must be a silent
+// no-op. It was not: the failing open printed
+//
+//	keep-awake.sh: line 79: .../keep-awake.d/<session>: No such file or directory
+//
+// to the watcher's inherited stderr, which is the session TTY that the AI
+// tool's full-screen UI is drawing on, so the text landed in Claude's input box.
+// (The trailing 2>/dev/null did not catch it: bash applies redirections
+// left-to-right, so the input redirect fails before stderr is rerouted.)
+func TestKeepAwakeReap_is_silent_when_a_holder_vanishes_mid_reap(t *testing.T) {
+	dir := t.TempDir()
+	env, _, _ := keepAwakeEnv(t, dir)
+	holders := filepath.Join(dir, "keep-awake.d")
+	if err := os.MkdirAll(holders, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Many holders, all owned by a PID that cannot exist, so every reaper below
+	// wants to delete every one of them — maximizing the window in which one
+	// reaper's rm lands between another's glob and its read. 80 is comfortably
+	// above the count that reproduced the leak on every trial (60).
+	for i := 0; i < 80; i++ {
+		writeTempFile(t, holders, fmt.Sprintf("proj-%d", i), "2147483646\n")
+	}
+
+	root := projectRoot(t)
+	// Two concurrent reapers == two live wisp-deck sessions ticking at once.
+	snippet := fmt.Sprintf(
+		`source %q
+reap() { keep_awake_reap %q; }
+reap & reap & wait`,
+		filepath.Join(root, "lib", "keep-awake.sh"), dir)
+
+	out, code := runBashSnippet(t, snippet, env)
+	assertExitCode(t, code, 0)
+	// Any output at all is a leak: reap is a background housekeeping call that
+	// shares a terminal with a TUI, so it must say nothing, ever.
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("reap leaked output to the terminal during a concurrent reap:\n%s", out)
+	}
+
+	// And it still did the job: every dead holder is gone.
+	left, err := os.ReadDir(holders)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 0 {
+		t.Errorf("expected all dead holders reaped, %d left", len(left))
+	}
+}
+
+// The same unsuppressed-open bug, pinned deterministically rather than by race:
+// a holder that exists (so -e passes) but cannot be opened must be reaped in
+// silence, not announced on the terminal.
+func TestKeepAwakeReap_is_silent_when_a_holder_cannot_be_read(t *testing.T) {
+	dir := t.TempDir()
+	env, _, _ := keepAwakeEnv(t, dir)
+	holders := filepath.Join(dir, "keep-awake.d")
+	if err := os.MkdirAll(holders, 0755); err != nil {
+		t.Fatal(err)
+	}
+	unreadable := writeTempFile(t, holders, "dev-locked-1234", "4242\n")
+	if err := os.Chmod(unreadable, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(unreadable, 0644) })
+
+	out, code := runBashFunc(t, "lib/keep-awake.sh", "keep_awake_reap", []string{dir}, env)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("reap leaked output for an unreadable holder:\n%s", out)
+	}
+}

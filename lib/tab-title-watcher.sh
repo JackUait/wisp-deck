@@ -231,6 +231,14 @@ start_tab_title_watcher() {
   local tab_title_setting="$4" tmux_cmd="$5" marker_file="$6"
   local config_dir="${7:-}"
 
+  # The subshell's stderr is muted at the boundary (see the 2>/dev/null on its
+  # closing paren). It would otherwise inherit the wrapper's stderr, which is the
+  # session terminal — the one the AI tool paints a full-screen UI onto — so a
+  # single stray line from anything this loop calls lands in the middle of that
+  # UI. It did: a failing read in keep_awake_tick's reap printed "No such file or
+  # directory" straight into Claude's input box. Nothing in here has a reader on
+  # that terminal, so nothing in here may write to it. Stdout stays open: the
+  # tab-title escape sequences are the loop's one legitimate output.
   (
     # Find the AI tool pane (rightmost pane in the layout)
     local ai_pane=""
@@ -324,7 +332,7 @@ start_tab_title_watcher() {
         was_waiting=false
       fi
     done
-  ) &
+  ) 2>/dev/null &
   _TAB_TITLE_WATCHER_PID=$!
 }
 
@@ -334,6 +342,11 @@ stop_tab_title_watcher() {
   local marker_file="${1:-}"
   if [ -n "$_TAB_TITLE_WATCHER_PID" ]; then
     kill "$_TAB_TITLE_WATCHER_PID" 2>/dev/null || true
+    # Reap it here, with stderr closed. `kill` itself is quiet; the noise comes
+    # from the shell's own job notification when it reaps a signalled child
+    # ("Terminated: 15" followed by the entire subshell body), which it would
+    # otherwise dump onto the session terminal at teardown.
+    wait "$_TAB_TITLE_WATCHER_PID" 2>/dev/null || true
   fi
   if [ -n "$marker_file" ]; then
     rm -f "$marker_file"

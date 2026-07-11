@@ -36,7 +36,9 @@ gt_claude_filter_prefix() {
   cache_file="$cache_dir/screenshot-filter-capable"
 
   if [ -f "$cache_file" ]; then
-    IFS= read -r cached < "$cache_file" 2>/dev/null || cached=""
+    # Grouped: the -f check above is a TOCTOU, and an open that loses the race
+    # must stay silent rather than print onto the terminal.
+    { IFS= read -r cached < "$cache_file"; } 2>/dev/null || cached=""
     case "$cached" in
       "${sig}|1") printf 'wisp-deck-tui screenshot-filter -- '; return 0 ;;
       "${sig}|0") return 0 ;;

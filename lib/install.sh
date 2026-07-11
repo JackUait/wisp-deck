@@ -129,7 +129,9 @@ ensure_wisp_deck_tui() {
   local share_dir="$1"
 
   local version
-  version="$(tr -d '[:space:]' < "$share_dir/VERSION" 2>/dev/null)"
+  # Grouped so stderr is closed before the open: a missing VERSION is a case this
+  # handles below, and it must not also spew the shell's own "No such file" first.
+  { version="$(tr -d '[:space:]' < "$share_dir/VERSION")"; } 2>/dev/null || version=""
   if [[ -z "$version" ]]; then
     error "Cannot determine wisp-deck-tui version: VERSION file missing in $share_dir"
     return 1

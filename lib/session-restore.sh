@@ -93,8 +93,10 @@ next_launch_seq() {
     sleep 0.05
   done
   now="$(date +%s)"
-  prev=""
-  [ -f "$f" ] && prev="$(tr -d '[:space:]' < "$f" 2>/dev/null)"
+  # Grouped so stderr is closed before the open. The -f test is a TOCTOU — this
+  # runs from the background heartbeat against a file other sessions rewrite and
+  # delete — and losing that race must not print onto the session terminal.
+  { prev="$(tr -d '[:space:]' < "$f")"; } 2>/dev/null || prev=""
   case "$prev" in '' | *[!0-9]*) prev=0 ;; esac
   next=$((prev + 1))
   [ "$now" -gt "$next" ] && next="$now"
@@ -243,7 +245,7 @@ maybe_restore_session() {
   [ -f "$snap" ] || return 0
 
   local last_boot=""
-  [ -f "$marker" ] && last_boot="$(tr -d '[:space:]' < "$marker" 2>/dev/null)"
+  { last_boot="$(tr -d '[:space:]' < "$marker")"; } 2>/dev/null || last_boot=""
   # Drift-tolerant: a marker stamped with a boottime-derived id of THIS boot
   # (pre-NTP-step, or by a pre-uuid wrapper) must still hold the gate.
   boot_id_is_current "$last_boot" "$cur_boot" && return 0
@@ -468,7 +470,7 @@ restore_surplus_launch() {
   [ "$participant" = "1" ] && return 0
   local marker="$config_dir/restore-drained-at" drained now
   [ -f "$marker" ] || return 1
-  drained="$(tr -d '[:space:]' < "$marker" 2>/dev/null)"
+  { drained="$(tr -d '[:space:]' < "$marker")"; } 2>/dev/null || drained=""
   case "$drained" in '' | *[!0-9]*) return 1 ;; esac
   case "$launch_epoch" in
     '' | *[!0-9]*) ;;
