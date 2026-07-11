@@ -1109,7 +1109,7 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mode = pickByWidth(cw)
 		}
 		if m.isImage {
-			m.viewport.SetContent(m.renderImageBody(cw))
+			m.viewport.SetContent(m.renderImageBody(cw, h))
 		} else {
 			m.viewport.SetContent(renderBodyMode(m.bodyContent(), cw, m.mode))
 		}

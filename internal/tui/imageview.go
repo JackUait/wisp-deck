@@ -15,30 +15,49 @@ import (
 // whatever color happens to be premultiplied in.
 var imagePreviewBg = [3]uint32{40, 40, 40}
 
+// fitImage returns the largest w×h-proportioned size that fits inside
+// maxW×maxHPx PIXELS ("contain"): capped by width first, then by height, so
+// any aspect ratio ends up fully visible. Never upscales (a blown-up preview
+// misrepresents the asset) and never returns a zero dimension.
+func fitImage(w, h, maxW, maxHPx int) (int, int) {
+	outW, outH := w, h
+	if outW > maxW {
+		outH = (outH*maxW + outW/2) / outW
+		outW = maxW
+	}
+	if outH > maxHPx {
+		outW = (outW*maxHPx + outH/2) / outH
+		outH = maxHPx
+	}
+	if outW < 1 {
+		outW = 1
+	}
+	if outH < 1 {
+		outH = 1
+	}
+	return outW, outH
+}
+
 // renderImagePreview renders img as rows of truecolor half-block cells: each
 // "▀" carries two vertically-stacked pixels (foreground = top, background =
-// bottom). The image is nearest-neighbor downscaled to fit width columns,
-// keeping its aspect ratio; a small image is shown at native size (never
-// upscaled — a blown-up preview misrepresents the asset). An odd-height image
-// leaves the final row's lower half unpainted (no background escape), so the
-// popup surface shows through. Every row ends in a reset so color can't bleed.
-func renderImagePreview(img image.Image, width int) string {
+// bottom). The image is nearest-neighbor downscaled to fit width columns AND
+// maxRows rows (each row = 2 px), keeping its aspect ratio (see fitImage), so
+// the whole image is visible whatever its shape. An odd-height image leaves
+// the final row's lower half unpainted (no background escape), so the popup
+// surface shows through. Every row ends in a reset so color can't bleed.
+func renderImagePreview(img image.Image, width, maxRows int) string {
 	if width < 1 {
 		width = 1
+	}
+	if maxRows < 1 {
+		maxRows = 1
 	}
 	bounds := img.Bounds()
 	w, h := bounds.Dx(), bounds.Dy()
 	if w < 1 || h < 1 {
 		return ""
 	}
-	outW := w
-	if outW > width {
-		outW = width
-	}
-	outH := (h*outW + w/2) / w
-	if outH < 1 {
-		outH = 1
-	}
+	outW, outH := fitImage(w, h, width, maxRows*2)
 
 	px := func(x, y int) (r, g, b uint32) {
 		sx := bounds.Min.X + x*w/outW
@@ -104,11 +123,27 @@ func (m DiffViewModel) imageDims() string {
 	return itoa(b.Dx()) + "×" + itoa(b.Dy())
 }
 
-// renderImageBody is the image-mode viewport content for a box interior cw
-// columns wide: the scaled preview, or the decode-failure fallback.
-func (m DiffViewModel) renderImageBody(cw int) string {
+// renderImageBody is the image-mode viewport content for a box interior of
+// cw columns × ch rows: the preview scaled to fit BOTH dimensions and centered
+// in the box (blank rows above, space padding left), or the decode-failure
+// fallback. Fitting both ways means no aspect ratio ever needs scrolling.
+func (m DiffViewModel) renderImageBody(cw, ch int) string {
 	if m.img == nil {
 		return diffGapRowStyle.Render("(no preview: " + m.imgErr + ")")
 	}
-	return renderImagePreview(m.img, cw)
+	if ch < 1 {
+		ch = 1
+	}
+	b := m.img.Bounds()
+	outW, _ := fitImage(b.Dx(), b.Dy(), cw, ch*2)
+	rows := strings.Split(renderImagePreview(m.img, cw, ch), "\n")
+	leftPad := strings.Repeat(" ", maxInt((cw-outW)/2, 0))
+	for i := range rows {
+		rows[i] = leftPad + rows[i]
+	}
+	padded := make([]string, 0, ch)
+	for i := 0; i < (ch-len(rows))/2; i++ {
+		padded = append(padded, "")
+	}
+	return strings.Join(append(padded, rows...), "\n")
 }
