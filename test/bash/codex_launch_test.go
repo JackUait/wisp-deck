@@ -76,10 +76,22 @@ func TestBuildAiLaunchCmd_codex_takes_no_positional_project_dir(t *testing.T) {
 	}
 }
 
-// Resume mode: opencode gets `--continue`, claude gets a guarded fallback chain.
-// Codex resume is out of scope, so a restored codex tab relaunches fresh.
-func TestBuildAiLaunchCmd_codex_resume_relaunches_fresh(t *testing.T) {
+// Resume mode with a captured session id: codex resumes ITS exact session via
+// a guarded `codex resume <id>` that falls back to a plain launch when the
+// resume fails at startup (mirrors claude's --resume → -c → plain chain).
+func TestBuildAiLaunchCmd_codex_resume_with_sid_uses_guarded_resume_chain(t *testing.T) {
 	env := buildEnv(t, nil, "WISP_DECK_RESUME=1", "WISP_DECK_RESUME_SESSION=sid-42")
+	got := codexLaunchCmd(t, env, "")
+	assertContains(t, got, "/usr/bin/codex resume sid-42")
+	assertContains(t, got, "_wd_rc")
+	// The fallback step is the bare binary (a "; /usr/bin/codex;" segment).
+	assertContains(t, got, "; /usr/bin/codex;")
+}
+
+// Resume mode WITHOUT a captured id stays a plain relaunch: `codex resume
+// --last` is cwd-filtered but could still steal another pane's session.
+func TestBuildAiLaunchCmd_codex_resume_without_sid_relaunches_fresh(t *testing.T) {
+	env := buildEnv(t, nil, "WISP_DECK_RESUME=1", "WISP_DECK_RESUME_SESSION=")
 	got := codexLaunchCmd(t, env, "")
 	if got != "/usr/bin/codex" {
 		t.Errorf("got %q, want a plain relaunch %q", got, "/usr/bin/codex")

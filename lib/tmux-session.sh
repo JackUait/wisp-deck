@@ -23,8 +23,17 @@ build_ai_launch_cmd() {
 
   # codex takes no flags, no env plumbing and no positional dir (the pane's cwd
   # is already the project dir), so it short-circuits ahead of the claude-only
-  # prefixes below — including in resume mode, where it relaunches fresh.
+  # prefixes below. In resume mode a captured session id resumes THAT exact
+  # session via a guarded `codex resume <id>` → plain fallback (same startup
+  # window contract as claude's chain below); without an id it relaunches
+  # fresh — `resume --last` is cwd-filtered but could steal another pane's
+  # session.
   if [ "$tool" = "codex" ]; then
+    if [ "${WISP_DECK_RESUME:-0}" = "1" ] && [ -n "${WISP_DECK_RESUME_SESSION:-}" ]; then
+      local cwin="${WISP_DECK_RESUME_FALLBACK_WINDOW:-10}"
+      echo "_wd_t0=\$(date +%s); $tool_cmd resume ${WISP_DECK_RESUME_SESSION}; _wd_rc=\$?; if [ \$_wd_rc -ne 0 ] && [ \$(( \$(date +%s) - _wd_t0 )) -lt $cwin ]; then _wd_t0=\$(date +%s); $tool_cmd; _wd_rc=\$?; fi"
+      return 0
+    fi
     echo "$tool_cmd"
     return 0
   fi

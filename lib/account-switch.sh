@@ -606,6 +606,83 @@ _relaunch_preserving_draft() {
   return 0
 }
 
+# _pool_tmux_env <tmux_cmd> <var> — print the tmux session env value of <var>,
+# empty when unset (`-VAR` line) or unreadable.
+_pool_tmux_env() {
+  local line
+  line="$("$1" show-environment "$2" 2>/dev/null)" || return 0
+  case "$line" in
+    "${2}="*) printf '%s\n' "${line#"${2}"=}" ;;
+  esac
+  return 0
+}
+
+# _pool_capture_leaving_tool <tmux_cmd> <pool_dir> — record the LEAVING agent's
+# session into the shared pool before the pane is respawned: stamp its native
+# session id into the tmux env (what a later switch back resumes) and export
+# its transcript tail as the agent-neutral handoff (what seeds a DIFFERENT
+# agent). Reads _rc_tool/_rc_project_dir from the caller's scope (the same
+# dynamic-scoping contract _read_relaunch_ctx uses). Fail-open: any miss just
+# leaves the pool as it was.
+#
+# claude's special case: an empty current_ai_session WITH a durable stamp and
+# a diverged live id means the user /new-closed the conversation — the pool's
+# handoff still describes the closed one, so clear it rather than let the next
+# agent resurrect it. An unstamped pane (no conversation yet) keeps the pool
+# untouched: the pool's conversation is still whatever an earlier stint put
+# there.
+_pool_capture_leaving_tool() {
+  local tmux_cmd="$1" pool="$2"
+  [ -n "$pool" ] || return 0
+  local meta="$pool/meta"
+  case "$_rc_tool" in
+    claude)
+      local leave_sid durable live
+      leave_sid="$(current_ai_session "$tmux_cmd")"
+      if [ -n "$leave_sid" ]; then
+        pool_set "$meta" claude "$leave_sid"
+        if export_claude_handoff \
+          "$(pool_claude_transcript "$_rc_project_dir" "$leave_sid")" \
+          "$pool/handoff.md" 2>/dev/null; then
+          pool_set "$meta" last_export_tool claude
+        fi
+      else
+        durable="$(_pool_tmux_env "$tmux_cmd" WISP_DECK_CLAUDE_SESSION)"
+        live="$(_pool_tmux_env "$tmux_cmd" WISP_DECK_CLAUDE_LIVE_SESSION)"
+        if [ -n "$durable" ] && [ -n "$live" ] && [ "$live" != "$durable" ]; then
+          rm -f "$pool/handoff.md"
+          pool_set "$meta" last_export_tool ""
+        fi
+      fi
+      ;;
+    codex)
+      local croot since csid
+      croot="${WISP_DECK_CODEX_SESSIONS_DIR:-$HOME/.codex/sessions}"
+      # Bound the capture to THIS pane's codex stint: the stint-start stamp
+      # when a switch launched it, the tmux session's creation time when the
+      # wrapper did (no stamp).
+      since="$(_pool_tmux_env "$tmux_cmd" WISP_DECK_CODEX_STARTED_AT)"
+      [ -n "$since" ] \
+        || since="$("$tmux_cmd" display-message -p '#{session_created}' 2>/dev/null)" \
+        || since=""
+      csid="$(codex_current_session "$croot" "$_rc_project_dir" "${since:-0}")"
+      if [ -n "$csid" ]; then
+        "$tmux_cmd" set-environment WISP_DECK_CODEX_SESSION "$csid" 2>/dev/null
+        pool_set "$meta" codex "$csid"
+        if export_codex_handoff "$(codex_rollout_for "$croot" "$csid")" \
+          "$pool/handoff.md" 2>/dev/null; then
+          pool_set "$meta" last_export_tool codex
+        fi
+      fi
+      ;;
+    opencode)
+      "$tmux_cmd" set-environment WISP_DECK_OPENCODE_ACTIVE 1 2>/dev/null
+      pool_set "$meta" opencode 1
+      ;;
+  esac
+  return 0
+}
+
 # _tool_cmd_for <tool> — the tool's binary, from the relaunch context's *_cmd
 # keys (caller scope, via _read_relaunch_ctx), falling back to PATH lookup for
 # a context written before the keys existed. Empty when unresolvable.
@@ -656,6 +733,18 @@ relaunch_switch_tool() {
       "$_rc_project_dir" >/dev/null 2>&1 || true
   fi
 
+  # The shared session pool for this wisp session (lib/session-pool.sh; guarded
+  # so a bare unit-test source without it still switches). Keyed by the
+  # relaunch file's per-session suffix. Capture the LEAVING agent into it
+  # before the respawn kills its process.
+  local cfg_root="${_rc_accounts_dir%/claude-accounts}" pool="" pool_key
+  pool_key="${relaunch_file##*/}"
+  pool_key="${pool_key#relaunch-}"
+  if command -v pool_dir >/dev/null 2>&1; then
+    pool="$(pool_dir "$cfg_root" "$pool_key" 2>/dev/null)" || pool=""
+  fi
+  _pool_capture_leaving_tool "$tmux_cmd" "$pool"
+
   local new_dir="" sid=""
   if [ "$target" = "claude" ]; then
     if [ -n "$chosen_acct" ] && [ "$chosen_acct" != "default" ] \
@@ -671,13 +760,39 @@ relaunch_switch_tool() {
     # Resume the conversation an earlier claude stint of THIS pane stamped
     # (claude → codex → claude carries the session over); unstamped = fresh.
     sid="$(current_ai_session "$tmux_cmd")"
+  elif [ "$target" = "codex" ]; then
+    # Resume the codex session an earlier codex stint of this pane left behind
+    # (stamped by _pool_capture_leaving_tool), and stamp the new stint's start
+    # so the NEXT switch away can bound its capture.
+    sid="$(_pool_tmux_env "$tmux_cmd" WISP_DECK_CODEX_SESSION)"
+    "$tmux_cmd" set-environment WISP_DECK_CODEX_STARTED_AT "$(date +%s)" 2>/dev/null
+  elif [ "$target" = "opencode" ]; then
+    # A pane that ran opencode before continues its project-scoped session;
+    # the marker value is only a flag — build_ai_launch_cmd's opencode resume
+    # is `--continue`, no per-id resume.
+    [ -n "$(_pool_tmux_env "$tmux_cmd" WISP_DECK_OPENCODE_ACTIVE)" ] && sid=1
+  fi
+
+  # Cross-agent handoff: the target has no session of its own, but the pool
+  # holds another agent's exported conversation — seed the fresh launch with
+  # an initial prompt pointing at it (claude and codex both take a positional
+  # prompt; opencode has no verified injection vector and launches bare).
+  local handoff_arg=""
+  if [ -z "$sid" ] && [ "$target" != "opencode" ] \
+     && [ -n "$pool" ] && [ -f "$pool/handoff.md" ]; then
+    local handoff_from
+    handoff_from="$(pool_get "$pool/meta" last_export_tool)"
+    if [ -n "$handoff_from" ] && command -v handoff_prompt >/dev/null 2>&1; then
+      handoff_arg=" $(printf '%q' "$(handoff_prompt "$pool/handoff.md" "$handoff_from")")"
+    fi
   fi
 
   local cmd
   cmd="$(build_switch_launch_cmd "$target" "$tool_cmd" \
     "$_rc_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir" "$sid")"
-  "$tmux_cmd" respawn-pane -k -t "$pane" -c "$_rc_project_dir" "$cmd; exec bash"
+  "$tmux_cmd" respawn-pane -k -t "$pane" -c "$_rc_project_dir" "$cmd$handoff_arg; exec bash"
 
+  [ -n "$pool" ] && pool_set "$pool/meta" last_tool "$target"
   "$tmux_cmd" set-environment WISP_DECK_TOOL "$target" 2>/dev/null
   if [ "$target" = "claude" ]; then
     "$tmux_cmd" set-environment WISP_DECK_CLAUDE_ACCOUNT "${new_dir##*/}" 2>/dev/null
