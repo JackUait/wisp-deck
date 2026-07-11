@@ -1,17 +1,41 @@
 #!/bin/bash
 # npm-based update check for wisp-deck.
 
-# Show update-available notification if a previous background check found a newer version.
-# Deletes the flag after displaying.
-notify_if_update_available() {
+# Print the pending update version found by a previous background check, or
+# nothing when there is none. A flag equal to the installed version is stale
+# (written before an update, inside the 24h re-check throttle) and is ignored.
+# Args: install_dir (where the .version marker lives)
+get_update_version() {
+  local install_dir="$1"
   local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
   local flag="${config_home}/wisp-deck/update-available"
   [ -f "$flag" ] || return 0
 
+  local remote_version local_version
+  remote_version="$(tr -d '[:space:]' < "$flag")"
+  local_version="$(cat "$install_dir/.version" 2>/dev/null | tr -d '[:space:]')"
+  [ -n "$remote_version" ] || return 0
+  [ "$remote_version" = "$local_version" ] && return 0
+  echo "$remote_version"
+}
+
+# Show update-available notification if a previous background check found a
+# newer version. Keeps the flag: the main menu reads it too (via
+# get_update_version) and must keep offering the update until it runs.
+# Args: install_dir (optional; defaults to the npm install location)
+notify_if_update_available() {
+  local install_dir="${1:-$HOME/.local/share/wisp-deck}"
   local version
-  version="$(cat "$flag")"
-  rm -f "$flag"
+  version="$(get_update_version "$install_dir")"
+  [ -n "$version" ] || return 0
   echo "  ↑ Update available: v${version} — run 'npx wisp-deck' to update"
+}
+
+# Run the update interactively. @latest forces npx past its cached tarball so
+# the freshly published version installs even when an older one is cached.
+run_wisp_deck_update() {
+  echo "  ⇡ Updating wisp-deck..."
+  npx --yes wisp-deck@latest
 }
 
 # Run a background check against the npm registry.
@@ -52,7 +76,11 @@ check_for_update() {
     # Always update the timestamp (even when up to date) so we throttle correctly
     date +%s > "$ts_file"
 
-    [ "$local_version" = "$remote_version" ] && return
+    if [ "$local_version" = "$remote_version" ]; then
+      # Clear any flag written before the update installed this version.
+      rm -f "$flag"
+      return
+    fi
     echo "$remote_version" > "$flag"
     # stderr dropped: this outlives the shell that spawned it (disowned), so a
     # network error surfacing minutes later would print onto whatever is on the

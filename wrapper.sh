@@ -249,6 +249,15 @@ else
           # Loop back to menu — worktrees refresh on reload
           continue
           ;;
+        update)
+          # The header notice's Update button. Run the npm update in the
+          # foreground, then reopen the menu — it re-execs wisp-deck-tui from
+          # disk, so the freshly installed build shows immediately.
+          if type run_wisp_deck_update &>/dev/null; then
+            run_wisp_deck_update || true
+          fi
+          continue
+          ;;
         *)
           # settings or unknown — loop back to menu
           continue

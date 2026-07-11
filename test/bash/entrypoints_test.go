@@ -993,3 +993,54 @@ func TestWrapper_does_not_reference_settings_menu_tui(t *testing.T) {
 		t.Errorf("wrapper.sh still references settings-menu-tui — it should be removed")
 	}
 }
+
+// The menu's Update button exits with action "update"; the wrapper must run
+// the updater and loop back to the menu instead of falling through to launch.
+func TestWrapper_handles_update_action(t *testing.T) {
+	root := projectRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "wrapper.sh"))
+	if err != nil {
+		t.Fatalf("failed to read wrapper.sh: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "update)") {
+		t.Errorf("wrapper.sh menu loop should handle the \"update\" action")
+	}
+	if !strings.Contains(content, "run_wisp_deck_update") {
+		t.Errorf("wrapper.sh should run run_wisp_deck_update for the update action")
+	}
+}
+
+func TestWrapper_update_action_runs_updater_then_returns_to_menu(t *testing.T) {
+	dir := t.TempDir()
+	markerFile := filepath.Join(dir, "updated")
+
+	// Simulate the wrapper's menu-loop dispatch for the update action.
+	testScript := fmt.Sprintf(`#!/bin/bash
+run_wisp_deck_update() { echo "ran" >> %q; }
+_selected_project_action="update"
+
+for _ in 1 2; do
+  case "$_selected_project_action" in
+    update)
+      run_wisp_deck_update
+      _selected_project_action="quit-loop"
+      continue
+      ;;
+    *)
+      echo "BACK_TO_MENU"
+      break
+      ;;
+  esac
+done
+`, markerFile)
+	scriptPath := writeTempFile(t, dir, "update-action-test.sh", testScript)
+	os.Chmod(scriptPath, 0755)
+
+	out, code := runBashSnippet(t, fmt.Sprintf("bash %q", scriptPath), nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "BACK_TO_MENU")
+	if _, err := os.Stat(markerFile); err != nil {
+		t.Errorf("expected run_wisp_deck_update to run: %v", err)
+	}
+}

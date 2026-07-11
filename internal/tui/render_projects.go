@@ -117,10 +117,13 @@ func (m *MainMenuModel) renderTitleRow(leftBorder, rightBorder string) string {
 		aiPart = agentLabel + nameStyle.Render(aiDisplay)
 	}
 	// AGENT switcher on the left; the wordmark right-aligns here only when there
-	// is no account or PLAN row above to host it.
+	// is no account or PLAN row above to host it. When a row above holds the
+	// wordmark, this row sits directly under it and carries the update notice.
 	var title string
 	if m.accountRowCount() == 0 && m.subscriptionRowCount() == 0 {
 		title = m.ghostWordmark()
+	} else {
+		title = m.updateNotice()
 	}
 	return m.headerRow(aiPart, title, leftBorder, rightBorder)
 }
@@ -224,16 +227,33 @@ func (m *MainMenuModel) renderSubscriptionRow(leftBorder, rightBorder string) st
 	return m.headerRow(content, title, leftBorder, rightBorder)
 }
 
-// renderUpdateRow renders the "Update available" notification row.
-func (m *MainMenuModel) renderUpdateRow(leftBorder, rightBorder string) string {
-	updateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	updateMsg := fmt.Sprintf("Update available: %s (brew upgrade wisp-deck)", m.updateVersion)
-	updateContent := updateStyle.Render(updateMsg)
-	updatePadding := menuContentWidth - lipgloss.Width(updateContent) - 2 // leading 2 spaces
-	if updatePadding < 0 {
-		updatePadding = 0
+// updateNotice renders the right-aligned "new version available" notice with
+// its inline Update button. Empty when no update is pending. It always sits on
+// the row directly under whichever header row hosts the wordmark, so the eye
+// falls from "Wisp Deck" straight onto the notice.
+func (m *MainMenuModel) updateNotice() string {
+	if m.updateVersion == "" {
+		return ""
 	}
-	return leftBorder + "  " + updateContent + strings.Repeat(" ", updatePadding) + rightBorder
+	versionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	// The leading letter is the real keybinding, mirroring the action bar.
+	buttonStyle := lipgloss.NewStyle().Foreground(m.theme.Accent)
+	if m.isHovered(regionUpdate) {
+		buttonStyle = buttonStyle.Bold(true).Underline(true)
+	}
+	version := "v" + strings.TrimPrefix(m.updateVersion, "v")
+	return versionStyle.Render("⇡ "+version+" available") + dimStyle.Render(" · ") + buttonStyle.Render("U Update")
+}
+
+// renderHeaderGapRow renders the blank spacer between the header switchers and
+// the tab bar. When the wordmark sits on the title row (no PLAN row above it),
+// a pending update notice right-aligns here — directly under the wordmark.
+func (m *MainMenuModel) renderHeaderGapRow(leftBorder, rightBorder string) string {
+	if m.updateVersion != "" && m.accountRowCount() == 0 && m.subscriptionRowCount() == 0 {
+		return m.headerRow("", m.updateNotice(), leftBorder, rightBorder)
+	}
+	return m.emptyMenuRow(leftBorder, rightBorder)
 }
 
 // renderProjectRows renders the leading blank row, every project (2 rows each)
@@ -683,19 +703,15 @@ func (m *MainMenuModel) renderMenuBox() string {
 	// Title row
 	lines = append(lines, m.renderTitleRow(leftBorder, rightBorder))
 
-	// Blank spacer separating the agent/plan switchers from the tab bar.
-	lines = append(lines, m.emptyMenuRow(leftBorder, rightBorder))
+	// Blank spacer separating the agent/plan switchers from the tab bar. It
+	// hosts the update notice when the wordmark sits on the title row above.
+	lines = append(lines, m.renderHeaderGapRow(leftBorder, rightBorder))
 
 	// Tab bar
 	lines = append(lines, m.renderTabBar(leftBorder, rightBorder))
 
 	// Separator after the tab bar
 	lines = append(lines, separator)
-
-	// Update notification (if set)
-	if m.updateVersion != "" {
-		lines = append(lines, m.renderUpdateRow(leftBorder, rightBorder))
-	}
 
 	// Project rows (leading blank + projects/worktrees + add-project row)
 	lines = append(lines, m.renderProjectRows(leftBorder, rightBorder)...)
@@ -750,11 +766,9 @@ func (m *MainMenuModel) renderMenuBox() string {
 
 	// Scroll clipping when menu is taller than the available terminal height.
 	// Fixed header = top + title + switcher-gap + tab-bar + sep + leading-blank (6),
-	// plus the optional subscription and update rows.
+	// plus the optional subscription row. The update notice reuses an existing
+	// header row, so it never adds a line.
 	headerEnd := 6 + m.subscriptionRowCount() + m.accountRowCount()
-	if m.updateVersion != "" {
-		headerEnd++
-	}
 	// Footer = separator-before-action + action-bar + bottom + help (4 lines).
 	// Keeping the separator in the footer ensures the action bar never renders
 	// detached when the body is clipped at tiny terminal heights.

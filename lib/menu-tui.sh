@@ -85,6 +85,11 @@ select_project_interactive() {
   cmd_args+=("--claude-accounts-dir" "$gt_config_dir/claude-accounts")
   cmd_args+=("--claude-default-label-file" "$gt_config_dir/claude-account-default-label")
   cmd_args+=("--auto-switch-file" "$gt_config_dir/auto-switch-accounts")
+  # A pending update found by the background npm check surfaces in the menu
+  # header (notice + Update button). Callers may pre-set _update_version.
+  if [ -z "${_update_version:-}" ] && type get_update_version &>/dev/null; then
+    _update_version="$(get_update_version "${WISP_DECK_INSTALL_DIR:-$HOME/.local/share/wisp-deck}")"
+  fi
   if [ -n "${_update_version:-}" ]; then
     cmd_args+=("--update-version" "$_update_version")
   fi

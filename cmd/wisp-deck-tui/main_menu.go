@@ -80,9 +80,52 @@ func runMainMenu(cmd *cobra.Command, args []string) error {
 	// Bubbletea will detect TTY EOF and shut down gracefully instead.
 	signal.Ignore(syscall.SIGHUP)
 
+	model, err := buildMainMenuModel()
+	if err != nil {
+		return err
+	}
+
+	ttyOpts, cleanup, err := util.TUITeaOptions()
+	if err != nil {
+		return fmt.Errorf("failed to run TUI: %w", err)
+	}
+	defer cleanup()
+
+	appModel := tui.NewAppModel(model)
+	// All-motion (not just cell-motion) so hover events arrive without a button
+	// held down — the main menu highlights whatever the pointer is over.
+	opts := append([]tea.ProgramOption{tea.WithAltScreen(), tea.WithMouseAllMotion()}, ttyOpts...)
+	p := tea.NewProgram(appModel, opts...)
+
+	finalModel, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("failed to run TUI: %w", err)
+	}
+
+	// Extract MainMenuModel from inside AppModel.
+	app := finalModel.(tui.AppModel)
+	m := app.InnerMainMenu()
+	result := m.Result()
+
+	if result == nil {
+		result = &tui.MainMenuResult{
+			Action: "quit",
+			AITool: m.CurrentAITool(),
+		}
+	}
+
+	jsonOutput, _ := json.Marshal(result)
+	fmt.Println(string(jsonOutput))
+
+	return nil
+}
+
+// buildMainMenuModel constructs the main-menu model from the package-level flag
+// values, applying every flag to the model.
+func buildMainMenuModel() (*tui.MainMenuModel, error) {
 	projects, err := models.LoadProjects(mainMenuProjectsFile)
 	if err != nil {
-		return fmt.Errorf("failed to load projects: %w", err)
+		return nil, fmt.Errorf("failed to load projects: %w", err)
 	}
 
 	models.PopulateWorktrees(projects)
@@ -145,38 +188,7 @@ func runMainMenu(cmd *cobra.Command, args []string) error {
 		model.SetClaudeDefaultLabelFile(mainMenuClaudeDefaultLabelFile)
 		model.SetClaudeDefaultLabel(tui.ReadDefaultAccountLabel(mainMenuClaudeDefaultLabelFile))
 	}
+	model.SetUpdateVersion(mainMenuUpdateVer)
 
-	ttyOpts, cleanup, err := util.TUITeaOptions()
-	if err != nil {
-		return fmt.Errorf("failed to run TUI: %w", err)
-	}
-	defer cleanup()
-
-	appModel := tui.NewAppModel(model)
-	// All-motion (not just cell-motion) so hover events arrive without a button
-	// held down — the main menu highlights whatever the pointer is over.
-	opts := append([]tea.ProgramOption{tea.WithAltScreen(), tea.WithMouseAllMotion()}, ttyOpts...)
-	p := tea.NewProgram(appModel, opts...)
-
-	finalModel, err := p.Run()
-	if err != nil {
-		return fmt.Errorf("failed to run TUI: %w", err)
-	}
-
-	// Extract MainMenuModel from inside AppModel.
-	app := finalModel.(tui.AppModel)
-	m := app.InnerMainMenu()
-	result := m.Result()
-
-	if result == nil {
-		result = &tui.MainMenuResult{
-			Action: "quit",
-			AITool: m.CurrentAITool(),
-		}
-	}
-
-	jsonOutput, _ := json.Marshal(result)
-	fmt.Println(string(jsonOutput))
-
-	return nil
+	return model, nil
 }

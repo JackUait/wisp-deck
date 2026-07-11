@@ -433,6 +433,11 @@ func (m *MainMenuModel) SetUpdateVersion(version string) {
 	m.updateVersion = version
 }
 
+// UpdateVersion returns the pending update version, empty when none.
+func (m *MainMenuModel) UpdateVersion() string {
+	return m.updateVersion
+}
+
 // SelectedItem returns the currently selected item index.
 func (m *MainMenuModel) SelectedItem() int {
 	return m.selectedItem
@@ -1902,13 +1907,10 @@ func (m *MainMenuModel) MapRowToItem(clickY int) int {
 	// switcher gap (blank row separating switchers from the tab bar)
 	// tab bar
 	// separator
-	// (optional) update notification row
 	// leading empty row
 	// Then project items start
+	// (the update notice reuses a header row above, so it never shifts this)
 	startRow := 6 + m.subscriptionRowCount() + m.accountRowCount()
-	if m.updateVersion != "" {
-		startRow++ // update notification takes a row
-	}
 
 	currentRow := startRow
 	flatIdx := 0
@@ -2585,6 +2587,14 @@ func (m *MainMenuModel) handleRune(r rune) (tea.Model, tea.Cmd) {
 		return m, m.enterAccountAddInput()
 	case 'w', 'W':
 		m.ToggleWorktreesAtCursor()
+		return m, nil
+	case 'u', 'U':
+		// Run the pending update (the header notice's button). Inert until an
+		// update is actually available.
+		if m.updateVersion != "" {
+			m.setActionResult("update")
+			return m, tea.Quit
+		}
 		return m, nil
 	case 's', 'S':
 		m.SetActiveTab(TabSettings)

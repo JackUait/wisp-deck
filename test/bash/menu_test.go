@@ -1199,3 +1199,103 @@ echo "action=$_selected_project_action"
 		t.Errorf("expected exactly 1 jq invocation, got %d", n)
 	}
 }
+
+// The menu wrapper reads the update flag itself (via get_update_version) so a
+// pending update reaches the TUI without any caller having to thread it in.
+func TestMenu_auto_populates_update_version_from_flag(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "captured_args")
+	binDir := mockCommand(t, dir, "wisp-deck-tui", fmt.Sprintf(`
+echo "$*" > %q
+echo '{"action":"quit"}'
+`, argsFile))
+	projectsFile := writeTempFile(t, dir, "projects", "proj1:/tmp/p1\n")
+
+	configDir := filepath.Join(dir, "config", "wisp-deck")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTempFile(t, configDir, "update-available", "2.9.9")
+	installDir := filepath.Join(dir, "install")
+	if err := os.MkdirAll(installDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTempFile(t, installDir, ".version", "2.6.0")
+
+	root := projectRoot(t)
+	env := buildEnv(t, []string{binDir},
+		"XDG_CONFIG_HOME="+filepath.Join(dir, "config"),
+		"WISP_DECK_INSTALL_DIR="+installDir,
+	)
+
+	script := fmt.Sprintf(`
+source %q 2>/dev/null || true
+source %q
+source %q
+error() { echo "ERROR: $*" >&2; }
+AI_TOOLS_AVAILABLE=("claude")
+SELECTED_AI_TOOL="claude"
+select_project_interactive %q || true
+`, filepath.Join(root, "lib/tui.sh"),
+		filepath.Join(root, "lib/update.sh"),
+		filepath.Join(root, "lib/menu-tui.sh"),
+		projectsFile)
+
+	_, _ = runBashSnippet(t, script, env)
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("failed to read captured args: %v", err)
+	}
+	assertContains(t, string(data), "--update-version")
+	assertContains(t, string(data), "2.9.9")
+}
+
+// A stale flag matching the installed version must NOT produce the flag.
+func TestMenu_skips_update_version_when_flag_matches_installed(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "captured_args")
+	binDir := mockCommand(t, dir, "wisp-deck-tui", fmt.Sprintf(`
+echo "$*" > %q
+echo '{"action":"quit"}'
+`, argsFile))
+	projectsFile := writeTempFile(t, dir, "projects", "proj1:/tmp/p1\n")
+
+	configDir := filepath.Join(dir, "config", "wisp-deck")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTempFile(t, configDir, "update-available", "2.6.0")
+	installDir := filepath.Join(dir, "install")
+	if err := os.MkdirAll(installDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTempFile(t, installDir, ".version", "2.6.0")
+
+	root := projectRoot(t)
+	env := buildEnv(t, []string{binDir},
+		"XDG_CONFIG_HOME="+filepath.Join(dir, "config"),
+		"WISP_DECK_INSTALL_DIR="+installDir,
+	)
+
+	script := fmt.Sprintf(`
+source %q 2>/dev/null || true
+source %q
+source %q
+error() { echo "ERROR: $*" >&2; }
+AI_TOOLS_AVAILABLE=("claude")
+SELECTED_AI_TOOL="claude"
+select_project_interactive %q || true
+`, filepath.Join(root, "lib/tui.sh"),
+		filepath.Join(root, "lib/update.sh"),
+		filepath.Join(root, "lib/menu-tui.sh"),
+		projectsFile)
+
+	_, _ = runBashSnippet(t, script, env)
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("failed to read captured args: %v", err)
+	}
+	assertNotContains(t, string(data), "--update-version")
+}

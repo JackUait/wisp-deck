@@ -35,6 +35,7 @@ const (
 	regionBody
 	regionSettings
 	regionStatsMode // the Full/Compact toggle in the Stats view
+	regionUpdate    // the right-aligned update notice / Update button
 )
 
 // hitTarget is the element under a given box-relative coordinate.
@@ -69,6 +70,29 @@ func (m *MainMenuModel) subscriptionRowIndex() int {
 // titleRowIndex returns the box-relative row of the AGENT/title row.
 func (m *MainMenuModel) titleRowIndex() int {
 	return 1 + m.accountRowCount() + m.subscriptionRowCount()
+}
+
+// updateNoticeRowIndex returns the box-relative row of the update notice, or -1
+// when no update is pending. Mirrors the render placement: the notice shares
+// the title row when a header row above hosts the wordmark, else it drops to
+// the spacer row under the wordmark-bearing title row.
+func (m *MainMenuModel) updateNoticeRowIndex() int {
+	if m.updateVersion == "" {
+		return -1
+	}
+	if m.accountRowCount() > 0 || m.subscriptionRowCount() > 0 {
+		return m.titleRowIndex()
+	}
+	return m.titleRowIndex() + 1
+}
+
+// updateNoticeSpan returns the [start, end) box-relative column span of the
+// right-aligned update notice, mirroring headerRow's layout: the title's last
+// column is the last content column (menuContentWidth) after the left border
+// and leading space.
+func (m *MainMenuModel) updateNoticeSpan() (int, int) {
+	end := 1 + menuContentWidth
+	return end - lipgloss.Width(m.updateNotice()), end
 }
 
 // tabBarRowIndex returns the box-relative row of the Projects · Settings · Stats
@@ -200,6 +224,11 @@ func (m *MainMenuModel) HitTest(boxX, boxY int) hitTarget {
 	}
 	if boxY == m.subscriptionRowIndex() && m.subscriptionFocusable() && m.onSwitcherControl(boxX, regionSubscription) {
 		return hitTarget{region: regionSubscription, prev: m.switcherPrev(boxX, regionSubscription)}
+	}
+	if boxY == m.updateNoticeRowIndex() && m.updateVersion != "" {
+		if start, end := m.updateNoticeSpan(); boxX >= start && boxX < end {
+			return hitTarget{region: regionUpdate}
+		}
 	}
 
 	// Tab bar.
@@ -393,6 +422,10 @@ func (m *MainMenuModel) clickTarget(t hitTarget) (tea.Model, tea.Cmd) {
 		m.focus = FocusBody
 		m.setStatsCompact(t.index == 1)
 		return m, nil
+	case regionUpdate:
+		// The notice is the button: clicking it mirrors the U key.
+		m.setActionResult("update")
+		return m, tea.Quit
 	}
 	return m, nil
 }

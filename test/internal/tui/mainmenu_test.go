@@ -842,11 +842,11 @@ func TestMainMenu_ViewUpdateVersion(t *testing.T) {
 	m.SetUpdateVersion("v1.2.3")
 	m.SetSize(80, 30)
 	view := m.View()
-	if !strings.Contains(view, "v1.2.3") {
-		t.Error("view should show update version when set")
+	if !strings.Contains(view, "v1.2.3 available") {
+		t.Error("view should show the pending version in the header notice")
 	}
-	if !strings.Contains(view, "Update available") {
-		t.Error("view should show 'Update available' message")
+	if !strings.Contains(view, "U Update") {
+		t.Error("view should show the Update button in the header notice")
 	}
 }
 
@@ -854,8 +854,8 @@ func TestMainMenu_ViewNoUpdateVersion(t *testing.T) {
 	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 	view := m.View()
-	if strings.Contains(view, "Update available") {
-		t.Error("view should NOT show update message when version is empty")
+	if strings.Contains(view, "U Update") || strings.Contains(view, "available") {
+		t.Error("view should NOT show the update notice when version is empty")
 	}
 }
 
@@ -1126,14 +1126,15 @@ func TestMainMenu_MapRowToItem_WithUpdateVersion(t *testing.T) {
 	m.SetUpdateVersion("v1.2.3")
 	m.SetSize(80, 30)
 
-	// With the subscription row and an update notification, the project shifts down:
-	// Row 0: border, 1: title, 2: subscription, 3: switcher gap, 4: tab bar,
-	// 5: separator, 6: update notification, 7: empty, 8-9: project.
-	if m.MapRowToItem(8) != 0 {
-		t.Errorf("with update version, project should be at row 8, got %d", m.MapRowToItem(8))
+	// The update notice reuses an existing header row (under the wordmark), so
+	// a pending update must NOT shift the body rows:
+	// Row 0: border, 1: subscription, 2: title, 3: switcher gap, 4: tab bar,
+	// 5: separator, 6: empty, 7-8: project.
+	if m.MapRowToItem(7) != 0 {
+		t.Errorf("with update version, project should be at row 7, got %d", m.MapRowToItem(7))
 	}
-	if m.MapRowToItem(9) != 0 {
-		t.Errorf("with update version, project path at row 9 should map to 0, got %d", m.MapRowToItem(9))
+	if m.MapRowToItem(8) != 0 {
+		t.Errorf("with update version, project path at row 8 should map to 0, got %d", m.MapRowToItem(8))
 	}
 }
 

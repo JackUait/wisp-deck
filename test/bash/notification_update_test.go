@@ -297,24 +297,130 @@ notify_if_update_available
 	}
 }
 
-func TestUpdate_notify_if_update_available_shows_version_and_deletes_flag(t *testing.T) {
+func TestUpdate_notify_if_update_available_shows_version_and_keeps_flag(t *testing.T) {
+	// The flag must survive the notify so the main menu (which reads it via
+	// get_update_version) can keep showing the update notice until the update
+	// actually runs.
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, "config", "wisp-deck")
 	os.MkdirAll(configDir, 0755)
 	writeTempFile(t, configDir, "update-available", "2.7.0")
+	installDir := filepath.Join(dir, "install")
+	os.MkdirAll(installDir, 0755)
+	writeTempFile(t, installDir, ".version", "2.6.0")
 
 	snippet := updateSnippet(t, fmt.Sprintf(`
 XDG_CONFIG_HOME=%q
-notify_if_update_available
-`, filepath.Join(dir, "config")))
+notify_if_update_available %q
+`, filepath.Join(dir, "config"), installDir))
 	out, code := runBashSnippet(t, snippet, nil)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "2.7.0")
 	assertContains(t, out, "npx wisp-deck")
 	flagFile := filepath.Join(configDir, "update-available")
-	if _, err := os.Stat(flagFile); !os.IsNotExist(err) {
-		t.Errorf("expected flag file to be deleted after notify_if_update_available")
+	if _, err := os.Stat(flagFile); err != nil {
+		t.Errorf("expected flag file to survive notify_if_update_available, got %v", err)
 	}
+}
+
+func TestUpdate_notify_if_update_available_silent_when_flag_matches_installed(t *testing.T) {
+	// A stale flag equal to the installed version (left over from before an
+	// update, inside the 24h re-check throttle) must not nag.
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "config", "wisp-deck")
+	os.MkdirAll(configDir, 0755)
+	writeTempFile(t, configDir, "update-available", "2.7.0")
+	installDir := filepath.Join(dir, "install")
+	os.MkdirAll(installDir, 0755)
+	writeTempFile(t, installDir, ".version", "2.7.0")
+
+	snippet := updateSnippet(t, fmt.Sprintf(`
+XDG_CONFIG_HOME=%q
+notify_if_update_available %q
+`, filepath.Join(dir, "config"), installDir))
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("expected no output when flag matches installed version, got %q", out)
+	}
+}
+
+// --- get_update_version ---
+
+func TestUpdate_get_update_version_prints_version_when_newer(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "config", "wisp-deck")
+	os.MkdirAll(configDir, 0755)
+	writeTempFile(t, configDir, "update-available", "2.7.0")
+	installDir := filepath.Join(dir, "install")
+	os.MkdirAll(installDir, 0755)
+	writeTempFile(t, installDir, ".version", "2.6.0")
+
+	snippet := updateSnippet(t, fmt.Sprintf(`
+XDG_CONFIG_HOME=%q
+get_update_version %q
+`, filepath.Join(dir, "config"), installDir))
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "2.7.0" {
+		t.Errorf("expected '2.7.0', got %q", strings.TrimSpace(out))
+	}
+}
+
+func TestUpdate_get_update_version_empty_when_flag_matches_installed(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "config", "wisp-deck")
+	os.MkdirAll(configDir, 0755)
+	writeTempFile(t, configDir, "update-available", "2.7.0")
+	installDir := filepath.Join(dir, "install")
+	os.MkdirAll(installDir, 0755)
+	writeTempFile(t, installDir, ".version", "2.7.0")
+
+	snippet := updateSnippet(t, fmt.Sprintf(`
+XDG_CONFIG_HOME=%q
+get_update_version %q
+`, filepath.Join(dir, "config"), installDir))
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("expected empty output when up to date, got %q", out)
+	}
+}
+
+func TestUpdate_get_update_version_empty_when_no_flag(t *testing.T) {
+	dir := t.TempDir()
+	installDir := filepath.Join(dir, "install")
+	os.MkdirAll(installDir, 0755)
+	writeTempFile(t, installDir, ".version", "2.6.0")
+
+	snippet := updateSnippet(t, fmt.Sprintf(`
+XDG_CONFIG_HOME=%q
+get_update_version %q
+`, filepath.Join(dir, "config"), installDir))
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("expected empty output when no flag file, got %q", out)
+	}
+}
+
+// --- run_wisp_deck_update ---
+
+func TestUpdate_run_wisp_deck_update_runs_npx_latest(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "npx-args")
+	binDir := mockCommand(t, dir, "npx", fmt.Sprintf(`echo "$@" > %q`, argsFile))
+	env := buildEnv(t, []string{binDir})
+
+	snippet := updateSnippet(t, `run_wisp_deck_update`)
+	_, code := runBashSnippet(t, snippet, env)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("expected npx to be invoked: %v", err)
+	}
+	assertContains(t, string(data), "wisp-deck@latest")
 }
 
 // --- check_for_update ---
@@ -422,6 +528,40 @@ sleep 0.3
 	flagFile := filepath.Join(dir, "config", "wisp-deck", "update-available")
 	if _, err := os.Stat(flagFile); !os.IsNotExist(err) {
 		t.Errorf("expected no flag file when already up to date")
+	}
+}
+
+func TestUpdate_check_for_update_clears_stale_flag_when_up_to_date(t *testing.T) {
+	// After an update installs, a flag written before it becomes stale; the next
+	// check must remove it so the menu stops offering the update.
+	dir := t.TempDir()
+	installDir := filepath.Join(dir, "install")
+	os.MkdirAll(installDir, 0755)
+	writeTempFile(t, installDir, ".version", "2.7.0")
+	configDir := filepath.Join(dir, "config", "wisp-deck")
+	os.MkdirAll(configDir, 0755)
+	writeTempFile(t, configDir, "update-available", "2.7.0")
+
+	npmBody := `
+if [ "$1" = "view" ] && [ "$2" = "wisp-deck" ] && [ "$3" = "version" ]; then
+  echo "2.7.0"
+  exit 0
+fi
+exit 1
+`
+	binDir := mockCommand(t, dir, "npm", npmBody)
+	env := buildEnv(t, []string{binDir},
+		"XDG_CONFIG_HOME="+filepath.Join(dir, "config"))
+
+	snippet := updateSnippet(t, fmt.Sprintf(`
+check_for_update %q
+sleep 0.3
+`, installDir))
+	_, code := runBashSnippet(t, snippet, env)
+	assertExitCode(t, code, 0)
+	flagFile := filepath.Join(configDir, "update-available")
+	if _, err := os.Stat(flagFile); !os.IsNotExist(err) {
+		t.Errorf("expected stale flag to be cleared when up to date")
 	}
 }
 

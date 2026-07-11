@@ -89,7 +89,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 		lines = append(lines, m.renderSubscriptionRow(leftBorder, rightBorder))
 	}
 	lines = append(lines, m.renderTitleRow(leftBorder, rightBorder))
-	lines = append(lines, m.emptyMenuRow(leftBorder, rightBorder))
+	lines = append(lines, m.renderHeaderGapRow(leftBorder, rightBorder))
 	lines = append(lines, m.renderTabBar(leftBorder, rightBorder))
 	lines = append(lines, separator)
 
