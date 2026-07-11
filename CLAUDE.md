@@ -135,6 +135,22 @@ make release                            # Create a new release
 WISP_DECK_LIVE_CLAUDE_E2E=1 go test ./test/bash/ -run TestLiveClaude -v  # After a claude upgrade: verify the real-claude behaviors draft preservation depends on
 ```
 
+### Reading a red CI run
+
+Every workflow job pipes `go test -json` to a file and hands it to `cmd/ci-report`,
+which names each failing test, replays its output, annotates the source line, and
+writes the GitHub step summary. So a failed job's **last step is the whole story** —
+no need to scroll the raw JSON stream. It also catches what a `grep '"Action":"fail"'`
+misses: build failures with no test, toolchain errors outside the JSON stream, and a
+run that produced no output at all (which used to be reported as success).
+
+Render any local run the same way:
+
+```bash
+go test -json ./... 2>&1 | tee out.json >/dev/null
+go run ./cmd/ci-report --title "Full suite" out.json
+```
+
 ### Creating Releases
 
 **EVERY release MUST include fresh `wisp-deck-tui` binaries. NO EXCEPTIONS.**

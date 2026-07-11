@@ -92,6 +92,47 @@ func TestReport_keeps_non_json_toolchain_noise(t *testing.T) {
 	}
 }
 
+// `go test` writes module-fetch progress to stderr, which CI merges into the
+// JSON stream. It is chatter, not an error — treating it as one would fail a
+// green run.
+func TestReport_ignores_module_download_chatter(t *testing.T) {
+	in := jsonLines(
+		`go: downloading github.com/creack/pty v1.1.24`,
+		`go: downloading github.com/charmbracelet/bubbletea v1.3.4`,
+		`{"Action":"pass","Package":"p","Test":"TestA"}`,
+		`{"Action":"pass","Package":"p"}`,
+	)
+
+	r := Parse(strings.NewReader(in))
+
+	if r.HasFailures() {
+		t.Fatalf("module-download chatter must not fail the run:\n%s", r.Text())
+	}
+	if len(r.Annotations()) != 0 {
+		t.Errorf("no annotations should be emitted for download chatter: %v", r.Annotations())
+	}
+}
+
+func TestReport_still_fails_on_a_real_toolchain_error_beside_the_chatter(t *testing.T) {
+	in := jsonLines(
+		`go: downloading github.com/creack/pty v1.1.24`,
+		`go: errors parsing go.mod:`,
+		`./menu.go:12:2: undefined: Foo`,
+	)
+
+	r := Parse(strings.NewReader(in))
+
+	if !r.HasFailures() {
+		t.Fatal("a real toolchain error must still fail, even when download chatter is present")
+	}
+	if strings.Contains(r.Text(), "downloading") {
+		t.Errorf("chatter should be filtered out of the report:\n%s", r.Text())
+	}
+	if !strings.Contains(r.Text(), "undefined: Foo") {
+		t.Errorf("the real error must survive:\n%s", r.Text())
+	}
+}
+
 func TestReport_says_everything_passed_when_nothing_failed(t *testing.T) {
 	in := jsonLines(
 		`{"Action":"pass","Package":"p","Test":"TestA"}`,
@@ -199,6 +240,46 @@ func TestReport_counts_read_as_english(t *testing.T) {
 	}
 	if !strings.Contains(text, "1 test)") {
 		t.Errorf("want a singular test count:\n%s", text)
+	}
+}
+
+// The pty tests dump whole terminal frames — thousands of escape-sequence
+// characters on ONE line. Replayed verbatim it buries the assertion that
+// actually explains the failure.
+func TestReport_clips_an_enormous_single_line(t *testing.T) {
+	blob := strings.Repeat(`\x1b[90m`, 900)
+	in := jsonLines(
+		`{"Action":"output","Package":"p","Test":"TestPty","Output":"    pty_test.go:12: expected 6 redraws, got 5. raw: `+blob+`\n"}`,
+		`{"Action":"fail","Package":"p","Test":"TestPty"}`,
+	)
+
+	text := Parse(strings.NewReader(in)).Text()
+
+	for _, line := range strings.Split(text, "\n") {
+		if len(line) > maxLineChars+40 {
+			t.Fatalf("a %d-char line survived; long lines must be clipped", len(line))
+		}
+	}
+	if !strings.Contains(text, "expected 6 redraws, got 5") {
+		t.Errorf("clipping must keep the head of the line, where the assertion is:\n%s", text)
+	}
+}
+
+func TestReport_annotation_stays_short_enough_to_read(t *testing.T) {
+	var lines []string
+	for i := 0; i < 40; i++ {
+		lines = append(lines,
+			`{"Action":"output","Package":"p","Test":"TestPty","Output":"    `+strings.Repeat("noise ", 60)+`\n"}`)
+	}
+	lines = append(lines, `{"Action":"fail","Package":"p","Test":"TestPty"}`)
+
+	ann := Parse(strings.NewReader(jsonLines(lines...))).Annotations()
+
+	if len(ann) != 1 {
+		t.Fatalf("got %d annotations, want 1", len(ann))
+	}
+	if len(ann[0]) > maxAnnotationChars+200 {
+		t.Errorf("annotation is %d chars; GitHub renders it in a small box, keep it skimmable", len(ann[0]))
 	}
 }
 

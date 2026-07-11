@@ -20,6 +20,19 @@ import (
 // runaway test cannot bury the other failures.
 const maxOutputLines = 60
 
+// maxLineChars clips one line. The pty tests print whole terminal frames —
+// thousands of escape-sequence characters on a single line — and the assertion
+// that explains the failure is at the head of it.
+const maxLineChars = 300
+
+// maxAnnotationChars bounds the `::error` body. GitHub renders it in a small box
+// on the run summary; past a few lines it stops being skimmable.
+const maxAnnotationChars = 900
+
+// maxAnnotationLines is how many lines of output an annotation carries. The
+// first lines hold the assertion; the rest is context best read in the log.
+const maxAnnotationLines = 5
+
 const modulePrefix = "github.com/jackuait/wisp-deck/"
 
 // Failure is one failed test, or one package that failed without running a test
@@ -69,7 +82,9 @@ func Parse(r io.Reader) *Report {
 
 		var ev event
 		if err := json.Unmarshal([]byte(line), &ev); err != nil || ev.Action == "" {
-			rep.Noise = append(rep.Noise, line)
+			if !isChatter(line) {
+				rep.Noise = append(rep.Noise, line)
+			}
 			continue
 		}
 
@@ -119,6 +134,29 @@ func Parse(r io.Reader) *Report {
 	return rep
 }
 
+// chatterPrefixes are the progress lines `go` writes to stderr while resolving
+// modules. CI merges stderr into the JSON stream, so they land here — but they
+// say nothing went wrong, and failing a green run over them would be worse than
+// the problem this package exists to fix.
+var chatterPrefixes = []string{
+	"go: downloading ",
+	"go: finding ",
+	"go: extracting ",
+	"go: upgraded ",
+	"go: downgraded ",
+	"go: added ",
+	"go: removed ",
+}
+
+func isChatter(line string) bool {
+	for _, p := range chatterPrefixes {
+		if strings.HasPrefix(line, p) {
+			return true
+		}
+	}
+	return false
+}
+
 func hasFailedChild(failed map[string]bool, pkg, test string) bool {
 	prefix := pkg + "\x00" + test + "/"
 	for key := range failed {
@@ -159,6 +197,14 @@ func meaningfulOutput(lines []string) []string {
 // HasFailures reports whether the run should fail the job.
 func (r *Report) HasFailures() bool {
 	return r.empty || len(r.Failures) > 0 || len(r.Noise) > 0
+}
+
+// clip shortens one line, keeping its head — that is where the assertion is.
+func clip(line string) string {
+	if len(line) <= maxLineChars {
+		return line
+	}
+	return line[:maxLineChars] + fmt.Sprintf(" … (+%d chars clipped)", len(line)-maxLineChars)
 }
 
 func testCount(n int) string {
@@ -207,7 +253,7 @@ func (r *Report) Text() string {
 		fmt.Fprintf(&b, "\nFAIL  %s\n", f.title())
 		lines, dropped := truncate(f.Output)
 		for _, l := range lines {
-			fmt.Fprintf(&b, "      %s\n", strings.TrimSpace(l))
+			fmt.Fprintf(&b, "      %s\n", clip(strings.TrimSpace(l)))
 		}
 		if dropped > 0 {
 			fmt.Fprintf(&b, "      … %d more lines truncated (see the full log above)\n", dropped)
@@ -218,7 +264,7 @@ func (r *Report) Text() string {
 		b.WriteString("\nFAIL  toolchain errors (outside the test stream)\n")
 		lines, dropped := truncate(r.Noise)
 		for _, l := range lines {
-			fmt.Fprintf(&b, "      %s\n", l)
+			fmt.Fprintf(&b, "      %s\n", clip(l))
 		}
 		if dropped > 0 {
 			fmt.Fprintf(&b, "      … %d more lines truncated\n", dropped)
@@ -272,7 +318,14 @@ func (r *Report) Annotations() []string {
 // locate finds the source position a failure should be pinned to, and the
 // message to show there.
 func locate(f Failure) (file, line, msg string) {
-	body := strings.Join(firstN(f.Output, maxOutputLines), "\n")
+	var trimmed []string
+	for _, l := range firstN(f.Output, maxAnnotationLines) {
+		trimmed = append(trimmed, clip(strings.TrimSpace(l)))
+	}
+	body := strings.Join(trimmed, "\n")
+	if len(body) > maxAnnotationChars {
+		body = body[:maxAnnotationChars] + " … (truncated — see the log)"
+	}
 	for _, l := range f.Output {
 		m := sourceRef.FindStringSubmatch(l)
 		if m == nil {
@@ -325,7 +378,7 @@ func (r *Report) Markdown(title string) string {
 			b.WriteString("(the test failed without producing output)\n")
 		}
 		for _, l := range lines {
-			b.WriteString(strings.TrimSpace(l) + "\n")
+			b.WriteString(clip(strings.TrimSpace(l)) + "\n")
 		}
 		if dropped > 0 {
 			fmt.Fprintf(&b, "… %d more lines truncated\n", dropped)
