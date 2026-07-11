@@ -113,6 +113,70 @@ func TestRestoreLayoutWatch_reapplies_after_late_resize(t *testing.T) {
 	}
 }
 
+// TestRestoreLayoutWatch_stops_on_user_pane_drag verifies the watcher's
+// hands-off rule: the settle horizon has to be generous (a loaded post-crash
+// storm can deliver the pty resize many seconds in), and a long-lived watcher
+// is only safe if it stands down the moment the user drags a pane border. A
+// drag changes #{window_layout} at a CONSTANT window size — the watcher must
+// exit promptly on that signal and must never re-apply over the user's
+// arrangement.
+func TestRestoreLayoutWatch_stops_on_user_pane_drag(t *testing.T) {
+	tmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux not available")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	sock := fmt.Sprintf("wisp-ld-%d", os.Getpid())
+	_ = exec.Command(tmux, "-L", sock, "kill-server").Run()
+	t.Cleanup(func() { _ = exec.Command(tmux, "-L", sock, "kill-server").Run() })
+
+	dir := t.TempDir()
+	shim := filepath.Join(dir, "tmux-shim")
+	if err := os.WriteFile(shim,
+		[]byte("#!/bin/bash\nexec \""+tmux+"\" -L \""+sock+"\" \"$@\"\n"), 0755); err != nil {
+		t.Fatalf("write shim: %v", err)
+	}
+
+	rt(t, ctx, tmux, sock, "new-session", "-d", "-s", "D", "-x", "188", "-y", "51", "cat")
+	rt(t, ctx, tmux, sock, "split-window", "-h", "-p", "75", "-t", "D:0", "cat")
+	rt(t, ctx, tmux, sock, "select-pane", "-L", "-t", "D:0")
+	rt(t, ctx, tmux, sock, "split-window", "-v", "-p", "45", "-t", "D:0", "cat")
+	layout := rt(t, ctx, tmux, sock, "display-message", "-p", "-t", "D:0", "#{window_layout}")
+
+	// Long settle (10s) and horizon (30s): without drag detection the watcher
+	// would linger for the full settle after the drag.
+	root := projectRoot(t)
+	watcher := exec.Command("bash", "-c",
+		fmt.Sprintf("source %q && restore_layout_watch %q D %q 0.1 100 300",
+			filepath.Join(root, "lib", "session-restore.sh"), shim, layout))
+	if err := watcher.Start(); err != nil {
+		t.Fatalf("start watcher: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- watcher.Wait() }()
+	t.Cleanup(func() { _ = watcher.Process.Kill() })
+
+	// Let the watcher make its initial application, then drag a border: the
+	// right (AI) column from 141 to 100 columns, window size unchanged.
+	time.Sleep(500 * time.Millisecond)
+	rt(t, ctx, tmux, sock, "resize-pane", "-t", "D:0.2", "-x", "100")
+	dragged := geom(t, ctx, tmux, sock, "D")
+
+	// The watcher must exit well before its 10s settle — the drag is its cue.
+	select {
+	case <-done:
+	case <-time.After(4 * time.Second):
+		t.Fatal("watcher did not stand down after a user pane drag")
+	}
+
+	if got := geom(t, ctx, tmux, sock, "D"); got != dragged {
+		t.Errorf("watcher reverted the user's drag\n want:\n%s\n got:\n%s", dragged, got)
+	}
+}
+
 // TestWrapperRestore_replays_layout_while_session_alive locks in the fix for
 // the dead-code replay: `tmux new-session` blocks until the session ends, so
 // the wrapper must arrange the select-layout replay to happen WHILE
