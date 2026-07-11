@@ -17,9 +17,16 @@
 # opening the switcher. No-op when the file is missing (keeps the resident copy).
 reload_switcher_lib() {
   local lib_dir="$1"
-  [ -n "$lib_dir" ] && [ -f "$lib_dir/account-switch.sh" ] || return 0
+  [ -n "$lib_dir" ] || return 0
+  # session-pool.sh first: the switch flow depends on its helpers, and a
+  # long-running ledger that predates the pool never sourced it at all —
+  # without this, capture and handoff are silently skipped until the pane
+  # restarts.
   # shellcheck source=/dev/null
-  source "$lib_dir/account-switch.sh"
+  [ -f "$lib_dir/session-pool.sh" ] && source "$lib_dir/session-pool.sh"
+  # shellcheck source=/dev/null
+  [ -f "$lib_dir/account-switch.sh" ] && source "$lib_dir/account-switch.sh"
+  return 0
 }
 
 # switcher_supports_session_flags — exit 0 when the installed wisp-deck-tui
@@ -775,15 +782,15 @@ relaunch_switch_tool() {
 
   # Cross-agent handoff: the target has no session of its own, but the pool
   # holds another agent's exported conversation — seed the fresh launch with
-  # an initial prompt pointing at it (claude and codex both take a positional
-  # prompt; opencode has no verified injection vector and launches bare).
+  # an initial prompt pointing at it. claude and codex take it positionally;
+  # opencode's TUI takes it through --prompt.
   local handoff_arg=""
-  if [ -z "$sid" ] && [ "$target" != "opencode" ] \
-     && [ -n "$pool" ] && [ -f "$pool/handoff.md" ]; then
+  if [ -z "$sid" ] && [ -n "$pool" ] && [ -f "$pool/handoff.md" ]; then
     local handoff_from
     handoff_from="$(pool_get "$pool/meta" last_export_tool)"
     if [ -n "$handoff_from" ] && command -v handoff_prompt >/dev/null 2>&1; then
       handoff_arg=" $(printf '%q' "$(handoff_prompt "$pool/handoff.md" "$handoff_from")")"
+      [ "$target" = "opencode" ] && handoff_arg=" --prompt$handoff_arg"
     fi
   fi
 

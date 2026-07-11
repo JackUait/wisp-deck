@@ -163,6 +163,75 @@ func TestExportClaudeHandoff_handles_string_and_block_content(t *testing.T) {
 	assertNotContains(t, md, "secret")
 }
 
+// claude wraps slash commands and local-command output in <...> pseudo-tags
+// ("<command-name>/clear</command-name>", "<local-command-caveat>..."). Those
+// are harness plumbing, not the user's words — they must not reach the handoff.
+func TestExportClaudeHandoff_skips_command_wrapper_messages(t *testing.T) {
+	dir := t.TempDir()
+	transcript := writeTempFile(t, dir, "sid.jsonl", strings.Join([]string{
+		`{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>"}}`,
+		`{"type":"user","message":{"role":"user","content":"<local-command-caveat>Caveat: local commands</local-command-caveat>"}}`,
+		`{"type":"user","message":{"role":"user","content":"real question"}}`,
+	}, "\n")+"\n")
+	out := filepath.Join(dir, "handoff.md")
+	_, code := runBashFunc(t, "lib/session-pool.sh", "export_claude_handoff",
+		[]string{transcript, out}, nil)
+	assertExitCode(t, code, 0)
+	data, _ := os.ReadFile(out)
+	assertContains(t, string(data), "real question")
+	assertNotContains(t, string(data), "command-name")
+	assertNotContains(t, string(data), "Caveat")
+}
+
+// A real transcript tail is dominated by assistant chunks (one entry per
+// streamed block); a flat last-N window exported ZERO user messages in the
+// observed failure. Each role gets its own quota so the user's voice always
+// survives.
+func TestExportClaudeHandoff_keeps_user_voice_when_assistant_dominates(t *testing.T) {
+	dir := t.TempDir()
+	var lines []string
+	lines = append(lines,
+		`{"type":"user","message":{"role":"user","content":"first ask"}}`,
+		`{"type":"user","message":{"role":"user","content":"second ask"}}`,
+	)
+	for i := 0; i < 40; i++ {
+		lines = append(lines,
+			fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"chunk %d"}]}}`, i))
+	}
+	transcript := writeTempFile(t, dir, "sid.jsonl", strings.Join(lines, "\n")+"\n")
+	out := filepath.Join(dir, "handoff.md")
+	_, code := runBashFunc(t, "lib/session-pool.sh", "export_claude_handoff",
+		[]string{transcript, out}, nil)
+	assertExitCode(t, code, 0)
+	data, _ := os.ReadFile(out)
+	assertContains(t, string(data), "first ask")
+	assertContains(t, string(data), "second ask")
+	assertContains(t, string(data), "chunk 39")
+	// Order must stay chronological: the asks precede the chunks.
+	if strings.Index(string(data), "second ask") > strings.Index(string(data), "chunk 39") {
+		t.Fatalf("messages out of chronological order:\n%s", data)
+	}
+}
+
+func TestExportCodexHandoff_keeps_user_voice_when_assistant_dominates(t *testing.T) {
+	root := t.TempDir()
+	extra := []string{
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"the only ask"}]}}`,
+	}
+	for i := 0; i < 40; i++ {
+		extra = append(extra,
+			fmt.Sprintf(`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"chunk %d"}]}}`, i))
+	}
+	rollout := writeRollout(t, root, "019c4ee5-2e51-7400-ba62-00000000000d", "/proj", time.Now(), extra...)
+	out := filepath.Join(root, "handoff.md")
+	_, code := runBashFunc(t, "lib/session-pool.sh", "export_codex_handoff",
+		[]string{rollout, out}, nil)
+	assertExitCode(t, code, 0)
+	data, _ := os.ReadFile(out)
+	assertContains(t, string(data), "the only ask")
+	assertContains(t, string(data), "chunk 39")
+}
+
 func TestExportHandoff_missing_source_fails_without_writing(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "handoff.md")

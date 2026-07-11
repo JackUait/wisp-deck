@@ -84,18 +84,23 @@ pool_claude_transcript() {
   printf '%s\n' "$HOME/.claude/projects/${proj//[^A-Za-z0-9]/-}/$sid.jsonl"
 }
 
-# export_claude_handoff <transcript_jsonl> <out_md> [max_msgs] — write the
-# transcript's last max_msgs (default 30) user/assistant TEXT messages as
-# markdown. String content passes through; block-list content keeps only text
-# blocks (thinking/tool blocks are model plumbing, not conversation). Non-zero
-# (and no file) when the transcript is missing/unreadable or python3 is absent.
+# export_claude_handoff <transcript_jsonl> <out_md> [max_per_role] — write the
+# transcript's tail as markdown, keeping the last max_per_role (default 15)
+# messages OF EACH ROLE, merged chronologically. Per-role quotas rather than a
+# flat window: a real tail is dominated by assistant chunks (one entry per
+# streamed block), and a flat last-N exported zero user messages. String
+# content passes through; block-list content keeps only text blocks
+# (thinking/tool blocks are model plumbing, not conversation); user texts that
+# start with '<' are harness plumbing (<command-name>, <local-command-caveat>,
+# system reminders), not the user's words. Non-zero (and no file) when the
+# transcript is missing/unreadable or python3 is absent.
 export_claude_handoff() {
-  local transcript="$1" out="$2" max="${3:-30}"
+  local transcript="$1" out="$2" max="${3:-15}"
   [ -f "$transcript" ] || return 1
   command -v python3 >/dev/null 2>&1 || return 1
   python3 - "$transcript" "$out" "$max" <<'PYEOF'
 import json, sys
-transcript, out, max_msgs = sys.argv[1], sys.argv[2], int(sys.argv[3])
+transcript, out, per_role = sys.argv[1], sys.argv[2], int(sys.argv[3])
 msgs = []
 with open(transcript, "rb") as f:
     for line in f:
@@ -114,27 +119,33 @@ with open(transcript, "rb") as f:
         else:
             continue
         text = text.strip()
-        if text:
-            msgs.append((e["type"], text))
+        if not text or (e["type"] == "user" and text.startswith("<")):
+            continue
+        msgs.append((e["type"], text))
+keep = set()
+for role in ("user", "assistant"):
+    idx = [i for i, (r, _) in enumerate(msgs) if r == role]
+    keep.update(idx[-per_role:])
 with open(out, "w") as f:
     f.write("# Conversation so far\n\n")
-    for role, text in msgs[-max_msgs:]:
+    for i in sorted(keep):
+        role, text = msgs[i]
         f.write("**%s:** %s\n\n" % ("User" if role == "user" else "Assistant", text))
 PYEOF
 }
 
-# export_codex_handoff <rollout_jsonl> <out_md> [max_msgs] — same markdown
-# shape from a codex rollout: response_item/message payloads, roles
-# user/assistant only, input_text/output_text items. User texts that are
-# injected context wrappers (they start with '<') are codex plumbing, not the
-# user's words — skipped.
+# export_codex_handoff <rollout_jsonl> <out_md> [max_per_role] — same markdown
+# shape (and the same per-role tail quotas) from a codex rollout:
+# response_item/message payloads, roles user/assistant only,
+# input_text/output_text items. User texts that are injected context wrappers
+# (they start with '<') are codex plumbing, not the user's words — skipped.
 export_codex_handoff() {
-  local rollout="$1" out="$2" max="${3:-30}"
+  local rollout="$1" out="$2" max="${3:-15}"
   [ -f "$rollout" ] || return 1
   command -v python3 >/dev/null 2>&1 || return 1
   python3 - "$rollout" "$out" "$max" <<'PYEOF'
 import json, sys
-rollout, out, max_msgs = sys.argv[1], sys.argv[2], int(sys.argv[3])
+rollout, out, per_role = sys.argv[1], sys.argv[2], int(sys.argv[3])
 msgs = []
 with open(rollout, "rb") as f:
     for line in f:
@@ -155,9 +166,14 @@ with open(rollout, "rb") as f:
         if not text or (role == "user" and text.startswith("<")):
             continue
         msgs.append((role, text))
+keep = set()
+for role in ("user", "assistant"):
+    idx = [i for i, (r, _) in enumerate(msgs) if r == role]
+    keep.update(idx[-per_role:])
 with open(out, "w") as f:
     f.write("# Conversation so far\n\n")
-    for role, text in msgs[-max_msgs:]:
+    for i in sorted(keep):
+        role, text = msgs[i]
         f.write("**%s:** %s\n\n" % ("User" if role == "user" else "Assistant", text))
 PYEOF
 }

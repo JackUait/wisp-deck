@@ -202,6 +202,76 @@ func TestRelaunchSwitchTool_opencode_round_trip_uses_continue(t *testing.T) {
 	assertContains(t, logOut, "/opt/opencode --continue")
 }
 
+// claude → opencode with no opencode stint: opencode takes no positional
+// prompt, but its TUI has a --prompt flag — the handoff must ride in on it or
+// the conversation silently dies at the opencode border (the observed real-use
+// failure).
+func TestRelaunchSwitchTool_claude_to_opencode_seeds_handoff_via_prompt_flag(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	bin := poolMockTmux(t, dir, rec)
+	stampTmuxEnv(t, dir, "WISP_DECK_CLAUDE_SESSION", "sid-2")
+	writeTempFile(t, filepath.Join(dir, ".claude", "projects", "-proj"), "sid-2.jsonl",
+		`{"type":"user","message":{"role":"user","content":"ship the release"}}`+"\n")
+	ctx := poolCtx(t, dir, "claude")
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, poolSwitchSnippet(t,
+		fmt.Sprintf("relaunch_switch_tool tmux %q opencode", ctx)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "/opt/opencode")
+	assertContains(t, logOut, "--prompt")
+	assertContains(t, logOut, "taking over")
+}
+
+// An opencode pane that already has its own session resumes it (--continue)
+// and must NOT also be fed the handoff prompt.
+func TestRelaunchSwitchTool_opencode_with_own_session_not_seeded(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	bin := poolMockTmux(t, dir, rec)
+	stampTmuxEnv(t, dir, "WISP_DECK_OPENCODE_ACTIVE", "1")
+	pool := filepath.Join(dir, "session-pool", "relaunch")
+	writeTempFile(t, pool, "handoff.md", "# Conversation so far\n\n**User:** x\n")
+	writeTempFile(t, pool, "meta", "last_export_tool=claude\n")
+	ctx := poolCtx(t, dir, "claude")
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, poolSwitchSnippet(t,
+		fmt.Sprintf("relaunch_switch_tool tmux %q opencode", ctx)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "--continue")
+	assertNotContains(t, logOut, "--prompt")
+}
+
+// reload_switcher_lib must also re-source session-pool.sh: a long-running
+// ledger that predates the pool would otherwise switch with pool helpers
+// missing — capture and handoff silently skipped — until the pane restarts.
+func TestReloadSwitcherLib_loads_session_pool(t *testing.T) {
+	dir := t.TempDir()
+	root := projectRoot(t)
+	for _, f := range []string{"account-switch.sh", "session-pool.sh"} {
+		src, err := os.ReadFile(filepath.Join(root, "lib", f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, f), src, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Simulate a pre-pool ledger: account-switch.sh loaded, session-pool NOT.
+	body := fmt.Sprintf(`
+source %q
+type pool_dir >/dev/null 2>&1 && echo BEFORE-DEFINED || echo BEFORE-MISSING
+reload_switcher_lib %q
+type pool_dir >/dev/null 2>&1 && echo AFTER-DEFINED || echo AFTER-MISSING
+`, filepath.Join(dir, "account-switch.sh"), dir)
+	out, code := runBashSnippet(t, body, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "BEFORE-MISSING")
+	assertContains(t, out, "AFTER-DEFINED")
+}
+
 // A /new-closed claude conversation must not be resurrected through the pool:
 // when the durable stamp survives but the live id moved on, leaving claude
 // clears the handoff so the next agent starts clean.

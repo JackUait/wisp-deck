@@ -84,14 +84,16 @@ created.
 Exporters (python3, same dependency the draft stash already takes;
 fail-open — no python3 ⇒ no handoff, switch behaves as today):
 
-- `export_claude_handoff <project_dir> <sid> <out>` — last 30 user/assistant
-  text messages from `~/.claude/projects/<munged>/<sid>.jsonl` (string or
-  block-list content; thinking/tool blocks skipped) as
-  `**User:** / **Assistant:**` markdown.
-- `export_codex_handoff <rollout_file> <out>` — same shape from
+- `export_claude_handoff <transcript> <out>` — the transcript's tail as
+  `**User:** / **Assistant:**` markdown, keeping the last 15 messages OF EACH
+  ROLE merged chronologically (a flat last-N window exported zero user
+  messages in real use: transcript tails are dominated by per-block assistant
+  entries). String or block-list content; thinking/tool blocks skipped; user
+  texts starting with `<` are harness plumbing (`<command-name>`,
+  `<local-command-caveat>`) and skipped.
+- `export_codex_handoff <rollout_file> <out>` — same shape and quotas from
   `response_item`/`message` payloads, roles user/assistant only,
-  `input_text`/`output_text` items; user texts that are internal context
-  wrappers (starting with `<`) are skipped.
+  `input_text`/`output_text` items; `<`-prefixed user texts skipped.
 
 ### 4. Switch flow (`relaunch_switch_tool` in `lib/account-switch.sh`)
 
@@ -107,12 +109,14 @@ On a switch from tool X to tool Y:
    - Y has its own session (stamped env / statusline stamp): native resume —
      claude `--resume <sid>` chain (existing), codex `codex resume <sid>`
      chain (new), opencode `--continue`.
-   - Otherwise, if `handoff.md` exists and Y is claude or codex: launch fresh
-     with a positional initial prompt: *"You are taking over a conversation
-     the user was having with another AI coding agent (<X>). Read
-     <handoff.md> for the conversation so far, then continue it seamlessly —
-     do not re-introduce yourself."* (quoted with `printf %q` into the
-     respawn command). Opencode launches fresh with no injection.
+   - Otherwise, if `handoff.md` exists: launch fresh seeded with an initial
+     prompt: *"You are taking over a conversation the user was having with
+     another AI coding agent (<X>). Read <handoff.md> for the conversation so
+     far, then continue it seamlessly — do not re-introduce yourself."*
+     (quoted with `printf %q` into the respawn command — safe: tmux respawns
+     via the default shell, zsh, which handles both bash's `$'…'` and zsh's
+     backslash form). claude and codex take the prompt positionally; opencode
+     takes it via its TUI `--prompt` flag.
    - Otherwise: fresh (today's behavior).
 4. Stamp `WISP_DECK_CODEX_STARTED_AT` when Y is codex; update pool
    `last_tool`. All existing behavior (env stamps, border accent, tool pref,
@@ -125,12 +129,26 @@ degrades to exactly today's switch.
 shell has the helpers; `relaunch_switch_tool` guards each call with
 `command -v` for bare unit-test sources.
 
+`reload_switcher_lib` re-sources session-pool.sh alongside account-switch.sh,
+so a long-running ledger that predates the pool gains the helpers on the next
+switcher open instead of silently skipping capture until a pane restart.
+
 ## Out of scope
 
 - Reboot restore of codex/opencode sessions (snapshot format untouched).
-- Handoff injection into opencode (no verified prompt-injection vector).
 - Continuous/live handoff export (switch-time only).
 - The auto-switch quota rotation (claude-login-only by definition).
+
+## Verified end-to-end (2026-07-11, real binaries, isolated tmux server)
+
+claude → codex: handoff exported and injected; codex read it and answered a
+codeword planted in the claude conversation. codex → claude: codex rollout id
+captured/stamped; claude relaunched `--resume <its own sid>` with history
+intact. claude → codex again: `codex resume <id>` restored the exact codex
+transcript. codex → opencode: `--prompt` seeding; opencode answered the
+codeword. opencode round-trip: `--continue` restored the same opencode session
+(token/cost counters carried over). An idle resumed stint with no new turns
+correctly captures nothing and keeps the pool's previous export.
 
 ## Testing (TDD — failing test first, per repo IRON RULE)
 
