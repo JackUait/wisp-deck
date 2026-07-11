@@ -7,9 +7,11 @@
   },
   "files": [
     "bin/wisp-deck",
+    "bin/wisp-deck-config",
     "bin/npx-wisp-deck.js",
     "lib/",
     "templates/",
+    "defaults/",
     "ghostty/",
     "terminals/",
     "wrapper.sh",

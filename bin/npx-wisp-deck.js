@@ -68,8 +68,10 @@ function main() {
 function copyDistribution(src, dest) {
   const entries = [
     'bin/wisp-deck',
+    'bin/wisp-deck-config',
     'lib',
     'templates',
+    'defaults',
     'ghostty',
     'terminals',
     'wrapper.sh',
