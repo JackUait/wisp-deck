@@ -90,14 +90,20 @@ warm_tui_binary
 
 TMUX_CMD="$(command -v tmux)"
 CLAUDE_CMD="$(command -v claude)"
-OPENCODE_CMD="$(resolve_opencode_cmd)"
 CODEX_CMD="$(command -v codex)"
+
+# NOT resolved here. resolve_opencode_cmd's npx branch spawns node to find out
+# WHICH npx invocation can launch OpenCode (6-13s, warm cache) — and this runs
+# before the picker paints, so every launch of every tool used to pay it. The
+# picker only needs to know OpenCode is *possible* (a PATH check); the command
+# string is resolved on demand, below, on the branch that actually launches it.
+OPENCODE_CMD=""
 
 # AI tool preference
 AI_TOOL_PREF_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/ai-tool"
 AI_TOOLS_AVAILABLE=()
 [ -n "$CLAUDE_CMD" ] && AI_TOOLS_AVAILABLE+=("claude")
-[ -n "$OPENCODE_CMD" ] && AI_TOOLS_AVAILABLE+=("opencode")
+opencode_available && AI_TOOLS_AVAILABLE+=("opencode")
 [ -n "$CODEX_CMD" ] && AI_TOOLS_AVAILABLE+=("codex")
 
 # Drop tools the user disabled in Settings → AI tools. No mapfile — this
@@ -278,6 +284,21 @@ export PROJECT_DIR
 export PROJECT_NAME="${PROJECT_NAME:-$(basename "$PROJECT_DIR")}"
 SESSION_NAME="dev-${PROJECT_NAME}-$$"
 
+# From here on this terminal belongs to the AI tool's full-screen UI, not to us:
+# the interactive phase (picker, Settings, the keep-awake password window) is
+# over, and everything below either backgrounds a loop that outlives it or hands
+# the screen to tmux. Nobody is reading stderr anymore — but it is still wired to
+# the terminal, so anything that writes there paints over the UI. That is how a
+# failing read in the keep-awake reaper ended up inside Claude's input box.
+#
+# So point stderr at a per-session log now, once, instead of asking every job and
+# every lib it calls to remember its own `2>/dev/null`. fd 3 keeps the real
+# terminal for the one thing the user must still see: tmux failing to start at
+# all, below — after which there is no UI left to protect.
+exec 3>&2
+_WD_ERROR_LOG="$SHARE_DIR/logs/${SESSION_NAME}.log"
+gt_mute_terminal_stderr "$_WD_ERROR_LOG"
+
 # Read settings
 _settings_file="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings"
 
@@ -421,6 +442,14 @@ if [ "$SELECTED_AI_TOOL" = "claude" ]; then
   WISP_DECK_CLAUDE_FILTER="$(gt_claude_filter_prefix "$SHARE_DIR")"
 fi
 
+# Pay the npx probe (see OPENCODE_CMD above) only now, and only when OpenCode is
+# the tool actually being launched — the one case that needs the command string.
+# A claude/codex session leaves OPENCODE_CMD empty in the relaunch context below;
+# _tool_cmd_for resolves it on demand if the user later switches to OpenCode.
+if [ "$SELECTED_AI_TOOL" = "opencode" ]; then
+  OPENCODE_CMD="$(resolve_opencode_cmd)"
+fi
+
 # Build the AI tool launch command. Only opencode takes the project dir as a
 # positional arg; claude takes the wrapper's CLI args, and codex takes neither
 # (its pane cwd is already the project dir).
@@ -532,4 +561,4 @@ fi
   set-option -p @gt_ai 1 \; \
   select-pane -L \; \
   split-window -v -p 45 -c "$PROJECT_DIR" "$_spare_cmd" \; \
-  select-pane -R
+  select-pane -R 2>&3

@@ -11,6 +11,18 @@
 # claude-accounts.sh (pointer helpers), tmux-session.sh (build_ai_launch_cmd),
 # and — for the relaunch's shared-state sync — claude-shared-settings.sh.
 
+# ai-tools.sh is the one dependency we self-source rather than assume, because
+# _tool_cmd_for needs resolve_opencode_cmd in contexts that do NOT load the full
+# wrapper lib set: the ledger pane (zsh, hence the WISP_DECK_LIB_DIR fallback —
+# BASH_SOURCE is empty there) and the auto-switch subshell. Guarded on the
+# function, so the usual case (caller already sourced it) costs nothing.
+if ! declare -f resolve_opencode_cmd >/dev/null 2>&1; then
+  _as_lib_dir="${WISP_DECK_LIB_DIR:-${BASH_SOURCE[0]%/*}}"
+  # shellcheck source=/dev/null
+  [ -f "$_as_lib_dir/ai-tools.sh" ] && source "$_as_lib_dir/ai-tools.sh"
+  unset _as_lib_dir
+fi
+
 # reload_switcher_lib <lib_dir> — re-source THIS module from disk so a
 # long-running ledger picks up on-disk edits to the switcher (popup dimensions,
 # flags, backdrop) without the whole pane having to restart. Called right before
@@ -700,6 +712,16 @@ _tool_cmd_for() {
     opencode) cmd="${_rc_opencode_cmd:-}" ;;
     codex) cmd="${_rc_codex_cmd:-}" ;;
   esac
+  # OpenCode is the one tool that can run without a binary on PATH (via npx), so
+  # a plain `command -v` returns empty for exactly the users who most need the
+  # fallback. It is also the tool wrapper.sh deliberately leaves unresolved in a
+  # claude/codex context — resolving it costs an npx probe that the launch path
+  # must not pay. Pay it here instead: a switch TO OpenCode is the moment the
+  # answer is finally needed, and it happens once, on an explicit user action.
+  if [ -z "$cmd" ] && [ "$tool" = "opencode" ] \
+    && declare -f resolve_opencode_cmd >/dev/null 2>&1; then
+    cmd="$(resolve_opencode_cmd)"
+  fi
   [ -n "$cmd" ] || cmd="$(command -v "$tool" 2>/dev/null)" || cmd=""
   printf '%s\n' "$cmd"
 }

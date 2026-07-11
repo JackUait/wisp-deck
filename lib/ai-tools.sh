@@ -11,6 +11,23 @@
 # round-trip and the periodic reinstall) instead of `@latest` re-fetching.
 #
 # Echoes the launch command, or empty when neither opencode nor npx is on PATH.
+# opencode_available — exit 0 when OpenCode can be launched at all, WITHOUT
+# deciding how. Deliberately cheap: a PATH lookup, no subprocess.
+#
+# This exists because resolve_opencode_cmd's npx branch spawns node (6-13s
+# measured, warm cache) and wrapper.sh used to call it before the project picker
+# painted — every launch, every tool, paying seconds to answer a question only an
+# OpenCode launch asks. The probe never decided availability anyway: it only
+# picks BETWEEN the two npx strings, both non-empty. So availability is exactly
+# "opencode or npx on PATH", which costs nothing. Pinned by
+# TestOpencodeAvailable_agrees_with_resolve_opencode_cmd.
+opencode_available() {
+  command -v opencode &>/dev/null || command -v npx &>/dev/null
+}
+
+# resolve_opencode_cmd — the launch command itself. The npx branch is the
+# expensive one; call it only when OpenCode is actually being launched, never on
+# the path to the picker.
 resolve_opencode_cmd() {
   if command -v opencode &>/dev/null; then
     echo "opencode"
