@@ -208,7 +208,9 @@ show_loading_screen() {
       frame=$(( (frame + 1) % pal_len ))
       sleep 0.15
     done
-  ) &
+    # stderr dropped, stdout kept: the spinner frames are this loop's whole
+    # purpose, but an error from it would land in the middle of them.
+  ) 2>/dev/null &
   _LOADING_SCREEN_PID=$!
 }
 

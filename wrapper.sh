@@ -301,7 +301,11 @@ fi
 # Background watcher: switch to the AI pane once it's ready. Resolves the AI
 # pane via gt_ai_pane (marker/geometry) rather than a fixed index, so it is
 # correct under any tmux pane-base-index.
-gt_focus_ai_pane_when_ready "$TMUX_CMD" "$SESSION_NAME" &
+#
+# stderr is dropped here, as on every job this file backgrounds: it would
+# otherwise be the session terminal, where the AI tool is drawing a full-screen
+# UI, and these jobs keep running for the whole session. Nothing reads it.
+gt_focus_ai_pane_when_ready "$TMUX_CMD" "$SESSION_NAME" 2>/dev/null &
 WATCHER_PID=$!
 
 # Reap holders left by sessions that died without running their trap (SIGKILL,
@@ -448,7 +452,7 @@ WISP_DECK_TERMINAL="ghostty"
 WISP_DECK_SNAPSHOT="$SHARE_DIR/last-session"
 # Backgrounded lib function, not an inline loop: each tick re-sources the lib
 # in a throwaway bash, so snapshot fixes reach sessions already running.
-run_snapshot_heartbeat "$_WRAPPER_DIR" "$TMUX_CMD" "$WISP_DECK_SNAPSHOT" &
+run_snapshot_heartbeat "$_WRAPPER_DIR" "$TMUX_CMD" "$WISP_DECK_SNAPSHOT" 2>/dev/null &
 HEARTBEAT_PID=$!
 
 # Build pane 0 command: the compact changeset-ledger view.
@@ -496,7 +500,7 @@ _spare_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/spare-tabs.sh\" && spare_
 # size settles. Skipped when no layout was captured (old snapshot) — the
 # default split stays.
 if [ "$RESTORE_MODE" -eq 1 ] && [ -n "${WISP_DECK_RESUME_LAYOUT:-}" ]; then
-  restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$WISP_DECK_RESUME_LAYOUT" &
+  restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$WISP_DECK_RESUME_LAYOUT" 2>/dev/null &
 fi
 
 "$TMUX_CMD" new-session -s "$SESSION_NAME" -e "PATH=$PATH" -e "WISP_DECK_MARKER_FILE=$WISP_DECK_MARKER_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=${WISP_DECK_RESUME_SESSION:-}" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$WISP_DECK_RELAUNCH_FILE" -e "WISP_DECK_CLAUDE_ACCOUNT=${WISP_DECK_CLAUDE_ACCOUNT_DIR##*/}" -e "WISP_DECK_SEQ=${_wd_launch_seq}" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \

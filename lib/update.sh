@@ -54,6 +54,9 @@ check_for_update() {
 
     [ "$local_version" = "$remote_version" ] && return
     echo "$remote_version" > "$flag"
-  ) &
+    # stderr dropped: this outlives the shell that spawned it (disowned), so a
+    # network error surfacing minutes later would print onto whatever is on the
+    # terminal by then. The result is communicated through $flag, not stderr.
+  ) 2>/dev/null &
   disown
 }
