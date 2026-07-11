@@ -160,10 +160,17 @@ ensure_wisp_deck_tui() {
   "$HOME/.local/bin/wisp-deck-tui" --version >/dev/null 2>&1 || true
 }
 
-# Install base CLI requirements.
+# Install base CLI requirements. Both are load-bearing at runtime — the
+# statusline and settings code shell out to jq, and the session IS a tmux
+# session — so a failure must fail the install rather than let setup continue
+# and break later, far from the cause. jq's failure used to be swallowed: the
+# function returned ensure_tmux's status. Both still run even when the first
+# fails, so one run reports every missing dependency.
 ensure_base_requirements() {
-  ensure_jq
-  ensure_tmux
+  local rc=0
+  ensure_jq || rc=1
+  ensure_tmux || rc=1
+  return "$rc"
 }
 
 # Install a Homebrew cask if the .app isn't in /Applications.

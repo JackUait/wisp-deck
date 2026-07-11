@@ -37,7 +37,7 @@ function main() {
     // Not installed yet
   }
 
-  if (installedVersion === version) {
+  if (installedVersion === version && isInstallIntact(installDir)) {
     process.stdout.write(`wisp-deck ${version} already up to date\n`);
   } else {
     // Copy bash distribution to install dir
@@ -62,6 +62,22 @@ function main() {
       process.exit(err.status || 1);
     }
   }
+}
+
+// The .version marker says which version was installed, not that the install
+// is still whole. An interrupted copy or a partial delete leaves the marker
+// behind, and trusting it alone made the launcher report "already up to date"
+// and then exec a bin/wisp-deck that wasn't there. Re-running `npx wisp-deck`
+// — the first thing a stuck user tries — must repair that, so spot-check the
+// files the launcher and the wrapper actually depend on.
+function isInstallIntact(dir) {
+  return [
+    'bin/wisp-deck',
+    'bin/wisp-deck-config',
+    'lib',
+    'wrapper.sh',
+    'VERSION',
+  ].every((rel) => fs.existsSync(path.join(dir, rel)));
 }
 
 // Recursively copy the bash distribution files. Each entry's destination is
