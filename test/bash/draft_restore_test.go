@@ -338,7 +338,11 @@ if [ "$1" = "display-popup" ]; then eval "${@: -1}" >/dev/null 2>&1 || true; fi`
 		t.Fatal(err)
 	}
 	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
-		"tool=opencode", "tool_cmd=npx opencode-ai@latest",
+		// claude_cmd is what wrapper.sh stamps in a real context. Without it
+		// _tool_cmd_for falls back to `command -v claude`, so the switch would
+		// respawn only on a machine that happens to have claude installed —
+		// green on a dev laptop, silently broken on CI.
+		"tool=opencode", "tool_cmd=npx opencode-ai@latest", "claude_cmd=claude",
 		"settings=", "filter=", "project_dir=/proj",
 		"accounts_dir=" + accountsDir,
 		"pointer=" + filepath.Join(dir, "claude-account"),

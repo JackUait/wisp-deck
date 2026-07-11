@@ -33,6 +33,27 @@ func waitForFrame(read func() string, want string, timeout time.Duration) (strin
 	}
 }
 
+var ansiSeq = regexp.MustCompile(`\x1b\[[0-9;?<>]*[a-zA-Z]|\x1b[()][AB012]|\x1b.`)
+
+// describeFrame renders a captured pty frame as the grid a human would see:
+// one numbered row per screen line, with the escape codes stripped. A %q dump of
+// the raw bytes is unreadable and hides WHERE things landed, which is the only
+// question worth asking when a mouse hit-test misses.
+func describeFrame(raw string) string {
+	frames := strings.Split(raw, "\x1b[H") // cursor-home starts each repaint
+	last := frames[len(frames)-1]
+	var b strings.Builder
+	for i, line := range strings.Split(last, "\r\n") {
+		text := ansiSeq.ReplaceAllString(line, "")
+		mark := ""
+		if strings.Contains(text, "\U000f0004") {
+			mark = "  <- the account pill is on this row"
+		}
+		fmt.Fprintf(&b, "  row %2d: %q%s\n", i+1, text, mark)
+	}
+	return b.String()
+}
+
 // Regression: when the user scrolls fast, SGR mouse reports must never leak onto
 // the screen as literal text (e.g. "[<65;40;18M"). `read -s` only silences echo
 // while it is actively reading; scroll events that arrive during the render gap
@@ -1812,8 +1833,9 @@ func TestCompactView_hover_highlights_account_pill(t *testing.T) {
 	hovered, took, ok := waitForFrame(read, "48;5;238", 6*time.Second)
 	if !ok {
 		t.Fatalf("hovering the account pill should light it with the hover background "+
-			"(48;5;238), but no frame did in %s.\nhovered frames: %q\nthe idle frame the "+
-			"pill was hovered on was:\n%q", took, hovered, idle)
+			"(48;5;238), but no frame did in %s.\nthe pane is 60x12 and the click went to "+
+			"row 12, col 3.\nthe idle frame it was hovering renders as:\n%s\nthe frames the "+
+			"hover produced render as:\n%s", took, describeFrame(idle), describeFrame(hovered))
 	}
 	t.Logf("pill hover highlighted after %s", took)
 
