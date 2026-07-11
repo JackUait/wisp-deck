@@ -71,11 +71,11 @@ func BenchmarkImageOpen_payloadPNG(b *testing.B) {
 func BenchmarkImageOpen_transmitBytes(b *testing.B) {
 	m := NewImageView("x.jpg", photoJPEG(b), "added")
 	payload := kittyPayload(m.img, m.imgSrc)
-	seq := kittyTransmitDisplay(payload, 1, 171, 48, false)
+	seq := kittyTransmitFile("/tmp/wisp-deck-preview-1.png", 1, 171, 48, false)
 	b.ReportMetric(float64(len(payload)), "png_bytes")
 	b.ReportMetric(float64(len(seq)), "wire_bytes")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		kittyTransmitDisplay(payload, 1, 171, 48, false)
+		kittyTransmitFile("/tmp/wisp-deck-preview-1.png", 1, 171, 48, false)
 	}
 }

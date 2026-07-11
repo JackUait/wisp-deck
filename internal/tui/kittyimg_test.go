@@ -44,60 +44,31 @@ func TestWrapTmuxPassthrough_doubles_escapes_inside_dcs(t *testing.T) {
 	}
 }
 
-func TestKittyTransmitDisplay_single_chunk_params(t *testing.T) {
-	data := []byte("tiny png bytes")
-	got := kittyTransmitDisplay(data, 7, 20, 10, false)
-	b64 := base64.StdEncoding.EncodeToString(data)
+func TestKittyTransmitFile_references_path_in_one_small_apc(t *testing.T) {
+	got := kittyTransmitFile("/tmp/wisp-deck-preview-1.png", 7, 20, 10, false)
 	if !strings.HasPrefix(got, "\x1b_G") || !strings.HasSuffix(got, "\x1b\\") {
 		t.Fatalf("not an APC sequence: %q", got)
 	}
-	for _, param := range []string{"a=T", "f=100", "q=2", "i=7", "c=20", "r=10"} {
+	for _, param := range []string{"a=T", "f=100", "t=f", "q=2", "i=7", "c=20", "r=10"} {
 		if !strings.Contains(got, param) {
 			t.Errorf("missing %s in %q", param, got)
 		}
 	}
+	b64 := base64.StdEncoding.EncodeToString([]byte("/tmp/wisp-deck-preview-1.png"))
 	if !strings.Contains(got, ";"+b64+"\x1b\\") {
-		t.Errorf("payload should be the base64 data: %q", got)
+		t.Errorf("payload should be the base64 path: %q", got)
 	}
-	if strings.Contains(got, "m=1") {
-		t.Errorf("single-chunk transmit must not set m=1: %q", got)
-	}
-}
-
-func TestKittyTransmitDisplay_chunks_large_payloads(t *testing.T) {
-	data := bytes.Repeat([]byte{0xAB}, 7000) // b64 ~9334 chars -> 3 chunks of 4096
-	got := kittyTransmitDisplay(data, 1, 20, 10, false)
-	chunks := strings.Split(got, "\x1b\\")
-	chunks = chunks[:len(chunks)-1] // trailing empty piece after last terminator
-	if len(chunks) != 3 {
-		t.Fatalf("chunks = %d, want 3", len(chunks))
-	}
-	if !strings.Contains(chunks[0], "m=1") || !strings.Contains(chunks[0], "a=T") {
-		t.Errorf("first chunk needs a=T and m=1: %q", chunks[0][:60])
-	}
-	if !strings.Contains(chunks[1], "m=1") || strings.Contains(chunks[1], "a=T") {
-		t.Errorf("middle chunk is continuation-only: %q", chunks[1][:30])
-	}
-	if !strings.Contains(chunks[2], "m=0") {
-		t.Errorf("last chunk must set m=0: %q", chunks[2][:30])
-	}
-	// Reassembling every chunk's payload must give back the full base64 data.
-	var b64 strings.Builder
-	for _, c := range chunks {
-		b64.WriteString(c[strings.Index(c, ";")+1:])
-	}
-	if b64.String() != base64.StdEncoding.EncodeToString(data) {
-		t.Error("chunk payloads do not reassemble to the original base64")
+	if strings.Count(got, "\x1b_G") != 1 {
+		t.Errorf("file transmit must be a single APC: %q", got)
 	}
 }
 
-func TestKittyTransmitDisplay_tmux_wraps_every_chunk(t *testing.T) {
-	data := bytes.Repeat([]byte{0xCD}, 7000)
-	got := kittyTransmitDisplay(data, 1, 20, 10, true)
-	if n := strings.Count(got, "\x1bPtmux;"); n != 3 {
-		t.Errorf("passthrough wrappers = %d, want 3", n)
+func TestKittyTransmitFile_tmux_wraps_the_sequence(t *testing.T) {
+	got := kittyTransmitFile("/tmp/p.png", 1, 20, 10, true)
+	if n := strings.Count(got, "\x1bPtmux;"); n != 1 {
+		t.Errorf("passthrough wrappers = %d, want 1", n)
 	}
-	if strings.Contains(got, "\x1b_G") && !strings.Contains(got, "\x1b\x1b_G") {
+	if !strings.Contains(got, "\x1b\x1b_G") {
 		t.Error("inner escapes must be doubled inside the tmux DCS")
 	}
 }
@@ -148,6 +119,7 @@ func TestImagePlacementAt_unavailable_without_image(t *testing.T) {
 }
 
 func TestWithKittyHires_transmit_carries_placement_params(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir()) // payload files land in an auto-cleaned dir
 	data := pngBytes(t, solidImage(8, 8, color.RGBA{9, 9, 9, 255}))
 	m := NewImageView("dot.png", data, "modified")
 	var buf bytes.Buffer

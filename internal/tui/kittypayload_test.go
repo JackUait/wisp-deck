@@ -2,10 +2,12 @@ package tui
 
 import (
 	"bytes"
+	"encoding/base64"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"os"
 	"strings"
 	"testing"
 
@@ -57,10 +59,111 @@ func TestKittyPayload_oversized_source_is_rescaled(t *testing.T) {
 	}
 }
 
+// noisyImage returns a w×h image with per-pixel variation so its PNG encoding
+// is large enough that a direct-medium transmit would need many chunks.
+func noisyImage(w, h int) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetRGBA(x, y, color.RGBA{uint8(x*7 + y*3), uint8(x*2 ^ y*5), uint8(x*13 + y*11), 255})
+		}
+	}
+	return img
+}
+
+// transmitPayloadPath extracts the file path referenced by a t=f transmit
+// sequence (the base64 payload after the APC's ';').
+func transmitPayloadPath(t *testing.T, out string) string {
+	t.Helper()
+	start := strings.Index(out, "\x1b_G")
+	end := strings.Index(out[start:], "\x1b\\")
+	if start < 0 || end < 0 {
+		t.Fatalf("no APC sequence in %q", out)
+	}
+	seq := out[start : start+end]
+	b64 := seq[strings.Index(seq, ";")+1:]
+	path, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("payload is not base64: %v", err)
+	}
+	return string(path)
+}
+
+// The transmit tty is SHARED with the tmux client process, and macOS
+// interleaves concurrent writers' bytes mid-stream (tmux frame bytes can split
+// the APC introducer, printing the pixel payload as on-screen gibberish).
+// So the pixels must travel via the kitty FILE medium (t=f): the tty write is
+// a tiny file reference, never a megabyte base64 stream.
+func TestKittyHires_transmit_uses_file_medium_and_stays_small(t *testing.T) {
+	data := pngBytes(t, noisyImage(256, 256))
+	m := NewImageView("photo.png", data, "modified")
+	var buf bytes.Buffer
+	m = m.WithKittyHires(&buf, false)
+	updated, cmd := m.Update(sizeMsg(80, 30))
+	m = updated.(DiffViewModel)
+	cmd()
+	out := buf.String()
+	if len(out) > 600 {
+		t.Fatalf("transmit wrote %d bytes to the shared tty, want a tiny file reference", len(out))
+	}
+	if !strings.Contains(out, "t=f") {
+		t.Fatalf("transmit must use the file medium:\n%q", out)
+	}
+	path := transmitPayloadPath(t, out)
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("payload file unreadable: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Error("payload file must hold the kittyPayload bytes (verbatim PNG here)")
+	}
+	m.KittyCleanup()
+}
+
+// The payload file is transient: once the popup closes it must be gone.
+func TestKittyHires_cleanup_removes_payload_file(t *testing.T) {
+	data := pngBytes(t, solidImage(8, 8, color.RGBA{9, 9, 9, 255}))
+	m := NewImageView("dot.png", data, "modified")
+	var buf bytes.Buffer
+	m = m.WithKittyHires(&buf, false)
+	updated, cmd := m.Update(sizeMsg(80, 30))
+	m = updated.(DiffViewModel)
+	cmd()
+	path := transmitPayloadPath(t, buf.String())
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("payload file must exist while the popup is open: %v", err)
+	}
+	m.KittyCleanup()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("cleanup must remove the payload file, stat err = %v", err)
+	}
+}
+
+// A transmit suppressed by an early close must not leak its temp file either.
+func TestKittyHires_close_before_transmit_leaves_no_file(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	data := pngBytes(t, solidImage(8, 8, color.RGBA{9, 9, 9, 255}))
+	m := NewImageView("dot.png", data, "modified")
+	var buf bytes.Buffer
+	m = m.WithKittyHires(&buf, false)
+	updated, cmd := m.Update(sizeMsg(80, 30))
+	m = updated.(DiffViewModel)
+	m.KittyCleanup()
+	cmd()
+	entries, err := os.ReadDir(os.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("suppressed transmit leaked %d temp file(s)", len(entries))
+	}
+}
+
 // The hi-res transmit must not block the first paint: arming stores the
 // writer, the first WindowSizeMsg returns a tea.Cmd that does the encode and
 // write off the event loop, and its completion message marks the image sent.
 func TestKittyHires_first_size_returns_async_transmit_cmd(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir()) // payload files land in an auto-cleaned dir
 	data := pngBytes(t, solidImage(8, 8, color.RGBA{9, 9, 9, 255}))
 	m := NewImageView("dot.png", data, "modified")
 	var buf bytes.Buffer
@@ -135,6 +238,7 @@ func TestKittyHires_cleanup_after_transmit_deletes_all(t *testing.T) {
 // image at the new geometry once the transmit completes, not leave it at the
 // stale rectangle.
 func TestKittyHires_resize_during_transmit_replaces_at_new_size(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir()) // payload files land in an auto-cleaned dir
 	data := pngBytes(t, solidImage(8, 8, color.RGBA{9, 9, 9, 255}))
 	m := NewImageView("dot.png", data, "modified")
 	var buf bytes.Buffer

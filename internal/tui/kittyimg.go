@@ -7,6 +7,7 @@ import (
 	"image/draw"
 	"image/png"
 	"io"
+	"os"
 	"strings"
 	"sync"
 
@@ -24,10 +25,6 @@ import (
 // so resize re-placements and deletion can address it. Arbitrary but fixed;
 // the pager shows one image at a time.
 const kittyImageID = 4242
-
-// kittyChunkSize is the protocol's maximum payload per APC escape; larger
-// base64 data must be split into m=1 continuation chunks.
-const kittyChunkSize = 4096
 
 // kittyMaxSide caps the transmitted bitmap's longest side. The popup can't
 // show more pixels than a retina full-screen anyway, and an unbounded photo
@@ -69,26 +66,21 @@ func kittyWrap(body string, tmux bool) string {
 	return seq
 }
 
-// kittyTransmitDisplay builds the transmit-and-display sequence for PNG data:
-// the image is stored under id and shown at the CURRENT cursor position,
-// scaled to cols×rows cells. Payloads beyond kittyChunkSize are split into
-// continuation chunks (m=1 … m=0), each wrapped for tmux individually. q=2
-// suppresses the terminal's responses (nobody is reading them).
-func kittyTransmitDisplay(data []byte, id, cols, rows int, tmux bool) string {
-	b64 := base64.StdEncoding.EncodeToString(data)
-	params := "a=T,f=100,q=2,i=" + itoa(id) + ",c=" + itoa(cols) + ",r=" + itoa(rows)
-	if len(b64) <= kittyChunkSize {
-		return kittyWrap(params+";"+b64, tmux)
-	}
-	var b strings.Builder
-	b.WriteString(kittyWrap(params+",m=1;"+b64[:kittyChunkSize], tmux))
-	rest := b64[kittyChunkSize:]
-	for len(rest) > kittyChunkSize {
-		b.WriteString(kittyWrap("m=1;"+rest[:kittyChunkSize], tmux))
-		rest = rest[kittyChunkSize:]
-	}
-	b.WriteString(kittyWrap("m=0;"+rest, tmux))
-	return b.String()
+// kittyTransmitFile builds the transmit-and-display sequence for a PNG stored
+// at path (kitty file medium, t=f): the image is stored under id and shown at
+// the CURRENT cursor position, scaled to cols×rows cells. The sequence carries
+// only the base64 path — ~200 bytes total. That is load-bearing, not merely an
+// optimization: the tty this is written to is SHARED with the tmux client
+// process, and macOS interleaves concurrent writers' bytes mid-stream. A
+// direct-medium transmit streams megabytes of base64 pixels, and a tmux frame
+// byte landing inside the APC introducer makes the terminal print the payload
+// as on-screen gibberish. There must never be a code path that writes bulk
+// data to this tty. q=2 suppresses the terminal's responses (nobody is
+// reading them, and a response would be typed into the active pane).
+func kittyTransmitFile(path string, id, cols, rows int, tmux bool) string {
+	b64 := base64.StdEncoding.EncodeToString([]byte(path))
+	return kittyWrap("a=T,f=100,t=f,q=2,i="+itoa(id)+
+		",c="+itoa(cols)+",r="+itoa(rows)+";"+b64, tmux)
 }
 
 // kittyPlace shows the already-transmitted image id at the current cursor
@@ -239,9 +231,10 @@ type kittySentMsg struct {
 // write truncated by process exit would leave the terminal parser inside an
 // APC sequence.
 type kittyShared struct {
-	mu     sync.Mutex
-	closed bool
-	sent   bool
+	mu          sync.Mutex
+	closed      bool
+	sent        bool
+	payloadPath string // temp file holding the transmitted PNG; removed on cleanup
 }
 
 // WithKittyHires arms the hi-res path: it remembers the terminal writer; the
@@ -275,13 +268,25 @@ func (m DiffViewModel) kittyTransmitCmd() tea.Cmd {
 		if payload == nil {
 			return kittySentMsg{ok: false}
 		}
+		f, err := os.CreateTemp("", "wisp-deck-preview-*.png")
+		if err != nil {
+			return kittySentMsg{ok: false}
+		}
+		path := f.Name()
+		_, werr := f.Write(payload)
+		if cerr := f.Close(); werr != nil || cerr != nil {
+			os.Remove(path)
+			return kittySentMsg{ok: false}
+		}
 		shared.mu.Lock()
 		defer shared.mu.Unlock()
 		if shared.closed { // popup already closed: never touch the terminal
+			os.Remove(path)
 			return kittySentMsg{ok: false}
 		}
+		shared.payloadPath = path
 		io.WriteString(out, "\x1b7"+cupTo(row, col)+
-			kittyTransmitDisplay(payload, kittyImageID, cols, rows, tmux)+"\x1b8")
+			kittyTransmitFile(path, kittyImageID, cols, rows, tmux)+"\x1b8")
 		shared.sent = true
 		return kittySentMsg{w: w, h: h, ok: true}
 	}
@@ -318,5 +323,8 @@ func (m DiffViewModel) KittyCleanup() {
 	m.kittyShared.closed = true
 	if m.kittyShared.sent {
 		io.WriteString(m.kittyOut, kittyDeleteAll(m.kittyTmux))
+	}
+	if m.kittyShared.payloadPath != "" {
+		os.Remove(m.kittyShared.payloadPath)
 	}
 }
