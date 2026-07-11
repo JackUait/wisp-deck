@@ -250,6 +250,38 @@ Terminal window (Ghostty)
 
 On window close, wrapper recursively kills entire process tree.
 
+### The launch critical path (NEVER block it)
+
+Everything `wrapper.sh` runs **before `select_project_interactive`** is the
+launch critical path: the user is staring at the loading splash for exactly
+that long. Budget is **~130ms**. The splash is there to make the wait pleasant,
+**not** to give you room to do work behind it.
+
+**The rule: no blocking subprocess before the picker.** No `npx`, `npm`, `node`,
+`curl`, `brew` — nothing that touches the network or boots a language runtime.
+
+This has already shipped once. `resolve_opencode_cmd` ran
+`npx --no-install opencode-ai --version` to decide *which* npx string could
+launch OpenCode — eagerly, every launch, for every tool. It cost **3s warm,
+6-13s under load**, and every Claude user paid it in full to compute a string
+that was then thrown away. It hid behind the splash for releases.
+
+When you need an expensive answer on this path, do one of:
+
+1. **Answer it without the subprocess.** Usually the expensive call is deciding
+   more than you need. `opencode_available()` (`lib/ai-tools.sh`) is the
+   pattern: a PATH check answers "can we run it?" for free, and the probe that
+   answers "*how* do we run it?" is deferred to the one branch that launches it.
+2. **Move it after the picker**, to the branch that actually needs it.
+3. **Background and disown it**, like `check_for_update` — spawning is fine,
+   *blocking* is the defect.
+
+Guarded by `test/bash/launch_critical_path_test.go`, which mocks every expensive
+command to sleep 20s and fails if the picker takes over 5s. It tests the
+property, not the instance, so it catches whatever the next offender turns out
+to be — and it names the command in the failure. `opencode_availability_test.go`
+adds a static guard against reintroducing that specific probe.
+
 ## Code Conventions
 
 ### Avoid Over-Engineering
