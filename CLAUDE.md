@@ -151,7 +151,7 @@ Run `make release` to automate the full release process. Before running:
 4. `gh` CLI must be installed and authenticated (`brew install gh && gh auth login`)
 
 The script will:
-- Run preflight checks (clean tree, main branch, valid version, tag doesn't exist, gh auth)
+- Run preflight checks (clean tree, main branch, valid version, tag doesn't exist, gh auth, **install verification**)
 - Show a confirmation prompt (skip with `--yes` flag)
 - Build `wisp-deck-tui` binaries for darwin/arm64 and darwin/amd64
 - Create annotated git tag `vX.Y.Z` and push
@@ -164,6 +164,8 @@ bash scripts/release.sh --yes  # Non-interactive (skip confirmation)
 ```
 
 **Gotcha (binary warm-up):** the FIRST exec of a freshly built, downloaded, or re-signed `wisp-deck-tui` pays a macOS Gatekeeper/XProtect assessment (~1s idle, multi-second under load). Both the file-list diff modal and the account switcher exec this binary, so a cold binary makes the first modal open stall. **Every code path that writes or re-signs `~/.local/bin/wisp-deck-tui` MUST exec it once afterwards** (`"$bin" --version >/dev/null 2>&1 || true`). Existing warm-up sites: `wrapper.sh` (session launch, via `warm_tui_binary` in `lib/tui.sh`), `scripts/release.sh`, `lib/install.sh` (`ensure_wisp_deck_tui`), and the Makefile `install` target — all guarded by `test/bash/tui_warm_test.go`.
+
+**Gotcha (packaging is invisible locally):** the dev machine runs wisp-deck from symlinks into the repo, so a file the installer needs but `package.json`'s `files` never publishes still resolves here — and breaks for every `npx` user. This shipped in v2.22.0: `bin/wisp-deck` symlinked `~/.local/bin/wisp-deck` at the unpublished `bin/wisp-deck-config`, `ln -sf` made a dangling link, and setup reported success while the command was dead. **Whenever the installer references a new path, add it to BOTH `copyDistribution` in `bin/npx-wisp-deck.js` AND `files` in `package.json`.** Guarded by `test/npx/` (packaging cross-check + a full install into an empty HOME), which `scripts/release.sh` runs in preflight and the `Install verification` workflow runs in CI. Because the launcher skips the copy when `.version` already matches, a packaging fix only reaches users on a **version bump**.
 
 **Gotcha:** `gh release create FILE#LABEL` uses the file's **basename** as the download name (not the label). If you build to a mktemp path, users get assets named `tmp.XXXX`. The release script builds to a temp directory with correct filenames to avoid this.
 

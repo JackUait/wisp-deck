@@ -121,6 +121,9 @@ fi
 
 # ---------- Wisp Deck CLI Command ----------
 header "Setting up wisp-deck command..."
+# ~/.local/bin usually exists by now (the TUI binary lands there), but not when
+# the binary was already current or this script is run on its own.
+mkdir -p "$HOME/.local/bin"
 ln -sf "$SHARE_DIR/bin/wisp-deck-config" "$HOME/.local/bin/wisp-deck"
 success "Created wisp-deck command at ~/.local/bin/wisp-deck"
 

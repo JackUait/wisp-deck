@@ -1,0 +1,68 @@
+name: Install verification
+
+# Proves wisp-deck is actually installable — the class of bug that unit tests
+# cannot see, because the dev machine runs from symlinks into the repo while
+# real users install from the npm tarball.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+  schedule:
+    # Catch a broken published package even when nobody is pushing.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  install-from-tarball:
+    name: Install from packed tarball
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Packs the repo exactly as npm would publish it, installs it into an empty
+      # HOME with Homebrew/the AI CLI/the TUI mocked, and asserts the result is
+      # usable: the `wisp-deck` command resolves, Ghostty points at the wrapper,
+      # and no symlink dangles. Also cross-checks that every path the installer
+      # references is actually published.
+      - name: Verify a fresh install works
+        run: go test ./test/npx/... -count=1 -v
+
+  install-from-npm:
+    name: Install published package (npx wisp-deck)
+    # Only where a published package can exist — PRs would test the previous
+    # release, which says nothing about the change under review.
+    if: github.event_name != 'pull_request'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Installs what users actually get: the tarball from the npm registry plus
+      # the wisp-deck-tui binary from GitHub Releases. Fails if the release assets
+      # are missing (404) or the published file set is incomplete.
+      - name: Verify `npx wisp-deck` installs for a real user
+        env:
+          WISP_DECK_VERIFY_PUBLISHED: '1'
+        run: go test ./test/npx/ -run TestInstall_e2e_from_npm_registry -count=1 -v

@@ -428,3 +428,75 @@ func TestMakefile_has_release_target(t *testing.T) {
 	assertContains(t, string(makefile), "release:")
 	assertContains(t, string(makefile), "scripts/release.sh")
 }
+
+// ============================================================
+// Install verification gate
+// ============================================================
+
+// commitVersion makes a clean repo with a committed VERSION file.
+func commitVersion(t *testing.T, dir, version string) {
+	t.Helper()
+	initGitRepo(t, dir)
+	writeTempFile(t, dir, "VERSION", version+"\n")
+	for _, args := range [][]string{
+		{"git", "add", "VERSION"},
+		{"git", "commit", "-m", "add version"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v failed: %v\n%s", args, err, out)
+		}
+	}
+}
+
+// A release must not publish a package users cannot install: the install
+// verification runs during preflight, before anything is tagged or pushed.
+func TestRelease_runs_install_verification_during_preflight(t *testing.T) {
+	dir := t.TempDir()
+	commitVersion(t, dir, "1.0.0")
+
+	mockDir := t.TempDir()
+	marker := filepath.Join(dir, "go-invoked")
+	mockCommand(t, mockDir, "gh", `exit 0`)
+	binDir := mockCommand(t, mockDir, "go", `echo "$@" >> "`+marker+`"; exit 0`)
+
+	cmd := exec.Command("bash", filepath.Join(projectRoot(t), "scripts", "release.sh"))
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader("n\n") // abort at the confirmation prompt
+	cmd.Env = buildEnv(t, []string{binDir},
+		"RELEASE_VERSION_FILE="+filepath.Join(dir, "VERSION"),
+	)
+	out, _ := cmd.CombinedOutput()
+
+	invoked, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("release.sh never ran the install verification: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(string(invoked), "test") || !strings.Contains(string(invoked), "test/npx") {
+		t.Errorf("expected the npx install tests to run, got: %q", strings.TrimSpace(string(invoked)))
+	}
+	assertContains(t, string(out), "Aborted") // preflight ran before any tagging
+}
+
+// If the install is broken, the release is refused outright.
+func TestRelease_aborts_when_install_verification_fails(t *testing.T) {
+	dir := t.TempDir()
+	commitVersion(t, dir, "1.0.0")
+
+	mockDir := t.TempDir()
+	mockCommand(t, mockDir, "gh", `exit 0`)
+	binDir := mockCommand(t, mockDir, "go", `echo "FAIL github.com/jackuait/wisp-deck/test/npx"; exit 1`)
+
+	cmd := exec.Command("bash", filepath.Join(projectRoot(t), "scripts", "release.sh"), "--yes")
+	cmd.Dir = dir
+	cmd.Env = buildEnv(t, []string{binDir},
+		"RELEASE_VERSION_FILE="+filepath.Join(dir, "VERSION"),
+	)
+	out, err := cmd.CombinedOutput()
+
+	if err == nil {
+		t.Fatalf("expected release to abort when the install is broken, got success:\n%s", out)
+	}
+	assertContains(t, string(out), "install")
+}

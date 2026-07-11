@@ -53,6 +53,20 @@ check_gh_auth() {
   fi
 }
 
+# Prove the package we are about to publish can actually be installed. v2.22.0
+# shipped an installer that symlinked ~/.local/bin/wisp-deck at a file npm never
+# published: `ln -sf` created a dangling link, so setup reported success while
+# the command was dead. These tests pack the tarball, install it into an empty
+# HOME, and fail on exactly that. Set RELEASE_SKIP_INSTALL_CHECK=1 to bypass.
+check_install_verified() {
+  local project_dir="$1" out
+  [[ "${RELEASE_SKIP_INSTALL_CHECK:-}" == "1" ]] && return 0
+  if ! out="$(cd "$project_dir" && go test ./test/npx/... -count=1 2>&1)"; then
+    echo "$out" >&2
+    return 1
+  fi
+}
+
 # --- Main orchestration ---
 
 # Script-level variable so the EXIT trap can clean up after main() returns.
@@ -92,6 +106,13 @@ main() {
 
   check_gh_auth
   echo "  ✓ gh CLI authenticated"
+
+  if check_install_verified "$project_dir"; then
+    echo "  ✓ Install verification passed"
+  else
+    echo "Error: install verification failed — refusing to publish a package users cannot install" >&2
+    exit 1
+  fi
 
   echo ""
 
