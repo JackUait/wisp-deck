@@ -729,10 +729,12 @@ open_diff_popup() {
   # deleted image has no bytes to show and falls back to the diff pipeline.
   local popup
   if is_image_file "$file" && [ -f "$dir/$file" ]; then
-    local status=modified qd
-    git -C "$dir" ls-files --error-unmatch -- "$file" >/dev/null 2>&1 || status=added
+    # NOT named "status": the ledger loop runs under zsh, where status is a
+    # read-only alias for $? and a local assignment fatals the whole loop.
+    local img_status=modified qd
+    git -C "$dir" ls-files --error-unmatch -- "$file" >/dev/null 2>&1 || img_status=added
     qd=$(printf '%q' "$dir")
-    popup="cat ${qd}/${qf} | wisp-deck-tui diff-view --image --status ${status} --ai-tool ${qtool} --title ${qf} ${backdrop_arg} ${decision_arg}"
+    popup="cat ${qd}/${qf} | wisp-deck-tui diff-view --image --status ${img_status} --ai-tool ${qtool} --title ${qf} ${backdrop_arg} ${decision_arg}"
   else
     local diffcmd
     diffcmd=$(file_diff_command "$dir" "$file")

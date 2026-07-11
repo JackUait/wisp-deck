@@ -46,6 +46,34 @@ func imagePopupCmd(t *testing.T, repo, file string) string {
 	return string(out)
 }
 
+// The ledger loop runs under zsh, where `status` is a READ-ONLY special
+// parameter (an alias for $?): a `local status=...` fatals and kills the whole
+// file list. The image branch must work under zsh, not just bash.
+func TestOpenDiffPopup_image_branch_survives_zsh(t *testing.T) {
+	repo := t.TempDir()
+	git := discardGitRepo(t, repo)
+	git("init", "-q")
+	writeTempFile(t, repo, "shot.png", "fakepngbytes")
+
+	dir := t.TempDir()
+	binDir := mockCommand(t, dir, "tmux", `echo "$@"`)
+	env := buildEnv(t, []string{binDir})
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+	script := "source " + module + " && open_diff_popup " + repo + " shot.png"
+	cmd := exec.Command("zsh", "-c", script)
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("open_diff_popup under zsh: %v\n%s", err, out)
+	}
+	got := string(out)
+	if strings.Contains(got, "read-only variable") {
+		t.Fatalf("zsh read-only variable clash:\n%q", got)
+	}
+	assertContains(t, got, "--image")
+	assertContains(t, got, "--status added")
+}
+
 func TestOpenDiffPopup_untracked_image_opens_preview_with_added_status(t *testing.T) {
 	repo := t.TempDir()
 	git := discardGitRepo(t, repo)
