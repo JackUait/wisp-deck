@@ -33,9 +33,26 @@ func TestResolveOpencodeCmd_prefers_direct_binary(t *testing.T) {
 	}
 }
 
+// A cached npx install must win over @latest: the registry's advertised
+// latest can be uninstallable (observed live: opencode-ai@latest resolved to
+// 1.17.18 which 404s — ETARGET), and then every @latest launch dies at npm
+// and dumps the pane to a bare shell while a working cached copy sits unused.
+func TestResolveOpencodeCmd_prefers_cached_npx_install(t *testing.T) {
+	dir := t.TempDir()
+	// npx succeeds for the --no-install probe: a cached copy exists.
+	binDir := mockCommand(t, dir, "npx", `[ "$1" = "--no-install" ] && exit 0; echo npx "$@"`)
+
+	out, code := runBashFunc(t, "lib/ai-tools.sh", "resolve_opencode_cmd", nil, ocEnv(t, binDir))
+	assertExitCode(t, code, 0)
+	if got := strings.TrimSpace(out); got != "npx --no-install opencode-ai" {
+		t.Errorf("got %q, want %q", got, "npx --no-install opencode-ai")
+	}
+}
+
 func TestResolveOpencodeCmd_falls_back_to_prefer_offline_npx(t *testing.T) {
 	dir := t.TempDir()
-	binDir := mockCommand(t, dir, "npx", `echo npx "$@"`)
+	// npx fails the --no-install probe: nothing cached, install path needed.
+	binDir := mockCommand(t, dir, "npx", `[ "$1" = "--no-install" ] && exit 1; echo npx "$@"`)
 
 	out, code := runBashFunc(t, "lib/ai-tools.sh", "resolve_opencode_cmd", nil, ocEnv(t, binDir))
 	assertExitCode(t, code, 0)

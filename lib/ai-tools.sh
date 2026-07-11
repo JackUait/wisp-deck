@@ -15,7 +15,15 @@ resolve_opencode_cmd() {
   if command -v opencode &>/dev/null; then
     echo "opencode"
   elif command -v npx &>/dev/null; then
-    echo "npx --prefer-offline opencode-ai@latest"
+    # A cached copy wins over @latest: the registry's advertised latest can be
+    # uninstallable (observed live: opencode-ai@latest -> 1.17.18, ETARGET),
+    # and then every @latest launch dies at npm and dumps the pane to a bare
+    # shell while a working cached copy sits unused.
+    if npx --no-install opencode-ai --version >/dev/null 2>&1; then
+      echo "npx --no-install opencode-ai"
+    else
+      echo "npx --prefer-offline opencode-ai@latest"
+    fi
   fi
 }
 
