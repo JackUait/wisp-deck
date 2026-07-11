@@ -283,6 +283,10 @@ func (m *MainMenuModel) mapRowToSettingsItem(boxY int) int {
 // wheel scrolling. Overlay/input modes own all input, so the menu's hit-testing
 // is suppressed while one is open.
 func (m *MainMenuModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// The About overlay owns all mouse input: click outside the card closes it.
+	if m.aboutOpen {
+		return m.handleAboutMouse(msg)
+	}
 	// The login-management modal is clickable (its cursor doubles as the hover
 	// highlight); its text-entry and remove-confirm sub-modes own input.
 	if m.accountMenuOpen && !m.accountMenuInputMode && !m.accountMenuConfirm {

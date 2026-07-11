@@ -3715,9 +3715,6 @@ func (m *MainMenuModel) View() string {
 		menuBox = m.renderInputBox()
 	case m.activeTab == TabSettings:
 		menuBox = m.renderSettingsBox()
-		if m.aboutOpen {
-			appendModal(m.renderAboutPanel())
-		}
 		if m.modelMapOpen {
 			appendModal(m.renderModelMapPanel())
 		}
@@ -3850,12 +3847,23 @@ func (m *MainMenuModel) View() string {
 		m.menuOriginX = placedLeft + boxRelX
 		m.menuOriginY = m.centerOffsetY + boxRelY
 		m.setModalOrigin(modalBaseLines)
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
+		placed := lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
+		// The About card floats as a modal over the faint-dimmed screen (like
+		// the account-switch popup) instead of appending below the box.
+		if m.aboutOpen {
+			return m.overlayAbout(placed)
+		}
+		return placed
 	}
 	m.centerOffsetY = 0
 	m.menuOriginX = boxRelX
 	m.menuOriginY = boxRelY
 	m.setModalOrigin(modalBaseLines)
+	// No terminal size yet: there is nothing to composite the overlay onto, so
+	// the card renders alone.
+	if m.aboutOpen {
+		return m.renderAboutCard()
+	}
 	return content
 }
 
