@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"image"
 	"regexp"
 	"strings"
 
@@ -44,6 +45,11 @@ type DiffViewModel struct {
 	// DiscardRequested() and runs the git restore.
 	discardArmed     bool
 	discardRequested bool
+	// Image mode (see NewImageView): the body is a half-block truecolor preview
+	// of img instead of a diff; imgErr holds the decode failure when img is nil.
+	isImage bool
+	img     image.Image
+	imgErr  string
 }
 
 // DiscardRequested reports whether the user confirmed discarding the file's
@@ -1102,7 +1108,11 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if !m.modeForced {
 			m.mode = pickByWidth(cw)
 		}
-		m.viewport.SetContent(renderBodyMode(m.bodyContent(), cw, m.mode))
+		if m.isImage {
+			m.viewport.SetContent(m.renderImageBody(cw))
+		} else {
+			m.viewport.SetContent(renderBodyMode(m.bodyContent(), cw, m.mode))
+		}
 		return m, nil
 
 	case tea.MouseMsg:
@@ -1338,7 +1348,11 @@ func (m DiffViewModel) View() string {
 	// wraps: a wrapped title row would push the discard button onto a second
 	// visual line, out of reach of its title-row click hit-box.
 	badge := m.statusBadge()
+	// An image has no line counts; its header caption is the pixel size instead.
 	counts := diffAddStyle.Render("+"+itoa(m.added)) + " " + diffDelStyle.Render("−"+itoa(m.deleted))
+	if m.isImage {
+		counts = diffGutterStyle.Render(m.imageDims())
+	}
 	ctrlW := lipgloss.Width(diffDiscardLabel)
 	if m.discardArmed {
 		ctrlW = lipgloss.Width(diffDiscardYes) + diffDiscardGap + lipgloss.Width(diffDiscardNo)

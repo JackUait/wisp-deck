@@ -15,6 +15,8 @@ var (
 	diffViewTitle        string
 	diffViewBackdropFile string
 	diffViewDiscardFile  string
+	diffViewImage        bool
+	diffViewStatus       string
 )
 
 var diffViewCmd = &cobra.Command{
@@ -30,6 +32,10 @@ func init() {
 		"file with a serialized screen capture shown dimmed behind the popup")
 	diffViewCmd.Flags().StringVar(&diffViewDiscardFile, "discard-file", "",
 		"file the pager writes 'discard' to when the user confirms discarding the file")
+	diffViewCmd.Flags().BoolVar(&diffViewImage, "image", false,
+		"treat stdin as raw image bytes and show a preview instead of a diff")
+	diffViewCmd.Flags().StringVar(&diffViewStatus, "status", "modified",
+		"file status badge for --image mode (added|modified|deleted)")
 	rootCmd.AddCommand(diffViewCmd)
 }
 
@@ -52,7 +58,14 @@ func runDiffView(cmd *cobra.Command, args []string) error {
 	}
 
 	tui.ApplyTheme(effectiveTheme(aiToolFlag))
-	model := tui.NewDiffView(diffViewTitle, string(data))
+	// --image: stdin carried raw image bytes, not a diff; the pager shows a
+	// half-block preview with the caller-supplied status badge.
+	var model tui.DiffViewModel
+	if diffViewImage {
+		model = tui.NewImageView(diffViewTitle, data, diffViewStatus)
+	} else {
+		model = tui.NewDiffView(diffViewTitle, string(data))
+	}
 	// Show the screen behind the (full-screen) popup dimmed in the margin. Best
 	// effort: an unreadable/missing backdrop file just leaves the margin blank.
 	if diffViewBackdropFile != "" {

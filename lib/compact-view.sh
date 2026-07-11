@@ -620,6 +620,18 @@ discard_worktree_files() {
   return "$rc"
 }
 
+# is_image_file reports (via exit status) whether <path> has an image extension
+# the preview popup can decode — only the formats the Go stdlib ships decoders
+# for (png/jpg/jpeg/gif), case-insensitive. Everything else (webp, svg, …)
+# keeps the regular diff popup.
+# Usage: is_image_file <path>
+is_image_file() {
+  case "$1" in
+    *.[pP][nN][gG]|*.[jJ][pP][gG]|*.[jJ][pP][eE][gG]|*.[gG][iI][fF]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # file_diff_command echoes the shell command whose output feeds the diff-view
 # pager for <file>. A tracked file diffs against HEAD — its committed version. A
 # just-created UNTRACKED file has no HEAD blob, so diffing against HEAD would emit
@@ -710,10 +722,23 @@ open_diff_popup() {
   # margin, and closes when a click lands in that margin (tmux ignores clicks
   # outside a smaller popup). No -T title — the pager's header already shows the
   # path + added/deleted counts.
-  local diffcmd
-  diffcmd=$(file_diff_command "$dir" "$file")
-  tmux display-popup -E -B -w 100% -h 100% \
-    "${diffcmd} | ${strip} | wisp-deck-tui diff-view --ai-tool ${qtool} --title ${qf} ${backdrop_arg} ${decision_arg}"
+  # An image that exists on disk gets a PREVIEW instead of a binary diff: its
+  # raw bytes are piped to the pager's --image mode (no diff, no header strip).
+  # The header badge can't be derived from binary bytes, so it's passed in:
+  # an untracked file is brand-new ("added"), a tracked one "modified". A
+  # deleted image has no bytes to show and falls back to the diff pipeline.
+  local popup
+  if is_image_file "$file" && [ -f "$dir/$file" ]; then
+    local status=modified qd
+    git -C "$dir" ls-files --error-unmatch -- "$file" >/dev/null 2>&1 || status=added
+    qd=$(printf '%q' "$dir")
+    popup="cat ${qd}/${qf} | wisp-deck-tui diff-view --image --status ${status} --ai-tool ${qtool} --title ${qf} ${backdrop_arg} ${decision_arg}"
+  else
+    local diffcmd
+    diffcmd=$(file_diff_command "$dir" "$file")
+    popup="${diffcmd} | ${strip} | wisp-deck-tui diff-view --ai-tool ${qtool} --title ${qf} ${backdrop_arg} ${decision_arg}"
+  fi
+  tmux display-popup -E -B -w 100% -h 100% "$popup"
 
   # The user confirmed a discard in the pager: revert the file's working-tree
   # changes now that the popup has closed.
