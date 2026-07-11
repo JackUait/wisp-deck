@@ -125,13 +125,18 @@ func (m *MainMenuModel) aboutCardLayout() (left, top, w, h int) {
 	return left, top, w, h
 }
 
-// aboutDim dims the screen around the card by FAINTNESS only — no dark
+// aboutDimStyle dims the screen around the card by FAINTNESS only — no dark
 // background tint — matching the account-switch and diff modals: a terminal
 // cell is one solid color, so the card's corners can only round against a
-// same-gray surround.
-var aboutDim = lipgloss.NewStyle().
-	Faint(true).
-	Foreground(lipgloss.Color("240"))
+// same-gray surround. Built per render, NOT held in a package var: the app
+// rebinds lipgloss's default renderer to /dev/tty at startup (stdout is bash's
+// capture pipe), and a style created at package init would keep the pre-switch
+// Ascii renderer and paint the backdrop plain.
+func aboutDimStyle() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Faint(true).
+		Foreground(lipgloss.Color("240"))
+}
 
 var aboutAnsiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
@@ -140,6 +145,7 @@ var aboutAnsiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 // gray, with the card lines laid centered on top.
 func (m *MainMenuModel) overlayAbout(placed string) string {
 	bg := strings.Split(placed, "\n")
+	aboutDim := aboutDimStyle()
 	cardLeft, cardTop, cardWidth, _ := m.aboutCardLayout()
 	cardLines := strings.Split(m.renderAboutCard(), "\n")
 

@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"io"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 func aKey() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}} }
@@ -113,6 +116,26 @@ func TestAbout_rendersAsCenteredOverlayModal(t *testing.T) {
 	}
 	if !strings.Contains(view, "Esc close") {
 		t.Errorf("card footer missing 'Esc close':\n%s", view)
+	}
+}
+
+// The real app rebinds lipgloss's default renderer to /dev/tty at startup
+// (util.TUITeaOptions), AFTER package vars are initialized: a dim style held
+// in a package var captures the pre-switch renderer (Ascii when stdout is
+// bash's command-substitution pipe) and renders the backdrop plain white.
+// The dim style must be built at render time so it uses the live renderer.
+func TestAbout_backdropDimBindsRendererAtRenderTime(t *testing.T) {
+	old := lipgloss.DefaultRenderer()
+	r := lipgloss.NewRenderer(io.Discard)
+	r.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetDefaultRenderer(r)
+	t.Cleanup(func() { lipgloss.SetDefaultRenderer(old) })
+
+	m := openAboutSized(t, 100, 40)
+
+	first := strings.SplitN(m.View(), "\n", 2)[0]
+	if !strings.Contains(first, "38;5;240") || !strings.Contains(first, "2;") {
+		t.Errorf("backdrop rows must open with the faint gray-240 dim sequence, got %q", first)
 	}
 }
 
