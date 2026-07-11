@@ -200,6 +200,7 @@ type MainMenuModel struct {
 	quitting            bool
 	result              *MainMenuResult
 	updateVersion       string
+	appVersion          string
 	activeTab           MenuTab
 	focus               focusRegion
 	settingsSelected    int
@@ -436,6 +437,16 @@ func (m *MainMenuModel) SetUpdateVersion(version string) {
 // UpdateVersion returns the pending update version, empty when none.
 func (m *MainMenuModel) UpdateVersion() string {
 	return m.updateVersion
+}
+
+// SetAppVersion sets the running binary's own version (shown in About).
+func (m *MainMenuModel) SetAppVersion(version string) {
+	m.appVersion = version
+}
+
+// AppVersion returns the running binary's own version, empty when unknown.
+func (m *MainMenuModel) AppVersion() string {
+	return m.appVersion
 }
 
 // SelectedItem returns the currently selected item index.

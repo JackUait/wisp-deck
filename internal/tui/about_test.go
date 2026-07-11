@@ -61,3 +61,26 @@ func TestAbout_escCloses(t *testing.T) {
 		t.Errorf("Esc should close the About panel")
 	}
 }
+
+func TestAbout_showsAppVersion(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetAppVersion("2.23.0")
+	m.SetActiveTab(TabSettings)
+	m.focus = FocusBody
+	m.Update(aKey())
+
+	if view := m.View(); !strings.Contains(view, "Version 2.23.0") {
+		t.Errorf("About panel missing the app version:\n%s", view)
+	}
+}
+
+func TestAbout_omitsVersionLineWhenUnset(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabSettings)
+	m.focus = FocusBody
+	m.Update(aKey())
+
+	if view := m.View(); strings.Contains(view, "Version") {
+		t.Errorf("About panel should not render a Version line without a version:\n%s", view)
+	}
+}

@@ -53,6 +53,9 @@ func (m *MainMenuModel) renderAboutPanel() string {
 	lines = append(lines, pad(primaryBoldStyle.Render("About Wisp Deck")))
 	lines = append(lines, separator)
 	lines = append(lines, emptyRow)
+	if m.appVersion != "" {
+		lines = append(lines, pad(dimStyle.Render("Version "+m.appVersion)))
+	}
 	lines = append(lines, pad("Made by Evgeniy Pyatkov (@jackuait)"))
 	lines = append(lines, pad(dimStyle.Render("Telegram: @that_ai_guy — https://t.me/that_ai_guy")))
 	lines = append(lines, emptyRow)

@@ -189,6 +189,7 @@ func buildMainMenuModel() (*tui.MainMenuModel, error) {
 		model.SetClaudeDefaultLabel(tui.ReadDefaultAccountLabel(mainMenuClaudeDefaultLabelFile))
 	}
 	model.SetUpdateVersion(mainMenuUpdateVer)
+	model.SetAppVersion(Version)
 
 	return model, nil
 }

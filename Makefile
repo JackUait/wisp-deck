@@ -1,9 +1,10 @@
 .PHONY: build install test clean lint release sync-version help
 
-# Build the Go binary
+# Build the Go binary. Stamp it with the VERSION file (like release builds)
+# so --version and the About card report the real version instead of "dev".
 build:
 	@echo "Building wisp-deck-tui..."
-	go build -o bin/wisp-deck-tui ./cmd/wisp-deck-tui
+	go build -ldflags "-X main.Version=$$(cat VERSION)" -o bin/wisp-deck-tui ./cmd/wisp-deck-tui
 	@codesign --sign - --force bin/wisp-deck-tui
 	@echo "✓ Built bin/wisp-deck-tui"
 

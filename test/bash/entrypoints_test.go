@@ -1044,3 +1044,17 @@ done
 		t.Errorf("expected run_wisp_deck_update to run: %v", err)
 	}
 }
+
+// Local builds must stamp the binary with the VERSION file, like release
+// builds do — otherwise `make install` produces a "dev" binary and the About
+// card / --version lie about what is installed.
+func TestMakefile_build_injects_version(t *testing.T) {
+	root := projectRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "Makefile"))
+	if err != nil {
+		t.Fatalf("failed to read Makefile: %v", err)
+	}
+	if !strings.Contains(string(data), "-X main.Version=") {
+		t.Errorf("Makefile build should inject -X main.Version from the VERSION file")
+	}
+}
