@@ -485,6 +485,20 @@ _spare_zdotdir="$(spare_prompt_zdotdir "$SHARE_DIR" "$SESSION_NAME" "$SHELL" "${
 _spare_cmd="$(spare_tabs_launch_cmd "$_spare_label" "$_spare_conf" "$PROJECT_DIR" "$_spare_zdotdir")"
 _spare_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/spare-tabs.sh\" && spare_tabs_close_current \"$_spare_label\"'"
 
+# Restore: replay the captured pane geometry over the just-built panes. The
+# build order below is deterministic and identical to capture time, so the
+# panes line up with the layout's cells. MUST be backgrounded before
+# new-session: that call attaches and blocks until the session ends, so any
+# replay placed after it never runs while the session is alive. The watcher
+# also re-applies after Ghostty's late pty resize (a crash-restored tab is
+# spawned before its final size lands, and tmux redistributes the delta
+# equally across columns, corrupting the split) and exits once the window
+# size settles. Skipped when no layout was captured (old snapshot) — the
+# default split stays.
+if [ "$RESTORE_MODE" -eq 1 ] && [ -n "${WISP_DECK_RESUME_LAYOUT:-}" ]; then
+  restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$WISP_DECK_RESUME_LAYOUT" &
+fi
+
 "$TMUX_CMD" new-session -s "$SESSION_NAME" -e "PATH=$PATH" -e "WISP_DECK_MARKER_FILE=$WISP_DECK_MARKER_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=${WISP_DECK_RESUME_SESSION:-}" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$WISP_DECK_RELAUNCH_FILE" -e "WISP_DECK_CLAUDE_ACCOUNT=${WISP_DECK_CLAUDE_ACCOUNT_DIR##*/}" -e "WISP_DECK_SEQ=${_wd_launch_seq}" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
   "$_pane0_cmd" \; \
   set-option status-left " ⬡ ${PROJECT_NAME} " \; \
@@ -506,12 +520,3 @@ _spare_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/spare-tabs.sh\" && spare_
   select-pane -L \; \
   split-window -v -p 45 -c "$PROJECT_DIR" "$_spare_cmd" \; \
   select-pane -R
-
-# Restore: replay the captured pane geometry over the just-built panes. The
-# build order above is deterministic and identical to capture time, so the
-# panes line up with the layout's cells; select-layout reproduces their exact
-# sizes (scaling proportionally if this terminal window is a different size).
-# Skipped when no layout was captured (old snapshot) — the default split stays.
-if [ "${RESTORE_MODE:-0}" = "1" ] && [ -n "${WISP_DECK_RESUME_LAYOUT:-}" ]; then
-  "$TMUX_CMD" select-layout -t "$SESSION_NAME:0" "$WISP_DECK_RESUME_LAYOUT" 2>/dev/null || true
-fi

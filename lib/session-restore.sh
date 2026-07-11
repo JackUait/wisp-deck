@@ -551,6 +551,47 @@ claude_pick_transcript() {
   return 0
 }
 
+# Replay a captured #{window_layout} onto <session>'s window 0, re-applying
+# until the window size settles. Run BACKGROUNDED by the wrapper BEFORE its
+# `tmux new-session` — that call attaches and blocks until the session ends,
+# so a replay placed after it never runs while the session is alive (the
+# original dead-code bug). Polling for a settled size matters just as much:
+# after a macOS crash, Ghostty respawns a restored tab's command before the
+# tab's pty reaches its final size, and when the real size lands tmux
+# distributes the width delta EQUALLY between the two columns (not
+# proportionally), corrupting the 25/75 split — the layout must be applied
+# again AFTER that resize. A failed select-layout (panes still being built
+# mid new-session chain) does not count as applied and is retried.
+# Exits on its own: once the size has been stable for settle_ticks after a
+# successful apply, or when the session dies, or after max_ticks — so it can
+# never linger and fight the user's own pane resizes later.
+# Usage: restore_layout_watch <tmux_cmd> <session> <layout>
+#        [interval] [settle_ticks] [max_ticks]
+restore_layout_watch() {
+  local tmux_cmd="$1" sess="$2" layout="$3"
+  local interval="${4:-0.25}" settle_ticks="${5:-8}" max_ticks="${6:-120}"
+  [ -n "$layout" ] || return 0
+  local i=0 size applied_size="" stable=0
+  while [ "$i" -lt "$max_ticks" ]; do
+    i=$((i + 1))
+    size="$("$tmux_cmd" display-message -p -t "$sess:0" '#{window_width}x#{window_height}' 2>/dev/null)"
+    if [ -z "$size" ]; then
+      # Session gone after we already applied → done. Not created yet → wait.
+      [ -n "$applied_size" ] && return 0
+    elif [ "$size" != "$applied_size" ]; then
+      if "$tmux_cmd" select-layout -t "$sess:0" "$layout" 2>/dev/null; then
+        applied_size="$size"
+        stable=0
+      fi
+    else
+      stable=$((stable + 1))
+      [ "$stable" -ge "$settle_ticks" ] && return 0
+    fi
+    sleep "$interval"
+  done
+  return 0
+}
+
 # Continue the restore chain: when entries remain, open the next tab of this
 # window (the new tab runs the wrapper, pops the next entry, and calls this
 # again). When the Cmd+T keystroke fails (Accessibility permission not

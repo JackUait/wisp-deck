@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestWrapperInteractive_pops_restore_queue_into_current_window runs the real
@@ -90,9 +91,10 @@ func TestWrapperRestore_applies_captured_layout(t *testing.T) {
 	}
 
 	layoutRec := filepath.Join(home, "layout-rec")
-	// Record every select-layout invocation's args; other subcommands no-op.
+	// Record every select-layout invocation's args; answer the layout
+	// watcher's window-size probe so it applies; other subcommands no-op.
 	mocks := map[string]string{
-		"tmux":          "#!/bin/bash\nif [ \"$1\" = \"select-layout\" ]; then printf '%s\\n' \"$*\" >> \"$GT_LAYOUT_REC\"; fi\nexit 0\n",
+		"tmux":          "#!/bin/bash\nif [ \"$1\" = \"select-layout\" ]; then printf '%s\\n' \"$*\" >> \"$GT_LAYOUT_REC\"; fi\nif [ \"$1\" = \"display-message\" ]; then echo 204x50; fi\nexit 0\n",
 		"claude":        "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
@@ -126,7 +128,18 @@ func TestWrapperRestore_applies_captured_layout(t *testing.T) {
 	_, code := runBashScript(t, "wrapper.sh", nil, env)
 	assertExitCode(t, code, 0)
 
-	data, err := os.ReadFile(layoutRec)
+	// The replay runs in a backgrounded watcher (new-session blocks in real
+	// life), so give it a moment past the wrapper's own exit.
+	deadline := time.Now().Add(5 * time.Second)
+	var data []byte
+	var err error
+	for time.Now().Before(deadline) {
+		data, err = os.ReadFile(layoutRec)
+		if err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	if err != nil {
 		t.Fatalf("select-layout was never invoked (captured layout not replayed): %v", err)
 	}
