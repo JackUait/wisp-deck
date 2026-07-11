@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"image"
+	"io"
 	"regexp"
 	"strings"
 
@@ -50,6 +51,12 @@ type DiffViewModel struct {
 	isImage bool
 	img     image.Image
 	imgErr  string
+	// Kitty-graphics hi-res overlay (see WithKittyHires): the PNG is written to
+	// kittyOut over the half-block cells so supported terminals show real pixels.
+	kittyOut  io.Writer
+	kittyTmux bool
+	kittyPNG  []byte
+	kittySent bool
 }
 
 // DiscardRequested reports whether the user confirmed discarding the file's
@@ -1110,6 +1117,10 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.isImage {
 			m.viewport.SetContent(m.renderImageBody(cw, h))
+			// Hi-res overlay: (re)place the real-pixel image over the half-block
+			// cells now that the size is known. This runs inside the alt screen,
+			// which is where the placement must live.
+			m.placeKittyImage()
 		} else {
 			m.viewport.SetContent(renderBodyMode(m.bodyContent(), cw, m.mode))
 		}

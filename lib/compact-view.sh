@@ -734,7 +734,17 @@ open_diff_popup() {
     local img_status=modified qd
     git -C "$dir" ls-files --error-unmatch -- "$file" >/dev/null 2>&1 || img_status=added
     qd=$(printf '%q' "$dir")
-    popup="cat ${qd}/${qf} | wisp-deck-tui diff-view --image --status ${img_status} --ai-tool ${qtool} --title ${qf} ${backdrop_arg} ${decision_arg}"
+    # The pager overlays the real pixels via kitty-graphics APC escapes. tmux
+    # 3.6 POPUPS swallow DCS passthrough (panes forward it; popups don't), so
+    # the pager writes the graphics straight to the CLIENT tty — the popup is
+    # full-screen, so its cells map 1:1 onto the outer terminal. Passthrough is
+    # still enabled as the fallback channel for tmux versions whose popups
+    # forward it (used when --gfx-tty is absent or unopenable).
+    tmux set -g allow-passthrough all 2>/dev/null || true
+    local client_tty gfx_arg=""
+    client_tty=$(tmux display-message -p -t "${TMUX_PANE:-}" '#{client_tty}' 2>/dev/null || true)
+    [ -n "$client_tty" ] && gfx_arg="--gfx-tty $(printf '%q' "$client_tty")"
+    popup="cat ${qd}/${qf} | wisp-deck-tui diff-view --image --status ${img_status} --ai-tool ${qtool} --title ${qf} ${gfx_arg} ${backdrop_arg} ${decision_arg}"
   else
     local diffcmd
     diffcmd=$(file_diff_command "$dir" "$file")
@@ -1315,8 +1325,25 @@ compact_view() {
         w=$(tmux display-message -p -t "${TMUX_PANE:-}" '#{pane_width}' 2>/dev/null || tput cols 2>/dev/null || echo 80)
         h=$(tmux display-message -p -t "${TMUX_PANE:-}" '#{pane_height}' 2>/dev/null || tput lines 2>/dev/null || echo 24)
       else
-        w=$(tput cols 2>/dev/null || echo 80)
-        h=$(tput lines 2>/dev/null || echo 24)
+        # Ask the TERMINAL, not terminfo. `tput cols/lines` reports the static
+        # xterm size (80x24) whenever it cannot read the tty — it then paints an
+        # 80-wide ledger into a narrower pane and, worse, puts the account pill's
+        # click target on row 24 of a pane that has fewer rows, so the pill can
+        # never be hovered or clicked. stty reads the real size off the tty.
+        local _sz=""
+        _sz="$(stty size 2>/dev/null </dev/tty)" || _sz=""
+        # stty prints "<rows> <cols>"; anything else (no tty, a 0 dimension)
+        # means it could not measure, so fall back to terminfo's guess.
+        case "$_sz" in
+          [1-9]*' '[1-9]*)
+            h="${_sz%% *}"
+            w="${_sz##* }"
+            ;;
+          *)
+            w=$(tput cols 2>/dev/null || echo 80)
+            h=$(tput lines 2>/dev/null || echo 24)
+            ;;
+        esac
       fi
     fi
     [ -z "$h" ] && h=24

@@ -17,6 +17,7 @@ var (
 	diffViewDiscardFile  string
 	diffViewImage        bool
 	diffViewStatus       string
+	diffViewGfxTTY       string
 )
 
 var diffViewCmd = &cobra.Command{
@@ -36,7 +37,18 @@ func init() {
 		"treat stdin as raw image bytes and show a preview instead of a diff")
 	diffViewCmd.Flags().StringVar(&diffViewStatus, "status", "modified",
 		"file status badge for --image mode (added|modified|deleted)")
+	diffViewCmd.Flags().StringVar(&diffViewGfxTTY, "gfx-tty", "",
+		"terminal device to write hi-res kitty graphics to directly (bypasses the tmux popup pty, which swallows passthrough)")
 	rootCmd.AddCommand(diffViewCmd)
+}
+
+// openGfxTTY opens the terminal device the hi-res graphics should be written
+// to. An empty path errors so the caller falls back to its own tty.
+func openGfxTTY(path string) (*os.File, error) {
+	if path == "" {
+		return nil, fmt.Errorf("no gfx tty")
+	}
+	return os.OpenFile(path, os.O_WRONLY, 0)
 }
 
 // writeDiscardDecision records the user's discard choice for the bash caller:
@@ -59,10 +71,25 @@ func runDiffView(cmd *cobra.Command, args []string) error {
 
 	tui.ApplyTheme(effectiveTheme(aiToolFlag))
 	// --image: stdin carried raw image bytes, not a diff; the pager shows a
-	// half-block preview with the caller-supplied status badge.
+	// half-block preview with the caller-supplied status badge. On terminals
+	// with kitty graphics (Ghostty), the real pixels are overlaid on top of the
+	// half-block cells via a second TTY handle; if anything in that chain fails,
+	// the half-block preview is what the user sees.
 	var model tui.DiffViewModel
 	if diffViewImage {
 		model = tui.NewImageView(diffViewTitle, data, diffViewStatus)
+		if tui.SupportsKittyGraphics(os.Getenv) {
+			// Preferred channel: the tmux client tty, written raw — tmux popups
+			// swallow DCS passthrough, so the popup's own pty can't carry the
+			// graphics. Fallback: our own tty, passthrough-wrapped inside tmux.
+			if f, err := openGfxTTY(diffViewGfxTTY); err == nil {
+				defer f.Close()
+				model = model.WithKittyHires(f, false)
+			} else if gfxTTY, err := util.OpenTTY(); err == nil {
+				defer gfxTTY.Close()
+				model = model.WithKittyHires(gfxTTY, os.Getenv("TMUX") != "")
+			}
+		}
 	} else {
 		model = tui.NewDiffView(diffViewTitle, string(data))
 	}
@@ -90,6 +117,8 @@ func runDiffView(cmd *cobra.Command, args []string) error {
 	// If the user confirmed discarding, leave a marker for the bash caller, which
 	// runs the actual git restore after the popup closes.
 	if dv, ok := finalModel.(tui.DiffViewModel); ok {
+		// Drop the hi-res image from the terminal's store before the TTY closes.
+		dv.KittyCleanup()
 		if err := writeDiscardDecision(diffViewDiscardFile, dv.DiscardRequested()); err != nil {
 			return fmt.Errorf("failed to record discard decision: %w", err)
 		}

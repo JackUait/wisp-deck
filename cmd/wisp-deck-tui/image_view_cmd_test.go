@@ -16,3 +16,11 @@ func TestDiffViewCmd_has_status_flag(t *testing.T) {
 		t.Fatal("expected --status flag on diff-view")
 	}
 }
+
+// --gfx-tty carries the tmux client tty so hi-res graphics can bypass the
+// popup pty (tmux popups swallow passthrough).
+func TestDiffViewCmd_has_gfx_tty_flag(t *testing.T) {
+	if diffViewCmd.Flags().Lookup("gfx-tty") == nil {
+		t.Fatal("expected --gfx-tty flag on diff-view")
+	}
+}

@@ -126,6 +126,33 @@ func TestOpenDiffPopup_missing_image_falls_back_to_diff(t *testing.T) {
 	assertContains(t, got, "diff HEAD")
 }
 
+// The hi-res overlay reaches the terminal as kitty-graphics APC escapes, which
+// tmux eats unless allow-passthrough is enabled; the image branch must switch
+// it on before opening the popup.
+func TestOpenDiffPopup_image_enables_tmux_passthrough(t *testing.T) {
+	repo := t.TempDir()
+	git := discardGitRepo(t, repo)
+	git("init", "-q")
+	writeTempFile(t, repo, "pic.png", "bytes")
+
+	got := imagePopupCmd(t, repo, "pic.png")
+	assertContains(t, got, "allow-passthrough")
+}
+
+// tmux 3.6 popups swallow DCS passthrough (panes forward it; popups don't —
+// verified empirically via OSC52), so the pager must write kitty graphics
+// straight to the tmux CLIENT tty. The image branch resolves it and passes it
+// via --gfx-tty.
+func TestOpenDiffPopup_image_passes_client_tty_for_graphics(t *testing.T) {
+	repo := t.TempDir()
+	git := discardGitRepo(t, repo)
+	git("init", "-q")
+	writeTempFile(t, repo, "pic.png", "bytes")
+
+	got := imagePopupCmd(t, repo, "pic.png")
+	assertContains(t, got, "--gfx-tty")
+}
+
 // The image branch keeps the shared popup plumbing: theme forwarding, the
 // dimmed backdrop, and the discard decision file.
 func TestOpenDiffPopup_image_keeps_theme_backdrop_and_discard(t *testing.T) {

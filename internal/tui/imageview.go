@@ -58,10 +58,16 @@ func renderImagePreview(img image.Image, width, maxRows int) string {
 		return ""
 	}
 	outW, outH := fitImage(w, h, width, maxRows*2)
+	// Box-filter to the output size so the cells carry averaged detail instead
+	// of nearest-neighbor aliasing; native-size images pass through untouched.
+	if outW != w || outH != h {
+		img = scaleImage(img, outW, outH)
+		bounds = img.Bounds()
+	}
 
 	px := func(x, y int) (r, g, b uint32) {
-		sx := bounds.Min.X + x*w/outW
-		sy := bounds.Min.Y + y*h/outH
+		sx := bounds.Min.X + x
+		sy := bounds.Min.Y + y
 		pr, pg, pb, pa := img.At(sx, sy).RGBA()
 		// Composite the premultiplied color over the preview background.
 		r = (pr + (0xffff-pa)*imagePreviewBg[0]/255) >> 8
