@@ -15,6 +15,24 @@ import (
 	"github.com/creack/pty"
 )
 
+// waitForFrame drains the pty until a frame containing want shows up, or the
+// deadline passes. A fixed sleep asserts how FAST the render is, which a loaded
+// 3-core CI runner will lose; polling asserts that it renders at all.
+func waitForFrame(read func() string, want string, timeout time.Duration) (string, time.Duration, bool) {
+	start := time.Now()
+	var acc strings.Builder
+	for {
+		acc.WriteString(read())
+		if strings.Contains(acc.String(), want) {
+			return acc.String(), time.Since(start), true
+		}
+		if time.Since(start) >= timeout {
+			return acc.String(), time.Since(start), false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // Regression: when the user scrolls fast, SGR mouse reports must never leak onto
 // the screen as literal text (e.g. "[<65;40;18M"). `read -s` only silences echo
 // while it is actively reading; scroll events that arrive during the render gap
@@ -1791,12 +1809,13 @@ func TestCompactView_hover_highlights_account_pill(t *testing.T) {
 
 	// Motion over the pill: bottom bar is row 12 (pane height), pill starts at col 1.
 	_, _ = ptmx.Write([]byte("\x1b[<35;3;12M"))
-	time.Sleep(300 * time.Millisecond)
-	hovered := read()
-	if !strings.Contains(hovered, "48;5;238") {
+	hovered, took, ok := waitForFrame(read, "48;5;238", 6*time.Second)
+	if !ok {
 		t.Fatalf("hovering the account pill should light it with the hover background "+
-			"(48;5;238), but no frame did; got:\n%q", hovered)
+			"(48;5;238), but no frame did in %s.\nhovered frames: %q\nthe idle frame the "+
+			"pill was hovered on was:\n%q", took, hovered, idle)
 	}
+	t.Logf("pill hover highlighted after %s", took)
 
 	// Motion just past the pill, still on the bottom bar (col 40, row 12) — not a
 	// file row, so no file-row hover. The pill highlight must clear.
