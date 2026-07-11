@@ -116,6 +116,7 @@ func NewImageView(title string, data []byte, status string) DiffViewModel {
 		return m
 	}
 	m.img = img
+	m.imgSrc = data
 	return m
 }
 

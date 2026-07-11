@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"encoding/base64"
 	"image"
+	"image/draw"
 	"image/png"
 	"io"
 	"strings"
+	"sync"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Kitty graphics protocol support: on terminals that implement it (Ghostty,
@@ -109,12 +113,25 @@ func cupTo(row, col int) string {
 	return "\x1b[" + itoa(row) + ";" + itoa(col) + "H"
 }
 
+// toRGBA returns img as *image.RGBA, converting once via image/draw (which has
+// optimized per-format paths, e.g. for JPEG's YCbCr) so pixel loops can read
+// Pix directly instead of paying an interface call per pixel.
+func toRGBA(img image.Image) *image.RGBA {
+	if rgba, ok := img.(*image.RGBA); ok {
+		return rgba
+	}
+	b := img.Bounds()
+	rgba := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+	draw.Draw(rgba, rgba.Bounds(), img, b.Min, draw.Src)
+	return rgba
+}
+
 // scaleImage box-filters img down to w×h: each output pixel is the average of
 // its source rectangle, so downscaled previews stay smooth instead of aliasing
-// the way nearest-neighbor sampling does.
+// the way nearest-neighbor sampling does. Operates on raw RGBA bytes for speed.
 func scaleImage(img image.Image, w, h int) *image.RGBA {
-	b := img.Bounds()
-	sw, sh := b.Dx(), b.Dy()
+	src := toRGBA(img)
+	sw, sh := src.Rect.Dx(), src.Rect.Dy()
 	if w < 1 {
 		w = 1
 	}
@@ -132,22 +149,22 @@ func scaleImage(img image.Image, w, h int) *image.RGBA {
 			if sx1 <= sx0 {
 				sx1 = sx0 + 1
 			}
-			var r, g, bl, a, n uint64
+			var r, g, bl, a uint64
 			for sy := sy0; sy < sy1; sy++ {
-				for sx := sx0; sx < sx1; sx++ {
-					pr, pg, pb, pa := img.At(b.Min.X+sx, b.Min.Y+sy).RGBA()
-					r += uint64(pr)
-					g += uint64(pg)
-					bl += uint64(pb)
-					a += uint64(pa)
-					n++
+				row := src.Pix[sy*src.Stride+sx0*4 : sy*src.Stride+sx1*4]
+				for i := 0; i < len(row); i += 4 {
+					r += uint64(row[i])
+					g += uint64(row[i+1])
+					bl += uint64(row[i+2])
+					a += uint64(row[i+3])
 				}
 			}
+			n := uint64((sy1 - sy0) * (sx1 - sx0))
 			i := out.PixOffset(x, y)
-			out.Pix[i+0] = uint8(r / n >> 8)
-			out.Pix[i+1] = uint8(g / n >> 8)
-			out.Pix[i+2] = uint8(bl / n >> 8)
-			out.Pix[i+3] = uint8(a / n >> 8)
+			out.Pix[i+0] = uint8(r / n)
+			out.Pix[i+1] = uint8(g / n)
+			out.Pix[i+2] = uint8(bl / n)
+			out.Pix[i+3] = uint8(a / n)
 		}
 	}
 	return out
@@ -177,67 +194,129 @@ func (m DiffViewModel) ImagePlacementAt(termW, termH int) (row, col, cols, rows 
 	return row, col, outW, imgRows, true
 }
 
-// WithKittyHires arms the hi-res path: the image is (down)scaled within
-// kittyMaxSide, PNG-encoded once, and remembered along with the writer to the
-// terminal. Nothing is written yet — bubbletea enters the ALT screen only at
-// Run(), and a placement made on the main screen wouldn't show there — the
-// first WindowSizeMsg does the transmit (see Update). An encode failure just
-// leaves hi-res unarmed; the half-block preview stands alone.
-func (m DiffViewModel) WithKittyHires(w io.Writer, tmux bool) DiffViewModel {
-	if m.img == nil {
-		return m
-	}
-	img := m.img
+// pngMagic is the PNG file signature, used to recognize sources kitty can
+// display without a re-encode.
+var pngMagic = []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+
+// kittyPayload returns the PNG bytes to transmit for an image whose original
+// file bytes are src. A source that is ALREADY a PNG within kittyMaxSide is
+// passed through verbatim — no decode/encode cost at all (screenshots, the
+// common case). Anything else (JPEG, GIF, oversized) is (down)scaled within
+// the cap and PNG-encoded at BestSpeed: PNG compression is lossless at every
+// level, so speed costs bytes, never quality. Returns nil on encode failure.
+func kittyPayload(img image.Image, src []byte) []byte {
 	b := img.Bounds()
-	if b.Dx() > kittyMaxSide || b.Dy() > kittyMaxSide {
+	if b.Dx() <= kittyMaxSide && b.Dy() <= kittyMaxSide {
+		if bytes.HasPrefix(src, pngMagic) {
+			return src
+		}
+	} else {
 		fw, fh := fitImage(b.Dx(), b.Dy(), kittyMaxSide, kittyMaxSide)
 		img = scaleImage(img, fw, fh)
 	}
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
+	enc := png.Encoder{CompressionLevel: png.BestSpeed}
+	if err := enc.Encode(&buf, img); err != nil {
+		return nil
+	}
+	return buf.Bytes()
+}
+
+// kittySentMsg reports the async transmit finished. w/h carry the popup size
+// the placement was computed for, so Update can re-place if a resize landed
+// while the transmit was in flight. ok=false means the encode failed (or the
+// popup closed first) and hi-res should stand down.
+type kittySentMsg struct {
+	w, h int
+	ok   bool
+}
+
+// kittyShared is the mutable state shared between the model (a value that
+// bubbletea copies) and the async transmit goroutine. The mutex serializes the
+// terminal writes and lets close-time cleanup both suppress a not-yet-started
+// transmit and WAIT OUT one that is mid-write — a transmit landing after the
+// alt screen exits would paint the image onto the user's normal screen, and a
+// write truncated by process exit would leave the terminal parser inside an
+// APC sequence.
+type kittyShared struct {
+	mu     sync.Mutex
+	closed bool
+	sent   bool
+}
+
+// WithKittyHires arms the hi-res path: it remembers the terminal writer; the
+// actual encode + transmit runs asynchronously off the first WindowSizeMsg
+// (see Update) so the popup's first paint is never blocked — and because
+// bubbletea enters the ALT screen only at Run(), where placements must live.
+func (m DiffViewModel) WithKittyHires(w io.Writer, tmux bool) DiffViewModel {
+	if m.img == nil {
 		return m
 	}
 	m.kittyOut = w
 	m.kittyTmux = tmux
-	m.kittyPNG = buf.Bytes()
+	m.kittyShared = &kittyShared{}
 	return m
 }
 
-// placeKittyImage writes the hi-res placement for the current size: the first
-// call transmits the PNG and displays it; later calls (resizes) drop the old
-// placement and re-place the stored image at the new rectangle. The cursor is
-// saved/restored around the move so the text frame isn't disturbed.
-func (m *DiffViewModel) placeKittyImage() {
-	if m.kittyOut == nil {
-		return
+// kittyTransmitCmd builds the one-shot async command that encodes the payload
+// and writes the positioned transmit-and-display sequence. Geometry is
+// captured now; if the popup resizes mid-flight, the kittySentMsg handler
+// re-places at the fresh size.
+func (m DiffViewModel) kittyTransmitCmd() tea.Cmd {
+	out, tmux, shared := m.kittyOut, m.kittyTmux, m.kittyShared
+	img, src := m.img, m.imgSrc
+	w, h := m.width, m.height
+	row, col, cols, rows, ok := m.ImagePlacementAt(w, h)
+	if !ok {
+		return nil
 	}
+	return func() tea.Msg {
+		payload := kittyPayload(img, src)
+		if payload == nil {
+			return kittySentMsg{ok: false}
+		}
+		shared.mu.Lock()
+		defer shared.mu.Unlock()
+		if shared.closed { // popup already closed: never touch the terminal
+			return kittySentMsg{ok: false}
+		}
+		io.WriteString(out, "\x1b7"+cupTo(row, col)+
+			kittyTransmitDisplay(payload, kittyImageID, cols, rows, tmux)+"\x1b8")
+		shared.sent = true
+		return kittySentMsg{w: w, h: h, ok: true}
+	}
+}
+
+// rePlaceKitty moves the already-transmitted image to the current size's
+// rectangle: drop the old placement, place anew. Small synchronous write.
+func (m *DiffViewModel) rePlaceKitty() {
 	row, col, cols, rows, ok := m.ImagePlacementAt(m.width, m.height)
 	if !ok {
 		return
 	}
-	var b strings.Builder
-	if m.kittySent {
-		b.WriteString(kittyDeletePlacements(kittyImageID, m.kittyTmux))
-	}
-	b.WriteString("\x1b7")
-	b.WriteString(cupTo(row, col))
-	if m.kittySent {
-		b.WriteString(kittyPlace(kittyImageID, cols, rows, m.kittyTmux))
-	} else {
-		b.WriteString(kittyTransmitDisplay(m.kittyPNG, kittyImageID, cols, rows, m.kittyTmux))
-		m.kittySent = true
-	}
-	b.WriteString("\x1b8")
-	io.WriteString(m.kittyOut, b.String())
-}
-
-// KittyCleanup deletes the transmitted image and its placements. The cmd layer
-// calls it after the program exits, before the TTY closes; leaving the alt
-// screen usually clears placements anyway, but terminals keep the DATA until
-// it's deleted, and the next popup shouldn't inherit a stale store.
-func (m DiffViewModel) KittyCleanup() {
-	if m.kittyOut == nil || !m.kittySent {
+	m.kittyShared.mu.Lock()
+	defer m.kittyShared.mu.Unlock()
+	if m.kittyShared.closed || !m.kittyShared.sent {
 		return
 	}
-	io.WriteString(m.kittyOut, kittyDeleteAll(m.kittyTmux))
+	io.WriteString(m.kittyOut, kittyDeletePlacements(kittyImageID, m.kittyTmux)+
+		"\x1b7"+cupTo(row, col)+kittyPlace(kittyImageID, cols, rows, m.kittyTmux)+"\x1b8")
+}
+
+// KittyCleanup closes the hi-res channel: it marks the popup closed (so an
+// in-flight transmit is suppressed, waiting out one that is mid-write) and,
+// if a transmit completed, deletes the image from the terminal's store.
+// Leaving the alt screen usually clears placements, but terminals keep the
+// DATA until it's deleted, and the next popup shouldn't inherit a stale store.
+// The cmd layer calls it after the program exits, before the TTY closes.
+func (m DiffViewModel) KittyCleanup() {
+	if m.kittyOut == nil || m.kittyShared == nil {
+		return
+	}
+	m.kittyShared.mu.Lock()
+	defer m.kittyShared.mu.Unlock()
+	m.kittyShared.closed = true
+	if m.kittyShared.sent {
+		io.WriteString(m.kittyOut, kittyDeleteAll(m.kittyTmux))
+	}
 }

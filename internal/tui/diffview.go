@@ -52,11 +52,15 @@ type DiffViewModel struct {
 	img     image.Image
 	imgErr  string
 	// Kitty-graphics hi-res overlay (see WithKittyHires): the PNG is written to
-	// kittyOut over the half-block cells so supported terminals show real pixels.
-	kittyOut  io.Writer
-	kittyTmux bool
-	kittyPNG  []byte
-	kittySent bool
+	// kittyOut over the half-block cells so supported terminals show real
+	// pixels. imgSrc keeps the original file bytes so an already-PNG source can
+	// be transmitted verbatim without a re-encode (see kittyPayload).
+	imgSrc      []byte
+	kittyOut    io.Writer
+	kittyTmux   bool
+	kittySent   bool
+	kittyArming bool         // transmit command in flight
+	kittyShared *kittyShared // state shared with the transmit goroutine
 }
 
 // DiscardRequested reports whether the user confirmed discarding the file's
@@ -1117,12 +1121,37 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.isImage {
 			m.viewport.SetContent(m.renderImageBody(cw, h))
-			// Hi-res overlay: (re)place the real-pixel image over the half-block
-			// cells now that the size is known. This runs inside the alt screen,
-			// which is where the placement must live.
-			m.placeKittyImage()
+			// Hi-res overlay: the first size kicks the async encode+transmit (off
+			// the event loop, so this paint isn't blocked; and inside the alt
+			// screen, where the placement must live). Later sizes re-place the
+			// already-transmitted image; a resize while the transmit is in flight
+			// is reconciled by the kittySentMsg handler.
+			if m.kittyOut != nil && m.img != nil && !m.kittySent && !m.kittyArming {
+				if cmd := m.kittyTransmitCmd(); cmd != nil {
+					m.kittyArming = true
+					return m, cmd
+				}
+			}
+			if m.kittySent {
+				m.rePlaceKitty()
+			}
 		} else {
 			m.viewport.SetContent(renderBodyMode(m.bodyContent(), cw, m.mode))
+		}
+		return m, nil
+
+	case kittySentMsg:
+		// The async transmit finished. If the encode failed, stand down; if the
+		// popup resized while the transmit was in flight, the image sits at the
+		// stale rectangle — move it to the current one.
+		m.kittyArming = false
+		if !msg.ok {
+			m.kittyOut = nil
+			return m, nil
+		}
+		m.kittySent = true
+		if msg.w != m.width || msg.h != m.height {
+			m.rePlaceKitty()
 		}
 		return m, nil
 

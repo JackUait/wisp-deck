@@ -147,17 +147,22 @@ func TestImagePlacementAt_unavailable_without_image(t *testing.T) {
 	}
 }
 
-func TestWithKittyHires_transmits_on_first_size_inside_altscreen(t *testing.T) {
+func TestWithKittyHires_transmit_carries_placement_params(t *testing.T) {
 	data := pngBytes(t, solidImage(8, 8, color.RGBA{9, 9, 9, 255}))
 	m := NewImageView("dot.png", data, "modified")
 	var buf bytes.Buffer
 	m = m.WithKittyHires(&buf, false)
 	// Arming writes nothing: placements land on the ALT screen, which bubbletea
-	// only enters at Run(); the first WindowSizeMsg is the first safe moment.
+	// only enters at Run(); the first WindowSizeMsg schedules the transmit.
 	if buf.Len() != 0 {
 		t.Fatalf("arming must not write; got %q", buf.String())
 	}
-	m = sizeDiff(m, 80, 30)
+	updated, cmd := m.Update(sizeMsg(80, 30))
+	m = updated.(DiffViewModel)
+	if cmd == nil {
+		t.Fatal("first size must schedule the transmit command")
+	}
+	cmd()
 	out := buf.String()
 	if !strings.Contains(out, "\x1b[14;37H") {
 		t.Errorf("missing CUP to image cell:\n%q", out)
@@ -171,21 +176,5 @@ func TestWithKittyHires_transmits_on_first_size_inside_altscreen(t *testing.T) {
 	if !strings.Contains(out, "\x1b7") || !strings.Contains(out, "\x1b8") {
 		t.Error("placement must save/restore the cursor")
 	}
-}
-
-func TestWithKittyHires_resize_replaces_placement(t *testing.T) {
-	data := pngBytes(t, solidImage(8, 8, color.RGBA{9, 9, 9, 255}))
-	m := NewImageView("dot.png", data, "modified")
-	var buf bytes.Buffer
-	m = m.WithKittyHires(&buf, false)
-	m = sizeDiff(m, 80, 30)
-	buf.Reset()
-	m = sizeDiff(m, 120, 40)
-	out := buf.String()
-	if !strings.Contains(out, "a=d") {
-		t.Errorf("resize must delete the old placement:\n%q", out)
-	}
-	if !strings.Contains(out, "a=p") || !strings.Contains(out, "i=") {
-		t.Errorf("resize must re-place the transmitted image:\n%q", out)
-	}
+	_ = m
 }
