@@ -345,6 +345,11 @@ keep_awake_sync "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" 2>/dev/null || tru
 
 cleanup() {
   stop_tab_title_watcher "$WISP_DECK_MARKER_FILE"
+  # A session that logged nothing leaves no file behind; one that hit a real
+  # error keeps its log (pruned after a week by gt_mute_terminal_stderr).
+  if [ -n "${_WD_ERROR_LOG:-}" ] && [ ! -s "$_WD_ERROR_LOG" ]; then
+    rm -f "$_WD_ERROR_LOG"
+  fi
   # Release before anything else: whatever follows may fail, and leaving the
   # machine unable to sleep is worse than leaving a temp file behind.
   keep_awake_drop "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" "$SESSION_NAME" 2>/dev/null || true

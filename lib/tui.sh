@@ -66,6 +66,38 @@ tui_init_interactive() {
   _MOUSE_OFF=$'\033[?1000l\033[?1006l'
 }
 
+# Point this process's stderr at a log file for the rest of its life, so nothing
+# it runs from here on can write to the session terminal.
+#
+# That terminal is where tmux hands the AI tool a full-screen UI, and it is also
+# the wrapper's fd 2 — so a single stray line from any lib, any background loop,
+# or the shell itself lands in the middle of that UI (it showed up inside
+# Claude's input box). The wrapper used to defend against this by repeating
+# `2>/dev/null` at every call site it backgrounded, plus inside the libs those
+# jobs call: an invariant restated by hand in a dozen places, which holds only
+# until someone forgets once. Closing fd 2 at the wrapper makes forgetting
+# harmless.
+#
+# The output goes to a log rather than /dev/null so a real error is still
+# recoverable — silencing the terminal must not mean losing the message. Logs
+# from sessions that ended over a week ago are pruned here, since this is the
+# only place that owns the directory.
+#
+# Never fails the session: if the log cannot be opened (read-only home, config
+# dir replaced by a file), fd 2 goes to /dev/null instead. Silence is the
+# requirement; the log is the bonus.
+# Usage: gt_mute_terminal_stderr <log_file>
+gt_mute_terminal_stderr() {
+  local log="$1" dir="${1%/*}"
+
+  if mkdir -p "$dir" 2>/dev/null && { : > "$log"; } 2>/dev/null; then
+    find "$dir" -type f -name '*.log' -mtime +7 -delete 2>/dev/null || true
+    exec 2>>"$log"
+  else
+    exec 2>/dev/null
+  fi
+}
+
 # Move cursor to row;col
 moveto() { printf '\033[%d;%dH' "$1" "$2"; }
 
