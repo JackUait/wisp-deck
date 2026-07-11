@@ -23,54 +23,11 @@ jobs:
         run: go test -json ./internal/... ./test/internal/... ./test/npx/... 2>&1 | tee go-test-output.json
         continue-on-error: true
 
-      - name: Generate Go test summary
+      # Names every failing test, replays its output, annotates the source line,
+      # and fails the job. Without it a failure reads only "exit code 1".
+      - name: Report Go test results
         if: always()
-        run: |
-          awk '
-          BEGIN {
-            pass=0; fail=0; total=0
-            failures=""
-          }
-          {
-            if ($0 ~ /"Action":"pass"/ && $0 ~ /"Test":"/) {
-              pass++; total++
-            }
-            if ($0 ~ /"Action":"fail"/ && $0 ~ /"Test":"/) {
-              fail++; total++
-              # Extract package name using sub
-              pkg = $0
-              sub(/.*"Package":"/, "", pkg)
-              sub(/".*/, "", pkg)
-              # Strip module prefix from package
-              sub(/.*\//, "", pkg)
-              # Extract test name using sub
-              tst = $0
-              sub(/.*"Test":"/, "", tst)
-              sub(/".*/, "", tst)
-              if (pkg != "" && tst != "") {
-                failures = failures "| " pkg " | " tst " |\n"
-              }
-            }
-          }
-          END {
-            print "## Go Test Results" > ENVIRON["GITHUB_STEP_SUMMARY"]
-            if (fail == 0) {
-              printf "All %d tests passed\n", total >> ENVIRON["GITHUB_STEP_SUMMARY"]
-            } else {
-              printf "%d failed, %d passed (%d total)\n\n", fail, pass, total >> ENVIRON["GITHUB_STEP_SUMMARY"]
-              print "### Failures\n| Package | Test |" >> ENVIRON["GITHUB_STEP_SUMMARY"]
-              print "|---------|------|" >> ENVIRON["GITHUB_STEP_SUMMARY"]
-              printf "%s", failures >> ENVIRON["GITHUB_STEP_SUMMARY"]
-            }
-          }' go-test-output.json
-
-      - name: Check Go test result
-        if: always()
-        run: |
-          if grep -q '"Action":"fail"' go-test-output.json 2>/dev/null; then
-            echo "Go tests failed"
-            exit 1
-          fi
+        run: go run ./cmd/ci-report --title "Go tests (TUI + units)" go-test-output.json
 
   bash-tests:
     name: Bash tests (shell libs)
@@ -91,51 +48,6 @@ jobs:
         run: go test -json ./test/bash/... 2>&1 | tee bash-test-output.json
         continue-on-error: true
 
-      - name: Generate bash test summary
+      - name: Report bash test results
         if: always()
-        run: |
-          awk '
-          BEGIN {
-            pass=0; fail=0; total=0
-            failures=""
-          }
-          {
-            if ($0 ~ /"Action":"pass"/ && $0 ~ /"Test":"/) {
-              pass++; total++
-            }
-            if ($0 ~ /"Action":"fail"/ && $0 ~ /"Test":"/) {
-              fail++; total++
-              # Extract package name using sub
-              pkg = $0
-              sub(/.*"Package":"/, "", pkg)
-              sub(/".*/, "", pkg)
-              # Strip module prefix from package
-              sub(/.*\//, "", pkg)
-              # Extract test name using sub
-              tst = $0
-              sub(/.*"Test":"/, "", tst)
-              sub(/".*/, "", tst)
-              if (pkg != "" && tst != "") {
-                failures = failures "| " pkg " | " tst " |\n"
-              }
-            }
-          }
-          END {
-            print "## Bash Test Results" > ENVIRON["GITHUB_STEP_SUMMARY"]
-            if (fail == 0) {
-              printf "All %d tests passed\n", total >> ENVIRON["GITHUB_STEP_SUMMARY"]
-            } else {
-              printf "%d failed, %d passed (%d total)\n\n", fail, pass, total >> ENVIRON["GITHUB_STEP_SUMMARY"]
-              print "### Failures\n| Package | Test |" >> ENVIRON["GITHUB_STEP_SUMMARY"]
-              print "|---------|------|" >> ENVIRON["GITHUB_STEP_SUMMARY"]
-              printf "%s", failures >> ENVIRON["GITHUB_STEP_SUMMARY"]
-            }
-          }' bash-test-output.json
-
-      - name: Check bash test result
-        if: always()
-        run: |
-          if grep -q '"Action":"fail"' bash-test-output.json 2>/dev/null; then
-            echo "Bash tests failed"
-            exit 1
-          fi
+        run: go run ./cmd/ci-report --title "Bash tests (shell libs)" bash-test-output.json

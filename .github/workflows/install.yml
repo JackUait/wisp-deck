@@ -38,7 +38,14 @@ jobs:
       # and no symlink dangles. Also cross-checks that every path the installer
       # references is actually published.
       - name: Verify a fresh install works
-        run: go test ./test/npx/... -count=1 -v
+        run: go test -json ./test/npx/... -count=1 2>&1 | tee install-test-output.json
+        continue-on-error: true
+
+      # Turns a failed install into a readable report — which check broke and
+      # what it saw — instead of a wall of verbose go test output.
+      - name: Report install verification results
+        if: always()
+        run: go run ./cmd/ci-report --title "Install from packed tarball" install-test-output.json
 
   install-from-npm:
     name: Install published package (npx wisp-deck)
@@ -65,4 +72,9 @@ jobs:
       - name: Verify `npx wisp-deck` installs for a real user
         env:
           WISP_DECK_VERIFY_PUBLISHED: '1'
-        run: go test ./test/npx/ -run TestInstall_e2e_from_npm_registry -count=1 -v
+        run: go test -json ./test/npx/ -run TestInstall_e2e_from_npm_registry -count=1 2>&1 | tee npm-install-test-output.json
+        continue-on-error: true
+
+      - name: Report published-package results
+        if: always()
+        run: go run ./cmd/ci-report --title "Install published package (npx wisp-deck)" npm-install-test-output.json
