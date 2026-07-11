@@ -32,7 +32,7 @@ func runStats(cmd *cobra.Command, args []string) error {
 	defer cleanup()
 
 	opts := append([]tea.ProgramOption{tea.WithAltScreen()}, ttyOpts...)
-	p := tea.NewProgram(model, opts...)
+	p := tea.NewProgram(tui.WithBlackBackground(model), opts...)
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("failed to run TUI: %w", err)
 	}

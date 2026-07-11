@@ -37,10 +37,10 @@ func runClaudeConfigMenu(cmd *cobra.Command, args []string) error {
 	defer cleanup()
 
 	opts := append([]tea.ProgramOption{tea.WithAltScreen(), tea.WithMouseAllMotion()}, ttyOpts...)
-	p := tea.NewProgram(model, opts...)
+	p := tea.NewProgram(tui.WithBlackBackground(model), opts...)
 	finalModel, runErr := p.Run()
 
-	m, ok := finalModel.(tui.ClaudeConfigMenuModel)
+	m, ok := tui.Unwrap(finalModel).(tui.ClaudeConfigMenuModel)
 	if !ok || m.Result() == nil {
 		if runErr != nil {
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", runErr)
