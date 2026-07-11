@@ -7,8 +7,24 @@ import (
 	_ "image/gif"  // register decoders for the formats is_image_file routes here
 	_ "image/jpeg" //
 	_ "image/png"  //
+	"os/exec"
 	"strings"
 )
+
+// openInPreview launches the image in the macOS Preview app. `-a Preview`
+// (not the default handler) so the header button's promise is always true.
+// Start, not Run: Preview opens beside the popup, which stays interactive.
+// Swappable so tests can observe the launch without spawning an app.
+var openInPreview = func(path string) error {
+	return exec.Command("open", "-a", "Preview", path).Start()
+}
+
+// WithImagePath tells the image view where its bytes live on disk, enabling
+// the [ Open in Preview ] control (the bytes themselves arrive on stdin).
+func (m DiffViewModel) WithImagePath(path string) DiffViewModel {
+	m.imgPath = path
+	return m
+}
 
 // imagePreviewBg is the dark gray an image's transparent pixels are composited
 // over, so alpha art reads against the popup's dark surface instead of

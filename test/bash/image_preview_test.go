@@ -105,6 +105,18 @@ func TestOpenDiffPopup_tracked_image_opens_preview_with_modified_status(t *testi
 	assertContains(t, got, "--status modified")
 }
 
+// The pager only sees bytes on stdin; opening the image in the macOS Preview
+// app needs the on-disk location, so the popup passes --path <dir>/<file>.
+func TestOpenDiffPopup_image_passes_path_for_preview_app(t *testing.T) {
+	repo := t.TempDir()
+	git := discardGitRepo(t, repo)
+	git("init", "-q")
+	writeTempFile(t, repo, "shot.png", "fakepngbytes")
+
+	got := imagePopupCmd(t, repo, "shot.png")
+	assertContains(t, got, "--path "+repo+"/shot.png")
+}
+
 // A deleted image has no bytes to preview; the popup falls back to the diff
 // pipeline rather than cat-ing a missing file.
 func TestOpenDiffPopup_missing_image_falls_back_to_diff(t *testing.T) {

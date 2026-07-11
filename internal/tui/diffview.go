@@ -51,6 +51,7 @@ type DiffViewModel struct {
 	isImage bool
 	img     image.Image
 	imgErr  string
+	imgPath string // on-disk location for "Open in Preview"; empty = hide the control
 	// Kitty-graphics hi-res overlay (see WithKittyHires): the PNG is written to
 	// kittyOut over the half-block cells so supported terminals show real
 	// pixels. imgSrc keeps the original file bytes so an already-PNG source can
@@ -109,6 +110,10 @@ const (
 	diffDiscardYes   = "[ Yes ]"
 	diffDiscardNo    = "[ No ]"
 	diffDiscardGap   = 1 // columns between the Yes and No confirm chips
+	// The open button names its destination app so it's obvious where the
+	// image will appear (macOS Preview, launched explicitly with `open -a`).
+	diffOpenLabel = "[ Open in Preview ]"
+	diffOpenGap   = 1 // columns between the open button and the discard control
 )
 
 // diffContextLines is how many unchanged lines the changes-only view keeps
@@ -197,6 +202,8 @@ var (
 	diffDiscardStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("1"))
 	diffDiscardYesStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("1"))
 	diffDiscardNoStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	// Open-in-Preview: a blue chip — actionable but safe, unlike the red Discard.
+	diffOpenStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("4"))
 
 	diffBarStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244")).
@@ -1198,6 +1205,13 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.discardArmed = true
 						return m, nil
 					}
+					if m.showOpenButton() {
+						os, oe := openButtonSpan(cw)
+						if cx >= os && cx < oe {
+							_ = openInPreview(m.imgPath)
+							return m, nil
+						}
+					}
 				}
 			}
 			// A click on a layout-switch tab switches the inline/side-by-side mode.
@@ -1292,6 +1306,12 @@ func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					_, _, cw, _ := m.layout()
 					m.viewport.SetContent(renderBodyMode(m.bodyContent(), cw, m.mode))
 					return m, nil
+				case 'o', 'O':
+					// Open the image in the macOS Preview app; the popup stays up.
+					if m.isImage && m.imgPath != "" {
+						_ = openInPreview(m.imgPath)
+					}
+					return m, nil
 				case 'g':
 					m.viewport.GotoTop()
 					return m, nil
@@ -1344,17 +1364,36 @@ func discardConfirmSpans(cw int) (yesStart, yesEnd, noStart, noEnd int) {
 	return yesStart, yesEnd, noStart, noEnd
 }
 
-// discardControl renders the right-anchored discard region of the title row:
-// the [ Discard ] button normally, or the [ Yes ] [ No ] confirm chips when
-// armed. <avail> is the content width left of this region (it pads the controls
-// flush to the right edge); a negative pad means the title already fills the row.
+// showOpenButton reports whether the title row carries the [ Open in Preview ]
+// button: image mode with a known on-disk path, and the discard confirm not
+// armed (while armed the title row belongs to the Yes/No chips).
+func (m DiffViewModel) showOpenButton() bool {
+	return m.isImage && m.imgPath != "" && !m.discardArmed
+}
+
+// openButtonSpan returns the [start, end) content columns of the
+// [ Open in Preview ] button, right-anchored just left of the discard button.
+func openButtonSpan(cw int) (start, end int) {
+	ds, _ := discardButtonSpan(cw)
+	end = ds - diffOpenGap
+	return end - lipgloss.Width(diffOpenLabel), end
+}
+
+// discardControl renders the right-anchored control region of the title row:
+// the [ Open in Preview ] (image mode) and [ Discard ] buttons normally, or
+// the [ Yes ] [ No ] confirm chips when armed. <avail> is the content width
+// left of this region (it pads the controls flush to the right edge); a
+// negative pad means the title already fills the row.
 func (m DiffViewModel) discardControl(avail int) string {
 	var ctrl string
 	if m.discardArmed {
 		ctrl = diffDiscardYesStyle.Render(diffDiscardYes) +
 			strings.Repeat(" ", diffDiscardGap) + diffDiscardNoStyle.Render(diffDiscardNo)
 	} else {
-		ctrl = diffDiscardStyle.Render(diffDiscardLabel)
+		if m.showOpenButton() {
+			ctrl = diffOpenStyle.Render(diffOpenLabel) + strings.Repeat(" ", diffOpenGap)
+		}
+		ctrl += diffDiscardStyle.Render(diffDiscardLabel)
 	}
 	pad := avail
 	if pad < 1 {
@@ -1396,6 +1435,8 @@ func (m DiffViewModel) View() string {
 	ctrlW := lipgloss.Width(diffDiscardLabel)
 	if m.discardArmed {
 		ctrlW = lipgloss.Width(diffDiscardYes) + diffDiscardGap + lipgloss.Width(diffDiscardNo)
+	} else if m.showOpenButton() {
+		ctrlW += lipgloss.Width(diffOpenLabel) + diffOpenGap
 	}
 	// diffTitleStyle adds 1 column of padding each side (+2). Reserve a 1-column
 	// gap before the right-anchored control too.
@@ -1425,6 +1466,9 @@ func (m DiffViewModel) View() string {
 			} else {
 				hints += " · f changes"
 			}
+		}
+		if m.showOpenButton() { // image with a known path: o opens it in Preview
+			hints += " · o Preview"
 		}
 		hints += " · click-out/q/Esc close"
 		bar = diffBarStyle.Render(fitColumn(hints+"    "+padPercent(pct), barW))

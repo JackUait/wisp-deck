@@ -24,3 +24,11 @@ func TestDiffViewCmd_has_gfx_tty_flag(t *testing.T) {
 		t.Fatal("expected --gfx-tty flag on diff-view")
 	}
 }
+
+// --path carries the image's on-disk location (the bytes arrive on stdin) so
+// the pager can offer opening it in the macOS Preview app.
+func TestDiffViewCmd_has_path_flag(t *testing.T) {
+	if diffViewCmd.Flags().Lookup("path") == nil {
+		t.Fatal("expected --path flag on diff-view")
+	}
+}

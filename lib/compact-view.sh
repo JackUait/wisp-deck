@@ -744,7 +744,9 @@ open_diff_popup() {
     local client_tty gfx_arg=""
     client_tty=$(tmux display-message -p -t "${TMUX_PANE:-}" '#{client_tty}' 2>/dev/null || true)
     [ -n "$client_tty" ] && gfx_arg="--gfx-tty $(printf '%q' "$client_tty")"
-    popup="cat ${qd}/${qf} | wisp-deck-tui diff-view --image --status ${img_status} --ai-tool ${qtool} --title ${qf} ${gfx_arg} ${backdrop_arg} ${decision_arg}"
+    # --path carries the on-disk location (the pager only sees bytes on its
+    # stdin) so the header can offer "Open in Preview".
+    popup="cat ${qd}/${qf} | wisp-deck-tui diff-view --image --status ${img_status} --ai-tool ${qtool} --title ${qf} --path ${qd}/${qf} ${gfx_arg} ${backdrop_arg} ${decision_arg}"
   else
     local diffcmd
     diffcmd=$(file_diff_command "$dir" "$file")

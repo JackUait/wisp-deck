@@ -18,6 +18,7 @@ var (
 	diffViewImage        bool
 	diffViewStatus       string
 	diffViewGfxTTY       string
+	diffViewPath         string
 )
 
 var diffViewCmd = &cobra.Command{
@@ -39,6 +40,8 @@ func init() {
 		"file status badge for --image mode (added|modified|deleted)")
 	diffViewCmd.Flags().StringVar(&diffViewGfxTTY, "gfx-tty", "",
 		"terminal device to write hi-res kitty graphics to directly (bypasses the tmux popup pty, which swallows passthrough)")
+	diffViewCmd.Flags().StringVar(&diffViewPath, "path", "",
+		"on-disk location of the --image bytes, enabling the Open in Preview control")
 	rootCmd.AddCommand(diffViewCmd)
 }
 
@@ -78,6 +81,9 @@ func runDiffView(cmd *cobra.Command, args []string) error {
 	var model tui.DiffViewModel
 	if diffViewImage {
 		model = tui.NewImageView(diffViewTitle, data, diffViewStatus)
+		if diffViewPath != "" {
+			model = model.WithImagePath(diffViewPath)
+		}
 		if tui.SupportsKittyGraphics(os.Getenv) {
 			// Preferred channel: the tmux client tty, written raw — tmux popups
 			// swallow DCS passthrough, so the popup's own pty can't carry the
