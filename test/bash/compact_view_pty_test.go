@@ -1728,6 +1728,23 @@ func TestCompactView_idle_frames_are_stable_no_blink(t *testing.T) {
 	}
 }
 
+// Outside tmux the ledger measures the pane with `tput`, which reports terminfo's
+// STATIC size (80x24 for xterm) whenever it cannot read the tty's real dimensions
+// — which is what happens on CI. The pill is only clickable on the bottom row
+// ($h), so a pane it believes is 24 rows tall puts the pill's hit-box on row 24 of
+// a 12-row pane: unreachable, and the ledger paints 80 columns wide into 60. Size
+// must come from the terminal itself, not from terminfo's guess.
+func TestCompactView_hover_pill_when_tput_reports_the_wrong_size(t *testing.T) {
+	dir := t.TempDir()
+	binDir := mockCommand(t, dir, "tput", `
+case "$1" in
+  cols)  echo 80 ;;   # terminfo's static xterm size, NOT this 60x12 pty
+  lines) echo 24 ;;
+  *) exit 0 ;;
+esac`)
+	hoverPillScenario(t, binDir)
+}
+
 // Hovering the account pill (the mid-session "switch account" button) must make it
 // highlight so it reads as pressable, and the highlight must clear when the pointer
 // leaves the pill. Drives the real loop under zsh with a deterministic 2-account
@@ -1736,6 +1753,13 @@ func TestCompactView_idle_frames_are_stable_no_blink(t *testing.T) {
 // motion just past the pill (still on the bottom bar, so not a file-row hover)
 // clears it.
 func TestCompactView_hover_highlights_account_pill(t *testing.T) {
+	hoverPillScenario(t, "")
+}
+
+// hoverPillScenario drives the pill hover against a real 60x12 pty. pathPrefix, when
+// set, is prepended to PATH — the tput-lies regression uses it to reproduce CI.
+func hoverPillScenario(t *testing.T, pathPrefix string) {
+	t.Helper()
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
 		t.Skip("zsh not available")
@@ -1782,6 +1806,9 @@ func TestCompactView_hover_highlights_account_pill(t *testing.T) {
 		// Strip TMUX and any inherited relaunch file so the pill context is ours.
 		if strings.HasPrefix(e, "TMUX=") || strings.HasPrefix(e, "WISP_DECK_RELAUNCH_FILE=") {
 			continue
+		}
+		if pathPrefix != "" && strings.HasPrefix(e, "PATH=") {
+			e = "PATH=" + pathPrefix + ":" + strings.TrimPrefix(e, "PATH=")
 		}
 		env = append(env, e)
 	}
