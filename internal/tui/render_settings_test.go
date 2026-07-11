@@ -51,19 +51,22 @@ func TestRenderSettingsBox_preservesSettingsRows(t *testing.T) {
 	}
 }
 
-func TestRenderSettingsBox_showsAuthorCredit(t *testing.T) {
+func TestRenderSettingsBox_hidesCreditByDefault(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	m.SetActiveTab(TabSettings)
 	out := m.renderSettingsBox()
 
-	for _, want := range []string{"Made by Evgeniy Pyatkov (@jackuait)", "@that_ai_guy"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("settings box missing credit %q:\n%s", want, out)
-		}
+	// The credit lives behind the About shortcut, not inline in the box.
+	if strings.Contains(out, "Made by Evgeniy Pyatkov") {
+		t.Errorf("credit should be hidden until About is opened:\n%s", out)
 	}
-	// The credit is decorative, not a selectable row.
+	// The footer advertises the About shortcut.
+	if !strings.Contains(out, "a about") {
+		t.Errorf("settings footer missing 'a about' hint:\n%s", out)
+	}
+	// Adding a shortcut must not add a selectable row.
 	if got := m.settingsItemCount(); got != rowKeepAwake+1 {
-		t.Errorf("settingsItemCount changed to %d; credit must not be a selectable row", got)
+		t.Errorf("settingsItemCount changed to %d; About is a shortcut, not a row", got)
 	}
 }
 

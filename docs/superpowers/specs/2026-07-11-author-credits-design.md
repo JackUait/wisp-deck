@@ -14,23 +14,25 @@ Canonical text:
 
 > Made by Evgeniy Pyatkov (@jackuait) · Telegram: @that_ai_guy — https://t.me/that_ai_guy
 
-## 1. Interface — static credit line in Settings (Approach A)
+## 1. Interface — About shortcut in Settings
 
-Append a dim, **non-selectable** credit line to the Settings box in
-`internal/tui/render_settings.go`, placed after the last settings section and
-before the trailing empty-row / separator / help-row block.
+**Revised (2026-07-11):** the credit is no longer an always-visible line. It is
+hidden behind an **About shortcut** on the Settings tab.
 
-- Rendered with the existing dim style, inside the menu box borders (matching
-  `emptyRow` width so the right border stays aligned).
-- Not a settings item: it is appended directly to `lines`, never added to the
-  positional row-index machinery (`settingsItemCount`, row constants, handler
-  indices). This deliberately avoids the index ripple across ~6 files and the
-  index-hardcoded tests that adding a selectable row would cause.
-- No keyboard/mouse handling, no navigation changes.
+- Pressing `a` on the Settings tab opens a small About card (popup panel). On
+  every other tab `a` keeps its long-standing add-project meaning. Esc / Enter /
+  `a` / `q` close the card.
+- The card is an appended modal panel (`renderAboutPanel`), mirroring the
+  account / model-map panels — same box chrome, appended below the Settings box
+  in `MainMenuModel.View`, gated on a new `aboutOpen` flag.
+- Key handling: `aboutOpen` intercepts input first in `Update` (via
+  `updateAbout`); the `a` rebind lives in `handleRune`.
+- Not a settings item: `settingsItemCount()` stays `rowKeepAwake + 1`, so the
+  positional row-index machinery is untouched. The Settings footer gains an
+  `a about` hint.
 
-**Rejected — Approach B (selectable "About" row/panel):** more discoverable but
-requires a new handler index that shifts every settings row and breaks
-index-hardcoded tests, plus new panel plumbing. Overkill for a static credit.
+**Rejected — always-visible static line:** simpler, but the user asked for the
+credit to be tucked away behind a shortcut rather than shown on every visit.
 
 ## 2. Credits file
 

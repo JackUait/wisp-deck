@@ -331,6 +331,10 @@ type MainMenuModel struct {
 	// panel that Plan opens). Lists Default + managed logins + an add row.
 	accountMenuOpen bool
 
+	// About panel: a small credit card opened with 'a' on the Settings tab and
+	// closed with Esc. Purely informational — no selectable rows.
+	aboutOpen bool
+
 	// AI-tools panel (Settings → Tools → AI tools): install a missing tool and
 	// choose the default. detectAITools is an injectable seam so tests never
 	// depend on the machine's PATH; nil means models.DetectAITools.
@@ -2187,6 +2191,9 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Wake()
 
 		// Modal sub-screens intercept all key handling regardless of focus.
+		if m.aboutOpen {
+			return m.updateAbout(msg)
+		}
 		if m.modelMapOpen {
 			return m.updateModelMap(msg)
 		}
@@ -2555,6 +2562,12 @@ func (m *MainMenuModel) handleRune(r rune) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case 'a', 'A':
+		// On the Settings tab 'a' opens the About card; everywhere else it keeps
+		// its long-standing add-project meaning.
+		if m.activeTab == TabSettings {
+			m.aboutOpen = true
+			return m, nil
+		}
 		return m.enterInputMode("add-project")
 	case 'd', 'D':
 		return m.enterDeleteMode()
@@ -3681,6 +3694,9 @@ func (m *MainMenuModel) View() string {
 		menuBox = m.renderInputBox()
 	case m.activeTab == TabSettings:
 		menuBox = m.renderSettingsBox()
+		if m.aboutOpen {
+			appendModal(m.renderAboutPanel())
+		}
 		if m.modelMapOpen {
 			appendModal(m.renderModelMapPanel())
 		}

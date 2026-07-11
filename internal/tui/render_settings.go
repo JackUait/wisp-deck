@@ -285,17 +285,6 @@ func (m *MainMenuModel) renderSettingsBox() string {
 		}
 	}
 
-	// Decorative author credit — a dim, non-selectable line (not a settings
-	// item, so settingsItemCount / row indices are untouched).
-	lines = append(lines, emptyRow)
-	creditText := "Made by Evgeniy Pyatkov (@jackuait) · @that_ai_guy"
-	creditRendered := dimStyle.Render(creditText)
-	creditGap := menuContentWidth - lipgloss.Width(creditRendered) - 1
-	if creditGap < 0 {
-		creditGap = 0
-	}
-	lines = append(lines, leftBorder+" "+creditRendered+strings.Repeat(" ", creditGap)+rightBorder)
-
 	// Empty row
 	lines = append(lines, emptyRow)
 
@@ -328,7 +317,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	default:
 		cycleOrEdit = helpStyle.Render("←→ cycle")
 	}
-	helpContent := helpStyle.Render("↑↓ navigate") + sep + cycleOrEdit + sep + helpStyle.Render("Esc close")
+	helpContent := helpStyle.Render("↑↓ navigate") + sep + cycleOrEdit + sep + helpStyle.Render("a about") + sep + helpStyle.Render("Esc close")
 	helpContentWidth := lipgloss.Width(helpContent)
 	helpPadding := menuContentWidth - helpContentWidth - 1
 	if helpPadding < 0 {
