@@ -14,11 +14,17 @@ detect_arch() {
   esac
 }
 
+# Shared curl hardening for every download the installer performs: retry
+# transient failures and bound connection hangs so one network blip doesn't
+# fail (or freeze) the whole install. No --max-time: binary downloads on slow
+# links may legitimately take minutes.
+CURL_RELIABILITY_OPTS=(--retry 3 --retry-delay 1 --connect-timeout 15)
+
 # Get the latest release tag from a GitHub repo (e.g. "v1.2.3")
 # Uses the /releases/latest redirect — no API key required.
 get_latest_release_tag() {
   local repo="$1" tag
-  tag="$(curl -fsSI "https://github.com/$repo/releases/latest" 2>/dev/null \
+  tag="$(curl -fsSI "${CURL_RELIABILITY_OPTS[@]}" "https://github.com/$repo/releases/latest" 2>/dev/null \
     | grep -i '^location:' \
     | sed 's|.*/tag/||' \
     | tr -d '[:space:]\r')"
@@ -30,17 +36,44 @@ get_latest_release_tag() {
 }
 
 # Download a binary from $url to $dest and make it executable.
+# The download lands in a temp file and only replaces $dest after it succeeds
+# (and passes $verify_cmd, when given), so a failed, truncated, or wrong
+# download never clobbers a working binary.
+# Usage: install_binary url dest display_name [verify_cmd]
+#   verify_cmd is invoked with the downloaded temp path appended; a non-zero
+#   exit rejects the download and keeps the existing install untouched.
 install_binary() {
-  local url="$1" dest="$2" display_name="$3"
+  local url="$1" dest="$2" display_name="$3" verify_cmd="${4:-}"
   info "Downloading $display_name..."
   mkdir -p "$(dirname "$dest")"
-  if curl -fsSL -o "$dest" "$url"; then
-    chmod +x "$dest"
-    success "$display_name installed"
-  else
+  local tmp="$dest.download.$$"
+  if ! curl -fsSL "${CURL_RELIABILITY_OPTS[@]}" -o "$tmp" "$url"; then
+    rm -f "$tmp"
     warn "Failed to download $display_name from $url"
     return 1
   fi
+  chmod +x "$tmp"
+  if [ -n "$verify_cmd" ] && ! $verify_cmd "$tmp" >/dev/null 2>&1; then
+    rm -f "$tmp"
+    warn "Downloaded $display_name failed verification — keeping existing install"
+    return 1
+  fi
+  mv -f "$tmp" "$dest"
+  success "$display_name installed"
+}
+
+# Verifier for install_binary: the downloaded file must at least run.
+verify_binary_runs() {
+  "$1" --version >/dev/null 2>&1
+}
+
+# Verifier for install_binary: wisp-deck-tui must run AND report the version
+# we asked for (catches a stale CDN or mis-published release asset).
+# Usage (via install_binary): verify_wisp_deck_tui_version <expected> <path>
+verify_wisp_deck_tui_version() {
+  local expected="$1" bin="$2" reported
+  reported="$("$bin" --version 2>/dev/null)" || return 1
+  [[ "$reported" == *"$expected"* ]]
 }
 
 # Install jq from jqlang/jq GitHub releases.
@@ -58,7 +91,8 @@ ensure_jq() {
   install_binary \
     "https://github.com/jqlang/jq/releases/latest/download/jq-${jq_arch}" \
     "$HOME/.local/bin/jq" \
-    "jq"
+    "jq" \
+    verify_binary_runs
 }
 
 # Install tmux from tmux/tmux-builds GitHub releases.
@@ -76,11 +110,11 @@ ensure_tmux() {
   trap "rm -rf '$tmp_dir'" RETURN
   url="https://github.com/tmux/tmux-builds/releases/download/${tag}/tmux-${version}-macos-${arch}.tar.gz"
   info "Downloading tmux..."
-  if curl -fsSL -o "$tmp_dir/tmux.tar.gz" "$url"; then
-    tar -xzf "$tmp_dir/tmux.tar.gz" -C "$tmp_dir" tmux
-    mkdir -p "$HOME/.local/bin"
-    mv "$tmp_dir/tmux" "$HOME/.local/bin/tmux"
-    chmod +x "$HOME/.local/bin/tmux"
+  if curl -fsSL "${CURL_RELIABILITY_OPTS[@]}" -o "$tmp_dir/tmux.tar.gz" "$url" \
+    && tar -xzf "$tmp_dir/tmux.tar.gz" -C "$tmp_dir" tmux 2>/dev/null \
+    && mkdir -p "$HOME/.local/bin" \
+    && mv "$tmp_dir/tmux" "$HOME/.local/bin/tmux" \
+    && chmod +x "$HOME/.local/bin/tmux"; then
     success "tmux installed"
   else
     warn "Failed to install tmux"
@@ -117,7 +151,8 @@ ensure_wisp_deck_tui() {
   url="https://github.com/JackUait/wisp-deck/releases/download/v${version}/wisp-deck-tui-darwin-${arch}"
 
   mkdir -p "$HOME/.local/bin"
-  install_binary "$url" "$HOME/.local/bin/wisp-deck-tui" "wisp-deck-tui" || return 1
+  install_binary "$url" "$HOME/.local/bin/wisp-deck-tui" "wisp-deck-tui" \
+    "verify_wisp_deck_tui_version $version" || return 1
   # Exec the fresh binary once so its first-run Gatekeeper assessment (~1s,
   # more under load) happens now — not on the first modal open in a session.
   "$HOME/.local/bin/wisp-deck-tui" --version >/dev/null 2>&1 || true

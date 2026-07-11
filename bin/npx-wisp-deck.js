@@ -64,7 +64,9 @@ function main() {
   }
 }
 
-// Recursively copy the bash distribution files.
+// Recursively copy the bash distribution files. Each entry's destination is
+// removed first so files dropped between versions don't linger and get
+// sourced/globbed by the new code.
 function copyDistribution(src, dest) {
   const entries = [
     'bin/wisp-deck',
@@ -80,8 +82,9 @@ function copyDistribution(src, dest) {
 
   for (const entry of entries) {
     const srcPath = path.join(src, entry);
-    if (!fs.existsSync(srcPath)) continue;
     const destPath = path.join(dest, entry);
+    fs.rmSync(destPath, { recursive: true, force: true });
+    if (!fs.existsSync(srcPath)) continue;
     copyRecursive(srcPath, destPath);
   }
 }
@@ -121,19 +124,46 @@ function ensureTuiBinary(version) {
   const arch = process.arch === 'x64' ? 'amd64' : process.arch;
   const url = `https://github.com/${REPO}/releases/download/v${version}/wisp-deck-tui-darwin-${arch}`;
 
+  // Download to a temp path and only replace the real binary after the new
+  // one runs and reports the expected version — a failed, truncated, or
+  // wrong-version download must never clobber a working install. Running it
+  // here also pays the first-exec Gatekeeper assessment at install time.
   fs.mkdirSync(tuiBinDir, { recursive: true });
-  downloadFile(url, tuiBinPath);
-  fs.chmodSync(tuiBinPath, 0o755);
+  const tmpPath = tuiBinPath + '.download-' + process.pid;
+  downloadFile(url, tmpPath);
+  fs.chmodSync(tmpPath, 0o755);
+  let reported = '';
+  try {
+    reported = execFileSync(tmpPath, ['--version'], { encoding: 'utf8' });
+  } catch (_) {
+    // Leave reported empty; handled below.
+  }
+  if (!reported.includes(version)) {
+    fs.rmSync(tmpPath, { force: true });
+    process.stderr.write(`Downloaded wisp-deck-tui failed verification (expected version ${version}, got ${JSON.stringify(reported.trim())}).\n`);
+    process.stderr.write('The existing install (if any) was left untouched. Please retry, and report this if it persists.\n');
+    process.exit(1);
+  }
+  fs.renameSync(tmpPath, tuiBinPath);
   process.stdout.write(`wisp-deck-tui ${version} installed\n`);
 }
 
-// Synchronous HTTPS download with redirect following.
+// Synchronous HTTPS download with redirect following. Retries transient
+// failures and bounds connection hangs; a failed attempt leaves no partial
+// file behind.
 function downloadFile(url, dest) {
   try {
-    execFileSync('curl', ['-fsSL', '-o', dest, url], {
+    execFileSync('curl', [
+      '-fsSL',
+      '--retry', '3',
+      '--retry-delay', '1',
+      '--connect-timeout', '15',
+      '-o', dest, url,
+    ], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
   } catch (_) {
+    fs.rmSync(dest, { force: true });
     process.stderr.write(`Failed to download ${url}\n`);
     process.stderr.write('Check your network connection and that this version has been released.\n');
     process.exit(1);

@@ -81,13 +81,7 @@ func TestDetectArch_returns_x86_64_for_x86_64(t *testing.T) {
 func TestInstallBinary_downloads_and_makes_executable(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "bin", "mytool")
-	binDir := mockCommand(t, dir, "curl", fmt.Sprintf(`
-if [ "$1" = "-fsSL" ]; then
-  echo "#!/bin/bash" > "$3"
-  exit 0
-fi
-exit 1
-`))
+	binDir := mockCommand(t, dir, "curl", mockCurlWriting("", `echo "#!/bin/bash" > "$dest"; exit 0`))
 	snippet := installSnippet(t, fmt.Sprintf(`install_binary "https://example.com/mytool" %q "mytool"`, dest))
 	env := buildEnv(t, []string{binDir})
 	out, code := runBashSnippet(t, snippet, env)
@@ -129,12 +123,10 @@ func TestEnsureJq_downloads_for_arm64(t *testing.T) {
 	os.MkdirAll(filepath.Join(fakeHome, ".local", "bin"), 0755)
 
 	curlCalls := filepath.Join(dir, "curl_calls")
-	binDir := mockCommand(t, dir, "curl", fmt.Sprintf(`
-echo "$@" >> %q
-if [ "$1" = "-fsSL" ]; then echo "binary" > "$3"; exit 0; fi
-if [ "$1" = "-fsSI" ]; then printf "location: https://github.com/jqlang/jq/releases/tag/jq-1.7.1\r\n"; exit 0; fi
-exit 0
-`, curlCalls))
+	binDir := mockCommand(t, dir, "curl", mockCurlWriting(
+		fmt.Sprintf(`echo "$@" >> %q
+if [ "$1" = "-fsSI" ]; then printf "location: https://github.com/jqlang/jq/releases/tag/jq-1.7.1\r\n"; exit 0; fi`, curlCalls),
+		`printf '#!/bin/bash\necho "jq-1.7.1"\n' > "$dest"; exit 0`))
 	mockCommand(t, dir, "uname", `echo "arm64"`)
 	snippet := installSnippet(t, `ensure_jq`)
 	// Symlink needed /usr/bin tools except jq into the mock dir so we can
@@ -154,12 +146,10 @@ func TestEnsureJq_downloads_for_x86_64(t *testing.T) {
 	os.MkdirAll(filepath.Join(fakeHome, ".local", "bin"), 0755)
 
 	curlCalls := filepath.Join(dir, "curl_calls")
-	binDir := mockCommand(t, dir, "curl", fmt.Sprintf(`
-echo "$@" >> %q
-if [ "$1" = "-fsSL" ]; then echo "binary" > "$3"; exit 0; fi
-if [ "$1" = "-fsSI" ]; then printf "location: https://github.com/jqlang/jq/releases/tag/jq-1.7.1\r\n"; exit 0; fi
-exit 0
-`, curlCalls))
+	binDir := mockCommand(t, dir, "curl", mockCurlWriting(
+		fmt.Sprintf(`echo "$@" >> %q
+if [ "$1" = "-fsSI" ]; then printf "location: https://github.com/jqlang/jq/releases/tag/jq-1.7.1\r\n"; exit 0; fi`, curlCalls),
+		`printf '#!/bin/bash\necho "jq-1.7.1"\n' > "$dest"; exit 0`))
 	mockCommand(t, dir, "uname", `echo "x86_64"`)
 	snippet := installSnippet(t, `ensure_jq`)
 	// Symlink needed /usr/bin tools except jq into the mock dir so we can
@@ -206,11 +196,9 @@ func TestEnsureWispDeckTui_updates_when_version_mismatch(t *testing.T) {
 if [ "$1" = "--version" ]; then echo "wisp-deck-tui version 2.4.0"; exit 0; fi
 echo "I exist"
 `)
-	mockCommand(t, dir, "curl", fmt.Sprintf(`
-echo "$@" >> %q
-if [ "$1" = "-fsSL" ]; then echo "binary" > "$3"; exit 0; fi
-exit 0
-`, curlCalls))
+	mockCommand(t, dir, "curl", mockCurlWriting(
+		fmt.Sprintf(`echo "$@" >> %q`, curlCalls),
+		`printf '#!/bin/bash\n[ "$1" = "--version" ] && echo "wisp-deck-tui version 2.5.0"\n' > "$dest"; exit 0`))
 	mockCommand(t, dir, "uname", `echo "arm64"`)
 	snippet := installSnippet(t, fmt.Sprintf(`ensure_wisp_deck_tui %q`, shareDir))
 	env := buildEnv(t, nil, "HOME="+fakeHome, "PATH="+binDir+":/usr/bin:/bin")
@@ -234,11 +222,9 @@ func TestEnsureWispDeckTui_updates_when_no_version_flag(t *testing.T) {
 if [ "$1" = "--version" ]; then echo "Error: unknown flag: --version" >&2; exit 1; fi
 echo "I exist"
 `)
-	mockCommand(t, dir, "curl", fmt.Sprintf(`
-echo "$@" >> %q
-if [ "$1" = "-fsSL" ]; then echo "binary" > "$3"; exit 0; fi
-exit 0
-`, curlCalls))
+	mockCommand(t, dir, "curl", mockCurlWriting(
+		fmt.Sprintf(`echo "$@" >> %q`, curlCalls),
+		`printf '#!/bin/bash\n[ "$1" = "--version" ] && echo "wisp-deck-tui version 2.5.0"\n' > "$dest"; exit 0`))
 	mockCommand(t, dir, "uname", `echo "arm64"`)
 	snippet := installSnippet(t, fmt.Sprintf(`ensure_wisp_deck_tui %q`, shareDir))
 	env := buildEnv(t, nil, "HOME="+fakeHome, "PATH="+binDir+":/usr/bin:/bin")
@@ -257,11 +243,9 @@ func TestEnsureWispDeckTui_downloads_binary_for_correct_arch(t *testing.T) {
 	writeTempFile(t, shareDir, "VERSION", "2.2.0")
 
 	curlCalls := filepath.Join(dir, "curl_calls")
-	binDir := mockCommand(t, dir, "curl", fmt.Sprintf(`
-echo "$@" >> %q
-if [ "$1" = "-fsSL" ]; then echo "binary" > "$3"; exit 0; fi
-exit 0
-`, curlCalls))
+	binDir := mockCommand(t, dir, "curl", mockCurlWriting(
+		fmt.Sprintf(`echo "$@" >> %q`, curlCalls),
+		`printf '#!/bin/bash\n[ "$1" = "--version" ] && echo "wisp-deck-tui version 2.2.0"\n' > "$dest"; exit 0`))
 	unameDir := mockCommand(t, dir, "uname", `echo "arm64"`)
 	snippet := installSnippet(t, fmt.Sprintf(`ensure_wisp_deck_tui %q`, shareDir))
 	// Use explicit PATH so the real wisp-deck-tui (if installed) is not found.

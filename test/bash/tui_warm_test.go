@@ -108,16 +108,12 @@ func TestEnsureWispDeckTui_warms_freshly_installed_binary(t *testing.T) {
 
 	// The "downloaded" binary logs every invocation, so we can see the warm-up.
 	warmLog := filepath.Join(dir, "warm.log")
-	binDir := mockCommand(t, dir, "curl", `
-if [ "$1" = "-fsSL" ]; then
-  cat > "$3" <<PAYLOAD
+	binDir := mockCommand(t, dir, "curl", mockCurlWriting("", `cat > "$dest" <<PAYLOAD
 #!/bin/bash
 echo "\$@" >> `+warmLog+`
+[ "\$1" = "--version" ] && echo "wisp-deck-tui version 9.9.9"
 PAYLOAD
-  exit 0
-fi
-exit 0
-`)
+exit 0`))
 	mockCommand(t, dir, "uname", `echo "arm64"`)
 
 	snippet := installSnippet(t, `ensure_wisp_deck_tui "`+shareDir+`"`)
