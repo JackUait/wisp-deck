@@ -37,14 +37,14 @@ func runConfirm(cmd *cobra.Command, args []string) error {
 
 	// Mouse enabled so the Yes/No buttons are clickable (and hoverable).
 	opts := append([]tea.ProgramOption{tea.WithMouseAllMotion()}, ttyOpts...)
-	p := tea.NewProgram(tui.WithBlackBackground(model), opts...)
+	p := tea.NewProgram(model, opts...)
 
 	finalModel, err := p.Run()
 	if err != nil {
 		return fmt.Errorf("failed to run TUI: %w", err)
 	}
 
-	m := tui.Unwrap(finalModel).(tui.ConfirmDialogModel)
+	m := finalModel.(tui.ConfirmDialogModel)
 
 	result := map[string]interface{}{
 		"confirmed": m.Confirmed,

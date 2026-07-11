@@ -36,14 +36,14 @@ func runMultiSelectAITool(cmd *cobra.Command, args []string) error {
 	defer cleanup()
 
 	opts := append([]tea.ProgramOption{tea.WithAltScreen(), tea.WithMouseAllMotion()}, ttyOpts...)
-	p := tea.NewProgram(tui.WithBlackBackground(model), opts...)
+	p := tea.NewProgram(model, opts...)
 
 	finalModel, err := p.Run()
 	if err != nil {
 		return fmt.Errorf("failed to run TUI: %w", err)
 	}
 
-	m := tui.Unwrap(finalModel).(tui.MultiSelectModel)
+	m := finalModel.(tui.MultiSelectModel)
 	result := m.Result()
 
 	var output interface{}

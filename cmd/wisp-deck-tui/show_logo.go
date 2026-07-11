@@ -32,7 +32,7 @@ func runShowLogo(cmd *cobra.Command, args []string) error {
 	defer cleanup()
 
 	opts := append([]tea.ProgramOption{tea.WithAltScreen()}, ttyOpts...)
-	p := tea.NewProgram(tui.WithBlackBackground(model), opts...)
+	p := tea.NewProgram(model, opts...)
 
 	_, err = p.Run()
 	return err
