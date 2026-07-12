@@ -731,10 +731,11 @@ _tool_cmd_for() {
 # or a claude login picked while a different agent runs — then target_tool is
 # claude and chosen_account the login). Beyond the respawn it keeps every
 # tool-identity surface consistent: the tmux session env (WISP_DECK_TOOL — the
-# pill and the next switch read it), the pane border accent, the launcher's
-# ai-tool preference (a switch steers future launches, mirroring how an
-# account pick writes the global pointer), and the relaunch context itself
-# (the next switch must know what the pane NOW runs). Leaving claude first
+# pill and the next switch read it), the pane border accent, and the relaunch
+# context itself (the next switch must know what the pane NOW runs). It
+# deliberately leaves the launcher's ai-tool preference alone — that file
+# chooses the tool for future/other sessions, and a mid-session switch is
+# session-scoped, so steering it would leak this choice everywhere. Leaving claude first
 # makes it persist any unsent draft into prompt history (Esc-Esc) — there is
 # no replay into a different agent's input, so the draft stays one Up-press
 # away for the user's next claude stint. Switching TO claude resumes the
@@ -830,9 +831,12 @@ relaunch_switch_tool() {
     "$tmux_cmd" set-option pane-active-border-style \
       "fg=colour$(get_tool_accent "$target")" 2>/dev/null
   fi
-  if [ -n "$_rc_tool_pref" ]; then
-    printf '%s\n' "$target" > "$_rc_tool_pref" 2>/dev/null || true
-  fi
+  # NOTE: deliberately does NOT write the launcher's ai-tool preference. That
+  # file steers which tool wrapper.sh picks for the NEXT launch and for OTHER
+  # sessions (wrapper.sh reads it at splash and at SELECTED_AI_TOOL); a
+  # mid-session switch is momentary and must not leak into future sessions.
+  # This session's tool identity lives in WISP_DECK_TOOL, the pool meta, and
+  # the relaunch context rewritten below — none of which need the global file.
   write_relaunch_context "$relaunch_file" "$target" "$tool_cmd" \
     "$_rc_settings" "$_rc_filter" "$_rc_project_dir" \
     "${_rc_accounts_dir%/claude-accounts}" "$_rc_tools" \

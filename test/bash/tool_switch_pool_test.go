@@ -127,6 +127,39 @@ func TestRelaunchSwitchTool_returning_to_codex_resumes_stamped_session(t *testin
 	}
 }
 
+// A mid-session tool switch must NOT rewrite the launcher's saved ai-tool
+// preference. That file is what wrapper.sh reads to choose the tool for the
+// NEXT launch and for OTHER sessions (wrapper.sh:44,122); steering it from an
+// in-session switch would leak this session's momentary choice into every
+// future session. The session's own tool identity is carried by WISP_DECK_TOOL,
+// the pool meta, and the relaunch context — none of which need the global file.
+func TestRelaunchSwitchTool_does_not_touch_global_ai_tool_pref(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	bin := poolMockTmux(t, dir, rec)
+	// The user's saved launcher preference: claude.
+	writeTempFile(t, dir, "ai-tool", "claude\n")
+	ctx := poolCtx(t, dir, "claude")
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, poolSwitchSnippet(t,
+		fmt.Sprintf("relaunch_switch_tool tmux %q codex", ctx)), env)
+	assertExitCode(t, code, 0)
+
+	// The in-session switch stamps WISP_DECK_TOOL — that is where THIS session's
+	// tool now lives.
+	if got := readTmuxEnv(t, dir, "WISP_DECK_TOOL"); got != "codex" {
+		t.Fatalf("expected WISP_DECK_TOOL=codex for this session, got %q", got)
+	}
+	// But the launcher preference other sessions read must be untouched.
+	pref, err := os.ReadFile(filepath.Join(dir, "ai-tool"))
+	if err != nil {
+		t.Fatalf("ai-tool pref: %v", err)
+	}
+	if strings.TrimSpace(string(pref)) != "claude" {
+		t.Fatalf("mid-session switch leaked into launcher ai-tool pref: got %q, want claude", string(pref))
+	}
+}
+
 // claude → codex with NO codex session of its own: codex is seeded with the
 // exported claude conversation via an initial handoff prompt.
 func TestRelaunchSwitchTool_claude_to_codex_seeds_handoff(t *testing.T) {

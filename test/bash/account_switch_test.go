@@ -1106,6 +1106,8 @@ func TestOpenAccountSwitcher_tool_result_switches_agent(t *testing.T) {
 	rec := filepath.Join(dir, "tmux.log")
 	bin := switcherToolMockTmux(t, dir, "WISP_DECK_CLAUDE_ACCOUNT=", "tool:codex", rec)
 	mockSwitcherBinary(t, dir)
+	// The user's saved launcher preference before the switch.
+	writeTempFile(t, dir, "ai-tool", "claude\n")
 	relaunch := switcherToolCtx(t, dir, "claude", "claude codex")
 	env := buildEnv(t, []string{bin}, "HOME="+dir)
 	_, code := runBashSnippet(t, accountSwitchSnippet(t,
@@ -1115,8 +1117,11 @@ func TestOpenAccountSwitcher_tool_result_switches_agent(t *testing.T) {
 	assertContains(t, logOut, "respawn-pane")
 	assertContains(t, logOut, "/opt/codex")
 	assertContains(t, logOut, "set-environment WISP_DECK_TOOL codex")
+	// The switch is session-scoped: the launcher's ai-tool preference (read for
+	// the NEXT launch and by OTHER sessions) must NOT be steered to codex.
 	pref, _ := runBashSnippet(t, fmt.Sprintf("cat %q", filepath.Join(dir, "ai-tool")), nil)
-	assertContains(t, pref, "codex")
+	assertContains(t, pref, "claude")
+	assertNotContains(t, pref, "codex")
 	ctx, _ := runBashSnippet(t, fmt.Sprintf("cat %q", relaunch), nil)
 	assertContains(t, ctx, "tool=codex")
 	assertContains(t, ctx, "tool_cmd=/opt/codex")
