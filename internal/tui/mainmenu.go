@@ -34,6 +34,18 @@ type worktreeDoneMsg struct {
 	err  error
 }
 
+// worktreeRemoveDoneMsg is sent after a background `git worktree remove` attempt
+// completes. Removal is dispatched as a tea.Cmd (never run inline in Update) because
+// git must rm -rf the entire worktree tree, which can take many seconds on a real
+// project and would otherwise freeze the whole UI event loop.
+type worktreeRemoveDoneMsg struct {
+	branch     string
+	projectIdx int
+	wtIdx      int
+	force      bool // whether this was the --force attempt (no dirty/locked re-prompt)
+	err        error
+}
+
 // pendingWorktreeDelete holds a worktree awaiting force-removal confirmation.
 type pendingWorktreeDelete struct {
 	projectIdx int
@@ -2182,6 +2194,9 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		models.PopulateWorktrees(m.projects)
 		return m, nil
 
+	case worktreeRemoveDoneMsg:
+		return m.applyWorktreeRemoveDone(msg)
+
 	case statsLoadedMsg:
 		m.statsMonths = msg.months
 		m.statsLoading = false
@@ -3196,36 +3211,21 @@ func (m *MainMenuModel) confirmDeleteFlat() (tea.Model, tea.Cmd) {
 	}
 }
 
-// confirmDeleteWorktree attempts to remove the worktree at (projectIdx, wtIdx) without force.
-// On dirty error, sets pendingForceDeleteWT and shows a prompt. On other errors, shows error feedback.
+// confirmDeleteWorktree dispatches a background removal of the worktree at
+// (projectIdx, wtIdx) without force. The actual `git worktree remove` runs in a
+// tea.Cmd — never inline — so the UI stays responsive while git deletes the tree.
+// The result is reported back as a worktreeRemoveDoneMsg.
 func (m *MainMenuModel) confirmDeleteWorktree(projectIdx, wtIdx int) (tea.Model, tea.Cmd) {
 	if projectIdx >= len(m.projects) || wtIdx >= len(m.projects[projectIdx].Worktrees) {
 		m.exitDeleteMode()
 		return m, nil
 	}
-	wt := m.projects[projectIdx].Worktrees[wtIdx]
-	projectPath := m.projects[projectIdx].Path
-
-	if err := models.RemoveWorktree(projectPath, wt.Path, false); err != nil {
-		if models.IsWorktreeDirtyError(err) {
-			m.pendingForceDeleteWT = &pendingWorktreeDelete{projectIdx: projectIdx, wtIdx: wtIdx}
-			m.setFeedback("Worktree has changes — press Y to force remove", "error")
-			return m, nil
-		}
-		if models.IsWorktreeLockedError(err) {
-			m.pendingForceDeleteWT = &pendingWorktreeDelete{projectIdx: projectIdx, wtIdx: wtIdx}
-			m.setFeedback("Worktree is locked — press Y to force remove", "error")
-			return m, nil
-		}
-		m.setFeedback("Failed to remove worktree", "error")
-		m.exitDeleteMode()
-		return m, nil
-	}
-
-	return m.reloadAfterWorktreeRemoval(wt.Branch)
+	return m, m.removeWorktreeCmd(projectIdx, wtIdx, false)
 }
 
-// forceDeleteWorktree runs git worktree remove --force for the pending worktree.
+// forceDeleteWorktree dispatches a background `git worktree remove --force` for the
+// pending worktree. Like confirmDeleteWorktree, the removal runs in a tea.Cmd so the
+// UI never freezes on a slow delete.
 func (m *MainMenuModel) forceDeleteWorktree() (tea.Model, tea.Cmd) {
 	pending := m.pendingForceDeleteWT
 	m.pendingForceDeleteWT = nil
@@ -3234,16 +3234,54 @@ func (m *MainMenuModel) forceDeleteWorktree() (tea.Model, tea.Cmd) {
 		m.exitDeleteMode()
 		return m, nil
 	}
-	wt := m.projects[pending.projectIdx].Worktrees[pending.wtIdx]
-	projectPath := m.projects[pending.projectIdx].Path
+	return m, m.removeWorktreeCmd(pending.projectIdx, pending.wtIdx, true)
+}
 
-	if err := models.RemoveWorktree(projectPath, wt.Path, true); err != nil {
-		m.setFeedback("Failed to force remove worktree", "error")
+// removeWorktreeCmd builds the tea.Cmd that removes a worktree off the UI event loop
+// and shows immediate "Removing…" feedback so the interface stays live during the
+// potentially multi-second `git worktree remove`.
+func (m *MainMenuModel) removeWorktreeCmd(projectIdx, wtIdx int, force bool) tea.Cmd {
+	wt := m.projects[projectIdx].Worktrees[wtIdx]
+	projectPath := m.projects[projectIdx].Path
+	m.setFeedback("Removing worktree "+wt.Branch+"…", "progress")
+	branch := wt.Branch
+	wtPath := wt.Path
+	return func() tea.Msg {
+		err := models.RemoveWorktree(projectPath, wtPath, force)
+		return worktreeRemoveDoneMsg{
+			branch:     branch,
+			projectIdx: projectIdx,
+			wtIdx:      wtIdx,
+			force:      force,
+			err:        err,
+		}
+	}
+}
+
+// applyWorktreeRemoveDone handles the result of a background worktree removal:
+// re-prompts for force on dirty/locked, reports other failures, and reloads on success.
+func (m *MainMenuModel) applyWorktreeRemoveDone(msg worktreeRemoveDoneMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		if !msg.force && models.IsWorktreeDirtyError(msg.err) {
+			m.pendingForceDeleteWT = &pendingWorktreeDelete{projectIdx: msg.projectIdx, wtIdx: msg.wtIdx}
+			m.setFeedback("Worktree has changes — press Y to force remove", "error")
+			return m, nil
+		}
+		if !msg.force && models.IsWorktreeLockedError(msg.err) {
+			m.pendingForceDeleteWT = &pendingWorktreeDelete{projectIdx: msg.projectIdx, wtIdx: msg.wtIdx}
+			m.setFeedback("Worktree is locked — press Y to force remove", "error")
+			return m, nil
+		}
+		if msg.force {
+			m.setFeedback("Failed to force remove worktree", "error")
+		} else {
+			m.setFeedback("Failed to remove worktree", "error")
+		}
 		m.exitDeleteMode()
 		return m, nil
 	}
 
-	return m.reloadAfterWorktreeRemoval(wt.Branch)
+	return m.reloadAfterWorktreeRemoval(msg.branch)
 }
 
 // reloadAfterWorktreeRemoval reloads projects+worktrees, resets state, and stays in delete mode.

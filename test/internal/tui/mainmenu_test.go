@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -4561,9 +4562,14 @@ func TestDeleteMode_ConfirmDelete_WorktreeTarget_Success(t *testing.T) {
 		t.Fatalf("precondition: deleteSelected should be 1, got %d", mm3.DeleteSelected())
 	}
 
-	// Confirm deletion
-	newModel4, _ := mm3.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// Confirm deletion — removal is dispatched as a background command.
+	newModel4, cmd := mm3.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	mm4 := newModel4.(*tui.MainMenuModel)
+	if cmd == nil {
+		t.Fatal("expected a background removal command")
+	}
+	newModel4b, _ := mm4.Update(cmd())
+	mm4 = newModel4b.(*tui.MainMenuModel)
 
 	// Should stay in delete mode and show success feedback
 	if !mm4.InDeleteMode() {
@@ -4609,9 +4615,14 @@ func TestDeleteMode_ConfirmDelete_WorktreeTarget_Dirty(t *testing.T) {
 	newModel3, _ := mm2.Update(tea.KeyMsg{Type: tea.KeyDown})
 	mm3 := newModel3.(*tui.MainMenuModel)
 
-	// Confirm deletion — should fail dirty and set pending
-	newModel4, _ := mm3.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// Confirm deletion — the background removal reports back a dirty error and sets pending.
+	newModel4, cmd := mm3.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	mm4 := newModel4.(*tui.MainMenuModel)
+	if cmd == nil {
+		t.Fatal("expected a background removal command")
+	}
+	newModel4b, _ := mm4.Update(cmd())
+	mm4 = newModel4b.(*tui.MainMenuModel)
 
 	// Should stay in delete mode
 	if !mm4.InDeleteMode() {
@@ -4623,9 +4634,14 @@ func TestDeleteMode_ConfirmDelete_WorktreeTarget_Dirty(t *testing.T) {
 		t.Errorf("expected dirty worktree feedback in view, got: %s", view)
 	}
 
-	// Pressing Y should force-remove
-	newModel5, _ := mm4.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Y'}})
+	// Pressing Y should force-remove (also dispatched in the background).
+	newModel5, cmd2 := mm4.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Y'}})
 	mm5 := newModel5.(*tui.MainMenuModel)
+	if cmd2 == nil {
+		t.Fatal("expected a background force-removal command")
+	}
+	newModel5b, _ := mm5.Update(cmd2())
+	mm5 = newModel5b.(*tui.MainMenuModel)
 
 	if !mm5.InDeleteMode() {
 		t.Error("should remain in delete mode after force removal")
@@ -4671,8 +4687,13 @@ func TestDeleteMode_ConfirmDelete_WorktreeTarget_Locked(t *testing.T) {
 	newModel3, _ := mm2.Update(tea.KeyMsg{Type: tea.KeyDown})
 	mm3 := newModel3.(*tui.MainMenuModel)
 
-	newModel4, _ := mm3.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	newModel4, cmd := mm3.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	mm4 := newModel4.(*tui.MainMenuModel)
+	if cmd == nil {
+		t.Fatal("expected a background removal command")
+	}
+	newModel4b, _ := mm4.Update(cmd())
+	mm4 = newModel4b.(*tui.MainMenuModel)
 
 	if !mm4.InDeleteMode() {
 		t.Error("should remain in delete mode when worktree is locked")
@@ -4682,8 +4703,13 @@ func TestDeleteMode_ConfirmDelete_WorktreeTarget_Locked(t *testing.T) {
 		t.Errorf("expected locked-worktree prompt in view, got: %s", view)
 	}
 
-	newModel5, _ := mm4.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Y'}})
+	newModel5, cmd2 := mm4.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Y'}})
 	mm5 := newModel5.(*tui.MainMenuModel)
+	if cmd2 == nil {
+		t.Fatal("expected a background force-removal command")
+	}
+	newModel5b, _ := mm5.Update(cmd2())
+	mm5 = newModel5b.(*tui.MainMenuModel)
 
 	if !mm5.InDeleteMode() {
 		t.Error("should remain in delete mode after force removal of locked worktree")
@@ -4694,6 +4720,90 @@ func TestDeleteMode_ConfirmDelete_WorktreeTarget_Locked(t *testing.T) {
 	}
 	if _, statErr := os.Stat(wtPath); !os.IsNotExist(statErr) {
 		t.Error("locked worktree path should not exist after force removal")
+	}
+}
+
+// TestDeleteMode_ConfirmDelete_DoesNotBlockEventLoop is the regression guard for the
+// UI-freeze bug: `git worktree remove` must run in a background tea.Cmd, never inline in
+// Update. If it runs inline, Bubbletea cannot repaint or accept input while git rm -rf's
+// the (potentially huge) worktree tree, freezing the whole interface. We shim a slow git
+// and assert the Update that triggers deletion returns promptly with a non-nil command
+// that carries out the actual removal in the background.
+func TestDeleteMode_ConfirmDelete_DoesNotBlockEventLoop(t *testing.T) {
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not found")
+	}
+
+	dir := t.TempDir()
+	if out, e := exec.Command(realGit, "-C", dir, "init").CombinedOutput(); e != nil {
+		t.Skipf("git init: %v: %s", e, out)
+	}
+	exec.Command(realGit, "-C", dir, "config", "user.email", "test@test.com").Run()
+	exec.Command(realGit, "-C", dir, "config", "user.name", "Test").Run()
+	exec.Command(realGit, "-C", dir, "commit", "--allow-empty", "-m", "init").Run()
+	exec.Command(realGit, "-C", dir, "branch", "feat").Run()
+	wtPath := filepath.Join(t.TempDir(), "feat")
+	if out, e := exec.Command(realGit, "-C", dir, "worktree", "add", wtPath, "feat").CombinedOutput(); e != nil {
+		t.Skipf("git worktree add: %v: %s", e, out)
+	}
+
+	// Slow git shim: sleeps 3s on `worktree remove`, delegates everything else to the real
+	// git so setup and the post-removal reload stay fast.
+	shimDir := t.TempDir()
+	shim := "#!/bin/sh\n" +
+		"for a in \"$@\"; do if [ \"$a\" = \"remove\" ]; then sleep 3; break; fi; done\n" +
+		"exec " + realGit + " \"$@\"\n"
+	if werr := os.WriteFile(filepath.Join(shimDir, "git"), []byte(shim), 0755); werr != nil {
+		t.Fatal(werr)
+	}
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	projects := []models.Project{
+		{Name: "myproj", Path: dir, Worktrees: []models.Worktree{{Path: wtPath, Branch: "feat"}}},
+	}
+	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "none")
+	m.SetSize(80, 30)
+	m.SetProjectsFile(filepath.Join(dir, "projects"))
+
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	mm := newModel.(*tui.MainMenuModel)
+	newModel2, _ := mm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	mm2 := newModel2.(*tui.MainMenuModel)
+	newModel3, _ := mm2.Update(tea.KeyMsg{Type: tea.KeyDown})
+	mm3 := newModel3.(*tui.MainMenuModel)
+	if got, _, _ := mm3.ResolveItem(mm3.DeleteSelected()); got != "worktree" {
+		t.Fatalf("precondition: delete cursor should be on a worktree, got %q", got)
+	}
+
+	// The Update that triggers deletion must return promptly (async dispatch), even though
+	// the underlying git worktree remove takes ~3s.
+	start := time.Now()
+	newModel4, cmd := mm3.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	elapsed := time.Since(start)
+	mm4 := newModel4.(*tui.MainMenuModel)
+
+	if elapsed > 1*time.Second {
+		t.Fatalf("delete blocked the UI event loop for %v; git worktree remove must run in a background tea.Cmd", elapsed)
+	}
+	if cmd == nil {
+		t.Fatal("expected a non-nil tea.Cmd to perform the removal in the background")
+	}
+
+	// Running the command carries out the actual removal and reports back via a message.
+	msg := cmd()
+	newModel5, _ := mm4.Update(msg)
+	mm5 := newModel5.(*tui.MainMenuModel)
+
+	if _, statErr := os.Stat(wtPath); !os.IsNotExist(statErr) {
+		t.Error("worktree path should be gone after the background removal completes")
+	}
+	if !mm5.InDeleteMode() {
+		t.Error("should remain in delete mode after removal")
+	}
+	view := mm5.View()
+	if !strings.Contains(view, "Removed") && !strings.Contains(view, "feat") {
+		t.Errorf("expected success feedback after removal, got: %s", view)
 	}
 }
 
