@@ -2440,3 +2440,147 @@ func TestDiscardWorktreeFiles_reverts_all_selected(t *testing.T) {
 		t.Errorf("unselected c.txt should be untouched: got %q", string(got))
 	}
 }
+
+// ── Image size-delta ledger rows ────────────────────────────────────────────
+// git numstat can't line-count a binary file, so an image shows "-/-" (rendered
+// as "+0 −0"), which tells the user nothing useful. For image files the ledger
+// shows the file's BYTE-SIZE change instead — how much it grew or shrank.
+
+func humanBytes(t *testing.T, n string) string {
+	t.Helper()
+	out, code := cvFuncArgv(t, "human_bytes", n)
+	assertExitCode(t, code, 0)
+	return strings.TrimSpace(out)
+}
+
+func TestHumanBytes_scales_units(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"0", "0B"},
+		{"512", "512B"},
+		{"1023", "1023B"},
+		{"1024", "1.0K"},
+		{"1536", "1.5K"},
+		{"1048576", "1.0M"},
+		{"2621440", "2.5M"},
+	}
+	for _, c := range cases {
+		if got := humanBytes(t, c.in); got != c.want {
+			t.Errorf("human_bytes %s = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func sizeRow(t *testing.T, oldB, newB, display string) string {
+	t.Helper()
+	out, code := cvFuncArgv(t, "format_ledger_size_row", oldB, newB, display)
+	assertExitCode(t, code, 0)
+	return ansiRE.ReplaceAllString(out, "")
+}
+
+func TestFormatLedgerSizeRow_increase_shows_signed_size(t *testing.T) {
+	plain := sizeRow(t, "1000", "3000", "pic.png")
+	if !strings.Contains(plain, "+2.0K") {
+		t.Errorf("a grown image should show +delta, got %q", plain)
+	}
+}
+
+func TestFormatLedgerSizeRow_decrease_shows_minus(t *testing.T) {
+	plain := sizeRow(t, "3000", "1000", "pic.png")
+	if !strings.Contains(plain, "−2.0K") { // U+2212 MINUS SIGN, as the ledger uses
+		t.Errorf("a shrunk image should show −delta, got %q", plain)
+	}
+}
+
+func TestFormatLedgerSizeRow_unchanged_shows_zero(t *testing.T) {
+	plain := sizeRow(t, "2000", "2000", "pic.png")
+	if !strings.Contains(plain, "±0") { // ±0
+		t.Errorf("no size change should show ±0, got %q", plain)
+	}
+}
+
+// The size-delta row must keep the filename in the SAME column (14) as a normal
+// "+NNN −NNN" line row, so image and text rows stay aligned in the ledger.
+func TestFormatLedgerSizeRow_aligns_filename_at_column_14(t *testing.T) {
+	plain := sizeRow(t, "1000", "3000", "pic.png")
+	if idx := strings.Index(plain, "pic.png"); idx != 14 {
+		t.Errorf("image row filename must start at column 14 like a text row, got %d in %q", idx, plain)
+	}
+}
+
+// format_image_row computes the right before/after sizes for the group the image
+// sits in: a brand-new (untracked) image is a full-size increase.
+func TestFormatImageRow_new_file_shows_full_size(t *testing.T) {
+	dir := t.TempDir()
+	git := discardGitRepo(t, dir)
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "seed.txt", "x\n")
+	git("add", "seed.txt")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "new.png", strings.Repeat("a", 2048)) // untracked, 2048 bytes
+
+	out, code := cvFuncArgv(t, "format_image_row", dir, "untracked", "new.png", "new.png")
+	assertExitCode(t, code, 0)
+	plain := ansiRE.ReplaceAllString(out, "")
+	if !strings.Contains(plain, "+2.0K") {
+		t.Errorf("a new image should show +full size (2.0K), got %q", plain)
+	}
+}
+
+// A modified (unstaged) image compares the working tree against the index blob.
+func TestFormatImageRow_modified_shows_delta_vs_index(t *testing.T) {
+	dir := t.TempDir()
+	git := discardGitRepo(t, dir)
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "pic.png", strings.Repeat("a", 1024))
+	git("add", "pic.png")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "pic.png", strings.Repeat("a", 3072)) // grew by 2048 bytes
+
+	out, code := cvFuncArgv(t, "format_image_row", dir, "unstaged", "pic.png", "pic.png")
+	assertExitCode(t, code, 0)
+	plain := ansiRE.ReplaceAllString(out, "")
+	if !strings.Contains(plain, "+2.0K") {
+		t.Errorf("a grown modified image should show +2.0K, got %q", plain)
+	}
+}
+
+// A staged image compares the index blob against the committed HEAD blob.
+func TestFormatImageRow_staged_shows_delta_vs_head(t *testing.T) {
+	dir := t.TempDir()
+	git := discardGitRepo(t, dir)
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "pic.png", strings.Repeat("a", 1024))
+	git("add", "pic.png")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "pic.png", strings.Repeat("a", 4096)) // grew by 3072 bytes
+	git("add", "pic.png")                                        // stage the growth
+
+	out, code := cvFuncArgv(t, "format_image_row", dir, "staged", "pic.png", "pic.png")
+	assertExitCode(t, code, 0)
+	plain := ansiRE.ReplaceAllString(out, "")
+	if !strings.Contains(plain, "+3.0K") {
+		t.Errorf("a grown staged image should show +3.0K, got %q", plain)
+	}
+}
+
+// A shrunk modified image shows a negative delta with the ledger minus sign.
+func TestFormatImageRow_shrunk_shows_negative(t *testing.T) {
+	dir := t.TempDir()
+	git := discardGitRepo(t, dir)
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "pic.png", strings.Repeat("a", 3072))
+	git("add", "pic.png")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "pic.png", strings.Repeat("a", 1024)) // shrank by 2048 bytes
+
+	out, code := cvFuncArgv(t, "format_image_row", dir, "unstaged", "pic.png", "pic.png")
+	assertExitCode(t, code, 0)
+	plain := ansiRE.ReplaceAllString(out, "")
+	if !strings.Contains(plain, "−2.0K") {
+		t.Errorf("a shrunk modified image should show −2.0K, got %q", plain)
+	}
+}

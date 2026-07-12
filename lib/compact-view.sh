@@ -87,6 +87,97 @@ format_ledger_row() {
     "$added" "$pad_a" '' "$deleted" "$pad_d" '' "$display"
 }
 
+# human_bytes renders a non-negative byte count as a short human string: bytes
+# below 1 KiB stay as "<n>B", then one decimal of KiB ("1.5K") up to 1 MiB, then
+# MiB ("2.5M"). Pure integer math (no bc): the fraction is a rounded tenth of the
+# unit, so 1536 -> "1.5K". Emits the string with NO trailing newline.
+# Usage: human_bytes <bytes>
+human_bytes() {
+  local n="$1" t
+  if [ "$n" -lt 1024 ]; then
+    printf '%dB' "$n"
+  elif [ "$n" -lt 1048576 ]; then
+    t=$(( (n * 10 + 512) / 1024 ))          # tenths of KiB, rounded
+    printf '%d.%dK' "$((t / 10))" "$((t % 10))"
+  else
+    t=$(( (n * 10 + 524288) / 1048576 ))    # tenths of MiB, rounded
+    printf '%d.%dM' "$((t / 10))" "$((t % 10))"
+  fi
+}
+
+# format_ledger_size_row prints one file row of the change ledger for an IMAGE (or
+# any binary file numstat can't line-count): instead of "+added −deleted" it shows
+# the file's byte-SIZE change — green "+<size>" when it grew, red "−<size>" when it
+# shrank, dim "±0" when unchanged. The signed figure occupies the SAME 9-column
+# field the "+NNN −NNN" counts fill, so the filename still starts at column 14 and
+# stays aligned with normal rows (see format_ledger_row). The sign is a single
+# rune emitted as a literal (not a %s arg) to keep its multibyte width from
+# skewing printf's padding. Emits a trailing newline.
+# Usage: format_ledger_size_row <old_bytes> <new_bytes> <display>
+format_ledger_size_row() {
+  local old="$1" new="$2" display="$3"
+  local green="\033[32m" red="\033[31m" dim="\033[90m" bright="\033[97m" reset="\033[0m"
+  local diff=$((new - old)) sign mag color
+  if [ "$diff" -gt 0 ]; then
+    sign="+"; color="$green"; mag=$(human_bytes "$diff")
+  elif [ "$diff" -lt 0 ]; then
+    sign="−"; color="$red"; mag=$(human_bytes "$((-diff))")
+  else
+    sign="±"; color="$dim"; mag="0"
+  fi
+  # Visible width of the figure = 1 rune (sign) + the ASCII magnitude. Pad it out
+  # to the 9-col count field so the filename lands at column 14.
+  local pad=$(( 8 - ${#mag} )); [ "$pad" -lt 0 ] && pad=0
+  printf "   ${color}%s%s${reset}%*s  ${bright}%s${reset}\n" \
+    "$sign" "$mag" "$pad" '' "$display"
+}
+
+# git_blob_size echoes the byte size of the blob at <rev>:<path> in <dir>, or 0
+# when that revision has no such blob (e.g. a file added since HEAD). An empty
+# <rev> means the index (git's ":path" form). Usage: git_blob_size <dir> <rev> <path>
+git_blob_size() {
+  git -C "$1" cat-file -s "$2:$3" 2>/dev/null || printf 0
+}
+
+# worktree_size echoes the on-disk byte size of <dir>/<path>, or 0 when the file
+# is absent (e.g. a deleted image). Usage: worktree_size <dir> <path>
+worktree_size() {
+  if [ -f "$1/$2" ]; then
+    wc -c < "$1/$2" | tr -d ' '
+  else
+    printf 0
+  fi
+}
+
+# format_image_row renders an image file's ledger row as a byte-size delta,
+# picking the before/after sizes from the group the image sits in:
+#   staged    -> index blob   vs HEAD blob   (what staging would commit)
+#   unstaged  -> working tree vs index blob  (the unstaged edit)
+#   untracked -> working tree vs nothing     (a brand-new file: full-size add)
+# <file> is the raw numstat path (a rename may arrive as "old => new"); sizes are
+# looked up against its current path via numstat_path. Usage:
+#   format_image_row <dir> <staged|unstaged|untracked> <file> <display>
+format_image_row() {
+  local dir="$1" ref="$2" file="$3" display="$4"
+  local path old=0 new=0
+  path=$(numstat_path "$file")
+  case "$ref" in
+    staged)
+      old=$(git_blob_size "$dir" HEAD "$path")
+      new=$(git_blob_size "$dir" "" "$path")
+      ;;
+    unstaged)
+      old=$(git_blob_size "$dir" "" "$path")
+      new=$(worktree_size "$dir" "$path")
+      ;;
+    untracked)
+      old=0
+      new=$(worktree_size "$dir" "$path")
+      ;;
+  esac
+  format_ledger_size_row "$old" "$new" "$display"
+}
+
 # clamp_scroll keeps a scroll offset within [0, total - avail]. When the content
 # fits (total <= avail) the result is 0.
 # Usage: clamp_scroll <scroll> <total_lines> <viewport_lines>
@@ -1005,18 +1096,26 @@ compact_view() {
   # The header label and each row's "+NNN −NNN" counts share column 3, so the
   # figures line up directly beneath the section name (see format_group_header /
   # format_ledger_row). Long filenames truncate at the right edge.
-  # Usage: render_group <numstat text> <glyph color> <glyph> <label> <name_width> <count>
+  # An image row shows a byte-SIZE delta (format_image_row) instead of the
+  # meaningless "+0 −0" numstat gives a binary file; <sizeref> tells it which
+  # revisions to size (staged/unstaged/untracked). project_dir is in the enclosing
+  # scope (this whole builder runs inside compact_view).
+  # Usage: render_group <numstat text> <glyph color> <glyph> <label> <name_width> <count> <sizeref>
   render_group() {
-    local data="$1" gcolor="$2" glyph="$3" label="$4" name_width="$5" count="$6"
+    local data="$1" gcolor="$2" glyph="$3" label="$4" name_width="$5" count="$6" sizeref="$7"
     [ -z "$data" ] && return
     format_group_header "$gcolor" "$glyph" "$label" "$count"
     local added deleted file display
     while IFS=$'\t' read -r added deleted file; do
       [ -z "$added" ] && continue
-      [ "$added" = "-" ] && added=0
-      [ "$deleted" = "-" ] && deleted=0
       display=$(format_file "$file" "$name_width")
-      format_ledger_row "$added" "$deleted" "$display"
+      if is_image_file "$file"; then
+        format_image_row "$project_dir" "$sizeref" "$file" "$display"
+      else
+        [ "$added" = "-" ] && added=0
+        [ "$deleted" = "-" ] && deleted=0
+        format_ledger_row "$added" "$deleted" "$display"
+      fi
     done <<< "$data"
     printf "\n"
   }
@@ -1461,13 +1560,13 @@ compact_view() {
       [ -n "$untracked" ] && has_content=1
 
       # ── Staged ──
-      render_group "$staged" "$green" "●" "staged" "$name_width" "$n_staged"
+      render_group "$staged" "$green" "●" "staged" "$name_width" "$n_staged" "staged"
 
       # ── Modified ──
-      render_group "$unstaged" "$yellow" "●" "modified" "$name_width" "$n_unstaged"
+      render_group "$unstaged" "$yellow" "●" "modified" "$name_width" "$n_unstaged" "unstaged"
 
       # ── New (untracked, just-created files) ──
-      render_group "$untracked" "$cyan" "●" "new" "$name_width" "$n_untracked"
+      render_group "$untracked" "$cyan" "●" "new" "$name_width" "$n_untracked" "untracked"
 
       # Empty state
       if [ "$has_content" -eq 0 ]; then

@@ -1883,3 +1883,82 @@ func hoverPillScenario(t *testing.T, pathPrefix string) {
 			"frame still carried 48;5;238; got:\n%q", last)
 	}
 }
+
+// End-to-end: a modified IMAGE in the ledger shows its byte-size change, not the
+// "+0 −0" that numstat gives a binary file. Renders the real loop over a pty with
+// a committed 1 KiB pic.png grown to 3 KiB and asserts the "+2.0K" delta lands on
+// the file's row (and that no "+0" line-count row does).
+func TestCompactView_image_row_shows_size_delta(t *testing.T) {
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "pic.png", strings.Repeat("a", 1024))
+	git("add", "pic.png")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "pic.png", strings.Repeat("a", 3072)) // grew by 2048 bytes
+
+	cmd := exec.Command("bash", "-c", "source "+module+" && compact_view "+dir)
+	env := []string{}
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "TMUX=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=1", "TERM=xterm")
+
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 12, Cols: 60})
+	if err != nil {
+		t.Fatalf("start pty: %v", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	var mu sync.Mutex
+	var out bytes.Buffer
+	go func() {
+		b := make([]byte, 4096)
+		for {
+			n, err := ptmx.Read(b)
+			if n > 0 {
+				mu.Lock()
+				out.Write(b[:n])
+				mu.Unlock()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	read := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return out.String()
+	}
+
+	acc, took, ok := waitForFrame(read, "2.0K", 6*time.Second)
+	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
+	time.Sleep(150 * time.Millisecond)
+	if !ok {
+		t.Fatalf("modified image should render a +2.0K size delta within %s, but no frame did.\n%s",
+			took, describeFrame(acc))
+	}
+	// The size delta REPLACES the line counts: the image's row must not show +0.
+	plain := ansiSeq.ReplaceAllString(acc, "")
+	for _, line := range strings.Split(plain, "\n") {
+		if strings.Contains(line, "pic.png") && strings.Contains(line, "+0") {
+			t.Errorf("image row must not show a +0 line count, got %q", line)
+		}
+	}
+}
