@@ -2584,3 +2584,38 @@ func TestFormatImageRow_shrunk_shows_negative(t *testing.T) {
 		t.Errorf("a shrunk modified image should show −2.0KB, got %q", plain)
 	}
 }
+
+// Regression: the compact-view pane runs under zsh, where `path` is a SPECIAL
+// array tied to $PATH. format_image_row's `local path=$(numstat_path ...)` thus
+// clobbered the command search path with the file name, so wc/tr inside
+// worktree_size became "command not found" and every image collapsed to ±0. The
+// function must not name a local after a zsh special. (bash has no such special,
+// so this only reproduces under zsh — hence a dedicated zsh run.)
+func TestFormatImageRow_zsh_does_not_clobber_path(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not available")
+	}
+	dir := t.TempDir()
+	git := discardGitRepo(t, dir)
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "seed.txt", "x\n")
+	git("add", "seed.txt")
+	git("commit", "-q", "-m", "init")
+	writeTempFile(t, dir, "menu.png", strings.Repeat("a", 2048)) // untracked, 2048 bytes
+
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+	script := "source " + module + " && format_image_row " + dir + " untracked menu.png menu.png"
+	out, err := exec.Command(zsh, "-c", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("zsh run failed: %v\n%s", err, out)
+	}
+	plain := ansiRE.ReplaceAllString(string(out), "")
+	if strings.Contains(plain, "command not found") {
+		t.Fatalf("format_image_row clobbered PATH under zsh (a local shadowed the special $path array): %q", plain)
+	}
+	if !strings.Contains(plain, "+2.0KB") {
+		t.Errorf("a new image under zsh should show its +2.0KB size, got %q", plain)
+	}
+}

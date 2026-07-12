@@ -155,24 +155,27 @@ worktree_size() {
 #   unstaged  -> working tree vs index blob  (the unstaged edit)
 #   untracked -> working tree vs nothing     (a brand-new file: full-size add)
 # <file> is the raw numstat path (a rename may arrive as "old => new"); sizes are
-# looked up against its current path via numstat_path. Usage:
+# looked up against its current path via numstat_path. The local is named `relpath`,
+# NOT `path`: the pane runs under zsh, where `path` is a special array tied to
+# $PATH, so a `local path=…` here would clobber the command search path and make
+# wc/tr/git vanish. Usage:
 #   format_image_row <dir> <staged|unstaged|untracked> <file> <display>
 format_image_row() {
   local dir="$1" ref="$2" file="$3" display="$4"
-  local path old=0 new=0
-  path=$(numstat_path "$file")
+  local relpath old=0 new=0
+  relpath=$(numstat_path "$file")
   case "$ref" in
     staged)
-      old=$(git_blob_size "$dir" HEAD "$path")
-      new=$(git_blob_size "$dir" "" "$path")
+      old=$(git_blob_size "$dir" HEAD "$relpath")
+      new=$(git_blob_size "$dir" "" "$relpath")
       ;;
     unstaged)
-      old=$(git_blob_size "$dir" "" "$path")
-      new=$(worktree_size "$dir" "$path")
+      old=$(git_blob_size "$dir" "" "$relpath")
+      new=$(worktree_size "$dir" "$relpath")
       ;;
     untracked)
       old=0
-      new=$(worktree_size "$dir" "$path")
+      new=$(worktree_size "$dir" "$relpath")
       ;;
   esac
   format_ledger_size_row "$old" "$new" "$display"
