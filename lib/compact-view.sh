@@ -88,9 +88,9 @@ format_ledger_row() {
 }
 
 # human_bytes renders a non-negative byte count as a short human string: bytes
-# below 1 KiB stay as "<n>B", then one decimal of KiB ("1.5K") up to 1 MiB, then
-# MiB ("2.5M"). Pure integer math (no bc): the fraction is a rounded tenth of the
-# unit, so 1536 -> "1.5K". Emits the string with NO trailing newline.
+# below 1 KiB stay as "<n>B", then one decimal of KiB ("1.5KB") up to 1 MiB, then
+# MiB ("2.5MB"). Pure integer math (no bc): the fraction is a rounded tenth of the
+# unit, so 1536 -> "1.5KB". Emits the string with NO trailing newline.
 # Usage: human_bytes <bytes>
 human_bytes() {
   local n="$1" t
@@ -98,10 +98,10 @@ human_bytes() {
     printf '%dB' "$n"
   elif [ "$n" -lt 1048576 ]; then
     t=$(( (n * 10 + 512) / 1024 ))          # tenths of KiB, rounded
-    printf '%d.%dK' "$((t / 10))" "$((t % 10))"
+    printf '%d.%dKB' "$((t / 10))" "$((t % 10))"
   else
     t=$(( (n * 10 + 524288) / 1048576 ))    # tenths of MiB, rounded
-    printf '%d.%dM' "$((t / 10))" "$((t % 10))"
+    printf '%d.%dMB' "$((t / 10))" "$((t % 10))"
   fi
 }
 

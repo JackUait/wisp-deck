@@ -2458,10 +2458,10 @@ func TestHumanBytes_scales_units(t *testing.T) {
 		{"0", "0B"},
 		{"512", "512B"},
 		{"1023", "1023B"},
-		{"1024", "1.0K"},
-		{"1536", "1.5K"},
-		{"1048576", "1.0M"},
-		{"2621440", "2.5M"},
+		{"1024", "1.0KB"},
+		{"1536", "1.5KB"},
+		{"1048576", "1.0MB"},
+		{"2621440", "2.5MB"},
 	}
 	for _, c := range cases {
 		if got := humanBytes(t, c.in); got != c.want {
@@ -2479,14 +2479,14 @@ func sizeRow(t *testing.T, oldB, newB, display string) string {
 
 func TestFormatLedgerSizeRow_increase_shows_signed_size(t *testing.T) {
 	plain := sizeRow(t, "1000", "3000", "pic.png")
-	if !strings.Contains(plain, "+2.0K") {
+	if !strings.Contains(plain, "+2.0KB") {
 		t.Errorf("a grown image should show +delta, got %q", plain)
 	}
 }
 
 func TestFormatLedgerSizeRow_decrease_shows_minus(t *testing.T) {
 	plain := sizeRow(t, "3000", "1000", "pic.png")
-	if !strings.Contains(plain, "−2.0K") { // U+2212 MINUS SIGN, as the ledger uses
+	if !strings.Contains(plain, "−2.0KB") { // U+2212 MINUS SIGN, as the ledger uses
 		t.Errorf("a shrunk image should show −delta, got %q", plain)
 	}
 }
@@ -2522,8 +2522,8 @@ func TestFormatImageRow_new_file_shows_full_size(t *testing.T) {
 	out, code := cvFuncArgv(t, "format_image_row", dir, "untracked", "new.png", "new.png")
 	assertExitCode(t, code, 0)
 	plain := ansiRE.ReplaceAllString(out, "")
-	if !strings.Contains(plain, "+2.0K") {
-		t.Errorf("a new image should show +full size (2.0K), got %q", plain)
+	if !strings.Contains(plain, "+2.0KB") {
+		t.Errorf("a new image should show +full size (2.0KB), got %q", plain)
 	}
 }
 
@@ -2541,8 +2541,8 @@ func TestFormatImageRow_modified_shows_delta_vs_index(t *testing.T) {
 	out, code := cvFuncArgv(t, "format_image_row", dir, "unstaged", "pic.png", "pic.png")
 	assertExitCode(t, code, 0)
 	plain := ansiRE.ReplaceAllString(out, "")
-	if !strings.Contains(plain, "+2.0K") {
-		t.Errorf("a grown modified image should show +2.0K, got %q", plain)
+	if !strings.Contains(plain, "+2.0KB") {
+		t.Errorf("a grown modified image should show +2.0KB, got %q", plain)
 	}
 }
 
@@ -2561,8 +2561,8 @@ func TestFormatImageRow_staged_shows_delta_vs_head(t *testing.T) {
 	out, code := cvFuncArgv(t, "format_image_row", dir, "staged", "pic.png", "pic.png")
 	assertExitCode(t, code, 0)
 	plain := ansiRE.ReplaceAllString(out, "")
-	if !strings.Contains(plain, "+3.0K") {
-		t.Errorf("a grown staged image should show +3.0K, got %q", plain)
+	if !strings.Contains(plain, "+3.0KB") {
+		t.Errorf("a grown staged image should show +3.0KB, got %q", plain)
 	}
 }
 
@@ -2580,7 +2580,7 @@ func TestFormatImageRow_shrunk_shows_negative(t *testing.T) {
 	out, code := cvFuncArgv(t, "format_image_row", dir, "unstaged", "pic.png", "pic.png")
 	assertExitCode(t, code, 0)
 	plain := ansiRE.ReplaceAllString(out, "")
-	if !strings.Contains(plain, "−2.0K") {
-		t.Errorf("a shrunk modified image should show −2.0K, got %q", plain)
+	if !strings.Contains(plain, "−2.0KB") {
+		t.Errorf("a shrunk modified image should show −2.0KB, got %q", plain)
 	}
 }

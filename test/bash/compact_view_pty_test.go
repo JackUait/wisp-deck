@@ -1886,7 +1886,7 @@ func hoverPillScenario(t *testing.T, pathPrefix string) {
 
 // End-to-end: a modified IMAGE in the ledger shows its byte-size change, not the
 // "+0 −0" that numstat gives a binary file. Renders the real loop over a pty with
-// a committed 1 KiB pic.png grown to 3 KiB and asserts the "+2.0K" delta lands on
+// a committed 1 KiB pic.png grown to 3 KiB and asserts the "+2.0KB" delta lands on
 // the file's row (and that no "+0" line-count row does).
 func TestCompactView_image_row_shows_size_delta(t *testing.T) {
 	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
@@ -1947,11 +1947,11 @@ func TestCompactView_image_row_shows_size_delta(t *testing.T) {
 		return out.String()
 	}
 
-	acc, took, ok := waitForFrame(read, "2.0K", 6*time.Second)
+	acc, took, ok := waitForFrame(read, "2.0KB", 6*time.Second)
 	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
 	time.Sleep(150 * time.Millisecond)
 	if !ok {
-		t.Fatalf("modified image should render a +2.0K size delta within %s, but no frame did.\n%s",
+		t.Fatalf("modified image should render a +2.0KB size delta within %s, but no frame did.\n%s",
 			took, describeFrame(acc))
 	}
 	// The size delta REPLACES the line counts: the image's row must not show +0.
