@@ -29,7 +29,27 @@ func TestWrapperBackgroundJobsDoNotWriteToTheTerminal(t *testing.T) {
 	backgrounded := regexp.MustCompile(`&\s*$`)
 	stdoutRedirected := regexp.MustCompile(`(^|[^0-9<>&])>[>&]?\s*\S|&>`)
 
-	for _, rel := range []string{"wrapper.sh", "lib/tab-title-watcher.sh", "lib/session-restore.sh"} {
+	// Every lib, not just the ones the wrapper backgrounds itself: a job spawned
+	// from a lib inherits the terminal just the same, and update.sh's disowned
+	// npm check outlives the launch by design — the exact shape of this bug.
+	files := []string{"wrapper.sh"}
+	libs, err := filepath.Glob(filepath.Join(root, "lib", "*.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range libs {
+		rel, _ := filepath.Rel(root, l)
+		// The one job that legitimately owns the terminal's stdout: the launch
+		// splash. Its frames ARE its output, it runs before the picker, and
+		// stop_loading_screen kills it at the handoff — it never coexists with
+		// the AI tool's UI.
+		if rel == "lib/loading.sh" {
+			continue
+		}
+		files = append(files, rel)
+	}
+
+	for _, rel := range files {
 		data, err := os.ReadFile(filepath.Join(root, rel))
 		if err != nil {
 			t.Fatal(err)

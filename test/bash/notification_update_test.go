@@ -485,19 +485,19 @@ exit 1
 	env := buildEnv(t, []string{binDir},
 		"XDG_CONFIG_HOME="+filepath.Join(dir, "config"))
 
-	snippet := updateSnippet(t, fmt.Sprintf(`
-check_for_update %q
-sleep 0.3
-`, installDir))
+	snippet := updateSnippet(t, fmt.Sprintf(`check_for_update %q`, installDir))
 	_, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
+
+	// Polled, not slept on: the update check is disowned and both its streams go
+	// to /dev/null (it outlives the launch, so anything it printed would land on
+	// the AI tool's UI). It therefore holds nothing open that the harness waits
+	// for, and the flag lands whenever npm finishes. The flag is the contract —
+	// wait for it.
 	flagFile := filepath.Join(dir, "config", "wisp-deck", "update-available")
-	data, err := os.ReadFile(flagFile)
-	if err != nil {
-		t.Fatalf("expected flag file to be written, got error: %v", err)
-	}
-	if strings.TrimSpace(string(data)) != "2.7.0" {
-		t.Errorf("expected flag content '2.7.0', got %q", strings.TrimSpace(string(data)))
+	data := waitForFile(t, flagFile, "expected flag file to be written")
+	if strings.TrimSpace(data) != "2.7.0" {
+		t.Errorf("expected flag content '2.7.0', got %q", strings.TrimSpace(data))
 	}
 }
 
@@ -553,16 +553,14 @@ exit 1
 	env := buildEnv(t, []string{binDir},
 		"XDG_CONFIG_HOME="+filepath.Join(dir, "config"))
 
-	snippet := updateSnippet(t, fmt.Sprintf(`
-check_for_update %q
-sleep 0.3
-`, installDir))
+	snippet := updateSnippet(t, fmt.Sprintf(`check_for_update %q`, installDir))
 	_, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
+
+	// Same as above: the disowned check holds nothing the harness waits on, so
+	// poll for the clearing rather than sleeping a guess.
 	flagFile := filepath.Join(configDir, "update-available")
-	if _, err := os.Stat(flagFile); !os.IsNotExist(err) {
-		t.Errorf("expected stale flag to be cleared when up to date")
-	}
+	waitForFileGone(t, flagFile, "expected stale flag to be cleared when up to date")
 }
 
 func TestUpdate_check_for_update_skips_when_checked_recently(t *testing.T) {

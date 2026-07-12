@@ -10,9 +10,11 @@ play_notification_sound() {
   local sound_name
   sound_name="$(get_sound_name "$ai_tool" "$config_dir")"
   if [[ -n "$sound_name" ]]; then
-    # stderr dropped: this fires from the watcher loop on a terminal the AI tool
-    # is drawing on, and a missing sound file is not worth corrupting it over.
-    afplay "/System/Library/Sounds/${sound_name}.aiff" 2>/dev/null &
+    # Both streams dropped: this fires from the watcher loop on a terminal the AI
+    # tool is drawing on, and a missing sound file is not worth corrupting it
+    # over. The watcher already drops both, but this must not depend on where it
+    # is called from — it is one line either way.
+    afplay "/System/Library/Sounds/${sound_name}.aiff" >/dev/null 2>&1 &
   fi
 }
 

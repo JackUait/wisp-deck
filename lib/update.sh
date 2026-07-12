@@ -82,9 +82,12 @@ check_for_update() {
       return
     fi
     echo "$remote_version" > "$flag"
-    # stderr dropped: this outlives the shell that spawned it (disowned), so a
-    # network error surfacing minutes later would print onto whatever is on the
-    # terminal by then. The result is communicated through $flag, not stderr.
-  ) 2>/dev/null &
+    # BOTH streams dropped: this is disowned and outlives the shell that spawned
+    # it, so anything it prints — an npm warning on stdout as readily as a
+    # network error on stderr — surfaces minutes later, on top of whatever holds
+    # the terminal by then: the AI tool's full-screen UI. It also starts before
+    # the wrapper mutes its own stderr, so it cannot rely on that. The result is
+    # communicated through $flag, never through a stream.
+  ) >/dev/null 2>&1 &
   disown
 }

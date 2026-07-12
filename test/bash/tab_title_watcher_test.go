@@ -679,14 +679,48 @@ func TestTabTitleWatcher_play_notification_sound_calls_afplay_when_enabled(t *te
 	_, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
 
-	// Give background process a moment to write
-	time.Sleep(200 * time.Millisecond)
+	data := waitForFile(t, logFile, "expected afplay to be called")
+	assertContains(t, data, "Glass.aiff")
+}
 
-	data, err := os.ReadFile(logFile)
-	if err != nil {
-		t.Fatalf("expected afplay to be called, log file missing: %v", err)
+// Poll for a background job's artifact instead of sleeping a fixed 200ms.
+//
+// The sleep used to be redundant: afplay inherited the snippet's stdout, which
+// is the harness's capture pipe, so CombinedOutput() blocked until the sound
+// process itself exited. That is the very coupling this suite now forbids — a
+// background job holding the user's terminal open — so play_notification_sound
+// sends afplay's output to /dev/null, the snippet returns as soon as bash exits,
+// and the fork+exec of the mock can land well after 200ms on a loaded machine.
+// Wait on the artifact, which is what the test actually cares about.
+func waitForFile(t *testing.T, path string, msg string) string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return string(data)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: %s never appeared: %v", msg, path, err)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	assertContains(t, string(data), "Glass.aiff")
+}
+
+// waitForFile's mirror image, for a background job whose contract is to REMOVE
+// a file.
+func waitForFileGone(t *testing.T, path string, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: %s is still there", msg, path)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func TestTabTitleWatcher_play_notification_sound_skips_when_sound_disabled(t *testing.T) {
@@ -705,7 +739,10 @@ func TestTabTitleWatcher_play_notification_sound_skips_when_sound_disabled(t *te
 	_, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
 
-	time.Sleep(200 * time.Millisecond)
+	// Absence cannot be polled for, so wait out the window in which a spawned
+	// afplay would have written. Generous, because a short wait here does not
+	// fail the test — it passes it, wrongly.
+	time.Sleep(1 * time.Second)
 
 	if _, err := os.Stat(logFile); !os.IsNotExist(err) {
 		t.Errorf("expected afplay NOT to be called when sound is disabled")
@@ -726,13 +763,8 @@ func TestTabTitleWatcher_play_notification_sound_uses_default_when_features_file
 	_, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
 
-	time.Sleep(200 * time.Millisecond)
-
-	data, err := os.ReadFile(logFile)
-	if err != nil {
-		t.Fatalf("expected afplay to be called with default sound: %v", err)
-	}
-	assertContains(t, string(data), "Bottle.aiff")
+	data := waitForFile(t, logFile, "expected afplay to be called with default sound")
+	assertContains(t, data, "Bottle.aiff")
 }
 
 func TestTabTitleWatcher_wrapper_passes_config_dir_to_watcher(t *testing.T) {
