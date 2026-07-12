@@ -456,7 +456,6 @@ func TestUpdate_check_for_update_does_nothing_when_version_file_missing(t *testi
 
 	snippet := updateSnippet(t, fmt.Sprintf(`
 check_for_update %q
-sleep 0.3
 `, installDir))
 	env := buildEnv(t, nil, "XDG_CONFIG_HOME="+filepath.Join(dir, "config"))
 	_, code := runBashSnippet(t, snippet, env)
@@ -521,7 +520,6 @@ exit 1
 
 	snippet := updateSnippet(t, fmt.Sprintf(`
 check_for_update %q
-sleep 0.3
 `, installDir))
 	_, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
@@ -590,7 +588,6 @@ exit 1
 
 	snippet := updateSnippet(t, fmt.Sprintf(`
 check_for_update %q
-sleep 0.3
 `, installDir))
 	_, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
@@ -630,7 +627,6 @@ exit 1
 	before := time.Now().Unix()
 	snippet := updateSnippet(t, fmt.Sprintf(`
 check_for_update %q
-sleep 0.3
 `, installDir))
 	_, code := runBashSnippet(t, snippet, env)
 	after := time.Now().Unix()
@@ -638,23 +634,17 @@ sleep 0.3
 
 	// Assert update-available flag was written with correct version
 	flagFile := filepath.Join(configDir, "update-available")
-	data, err := os.ReadFile(flagFile)
-	if err != nil {
-		t.Fatalf("expected update-available flag file to be written, got error: %v", err)
-	}
-	if strings.TrimSpace(string(data)) != "2.7.0" {
-		t.Errorf("expected flag content '2.7.0', got %q", strings.TrimSpace(string(data)))
+	data := waitForFile(t, flagFile, "expected update-available flag file to be written")
+	if strings.TrimSpace(data) != "2.7.0" {
+		t.Errorf("expected flag content '2.7.0', got %q", strings.TrimSpace(data))
 	}
 
 	// Assert last-update-check was refreshed (only passes once throttle feature exists)
 	tsFile := filepath.Join(configDir, "last-update-check")
-	tsData, err := os.ReadFile(tsFile)
+	tsData := waitForFile(t, tsFile, "expected last-update-check to be refreshed after stale run")
+	ts, err := strconv.ParseInt(strings.TrimSpace(tsData), 10, 64)
 	if err != nil {
-		t.Fatalf("expected last-update-check to be refreshed after stale run, got error: %v", err)
-	}
-	ts, err := strconv.ParseInt(strings.TrimSpace(string(tsData)), 10, 64)
-	if err != nil {
-		t.Fatalf("expected numeric timestamp in last-update-check, got %q", strings.TrimSpace(string(tsData)))
+		t.Fatalf("expected numeric timestamp in last-update-check, got %q", strings.TrimSpace(tsData))
 	}
 	if ts < before || ts > after+1 {
 		t.Errorf("refreshed timestamp %d out of expected range [%d, %d]", ts, before, after+1)
@@ -687,19 +677,15 @@ exit 1
 
 	snippet := updateSnippet(t, fmt.Sprintf(`
 check_for_update %q
-sleep 0.3
 `, installDir))
 	_, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
 
 	// Flag MUST be written — future timestamp should not suppress the check
 	flagFile := filepath.Join(dir, "config", "wisp-deck", "update-available")
-	data, err := os.ReadFile(flagFile)
-	if err != nil {
-		t.Fatalf("expected flag file when future timestamp was present: %v", err)
-	}
-	if strings.TrimSpace(string(data)) != "2.7.0" {
-		t.Errorf("expected flag content '2.7.0', got %q", strings.TrimSpace(string(data)))
+	data := waitForFile(t, flagFile, "expected flag file when future timestamp was present")
+	if strings.TrimSpace(data) != "2.7.0" {
+		t.Errorf("expected flag content '2.7.0', got %q", strings.TrimSpace(data))
 	}
 }
 
@@ -728,20 +714,16 @@ exit 1
 	before := time.Now().Unix()
 	snippet := updateSnippet(t, fmt.Sprintf(`
 check_for_update %q
-sleep 0.3
 `, installDir))
 	_, code := runBashSnippet(t, snippet, env)
 	after := time.Now().Unix()
 	assertExitCode(t, code, 0)
 
 	tsFile := filepath.Join(configDir, "last-update-check")
-	data, err := os.ReadFile(tsFile)
+	data := waitForFile(t, tsFile, "expected last-update-check file to be written")
+	ts, err := strconv.ParseInt(strings.TrimSpace(data), 10, 64)
 	if err != nil {
-		t.Fatalf("expected last-update-check file to be written, got error: %v", err)
-	}
-	ts, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-	if err != nil {
-		t.Fatalf("expected numeric timestamp in last-update-check, got %q", strings.TrimSpace(string(data)))
+		t.Fatalf("expected numeric timestamp in last-update-check, got %q", strings.TrimSpace(data))
 	}
 	if ts < before || ts > after+1 {
 		t.Errorf("timestamp %d out of expected range [%d, %d]", ts, before, after+1)
