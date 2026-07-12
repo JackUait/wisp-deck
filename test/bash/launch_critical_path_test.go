@@ -57,13 +57,18 @@ var expensiveCommands = []string{
 	"curl", "wget", "brew", "gh", "docker", "ssh", "aws", "kubectl",
 }
 
+// The two numbers are set far apart on purpose, because this is a wall-clock
+// assertion and this repo already has wall-clock flakes. Widening the gap buys
+// CI headroom without costing any detection power: a mocked offender always adds
+// the full delay, so what matters is delay >> budget, not budget being tight.
 const (
-	// Far longer than any plausible honest pause, so a synchronous call cannot
-	// hide inside the budget. Real npx was 3-13s; 20s is unmistakable.
-	expensiveCommandDelay = 20 * time.Second
-	// The real path measures ~0.13s. 5s is ~38x headroom, so this stays stable
-	// under a loaded parallel suite instead of becoming another wall-clock flake.
-	criticalPathBudget = 5 * time.Second
+	// What a mocked expensive command costs. Any synchronous call to one blows
+	// the budget by ~4x — far too much to hide in runner jitter.
+	expensiveCommandDelay = 30 * time.Second
+	// What the pre-picker path is allowed to take. It measures ~0.5-1.2s here,
+	// even under a fully loaded parallel suite; 8s leaves room for a GitHub macOS
+	// runner, which spawns processes several times slower than a laptop.
+	criticalPathBudget = 8 * time.Second
 )
 
 // TestLaunchCriticalPath_paints_the_picker_without_blocking_on_any_subprocess is
