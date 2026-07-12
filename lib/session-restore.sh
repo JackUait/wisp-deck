@@ -155,7 +155,7 @@ write_session_snapshot() {
   # alphabetical list order, alphabetizing restored tabs (see next_launch_seq).
   local keyed="$tmp.keyed"
   : > "$keyed"
-  local s env boot proj path tool term sid layout acct seq
+  local s env boot proj filepath tool term sid layout acct seq
   local _created
   while read -r _created s; do
     [ -n "$s" ] || continue
@@ -163,7 +163,7 @@ write_session_snapshot() {
     echo "$env" | grep -q '^WISP_DECK=1$' || continue
     boot="$(echo "$env" | sed -n 's/^WISP_DECK_BOOT=//p')"
     proj="$(echo "$env" | sed -n 's/^WISP_DECK_PROJECT=//p')"
-    path="$(echo "$env" | sed -n 's/^WISP_DECK_PATH=//p')"
+    filepath="$(echo "$env" | sed -n 's/^WISP_DECK_PATH=//p')"
     tool="$(echo "$env" | sed -n 's/^WISP_DECK_TOOL=//p')"
     term="$(echo "$env" | sed -n 's/^WISP_DECK_TERMINAL=//p')"
     sid="$(echo "$env" | sed -n 's/^WISP_DECK_CLAUDE_SESSION=//p')"
@@ -183,7 +183,7 @@ write_session_snapshot() {
     layout="$("$tmux_cmd" display-message -p -t "$s:0" '#{window_layout}' 2>/dev/null || true)"
     seq="$(echo "$env" | sed -n 's/^WISP_DECK_SEQ=//p')"
     case "$seq" in '' | *[!0-9]*) seq="$_created" ;; esac
-    echo "${seq} ${boot}|${proj}|${path}|${tool}|${term}|${sid}|${layout}|${acct}" >> "$keyed"
+    echo "${seq} ${boot}|${proj}|${filepath}|${tool}|${term}|${sid}|${layout}|${acct}" >> "$keyed"
   done <<< "$sessions"
   sort -sn "$keyed" | cut -d' ' -f2- > "$tmp"
   rm -f "$keyed"
@@ -280,7 +280,7 @@ maybe_restore_session() {
 
   local tmp="$queue.tmp.$$"
   : > "$tmp"
-  local queued=0 b proj path tool term sid layout acct
+  local queued=0 b proj filepath tool term sid layout acct
   local entries=()
   # Parallel to entries[]: the exact pane layout and the session's Claude
   # login for each entry, held aside so the unstamped-duplicate dedup pass
@@ -291,7 +291,7 @@ maybe_restore_session() {
   # one conversation — whatever upstream failure duplicates a line, restoring
   # the same sid twice would open duplicate tabs.
   local queued_sids=$'\n'
-  while IFS='|' read -r b proj path tool term sid layout acct; do
+  while IFS='|' read -r b proj filepath tool term sid layout acct; do
     [ -n "$b" ] || continue
     # Skip sessions of the current boot — they are alive right now, restoring
     # them would duplicate their tabs. Drift-tolerant so entries stamped with
@@ -304,19 +304,19 @@ maybe_restore_session() {
     # shell. Blank such ids so the tab falls back to `claude -c` (or the
     # duplicate-pinning below).
     if [ "$tool" = "claude" ] && [ -n "$sid" ] \
-      && ! claude_transcript_resumable "$path" "$sid"; then
+      && ! claude_transcript_resumable "$filepath" "$sid"; then
       sid=""
     fi
     if [ -n "$sid" ]; then
       case "$queued_sids" in
         *$'\n'"$sid"$'\n'*)
-          restore_log "$config_dir" "queue-build dropped duplicate sid $sid ($path)"
+          restore_log "$config_dir" "queue-build dropped duplicate sid $sid ($filepath)"
           continue
           ;;
       esac
       queued_sids="${queued_sids}${sid}"$'\n'
     fi
-    entries+=("${path}|${tool}|${sid}")
+    entries+=("${filepath}|${tool}|${sid}")
     layouts+=("$layout")
     accts+=("$acct")
   done < "$snap"
@@ -329,24 +329,24 @@ maybe_restore_session() {
   # tab keeps the plain `-c` fallback — no guessing needed.
   local n=${#entries[@]} i j path2 tool2 sid2 dupes used
   for ((i = 0; i < n; i++)); do
-    IFS='|' read -r path tool sid <<< "${entries[$i]}"
+    IFS='|' read -r filepath tool sid <<< "${entries[$i]}"
     if [ "$tool" = "claude" ] && [ -z "$sid" ]; then
       dupes=0
       used=""
       for ((j = 0; j < n; j++)); do
         [ "$j" -eq "$i" ] && continue
         IFS='|' read -r path2 tool2 sid2 <<< "${entries[$j]}"
-        [ "$tool2" = "claude" ] && [ "$path2" = "$path" ] || continue
+        [ "$tool2" = "claude" ] && [ "$path2" = "$filepath" ] || continue
         dupes=1
         [ -n "$sid2" ] && used="${used}${sid2}"$'\n'
       done
       if [ "$dupes" -eq 1 ]; then
-        sid="$(claude_pick_transcript "$path" "$used")"
+        sid="$(claude_pick_transcript "$filepath" "$used")"
         # Record the pick so the path's next duplicate skips it.
-        entries[i]="${path}|${tool}|${sid}"
+        entries[i]="${filepath}|${tool}|${sid}"
       fi
     fi
-    echo "${cur_boot}|${path}|${tool}|${sid}|${layouts[$i]}|${accts[$i]}" >> "$tmp"
+    echo "${cur_boot}|${filepath}|${tool}|${sid}|${layouts[$i]}|${accts[$i]}" >> "$tmp"
     queued=1
   done
   if [ "$queued" -eq 1 ]; then
@@ -507,10 +507,10 @@ restore_sid_already_open() {
 # multi-tab projects from old snapshots must still restore).
 # Usage: restore_entry_wanted <tmux_cmd> <entry>   entry = path|tool|sid|layout|account
 restore_entry_wanted() {
-  local tmux_cmd="$1" entry="$2" path sid
-  path="${entry%%|*}"
+  local tmux_cmd="$1" entry="$2" filepath sid
+  filepath="${entry%%|*}"
   sid="$(echo "$entry" | cut -d'|' -f3)"
-  [ -d "$path" ] || return 1
+  [ -d "$filepath" ] || return 1
   ! restore_sid_already_open "$tmux_cmd" "$sid"
 }
 
@@ -536,9 +536,9 @@ claude_transcript_resumable() {
 # project has no transcript store or every transcript is taken.
 # Usage: claude_pick_transcript <path> <used>
 claude_pick_transcript() {
-  local path="$1" used="$2"
+  local filepath="$1" used="$2"
   local dir f sid
-  dir="$(claude_project_dir "$path")"
+  dir="$(claude_project_dir "$filepath")"
   [ -d "$dir" ] || return 0
   while IFS= read -r f; do
     [ -n "$f" ] || continue

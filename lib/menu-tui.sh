@@ -102,7 +102,7 @@ select_project_interactive() {
   # One jq spawn instead of one per field (this path sits between menu close
   # and project open; a jq spawn is ~25ms). One field per line — a tab-joined
   # form would collapse empty fields, since tab is IFS whitespace.
-  local parsed action ai_tool name path
+  local parsed action ai_tool name filepath
   if ! parsed=$(echo "$result" | jq -r '.action // "", .ai_tool // "", .name // "", .path // ""' 2>/dev/null); then
     error "Failed to parse menu response"
     return 1
@@ -111,7 +111,7 @@ select_project_interactive() {
     read -r action
     read -r ai_tool
     read -r name
-    read -r path
+    read -r filepath
   } <<< "$parsed"
 
   if [[ -z "$action" || "$action" == "null" ]]; then
@@ -137,13 +137,13 @@ select_project_interactive() {
         error "TUI returned invalid project name"
         return 1
       fi
-      if [[ -z "$path" || "$path" == "null" ]]; then
+      if [[ -z "$filepath" || "$filepath" == "null" ]]; then
         error "TUI returned invalid project path"
         return 1
       fi
 
       _selected_project_name="$name"
-      _selected_project_path="$path"
+      _selected_project_path="$filepath"
       return 0
       ;;
     quit)

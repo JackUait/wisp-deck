@@ -3,17 +3,17 @@
 
 # Merge statusLine into Claude settings.json (create if missing).
 merge_claude_settings() {
-  local path="$1"
-  mkdir -p "$(dirname "$path")"
-  if [ -f "$path" ]; then
-    if grep -q '"statusLine"' "$path"; then
+  local filepath="$1"
+  mkdir -p "$(dirname "$filepath")"
+  if [ -f "$filepath" ]; then
+    if grep -q '"statusLine"' "$filepath"; then
       success "Claude status line already configured"
     else
-      sed -i '' '$ s/}$/,\n  "statusLine": {\n    "type": "command",\n    "command": "bash ~\/.claude\/statusline-wrapper.sh"\n  }\n}/' "$path"
+      sed -i '' '$ s/}$/,\n  "statusLine": {\n    "type": "command",\n    "command": "bash ~\/.claude\/statusline-wrapper.sh"\n  }\n}/' "$filepath"
       success "Added status line to Claude settings"
     fi
   else
-    cat > "$path" << 'CSEOF'
+    cat > "$filepath" << 'CSEOF'
 {
   "statusLine": {
     "type": "command",
@@ -30,17 +30,17 @@ CSEOF
 # row for whichever subagent the user is on shows that subagent's own info.
 # Mirrors merge_claude_settings: idempotent, appends before the final brace.
 merge_subagent_statusline() {
-  local path="$1"
-  mkdir -p "$(dirname "$path")"
-  if [ -f "$path" ]; then
-    if grep -q '"subagentStatusLine"' "$path"; then
+  local filepath="$1"
+  mkdir -p "$(dirname "$filepath")"
+  if [ -f "$filepath" ]; then
+    if grep -q '"subagentStatusLine"' "$filepath"; then
       success "Claude subagent status line already configured"
     else
-      sed -i '' '$ s/}$/,\n  "subagentStatusLine": {\n    "type": "command",\n    "command": "bash ~\/.claude\/subagent-statusline.sh"\n  }\n}/' "$path"
+      sed -i '' '$ s/}$/,\n  "subagentStatusLine": {\n    "type": "command",\n    "command": "bash ~\/.claude\/subagent-statusline.sh"\n  }\n}/' "$filepath"
       success "Added subagent status line to Claude settings"
     fi
   else
-    cat > "$path" << 'CSEOF'
+    cat > "$filepath" << 'CSEOF'
 {
   "subagentStatusLine": {
     "type": "command",
@@ -56,7 +56,7 @@ CSEOF
 # Uses $WISP_DECK_MARKER_FILE env var so hooks are safe outside Wisp Deck.
 # Outputs "added", "upgraded", or "exists".
 add_waiting_indicator_hooks() {
-  local path="$1"
+  local filepath="$1"
   # Fast path: a python3 cold start (~40ms) runs synchronously on every Claude
   # launch before the AI tool can start. When the file already carries all three
   # distinguishing markers of the current format — the PostToolUse "-cooldown"
@@ -71,16 +71,16 @@ add_waiting_indicator_hooks() {
   # running ghost-tab session polls to play an ungated sound. When that legacy
   # marker is present the file is NOT up to date — fall through to the python so
   # it gets stripped, even if all three current-format markers are also present.
-  if [ -f "$path" ] \
-    && grep -q -- '-cooldown' "$path" \
-    && grep -q -- '-ask' "$path" \
-    && grep -qF '(?!AskUserQuestion$)' "$path" \
-    && ! grep -q 'GHOST_TAB_MARKER_FILE' "$path"; then
+  if [ -f "$filepath" ] \
+    && grep -q -- '-cooldown' "$filepath" \
+    && grep -q -- '-ask' "$filepath" \
+    && grep -qF '(?!AskUserQuestion$)' "$filepath" \
+    && ! grep -q 'GHOST_TAB_MARKER_FILE' "$filepath"; then
     echo "exists"
     return 0
   fi
-  mkdir -p "$(dirname "$path")"
-  python3 - "$path" << 'PYEOF'
+  mkdir -p "$(dirname "$filepath")"
+  python3 - "$filepath" << 'PYEOF'
 import json, sys, os
 
 settings_path = sys.argv[1]
@@ -223,12 +223,12 @@ PYEOF
 # Remove waiting indicator hooks from settings.json.
 # Outputs "removed" or "not_found".
 remove_waiting_indicator_hooks() {
-  local path="$1"
-  if [ ! -f "$path" ]; then
+  local filepath="$1"
+  if [ ! -f "$filepath" ]; then
     echo "not_found"
     return 0
   fi
-  python3 - "$path" << 'PYEOF'
+  python3 - "$filepath" << 'PYEOF'
 import json, sys, os
 
 settings_path = sys.argv[1]

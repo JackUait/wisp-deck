@@ -59,8 +59,8 @@ resolve_claude_config_path() {
   local configs_dir="$1" pointer_file="$2" active
   active="$(get_active_claude_config "$pointer_file")"
   [ -z "$active" ] && return 0
-  local path="$configs_dir/$active"
-  [ -f "$path" ] && printf '%s\n' "$path"
+  local filepath="$configs_dir/$active"
+  [ -f "$filepath" ] && printf '%s\n' "$filepath"
 }
 
 # Mutations (add / rename / delete) live in Go — the single source of truth —

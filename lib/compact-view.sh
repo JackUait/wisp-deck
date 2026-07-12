@@ -566,13 +566,13 @@ discard_worktree_file() {
 # member (whole-line match) or appended when it is not. Empty lines are dropped.
 # Usage: toggle_selection <selected> <path>
 toggle_selection() {
-  local selected="$1" path="$2" out="" line found=0
+  local selected="$1" filepath="$2" out="" line found=0
   while IFS= read -r line; do
     [ -z "$line" ] && continue
-    if [ "$line" = "$path" ]; then found=1; continue; fi
+    if [ "$line" = "$filepath" ]; then found=1; continue; fi
     out="${out}${line}"$'\n'
   done <<< "$selected"
-  [ "$found" -eq 0 ] && out="${out}${path}"$'\n'
+  [ "$found" -eq 0 ] && out="${out}${filepath}"$'\n'
   printf '%s' "${out%$'\n'}"
 }
 
@@ -580,9 +580,9 @@ toggle_selection() {
 # non-zero otherwise. Whole-line so "a.txt" never matches "src/a.txt".
 # Usage: selection_contains <selected> <path>
 selection_contains() {
-  local selected="$1" path="$2" line
+  local selected="$1" filepath="$2" line
   while IFS= read -r line; do
-    [ "$line" = "$path" ] && return 0
+    [ "$line" = "$filepath" ] && return 0
   done <<< "$selected"
   return 1
 }

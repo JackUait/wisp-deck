@@ -28,12 +28,12 @@ get_projects_root() {
 # set_projects_root <file> <path> — writes tilde-expanded path; removes file if path is empty.
 set_projects_root() {
   local file="$1"
-  local path="$2"
-  if [ -z "$path" ]; then
+  local filepath="$2"
+  if [ -z "$filepath" ]; then
     rm -f "$file"
     return 0
   fi
   local expanded
-  expanded="$(path_expand "$path")"
+  expanded="$(path_expand "$filepath")"
   printf '%s\n' "$expanded" > "$file"
 }

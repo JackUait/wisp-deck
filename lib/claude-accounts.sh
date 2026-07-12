@@ -64,8 +64,8 @@ resolve_claude_account_dir() {
   local accounts_dir="$1" pointer_file="$2" active
   active="$(get_active_claude_account "$pointer_file")"
   [ -z "$active" ] && return 0
-  local path="$accounts_dir/$active"
-  [ -d "$path" ] && printf '%s\n' "$path"
+  local filepath="$accounts_dir/$active"
+  [ -d "$filepath" ] && printf '%s\n' "$filepath"
 }
 
 # resolve_restore_claude_account_dir <accounts_dir> <pointer_file> <acct> —
@@ -87,8 +87,8 @@ resolve_restore_claude_account_dir() {
     return 0
   fi
   [ "$acct" = "default" ] && return 0
-  local path="$accounts_dir/$acct"
-  [ -d "$path" ] && printf '%s\n' "$path"
+  local filepath="$accounts_dir/$acct"
+  [ -d "$filepath" ] && printf '%s\n' "$filepath"
   return 0
 }
 
