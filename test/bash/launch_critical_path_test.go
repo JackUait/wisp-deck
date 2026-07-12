@@ -39,7 +39,23 @@ import (
 
 // Commands that reach the network or boot a language runtime. None of these has
 // any business running before the picker paints.
-var expensiveCommands = []string{"npx", "npm", "node", "curl", "wget", "brew"}
+//
+// The wall-clock budget below catches a slow pre-picker path whatever the cause
+// — even a slow loop in bash. These mocks exist to make commands that are slow
+// in REAL life reliably slow in the sandbox too, where they might otherwise
+// return instantly (no network, nothing installed) and let a genuine regression
+// pass. So the list is deliberately broad: err toward listing a runtime nobody
+// has used yet, because the whole point is catching the offender nobody
+// predicted. Adding a name here is free — if it is not on the path, nothing
+// invokes it.
+var expensiveCommands = []string{
+	// node ecosystem (the one that already bit us)
+	"npx", "npm", "node", "pnpm", "yarn", "bun", "deno",
+	// other language runtimes / package managers
+	"python", "python3", "pip", "pip3", "ruby", "gem", "cargo", "go",
+	// network + heavyweight CLIs
+	"curl", "wget", "brew", "gh", "docker", "ssh", "aws", "kubectl",
+}
 
 const (
 	// Far longer than any plausible honest pause, so a synchronous call cannot
@@ -73,7 +89,18 @@ func TestLaunchCriticalPath_paints_the_picker_without_blocking_on_any_subprocess
 	// asserting against a once-per-day code path rather than the everyday one.
 	writeTempFile(t, cfg, "last-update-check", strconv.FormatInt(time.Now().Unix(), 10)+"\n")
 
-	bin := filepath.Join(home, "spybin")
+	// The spies MUST live in $HOME/.local/bin, and nowhere else. wrapper.sh's
+	// first act is
+	//
+	//	export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+	//
+	// so a spy dir merely prepended to the test's PATH is shadowed by Homebrew,
+	// and every offender installed there (python3, gh, docker, go, wget, ...)
+	// would run the REAL, fast binary and sail past this guard. That hole was
+	// live until a python3 regression passed a test that should have caught it.
+	// $HOME/.local/bin is the one entry wrapper.sh puts ahead of those — and it
+	// is where wisp-deck-tui genuinely installs, so this is also the honest layout.
+	bin := filepath.Join(home, ".local", "bin")
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatalf("mkdir spybin: %v", err)
 	}
@@ -99,6 +126,13 @@ func TestLaunchCriticalPath_paints_the_picker_without_blocking_on_any_subprocess
 		"HOME="+home,
 		"XDG_CONFIG_HOME="+filepath.Join(home, ".config"),
 	)
+
+	// A guard that cannot see the thing it guards is worse than no guard: it
+	// reports safety. Before trusting the result, prove the spies actually win
+	// PATH resolution once wrapper.sh has applied its own PATH prologue — so if
+	// that prologue ever changes and re-shadows them, THIS fails loudly instead
+	// of the budget check quietly passing everything.
+	assertSpiesAreReachable(t, env, bin)
 
 	// Output goes to a file, never a pipe: a pipe would stay open until the
 	// disowned background children exit too, and we would end up timing THEM
@@ -194,4 +228,36 @@ func runScriptTimed(t *testing.T, script string, env []string, outFile string) (
 		code = exitErr.ExitCode()
 	}
 	return elapsed, code
+}
+
+// assertSpiesAreReachable replays wrapper.sh's own PATH prologue and checks that
+// every expensive command still resolves to our mock rather than a real binary.
+// This is the guard's guard: it is the check that would have caught the spy dir
+// being shadowed by /opt/homebrew/bin.
+func assertSpiesAreReachable(t *testing.T, env []string, bin string) {
+	t.Helper()
+	// Byte-for-byte the PATH line at the top of wrapper.sh.
+	script := `export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+for c in ` + strings.Join(expensiveCommands, " ") + `; do
+  printf '%s\t%s\n' "$c" "$(command -v "$c" 2>/dev/null || echo MISSING)"
+done`
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("probe PATH: %v", err)
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		name, resolved, ok := strings.Cut(line, "\t")
+		if !ok {
+			continue
+		}
+		if !strings.HasPrefix(resolved, bin+"/") {
+			t.Fatalf("spy for %q is shadowed: after wrapper.sh's PATH prologue it resolves to %q, "+
+				"not the mock in %s.\n\nThis guard would silently pass a blocking %s call. "+
+				"Put the mocks somewhere wrapper.sh's PATH cannot outrank.",
+				name, resolved, bin, name)
+		}
+	}
 }
