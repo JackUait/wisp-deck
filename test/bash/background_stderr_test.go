@@ -30,8 +30,18 @@ import (
 // the point the job is spawned (`) 2>/dev/null &`), where it holds for every
 // line the job will ever run, rather than trusting each of them to stay quiet.
 //
-// Stdout is deliberately NOT covered: it is the legitimate channel for the
-// tab-title escape codes and the launch spinner.
+// Stdout is the other half of the same channel, and is covered by its companion,
+// TestWrapperBackgroundJobsDoNotWriteToTheTerminal in stdout_leak_test.go: the
+// tab-title escape — the one thing a background job legitimately needs the
+// terminal for — is addressed to /dev/tty in set_tab_title, so no background
+// job needs stdout either.
+//
+// The redirect here is belt to the wrapper's braces: wrapper.sh points its own
+// fd 2 at a session log before spawning anything (gt_mute_terminal_stderr), so
+// these jobs are already safe. Keeping it at the spawn point too means a job
+// stays safe even if it is ever moved, copied, or spawned from a process that
+// has not muted itself — and "$WISP_DECK_ERROR_LOG" keeps the error readable
+// instead of dumping it in /dev/null.
 func TestBackgroundJobsDoNotInheritTerminalStderr(t *testing.T) {
 	root := projectRoot(t)
 

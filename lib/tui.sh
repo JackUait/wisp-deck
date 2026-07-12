@@ -34,13 +34,29 @@ warm_tui_binary() {
 }
 
 # Set terminal/tab title. With tool: "project · tool", without: "project"
+#
+# Addressed to /dev/tty, not stdout. The tab-title watcher polls for the whole
+# session and calls a dozen libs per tick; if any of them ever echoes, that line
+# lands on the session terminal, in the middle of the AI tool's full-screen UI.
+# The only way to drop the watcher's stdout is for its one legitimate output —
+# this escape — to go somewhere else. The controlling terminal is the same
+# window either way, so the title still lands.
+#
+# Falls back to stdout when there is no controlling terminal (go test, CI, a
+# pipe), where the escape is inert anyway.
 set_tab_title() {
   local project="$1"
   local tool="${2:-}"
+  # Probed by opening it, not with `[ -w /dev/tty ]`: the device node is there
+  # and reports writable even for a process with no controlling terminal, where
+  # the open then fails with "Device not configured" — printed, of course, to
+  # the terminal this whole exercise is about keeping clean.
+  local out=/dev/stdout
+  { : > /dev/tty; } 2>/dev/null && out=/dev/tty
   if [ -n "$tool" ]; then
-    printf '\033]0;%s · %s\007' "$project" "$tool"
+    printf '\033]0;%s · %s\007' "$project" "$tool" > "$out"
   else
-    printf '\033]0;%s\007' "$project"
+    printf '\033]0;%s\007' "$project" > "$out"
   fi
 }
 

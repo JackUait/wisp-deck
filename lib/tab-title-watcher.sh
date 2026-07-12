@@ -231,14 +231,22 @@ start_tab_title_watcher() {
   local tab_title_setting="$4" tmux_cmd="$5" marker_file="$6"
   local config_dir="${7:-}"
 
-  # The subshell's stderr is muted at the boundary (see the 2>/dev/null on its
-  # closing paren). It would otherwise inherit the wrapper's stderr, which is the
-  # session terminal — the one the AI tool paints a full-screen UI onto — so a
-  # single stray line from anything this loop calls lands in the middle of that
-  # UI. It did: a failing read in keep_awake_tick's reap printed "No such file or
-  # directory" straight into Claude's input box. Nothing in here has a reader on
-  # that terminal, so nothing in here may write to it. Stdout stays open: the
-  # tab-title escape sequences are the loop's one legitimate output.
+  # BOTH of the subshell's output streams are cut off from the terminal at its
+  # closing paren. It would otherwise inherit the wrapper's stdout and stderr,
+  # which ARE the session terminal — the one the AI tool paints a full-screen UI
+  # onto — so a single stray line from anything this loop calls lands in the
+  # middle of that UI. It did: a failing read in keep_awake_tick's reap printed
+  # "No such file or directory" straight into Claude's input box.
+  #
+  # This loop calls a dozen libs on every 0.5s tick for the life of the session,
+  # and none of them can know they are running here, so the only safe assumption
+  # is that any of them might print. Nothing has a reader on that terminal, so
+  # nothing in here may write to it — including the tab-title escape, which now
+  # goes out via /dev/tty in set_tab_title rather than on this stdout.
+  #
+  # stderr is kept, but pointed at the session's error log (the wrapper exports
+  # it) instead of /dev/null: silencing the terminal must not mean losing the
+  # message. Standalone, with no log exported, it degrades to /dev/null.
   (
     # Find the AI tool pane (rightmost pane in the layout)
     local ai_pane=""
@@ -332,7 +340,7 @@ start_tab_title_watcher() {
         was_waiting=false
       fi
     done
-  ) 2>/dev/null &
+  ) >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
   _TAB_TITLE_WATCHER_PID=$!
 }
 
