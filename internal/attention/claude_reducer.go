@@ -48,10 +48,13 @@ type ClaudeReducerExit struct {
 // state. It is intentionally single-threaded: the supervisor owns one reducer
 // and serializes poll and exit events through its control loop.
 type ClaudeReducer struct {
-	generation string
-	state      State
-	armed      bool
-	turn       uint64
+	generation         string
+	state              State
+	armed              bool
+	turn               uint64
+	questionIdentity   string
+	permissionIdentity string
+	errorIdentity      string
 }
 
 // NewClaudeReducer creates a reducer fenced to one launch generation.
@@ -75,6 +78,9 @@ func NewClaudeReducer(generation string) (*ClaudeReducer, error) {
 func (r *ClaudeReducer) Reduce(observation ClaudeReducerObservation) State {
 	switch observation.Status {
 	case ClaudeObservedIdle:
+		if pending, ok := r.highestAttention(); ok {
+			return pending
+		}
 		if r.armed {
 			r.armed = false
 			return r.setState(PhaseAttention, ReasonDone, "done:"+strconv.FormatUint(r.turn, 10))
@@ -85,6 +91,7 @@ func (r *ClaudeReducer) Reduce(observation ClaudeReducerObservation) State {
 		return r.setState(PhaseReady, ReasonNone, "")
 
 	case ClaudeObservedBusy:
+		r.clearPendingAttention()
 		if !r.armed {
 			r.turn++
 			r.armed = true
@@ -102,11 +109,15 @@ func (r *ClaudeReducer) Reduce(observation ClaudeReducerObservation) State {
 			return r.reduceUnknown()
 		}
 		r.armed = false
-		return r.setState(
-			PhaseAttention,
-			reason,
-			"waiting:"+observation.StatusUpdatedAt,
-		)
+		identity := "waiting:" + observation.StatusUpdatedAt
+		switch reason {
+		case ReasonQuestion:
+			r.questionIdentity = identity
+		case ReasonPermission:
+			r.permissionIdentity = identity
+		}
+		pending, _ := r.highestAttention()
+		return pending
 
 	case ClaudeObservedUnknown:
 		return r.reduceUnknown()
@@ -124,14 +135,37 @@ func (r *ClaudeReducer) ReduceExit(exit ClaudeReducerExit) State {
 		return r.state
 	}
 	r.armed = false
-	return r.setState(PhaseAttention, ReasonError, "error:"+strconv.Itoa(exit.Code))
+	r.errorIdentity = "error:" + strconv.Itoa(exit.Code)
+	pending, _ := r.highestAttention()
+	return pending
 }
 
 func (r *ClaudeReducer) reduceUnknown() State {
-	if r.state.Phase == PhaseAttention {
-		return r.state
+	if pending, ok := r.highestAttention(); ok {
+		return pending
 	}
 	return r.setState(PhaseUnknown, ReasonNone, "")
+}
+
+func (r *ClaudeReducer) highestAttention() (State, bool) {
+	switch {
+	case r.questionIdentity != "":
+		return r.setState(PhaseAttention, ReasonQuestion, r.questionIdentity), true
+	case r.permissionIdentity != "":
+		return r.setState(PhaseAttention, ReasonPermission, r.permissionIdentity), true
+	case r.errorIdentity != "":
+		return r.setState(PhaseAttention, ReasonError, r.errorIdentity), true
+	case r.state.Phase == PhaseAttention:
+		return r.state, true
+	default:
+		return State{}, false
+	}
+}
+
+func (r *ClaudeReducer) clearPendingAttention() {
+	r.questionIdentity = ""
+	r.permissionIdentity = ""
+	r.errorIdentity = ""
 }
 
 func (r *ClaudeReducer) setState(phase Phase, reason Reason, identity string) State {

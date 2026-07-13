@@ -39,6 +39,15 @@ type SupervisorProcess struct {
 	Start string
 }
 
+// claudeDescendantTracker retains only PID + start-time identities observed in
+// the owned root's ancestry while the lifecycle-aware root handle was live.
+// Reparented survivors remain addressable, but every numeric signal still
+// requires an exact identity match in a fresh snapshot.
+type claudeDescendantTracker struct {
+	rootPID int
+	ordered []SupervisorProcess
+}
+
 // ClaudeSupervisor transparently owns one complete Claude fallback chain. It
 // adds no PTY and no process group: the existing screenshot filter remains the
 // sole PTY boundary.
@@ -47,10 +56,11 @@ type ClaudeSupervisor struct {
 	Stdout io.Writer
 	Stderr io.Writer
 
-	PollInterval time.Duration
-	GracePeriod  time.Duration
-	Poll         func(context.Context, int) error
-	OnExit       func(ClaudeExitResult) error
+	PollInterval    time.Duration
+	GracePeriod     time.Duration
+	SignalReconcile time.Duration
+	Poll            func(context.Context, int) error
+	OnExit          func(ClaudeExitResult) error
 
 	CommandContext func(context.Context, string, ...string) *exec.Cmd
 	Snapshot       func(context.Context) ([]SupervisorProcess, error)
@@ -93,7 +103,11 @@ func (s *ClaudeSupervisor) Run(ctx context.Context, command []string) (ClaudeExi
 		cmd.Stderr = os.Stderr
 	}
 	if err := cmd.Start(); err != nil {
-		return ClaudeExitResult{}, fmt.Errorf("start Claude launch chain: %w", err)
+		startErr := fmt.Errorf("start Claude launch chain: %w", err)
+		if ctx.Err() != nil {
+			return ClaudeExitResult{}, startErr
+		}
+		return s.finishTerminalError(startErr)
 	}
 
 	waitCh := make(chan error, 1)
@@ -115,15 +129,85 @@ func (s *ClaudeSupervisor) Run(ctx context.Context, command []string) (ClaudeExi
 		signals = ownedSignals
 	}
 
-	rootPID := cmd.Process.Pid
+	return s.superviseStarted(ctx, cmd.Process, waitCh, signals, ticker.C)
+}
+
+// superviseStarted serializes terminal events for one already-started launch.
+func (s *ClaudeSupervisor) superviseStarted(
+	ctx context.Context,
+	rootProcess *os.Process,
+	waitCh <-chan error,
+	signals <-chan os.Signal,
+	ticks <-chan time.Time,
+) (ClaudeExitResult, error) {
+	if rootProcess == nil {
+		return ClaudeExitResult{}, errors.New("Claude supervisor root process is unavailable")
+	}
+	rootPID := rootProcess.Pid
+	descendants := &claudeDescendantTracker{rootPID: rootPID}
+	// Poll callbacks may synchronously observe cancellation and wait for the root
+	// to exit. Capture descendants first while the owned process handle can still
+	// prove that the snapshot belongs to this launch.
+	s.refreshTrackedDescendants(ctx, rootProcess, descendants)
 	if s.Poll != nil {
 		_ = s.Poll(ctx, rootPID)
 	}
-	for {
+
+	var waitErr error
+	waitReady := false
+	shutdown := func(sig syscall.Signal) (ClaudeExitResult, error) {
+		return s.shutdown(ctx, rootProcess, descendants, sig, waitCh)
+	}
+	forward := func(sig syscall.Signal) (ClaudeExitResult, error) {
+		// Wait owns the lifecycle-safe child handle. If it has already reaped the
+		// root, classify the latched result without signalling a potentially
+		// recycled numeric PID.
 		select {
-		case waitErr := <-waitCh:
-			return s.finish(waitErr)
-		case <-ticker.C:
+		case waitErr = <-waitCh:
+			waitReady = true
+			s.cleanupTrackedDescendants(ctx, descendants, sig)
+			return s.finishExternal(waitErr, sig)
+		default:
+			return shutdown(sig)
+		}
+	}
+	for {
+		// Latch Wait before inspecting signals. Once the child is reaped, shutdown
+		// must never address its numeric PID again.
+		select {
+		case waitErr = <-waitCh:
+			waitReady = true
+		default:
+		}
+		if waitReady {
+			return s.finishAfterWait(ctx, waitErr, signals, descendants)
+		}
+
+		// Consume at most one ready signal per turn. Unsupported signals cannot
+		// spin forever, and a closed channel is disabled.
+		if signals != nil {
+			select {
+			case received, ok := <-signals:
+				if !ok {
+					signals = nil
+					continue
+				}
+				sig, valid := received.(syscall.Signal)
+				if valid && claudeForwardedSignal(sig) {
+					return forward(sig)
+				}
+				continue
+			default:
+			}
+		}
+		if ctx.Err() != nil {
+			return forward(syscall.SIGTERM)
+		}
+		select {
+		case waitErr = <-waitCh:
+			waitReady = true
+		case <-ticks:
+			s.refreshTrackedDescendants(ctx, rootProcess, descendants)
 			if s.Poll != nil {
 				_ = s.Poll(ctx, rootPID)
 			}
@@ -136,9 +220,59 @@ func (s *ClaudeSupervisor) Run(ctx context.Context, command []string) (ClaudeExi
 			if !ok || !claudeForwardedSignal(sig) {
 				continue
 			}
-			return s.shutdown(ctx, cmd.Process, sig, waitCh)
+			return forward(sig)
 		case <-ctx.Done():
-			return s.shutdown(ctx, cmd.Process, syscall.SIGTERM, waitCh)
+			return forward(syscall.SIGTERM)
+		}
+	}
+}
+
+func (s *ClaudeSupervisor) finishAfterWait(
+	ctx context.Context,
+	waitErr error,
+	signals <-chan os.Signal,
+	descendants *claudeDescendantTracker,
+) (ClaudeExitResult, error) {
+	if signals == nil {
+		if ctx.Err() != nil {
+			s.cleanupTrackedDescendants(ctx, descendants, syscall.SIGTERM)
+			return s.finishExternal(waitErr, syscall.SIGTERM)
+		}
+		return s.finish(waitErr)
+	}
+	// signal.Notify cannot prove that no terminal signal is still queued behind
+	// Wait. Bound that ambiguity by the same grace period used for cooperative
+	// shutdown; callers may explicitly override the arbitration window.
+	reconcile := s.SignalReconcile
+	if reconcile <= 0 {
+		reconcile = s.gracePeriod()
+	}
+	deadline := time.Now().Add(reconcile)
+	timer := time.NewTimer(reconcile)
+	defer timer.Stop()
+	for {
+		select {
+		case received, ok := <-signals:
+			if !ok {
+				if ctx.Err() != nil {
+					s.cleanupTrackedDescendants(ctx, descendants, syscall.SIGTERM)
+					return s.finishExternal(waitErr, syscall.SIGTERM)
+				}
+				return s.finish(waitErr)
+			}
+			sig, valid := received.(syscall.Signal)
+			if valid && claudeForwardedSignal(sig) {
+				s.cleanupTrackedDescendants(ctx, descendants, sig)
+				return s.finishExternal(waitErr, sig)
+			}
+			if !time.Now().Before(deadline) {
+				return s.finish(waitErr)
+			}
+		case <-ctx.Done():
+			s.cleanupTrackedDescendants(ctx, descendants, syscall.SIGTERM)
+			return s.finishExternal(waitErr, syscall.SIGTERM)
+		case <-timer.C:
+			return s.finish(waitErr)
 		}
 	}
 }
@@ -155,17 +289,14 @@ func claudeForwardedSignal(sig syscall.Signal) bool {
 func (s *ClaudeSupervisor) shutdown(
 	parentContext context.Context,
 	rootProcess *os.Process,
+	descendants *claudeDescendantTracker,
 	sig syscall.Signal,
 	waitCh <-chan error,
 ) (ClaudeExitResult, error) {
 	if rootProcess == nil {
 		return ClaudeExitResult{}, errors.New("Claude supervisor root process is unavailable")
 	}
-	rootPID := rootProcess.Pid
-	grace := s.GracePeriod
-	if grace <= 0 {
-		grace = defaultClaudeGracePeriod
-	}
+	grace := s.gracePeriod()
 	// Cleanup must outlive cancellation of the caller context, but remain
 	// bounded if ps or a platform process operation wedges.
 	cleanupContext, cancelCleanup := context.WithTimeout(
@@ -174,32 +305,62 @@ func (s *ClaudeSupervisor) shutdown(
 	)
 	defer cancelCleanup()
 
-	targets := s.signalTree(cleanupContext, rootPID, sig)
-	timer := time.NewTimer(grace)
+	// Refresh only while the lifecycle-aware child handle still proves that the
+	// root in this snapshot is the process we started. A Wait that wins inside
+	// this refresh is handled before any root signal is attempted.
+	s.refreshTrackedDescendants(cleanupContext, rootProcess, descendants)
 	rootExited := false
 	var waitErr error
 	select {
 	case waitErr = <-waitCh:
 		rootExited = true
-		<-timer.C
-	case <-timer.C:
+	default:
 	}
+	if rootExited {
+		s.cleanupTrackedDescendantsWithContext(cleanupContext, descendants, sig)
+		return s.finishExternal(waitErr, sig)
+	}
+
+	// Descendants use numeric PIDs only after a fresh exact identity check. The
+	// root is deliberately excluded and is signalled solely through os.Process.
+	s.signalVerifiedDescendants(cleanupContext, descendants, sig)
+	select {
+	case waitErr = <-waitCh:
+		rootExited = true
+	default:
+		_ = rootProcess.Signal(sig)
+	}
+
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	rootWait := waitCh
+	if rootExited {
+		rootWait = nil
+	}
+graceLoop:
+	for {
+		select {
+		case waitErr = <-rootWait:
+			rootExited = true
+			rootWait = nil
+		case <-timer.C:
+			break graceLoop
+		case <-cleanupContext.Done():
+			break graceLoop
+		}
+	}
+
 	if !rootExited {
 		select {
 		case waitErr = <-waitCh:
 			rootExited = true
 		default:
+			s.refreshTrackedDescendants(cleanupContext, rootProcess, descendants)
 		}
 	}
-
-	// Keep the original snapshot. Once the shell root exits, surviving
-	// descendants are reparented and cannot be rediscovered by ancestry.
-	liveTargets := s.revalidateShutdownTargets(cleanupContext, targets, rootPID, rootExited)
-	s.signalProcesses(liveTargets, syscall.SIGKILL)
+	s.signalVerifiedDescendants(cleanupContext, descendants, syscall.SIGKILL)
 	if !rootExited {
-		// The child handle is lifecycle-aware and remains safe when a process
-		// table snapshot fails. It is the final root fallback after verified
-		// descendant kills.
+		// The lifecycle-aware handle is the only permitted root kill path.
 		_ = rootProcess.Kill()
 		select {
 		case waitErr = <-waitCh:
@@ -216,33 +377,94 @@ func (s *ClaudeSupervisor) shutdown(
 	return s.finishExternal(waitErr, sig)
 }
 
-func (s *ClaudeSupervisor) signalTree(ctx context.Context, rootPID int, sig syscall.Signal) []SupervisorProcess {
-	snapshot := s.Snapshot
-	if snapshot == nil {
-		snapshot = claudeSupervisorSnapshot
+func (s *ClaudeSupervisor) gracePeriod() time.Duration {
+	if s.GracePeriod > 0 {
+		return s.GracePeriod
 	}
-	processes, err := snapshot(ctx)
-	if err != nil {
-		processes = nil
-	}
-	ordered := claudeShutdownTargets(processes, rootPID)
-	s.signalProcesses(ordered, sig)
-	return ordered
+	return defaultClaudeGracePeriod
 }
 
-func (s *ClaudeSupervisor) revalidateShutdownTargets(
-	ctx context.Context,
-	targets []SupervisorProcess,
-	rootPID int,
-	rootExited bool,
-) []SupervisorProcess {
+func (s *ClaudeSupervisor) snapshotProcesses(ctx context.Context) ([]SupervisorProcess, error) {
 	snapshot := s.Snapshot
 	if snapshot == nil {
 		snapshot = claudeSupervisorSnapshot
 	}
-	processes, err := snapshot(ctx)
+	return snapshot(ctx)
+}
+
+func (s *ClaudeSupervisor) refreshTrackedDescendants(
+	ctx context.Context,
+	rootProcess *os.Process,
+	tracked *claudeDescendantTracker,
+) {
+	if rootProcess == nil || tracked == nil || tracked.rootPID <= 0 || rootProcess.Pid != tracked.rootPID {
+		return
+	}
+	processes, err := s.snapshotProcesses(ctx)
 	if err != nil {
-		processes = nil
+		return
+	}
+	var root SupervisorProcess
+	rootFound := false
+	for _, process := range processes {
+		if process.PID == tracked.rootPID && process.Start != "" {
+			root = process
+			rootFound = true
+			break
+		}
+	}
+	if !rootFound {
+		return
+	}
+	// This no-op signal uses the owned process handle (pidfd where available).
+	// If Wait already reaped the root, do not trust a snapshot row that may be a
+	// recycled numeric PID.
+	if err := rootProcess.Signal(syscall.Signal(0)); err != nil {
+		return
+	}
+
+	targets := claudeShutdownTargets(processes, tracked.rootPID)
+	captured := make([]SupervisorProcess, 0, len(targets))
+	capturedPIDs := make(map[int]struct{}, len(targets))
+	for _, target := range targets {
+		if target.PID <= 0 || target.PID == root.PID || target.Start == "" {
+			continue
+		}
+		if _, duplicate := capturedPIDs[target.PID]; duplicate {
+			continue
+		}
+		capturedPIDs[target.PID] = struct{}{}
+		captured = append(captured, target)
+	}
+
+	// Put the newest deep-first tree first, retaining older exact identities for
+	// descendants that have already reparented and disappeared from ancestry.
+	merged := make([]SupervisorProcess, 0, len(captured)+len(tracked.ordered))
+	merged = append(merged, captured...)
+	seenPIDs := capturedPIDs
+	for _, target := range tracked.ordered {
+		if target.PID <= 0 || target.PID == tracked.rootPID || target.Start == "" {
+			continue
+		}
+		if _, duplicate := seenPIDs[target.PID]; duplicate {
+			continue
+		}
+		seenPIDs[target.PID] = struct{}{}
+		merged = append(merged, target)
+	}
+	tracked.ordered = merged
+}
+
+func (s *ClaudeSupervisor) verifiedTrackedDescendants(
+	ctx context.Context,
+	tracked *claudeDescendantTracker,
+) []SupervisorProcess {
+	if tracked == nil || len(tracked.ordered) == 0 {
+		return nil
+	}
+	processes, err := s.snapshotProcesses(ctx)
+	if err != nil {
+		return nil
 	}
 	current := make(map[int]SupervisorProcess, len(processes))
 	for _, process := range processes {
@@ -250,88 +472,92 @@ func (s *ClaudeSupervisor) revalidateShutdownTargets(
 			current[process.PID] = process
 		}
 	}
-	live := make([]SupervisorProcess, 0, len(targets))
-	type processIdentity struct {
-		pid   int
-		start string
-	}
-	seen := make(map[processIdentity]struct{}, len(targets))
-	appendLive := func(target SupervisorProcess) {
-		key := processIdentity{pid: target.PID, start: target.Start}
-		if _, duplicate := seen[key]; duplicate {
-			return
+	verified := make([]SupervisorProcess, 0, len(tracked.ordered))
+	seen := make(map[int]struct{}, len(tracked.ordered))
+	for _, target := range tracked.ordered {
+		if target.PID <= 0 || target.PID == tracked.rootPID || target.Start == "" {
+			continue
 		}
-		seen[key] = struct{}{}
-		live = append(live, target)
-	}
-	var originalRoot SupervisorProcess
-	for _, target := range targets {
-		if target.PID == rootPID {
-			originalRoot = target
-			break
-		}
-	}
-
-	// First take the refreshed launch tree, but only while its root is still
-	// the exact owned process. Otherwise a recycled root PID could make an
-	// unrelated tree look like newly spawned descendants.
-	refreshedRoot, refreshedRootFound := current[rootPID]
-	acceptRefreshedTree := !rootExited && refreshedRootFound
-	if acceptRefreshedTree && originalRoot.Start != "" {
-		acceptRefreshedTree = refreshedRoot.Start == originalRoot.Start &&
-			refreshedRoot.PPID == originalRoot.PPID
-	}
-	if acceptRefreshedTree {
-		for _, target := range claudeShutdownTargets(processes, rootPID) {
-			if target.Start != "" {
-				appendLive(target)
-			}
-		}
-	}
-
-	// Then retain original descendants that survived but were reparented after
-	// the shell root exited. Only an exact PID + process-start identity matches.
-	for _, target := range targets {
-		if target.PID == rootPID && rootExited {
+		if _, duplicate := seen[target.PID]; duplicate {
 			continue
 		}
 		observed, ok := current[target.PID]
-		identityMatches := target.Start != "" && ok && observed.Start == target.Start
-		if target.PID == rootPID {
-			identityMatches = identityMatches && observed.PPID == target.PPID
-		}
-		if identityMatches {
-			appendLive(target)
+		if !ok || observed.Start != target.Start {
 			continue
 		}
-		// An identity-free root is the only safe fallback: if Wait has not
-		// returned, it is still the owned child. Descendants are never killed
-		// from an unverified stale PID.
-		if target.PID == rootPID && !rootExited && target.Start == "" {
-			appendLive(target)
-		}
+		seen[target.PID] = struct{}{}
+		verified = append(verified, target)
 	}
-	return live
+	return verified
 }
 
-func (s *ClaudeSupervisor) signalProcesses(ordered []SupervisorProcess, sig syscall.Signal) {
+func (s *ClaudeSupervisor) signalVerifiedDescendants(
+	ctx context.Context,
+	tracked *claudeDescendantTracker,
+	sig syscall.Signal,
+) []SupervisorProcess {
+	verified := s.verifiedTrackedDescendants(ctx, tracked)
 	signalProcess := s.SignalProcess
 	if signalProcess == nil {
 		signalProcess = func(pid int, signal syscall.Signal) error {
 			return syscall.Kill(pid, signal)
 		}
 	}
-	for _, process := range ordered {
+	for _, process := range verified {
+		if tracked == nil || process.PID == tracked.rootPID {
+			continue
+		}
 		_ = signalProcess(process.PID, sig)
 	}
+	return verified
+}
+
+func (s *ClaudeSupervisor) cleanupTrackedDescendants(
+	parentContext context.Context,
+	tracked *claudeDescendantTracker,
+	sig syscall.Signal,
+) {
+	grace := s.gracePeriod()
+	cleanupContext, cancelCleanup := context.WithTimeout(
+		context.WithoutCancel(parentContext),
+		grace+defaultClaudeCleanupSlack,
+	)
+	defer cancelCleanup()
+	s.cleanupTrackedDescendantsWithContext(cleanupContext, tracked, sig)
+}
+
+func (s *ClaudeSupervisor) cleanupTrackedDescendantsWithContext(
+	ctx context.Context,
+	tracked *claudeDescendantTracker,
+	sig syscall.Signal,
+) {
+	if len(s.signalVerifiedDescendants(ctx, tracked, sig)) == 0 {
+		return
+	}
+	timer := time.NewTimer(s.gracePeriod())
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+	s.signalVerifiedDescendants(ctx, tracked, syscall.SIGKILL)
 }
 
 func (s *ClaudeSupervisor) finish(waitErr error) (ClaudeExitResult, error) {
 	result, err := claudeExitResult(waitErr)
 	if err != nil {
-		return ClaudeExitResult{}, err
+		return s.finishTerminalError(err)
 	}
 	return s.publishExit(result)
+}
+
+func (s *ClaudeSupervisor) finishTerminalError(terminalErr error) (ClaudeExitResult, error) {
+	result := ClaudeExitResult{ExitCode: 1}
+	_, publishErr := s.publishExit(result)
+	if publishErr != nil {
+		terminalErr = errors.Join(terminalErr, publishErr)
+	}
+	return result, terminalErr
 }
 
 func (s *ClaudeSupervisor) finishExternal(waitErr error, forwarded syscall.Signal) (ClaudeExitResult, error) {
@@ -373,7 +599,7 @@ func claudeExitResult(waitErr error) (ClaudeExitResult, error) {
 }
 
 func claudeSupervisorSnapshot(ctx context.Context) ([]SupervisorProcess, error) {
-	cmd := exec.CommandContext(ctx, "ps", "-axo", "pid=,ppid=,lstart=")
+	cmd := exec.CommandContext(ctx, claudePSExecutable, "-axo", "pid=,ppid=,lstart=")
 	cmd.Env = applyEnvironmentOverrides(os.Environ(), []string{"LC_ALL=C", "TZ=UTC"})
 	out, err := cmd.Output()
 	if err != nil {

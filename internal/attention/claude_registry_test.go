@@ -9,7 +9,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 const (
@@ -38,8 +40,8 @@ func TestPSSnapshotterRunsLocaleStableUTCSnapshot(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("runner calls = %d, want 1", calls)
 	}
-	if gotName != "ps" {
-		t.Fatalf("command = %q, want ps", gotName)
+	if gotName != "/bin/ps" {
+		t.Fatalf("command = %q, want /bin/ps", gotName)
 	}
 	if want := []string{"-axo", "pid=,ppid=,lstart="}; !reflect.DeepEqual(gotArgs, want) {
 		t.Fatalf("args = %#v, want %#v", gotArgs, want)
@@ -182,6 +184,147 @@ func TestClaudeRegistryMapperFindsSessionThroughLaunchChain(t *testing.T) {
 	}
 	if !found || got.PID != 400 || got.Status != "busy" {
 		t.Fatalf("Poll() = (%#v, %v), want PID 400 busy", got, found)
+	}
+}
+
+func TestClaudeRegistryMapperKeepsInteractiveForegroundAuthoritativeOverSubagent(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	const subagentStart = "Mon Jul 13 09:00:02 2026"
+	const interactiveStart = "Mon Jul 13 09:00:03 2026"
+	writeRegistryRecord(t, configDir, 101, `{"pid":101,"kind":"subagent","procStart":"`+subagentStart+`","status":"idle","updatedAt":90}`)
+	writeRegistryRecord(t, configDir, 102, `{"pid":102,"kind":"interactive","procStart":"`+interactiveStart+`","status":"busy","updatedAt":80}`)
+	mapper := registryMapper(configDir, psSnapshot(
+		psProcess(100, 1, registryRootStart),
+		psProcess(101, 100, subagentStart),
+		psProcess(102, 101, interactiveStart),
+	))
+
+	got, found, err := mapper.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	want := ClaudeRegistryStatus{
+		PID:            102,
+		Status:         "busy",
+		StatusIdentity: "80",
+	}
+	if !found || got != want {
+		t.Fatalf("Poll() = (%#v, %v), want interactive foreground %#v; subagent idle must not complete the turn", got, found, want)
+	}
+}
+
+func TestClaudeRegistryMapperRejectsSymlinkedSessionRecord(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	sessionsDir := filepath.Join(configDir, "sessions")
+	if err := os.MkdirAll(sessionsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(configDir, "attacker-controlled.json")
+	record := `{"pid":101,"kind":"interactive","procStart":"` + registryChildStart + `","status":"idle","updatedAt":91}`
+	if err := os.WriteFile(target, []byte(record), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(sessionsDir, "101.json")); err != nil {
+		t.Fatal(err)
+	}
+	mapper := registryMapper(configDir, psSnapshot(
+		psProcess(100, 1, registryRootStart),
+		psProcess(101, 100, registryChildStart),
+	))
+
+	got, found, err := mapper.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if found {
+		t.Fatalf("Poll() = (%#v, true), want symlinked registry record rejected", got)
+	}
+}
+
+func TestReadClaudeRegistryFileAcceptsRegularFileAtSizeLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "record.json")
+	want := make([]byte, maxClaudeRegistryRecordBytes)
+	want[0] = '{'
+	want[len(want)-1] = '}'
+	if err := os.WriteFile(path, want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := readClaudeRegistryFile(path)
+	if err != nil {
+		t.Fatalf("readClaudeRegistryFile: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("read %d bytes, want exact %d-byte regular file", len(got), len(want))
+	}
+}
+
+func TestReadClaudeRegistryFileRejectsOversizedSparseFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "record.json")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxClaudeRegistryRecordBytes + 1); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := readClaudeRegistryFile(path); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("readClaudeRegistryFile error = %v, want pre-read size-limit rejection", err)
+	}
+}
+
+func TestReadClaudeRegistryFileRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.json")
+	link := filepath.Join(dir, "record.json")
+	if err := os.WriteFile(target, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := readClaudeRegistryFile(link); err == nil {
+		t.Fatal("readClaudeRegistryFile followed a symlink")
+	}
+}
+
+func TestReadClaudeRegistryFileRejectsFIFOBeforeBlocking(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "record.json")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatalf("mkfifo: %v", err)
+	}
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	done := make(chan readResult, 1)
+	go func() {
+		data, err := readClaudeRegistryFile(path)
+		done <- readResult{data: data, err: err}
+	}()
+
+	select {
+	case result := <-done:
+		if result.err == nil {
+			t.Fatalf("readClaudeRegistryFile read FIFO data %q, want rejection", result.data)
+		}
+	case <-time.After(time.Second):
+		// Unblock an unsafe os.ReadFile implementation so the failed regression
+		// cannot leave a goroutine behind in the package test process.
+		if fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_ = syscall.Close(fd)
+		}
+		t.Fatal("readClaudeRegistryFile blocked opening a FIFO")
 	}
 }
 
@@ -392,7 +535,6 @@ func registryMapper(configDir, snapshot string) ClaudeRegistryMapper {
 		Snapshot: ProcessSnapshotFunc(func(context.Context) ([]byte, error) {
 			return []byte(snapshot), nil
 		}),
-		ReadFile: ReadFileFunc(os.ReadFile),
 	}
 }
 

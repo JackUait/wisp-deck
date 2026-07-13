@@ -95,6 +95,107 @@ func TestClaudeReducerWaitingThenIdleRetainsUnresolvedAttention(t *testing.T) {
 	}
 }
 
+func TestClaudeReducerRetainsIndependentWaitingPriority(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		first ClaudeReducerObservation
+		last  ClaudeReducerObservation
+	}{
+		{
+			name: "question remains above a later permission",
+			first: ClaudeReducerObservation{
+				Status:          ClaudeObservedWaiting,
+				WaitingReason:   ClaudeWaitingQuestion,
+				StatusUpdatedAt: "question-1",
+			},
+			last: ClaudeReducerObservation{
+				Status:          ClaudeObservedWaiting,
+				WaitingReason:   ClaudeWaitingPermission,
+				StatusUpdatedAt: "permission-1",
+			},
+		},
+		{
+			name: "question supersedes an earlier permission",
+			first: ClaudeReducerObservation{
+				Status:          ClaudeObservedWaiting,
+				WaitingReason:   ClaudeWaitingPermission,
+				StatusUpdatedAt: "permission-2",
+			},
+			last: ClaudeReducerObservation{
+				Status:          ClaudeObservedWaiting,
+				WaitingReason:   ClaudeWaitingQuestion,
+				StatusUpdatedAt: "question-2",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			reducer := newTestClaudeReducer(t)
+			reducer.Reduce(tt.first)
+			got := reducer.Reduce(tt.last)
+			assertClaudeState(t, got, PhaseAttention, ReasonQuestion, "waiting:"+questionIdentity(tt.first, tt.last))
+
+			// Idle cannot resolve either request. A later foreground busy state is
+			// the first semantic proof that both blockers cleared.
+			got = reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedIdle})
+			assertClaudeState(t, got, PhaseAttention, ReasonQuestion, "waiting:"+questionIdentity(tt.first, tt.last))
+			got = reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedBusy})
+			assertClaudeState(t, got, PhaseWorking, ReasonNone, "")
+		})
+	}
+}
+
+func TestClaudeReducerLowerPriorityExitCannotHideWaitingRequest(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		waitingReason ClaudeWaitingReason
+		wantReason    Reason
+	}{
+		{name: "question", waitingReason: ClaudeWaitingQuestion, wantReason: ReasonQuestion},
+		{name: "permission", waitingReason: ClaudeWaitingPermission, wantReason: ReasonPermission},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			reducer := newTestClaudeReducer(t)
+			want := reducer.Reduce(ClaudeReducerObservation{
+				Status:          ClaudeObservedWaiting,
+				WaitingReason:   tt.waitingReason,
+				StatusUpdatedAt: tt.name + "-exit",
+			})
+			got := reducer.ReduceExit(ClaudeReducerExit{Code: 17})
+			if got != want {
+				t.Fatalf("%s then nonzero exit = %#v, want retained %#v", tt.name, got, want)
+			}
+		})
+	}
+}
+
+func TestClaudeReducerAutomaticContinuationAndSubagentProgressStayWorking(t *testing.T) {
+	t.Parallel()
+
+	reducer := newTestClaudeReducer(t)
+	for _, semanticStep := range []string{
+		"foreground started",
+		"automatic continuation queued",
+		"subagent completed while foreground continues",
+		"continued foreground work",
+	} {
+		got := reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedBusy})
+		if got.Phase != PhaseWorking || got.Reason != ReasonNone {
+			t.Fatalf("%s = %#v, want working without attention", semanticStep, got)
+		}
+	}
+	got := reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedIdle})
+	assertClaudeState(t, got, PhaseAttention, ReasonDone, "done:1")
+}
+
 func TestClaudeReducerBusyAfterAttentionWorksAndRearms(t *testing.T) {
 	t.Parallel()
 
@@ -269,4 +370,13 @@ func assertClaudeState(t *testing.T, got State, phase Phase, reason Reason, iden
 	if got != want {
 		t.Fatalf("state = %#v, want %#v", got, want)
 	}
+}
+
+func questionIdentity(observations ...ClaudeReducerObservation) string {
+	for _, observation := range observations {
+		if observation.WaitingReason == ClaudeWaitingQuestion {
+			return observation.StatusUpdatedAt
+		}
+	}
+	return ""
 }

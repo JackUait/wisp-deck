@@ -14,11 +14,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 )
 
-const maxClaudeRegistryRecordBytes = 256 * 1024
+const (
+	maxClaudeRegistryRecordBytes = 256 * 1024
+	claudePSExecutable           = "/bin/ps"
+)
 
 var psSnapshotLine = regexp.MustCompile(`^[ \t]*([0-9]+)[ \t]+([0-9]+)[ \t]+(.+?)[ \t]*$`)
 
@@ -27,8 +31,8 @@ var psSnapshotLine = regexp.MustCompile(`^[ \t]*([0-9]+)[ \t]+([0-9]+)[ \t]+(.+?
 // same point-in-time view.
 type ProcessSnapshotFunc func(context.Context) ([]byte, error)
 
-// ReadFileFunc is the mapper's filesystem boundary. Production callers can use
-// os.ReadFile; tests and other platforms can provide a deterministic reader.
+// ReadFileFunc is an explicitly trusted mapper filesystem boundary for tests
+// and other platforms. Production uses the bounded no-follow reader below.
 type ReadFileFunc func(string) ([]byte, error)
 
 // CommandOutputFunc is the injectable process boundary used by PSSnapshotter.
@@ -51,7 +55,7 @@ func (s PSSnapshotter) Snapshot(ctx context.Context) ([]byte, error) {
 	}
 	output, err := run(
 		ctx,
-		"ps",
+		claudePSExecutable,
 		[]string{"-axo", "pid=,ppid=,lstart="},
 		[]string{"LC_ALL=C", "TZ=UTC"},
 	)
@@ -101,7 +105,7 @@ func (m ClaudeRegistryMapper) Poll(ctx context.Context) (ClaudeRegistryStatus, b
 	}
 	readFile := m.ReadFile
 	if readFile == nil {
-		readFile = os.ReadFile
+		readFile = readClaudeRegistryFile
 	}
 
 	data, err := snapshot(ctx)
@@ -172,6 +176,46 @@ func (m ClaudeRegistryMapper) Poll(ctx context.Context) (ClaudeRegistryStatus, b
 		return ClaudeRegistryStatus{}, false, nil
 	}
 	return best, true, nil
+}
+
+// readClaudeRegistryFile reads one bounded regular registry record without
+// following a final symlink or ever blocking on a substituted FIFO. The open
+// and fstat operate on the same descriptor, closing the lstat/open race.
+func readClaudeRegistryFile(path string) ([]byte, error) {
+	fd, err := syscall.Open(
+		path,
+		syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW,
+		0,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("open Claude registry record: %w", err)
+	}
+	file := os.NewFile(uintptr(fd), path)
+	if file == nil {
+		_ = syscall.Close(fd)
+		return nil, errors.New("open Claude registry record: invalid file descriptor")
+	}
+	defer func() { _ = file.Close() }()
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat Claude registry record: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("Claude registry record is not a regular file")
+	}
+	if info.Size() > maxClaudeRegistryRecordBytes {
+		return nil, fmt.Errorf("Claude registry record exceeds %d bytes", maxClaudeRegistryRecordBytes)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(file, maxClaudeRegistryRecordBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read Claude registry record: %w", err)
+	}
+	if len(data) > maxClaudeRegistryRecordBytes {
+		return nil, fmt.Errorf("Claude registry record exceeds %d bytes", maxClaudeRegistryRecordBytes)
+	}
+	return data, nil
 }
 
 type snapshotProcess struct {
