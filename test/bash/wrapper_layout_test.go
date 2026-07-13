@@ -147,6 +147,173 @@ func recordWrapperNewSessionForTool(t *testing.T, tool string) string {
 	return string(data)
 }
 
+// OpenCode loads plugins as part of process startup, so the installed plugin
+// must already match this distribution when tmux starts the AI pane. This runs
+// the real wrapper and has the tmux launch boundary inspect the destination.
+func TestWrapperOpenCode_syncs_plugin_before_new_session(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recPath := filepath.Join(home, "rec")
+	dest := opencodePluginDestination(filepath.Join(home, ".config"))
+	writeTempFile(t, filepath.Dir(dest), filepath.Base(dest), "stale plugin\n")
+	mocks := map[string]string{
+		"tmux": `#!/bin/bash
+if [ "$1" = "new-session" ]; then
+  if cmp -s "$GT_PLUGIN_SOURCE" "$GT_PLUGIN_DEST"; then
+    printf 'plugin-ready\n' > "$GT_REC"
+  else
+    printf 'plugin-stale\n' > "$GT_REC"
+  fi
+  exit 0
+fi
+exit 0
+`,
+		"opencode":      "#!/bin/bash\nexit 0\n",
+		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
+		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
+	}
+	for name, body := range mocks {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(body), 0o755); err != nil {
+			t.Fatalf("write mock %s: %v", name, err)
+		}
+	}
+	projDir := filepath.Join(home, "proj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seedRestoreQueue(t, home, projDir, "opencode")
+	env := buildEnv(t, nil, "HOME="+home, "GT_REC="+recPath,
+		"GT_PLUGIN_SOURCE="+filepath.Join(projectRoot(t), "templates", "opencode-plugin.ts"),
+		"GT_PLUGIN_DEST="+dest)
+
+	_, code := runBashScript(t, "wrapper.sh", nil, env)
+	assertExitCode(t, code, 0)
+	got, err := os.ReadFile(recPath)
+	if err != nil {
+		t.Fatalf("new-session was never reached: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != "plugin-ready" {
+		t.Fatalf("OpenCode launch observed an unsynchronized plugin: %s", got)
+	}
+}
+
+func TestWrapperOpenCode_syncs_plugin_before_attention_generation(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orderPath := filepath.Join(home, "plugin-order")
+	dest := opencodePluginDestination(filepath.Join(home, ".config"))
+	writeTempFile(t, filepath.Dir(dest), filepath.Base(dest), "stale plugin\n")
+	mocks := map[string]string{
+		"mv": `#!/bin/bash
+target=""
+for target in "$@"; do :; done
+if [ "$target" = "$GT_PLUGIN_DEST" ]; then
+  marker=plugin-before-generation
+  for state in "$GT_ATTENTION_TMP"/wisp-deck-attention.*/generation.*/state; do
+    if [ -f "$state" ]; then marker=plugin-saw-generation; break; fi
+  done
+  printf '%s\n' "$marker" > "$GT_PLUGIN_ORDER"
+fi
+exec /bin/mv "$@"
+`,
+		"tmux":          "#!/bin/bash\nexit 0\n",
+		"opencode":      "#!/bin/bash\nexit 0\n",
+		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
+		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
+	}
+	for name, body := range mocks {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(body), 0o755); err != nil {
+			t.Fatalf("write mock %s: %v", name, err)
+		}
+	}
+	projDir := filepath.Join(home, "proj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	attentionTmp := filepath.Join(home, "attention-tmp")
+	if err := os.MkdirAll(attentionTmp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seedRestoreQueue(t, home, projDir, "opencode")
+	env := buildEnv(t, nil, "HOME="+home, "TMPDIR="+attentionTmp,
+		"GT_PLUGIN_DEST="+dest, "GT_PLUGIN_ORDER="+orderPath,
+		"GT_ATTENTION_TMP="+attentionTmp)
+
+	_, code := runBashScript(t, "wrapper.sh", nil, env)
+	assertExitCode(t, code, 0)
+	got, err := os.ReadFile(orderPath)
+	if err != nil {
+		t.Fatalf("plugin rename was not observed: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != "plugin-before-generation" {
+		t.Fatalf("plugin sync ran after attention generation creation: %s", got)
+	}
+}
+
+func TestWrapperOpenCode_plugin_failure_does_not_create_attention(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mktempLog := filepath.Join(home, "mktemp.log")
+	newSession := filepath.Join(home, "new-session")
+	mocks := map[string]string{
+		"mktemp": `#!/bin/bash
+printf '%s\n' "$@" >> "$GT_MKTEMP_LOG"
+exec /usr/bin/mktemp "$@"
+`,
+		"tmux": `#!/bin/bash
+if [ "$1" = "new-session" ]; then printf launched > "$GT_NEW_SESSION"; fi
+exit 0
+`,
+		"opencode":      "#!/bin/bash\nexit 0\n",
+		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
+		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
+	}
+	for name, body := range mocks {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(body), 0o755); err != nil {
+			t.Fatalf("write mock %s: %v", name, err)
+		}
+	}
+	projDir := filepath.Join(home, "proj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	attentionTmp := filepath.Join(home, "attention-tmp")
+	if err := os.MkdirAll(attentionTmp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dest := opencodePluginDestination(filepath.Join(home, ".config"))
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seedRestoreQueue(t, home, projDir, "opencode")
+	env := buildEnv(t, nil, "HOME="+home, "TMPDIR="+attentionTmp,
+		"GT_MKTEMP_LOG="+mktempLog, "GT_NEW_SESSION="+newSession)
+
+	_, code := runBashScript(t, "wrapper.sh", nil, env)
+	if code == 0 {
+		t.Fatal("wrapper launched OpenCode despite plugin preflight failure")
+	}
+	if _, err := os.Stat(newSession); !os.IsNotExist(err) {
+		t.Fatalf("tmux new-session ran after plugin preflight failure: %v", err)
+	}
+	mktempCalls, err := os.ReadFile(mktempLog)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(mktempCalls), "wisp-deck-attention") {
+		t.Fatalf("plugin failure created or fenced attention state:\n%s", mktempCalls)
+	}
+}
+
 // TestWrapper_active_pane_border_uses_tool_accent verifies the focused-pane
 // border follows the session's tool: purple (colour141) for OpenCode, orange
 // (colour209) for claude.

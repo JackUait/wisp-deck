@@ -42,6 +42,30 @@ if ! declare -f write_claude_launch_settings >/dev/null 2>&1; then
   unset _as_settings_lib_dir
 fi
 
+# A switch to OpenCode is also a launch boundary. Load the installer in the
+# independent ledger/auto-switch shells so they can atomically refresh the
+# plugin before rotating attention state or killing the current pane.
+if ! declare -f install_opencode_plugin >/dev/null 2>&1; then
+  _as_install_lib_dir="${WISP_DECK_LIB_DIR:-${BASH_SOURCE[0]%/*}}"
+  # shellcheck source=/dev/null
+  [ -f "$_as_install_lib_dir/install.sh" ] && source "$_as_install_lib_dir/install.sh"
+  unset _as_install_lib_dir
+fi
+
+# _prepare_opencode_plugin_launch <tool> — refresh OpenCode's event adapter at
+# every respawn boundary. Failure is a safe no-op for the switch: the caller
+# leaves the current pane and attention generation alive.
+_prepare_opencode_plugin_launch() {
+  [ "$1" = "opencode" ] || return 0
+  if declare -f install_opencode_plugin >/dev/null 2>&1 \
+     && install_opencode_plugin; then
+    return 0
+  fi
+  printf 'Failed to install OpenCode plugin; keeping the current agent running.\n' \
+    >>"${WISP_DECK_ERROR_LOG:-/dev/null}" 2>/dev/null || true
+  return 1
+}
+
 # reload_switcher_lib <lib_dir> — re-source THIS module from disk so a
 # long-running ledger picks up on-disk edits to the switcher (popup dimensions,
 # flags, backdrop) without the whole pane having to restart. Called right before
@@ -688,6 +712,7 @@ relaunch_ai_pane() {
 
   pane="$(find_ai_pane "$tmux_cmd")"
   [ -n "$pane" ] || return 0
+  _prepare_opencode_plugin_launch "$_rc_tool" || return 0
   if [ -n "$_rc_attention_root" ]; then
     declare -f attention_relaunch_lock_acquire >/dev/null 2>&1 || return 0
     attention_relaunch_lock_acquire "$_rc_attention_root" || return 0
@@ -922,6 +947,7 @@ relaunch_switch_tool() {
   [ -n "$tool_cmd" ] || return 0
   pane="$(find_ai_pane "$tmux_cmd")"
   [ -n "$pane" ] || return 0
+  _prepare_opencode_plugin_launch "$target" || return 0
   if [ -n "$_rc_attention_root" ]; then
     declare -f attention_relaunch_lock_acquire >/dev/null 2>&1 || return 0
     attention_relaunch_lock_acquire "$_rc_attention_root" || return 0

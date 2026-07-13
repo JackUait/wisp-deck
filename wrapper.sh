@@ -70,7 +70,7 @@ if [ ! -d "$_WRAPPER_DIR/lib" ]; then
   exit 1
 fi
 
-_gt_libs=(theme ai-tools projects process input tui menu-tui project-actions tmux-session settings-json notification-setup keep-awake tab-title-watcher terminals/ghostty session-restore claude-configs claude-accounts claude-shared-settings auto-switch attention account-switch compact-view screenshot spare-tabs)
+_gt_libs=(theme ai-tools projects process input tui install menu-tui project-actions tmux-session settings-json notification-setup keep-awake tab-title-watcher terminals/ghostty session-restore claude-configs claude-accounts claude-shared-settings auto-switch attention account-switch compact-view screenshot spare-tabs)
 for _gt_lib in "${_gt_libs[@]}"; do
   if [ ! -f "$_WRAPPER_DIR/lib/${_gt_lib}.sh" ]; then
     printf '\033[31mError:\033[0m Missing library %s/lib/%s.sh\n' "$_WRAPPER_DIR" "$_gt_lib" >&2
@@ -326,6 +326,18 @@ WISP_DECK_ATTENTION_ROOT=""
 WISP_DECK_ATTENTION_DESCRIPTOR=""
 WISP_DECK_ATTENTION_GENERATION=""
 WISP_DECK_ATTENTION_FILE=""
+
+# OpenCode reads plugins during process startup. Refresh its semantic adapter
+# before creating any attention root/generation so a failed preflight cannot
+# publish or fence state for a launch that will never happen. Command resolution
+# stays near launch construction below because its npx probe is comparatively
+# expensive and unrelated to this filesystem preflight.
+if [ "$SELECTED_AI_TOOL" = "opencode" ]; then
+  if ! install_opencode_plugin; then
+    printf '\033[31mError:\033[0m Failed to install OpenCode plugin. Run wisp-deck to repair the installation.\n' >&2
+    exit 1
+  fi
+fi
 
 # Background watcher: switch to the AI pane once it's ready. Resolves the AI
 # pane via gt_ai_pane (marker/geometry) rather than a fixed index, so it is
