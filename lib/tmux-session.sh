@@ -18,7 +18,39 @@ get_tool_accent() {
 # filter remains inside that chain as its sole PTY boundary.
 # Usage: build_ai_launch_cmd <tool> <tool_cmd> [extra_args_or_project_dir]
 build_ai_launch_cmd() {
-  local tool="$1" raw config_root state_q generation_q config_q raw_q
+  local tool="$1" tool_cmd="$2" raw config_root state_q generation_q config_q raw_q
+
+  # Codex's semantic adapter owns the entire remote/embedded resume fallback
+  # matrix. Build it as argv-safe shell text before constructing the legacy
+  # raw chain so hostile handoff prompts remain one argument and no shell
+  # fallback can bypass the generation writer.
+  if [ "$tool" = "codex" ] \
+     && [ -n "${WISP_DECK_ATTENTION_FILE:-}" ] \
+     && [ -n "${WISP_DECK_ATTENTION_GENERATION:-}" ]; then
+    local codex_q fallback fallback_q resume_q="" prompt_q="" extra=""
+    [ "$#" -ge 3 ] && extra="$3"
+    fallback="${WISP_DECK_RESUME_FALLBACK_WINDOW:-10}"
+    case "$fallback" in
+      *[!0-9]*) ;;
+      *) fallback="${fallback}s" ;;
+    esac
+    printf -v codex_q '%q' "$tool_cmd"
+    printf -v state_q '%q' "$WISP_DECK_ATTENTION_FILE"
+    printf -v generation_q '%q' "$WISP_DECK_ATTENTION_GENERATION"
+    printf -v fallback_q '%q' "$fallback"
+    if [ "${WISP_DECK_RESUME:-0}" = "1" ] \
+       && [ -n "${WISP_DECK_RESUME_SESSION:-}" ]; then
+      printf -v resume_q ' --resume-session %q' "$WISP_DECK_RESUME_SESSION"
+      # build_switch_launch_cmd passes project_dir in the legacy extra slot
+      # for resumes. It is cwd metadata, not an initial Codex prompt.
+      extra=""
+    fi
+    [ -n "$extra" ] && printf -v prompt_q ' %q' "$extra"
+    printf 'wisp-deck-tui codex-adapter --codex %s --state-file %s --generation %s%s --fallback-window %s --%s\n' \
+      "$codex_q" "$state_q" "$generation_q" "$resume_q" "$fallback_q" "$prompt_q"
+    return 0
+  fi
+
   raw="$(build_ai_launch_cmd_raw "$@")" || return 1
   if [ "$tool" = "claude" ] \
      && [ -n "${WISP_DECK_ATTENTION_FILE:-}" ] \

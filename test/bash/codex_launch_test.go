@@ -1,6 +1,9 @@
 package bash_test
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -99,6 +102,108 @@ func TestBuildAiLaunchCmd_codex_resume_without_sid_relaunches_fresh(t *testing.T
 	for _, flag := range []string{"--continue", "--resume", "-c"} {
 		if strings.Contains(got, flag) {
 			t.Errorf("codex resume launch %q must not carry %q", got, flag)
+		}
+	}
+}
+
+func TestBuildAiLaunchCmd_codex_attention_uses_argv_safe_adapter(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	capture := filepath.Join(dir, "args")
+	writeExecutable(t, filepath.Join(binDir, "wisp-deck-tui"), `#!/bin/bash
+: > "$CAPTURE"
+for arg in "$@"; do printf '%s\n' "$arg" >> "$CAPTURE"; done
+`)
+	state := filepath.Join(dir, "private root", "generation.Abc123", "state")
+	env := buildEnv(t, []string{binDir},
+		"WISP_DECK_ATTENTION_FILE="+state,
+		"WISP_DECK_ATTENTION_GENERATION=generation.Abc123",
+		"WISP_DECK_RESUME_FALLBACK_WINDOW=9",
+		"CAPTURE="+capture,
+	)
+	marker := filepath.Join(dir, "must-not-run")
+	prompt := `--hostile prompt; $(touch ` + marker + `)`
+	// Pass the hostile value as a real positional parameter. runBashFunc's Go
+	// %q helper is not shell-safe for $(), which would test the helper instead
+	// of build_ai_launch_cmd.
+	module := filepath.Join(projectRoot(t), "lib", "tmux-session.sh")
+	build := exec.Command("bash", "-c", `source "$1"; shift; build_ai_launch_cmd "$@"`,
+		"bash", module, "codex", "/usr/bin/codex", prompt)
+	build.Env = env
+	builtBytes, err := build.CombinedOutput()
+	if err != nil {
+		t.Fatalf("build adapter: %v\n%s", err, builtBytes)
+	}
+	built := strings.TrimSpace(string(builtBytes))
+	cmd := exec.Command("bash", "-c", built)
+	cmd.Env = env
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("execute built adapter: %v\n%s\ncommand: %s", err, output, built)
+	}
+	data, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("hostile prompt executed shell substitution; marker err=%v", err)
+	}
+	got := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	want := []string{
+		"codex-adapter",
+		"--codex", "/usr/bin/codex",
+		"--state-file", state,
+		"--generation", "generation.Abc123",
+		"--fallback-window", "9s",
+		"--", prompt,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("adapter args = %#v, want %#v\ncommand: %s", got, want, built)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("adapter arg %d = %q, want %q\nall=%#v\ncommand: %s", i, got[i], want[i], got, built)
+		}
+	}
+}
+
+func TestBuildAiLaunchCmd_codex_attention_resume_is_one_adapter_not_shell_chain(t *testing.T) {
+	env := buildEnv(t, nil,
+		"WISP_DECK_ATTENTION_FILE=/tmp/generation.Abc/state",
+		"WISP_DECK_ATTENTION_GENERATION=generation.Abc",
+		"WISP_DECK_RESUME=1",
+		"WISP_DECK_RESUME_SESSION=11111111-1111-4111-8111-111111111111",
+		"WISP_DECK_RESUME_FALLBACK_WINDOW=2.5s",
+	)
+	got := codexLaunchCmd(t, env, "/repo/must-not-become-prompt")
+	for _, want := range []string{
+		"wisp-deck-tui codex-adapter",
+		"--codex /usr/bin/codex",
+		"--state-file /tmp/generation.Abc/state",
+		"--generation generation.Abc",
+		"--resume-session 11111111-1111-4111-8111-111111111111",
+		"--fallback-window 2.5s",
+	} {
+		assertContains(t, got, want)
+	}
+	for _, forbidden := range []string{"_wd_t0", "_wd_rc", "/repo/must-not-become-prompt"} {
+		assertNotContains(t, got, forbidden)
+	}
+	if !strings.HasSuffix(got, " --") {
+		t.Fatalf("adapter command must end in -- for a safely appended handoff: %q", got)
+	}
+}
+
+func TestBuildAiLaunchCmd_codex_without_complete_attention_runtime_keeps_legacyBehavior(t *testing.T) {
+	tests := [][]string{
+		{"WISP_DECK_ATTENTION_FILE=/tmp/generation.Abc/state"},
+		{"WISP_DECK_ATTENTION_GENERATION=generation.Abc"},
+	}
+	for _, vars := range tests {
+		if got := codexLaunchCmd(t, buildEnv(t, nil, vars...), ""); got != "/usr/bin/codex" {
+			t.Fatalf("partial attention env produced %q, want legacy bare command", got)
 		}
 	}
 }
