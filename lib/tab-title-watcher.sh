@@ -326,7 +326,7 @@ apply_tab_title() {
 discover_ai_pane() {
   local session_name="${1-}" tmux_cmd="${2-}" listing line pane flag extra
   local found="" count=0 suffix
-  listing="$("$tmux_cmd" list-panes -t "$session_name" -F '#{pane_id}\t#{@gt_ai}' 2>/dev/null)" || return 1
+  listing="$("$tmux_cmd" list-panes -t "$session_name" -F $'#{pane_id}\t#{@gt_ai}' 2>/dev/null)" || return 1
   while IFS= read -r line; do
     pane=${line%%$'\t'*}
     [ "$pane" != "$line" ] || continue

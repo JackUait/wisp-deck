@@ -196,7 +196,9 @@ printf '%s\n' "$*" >> "$TMUX_CALLS"
 			if err != nil {
 				t.Fatal(err)
 			}
-			assertContains(t, string(data), `#{pane_id}\t#{@gt_ai}`)
+			// tmux does not translate a backslash+t in -F. The argument itself
+			// must contain a real tab byte or production output cannot be split.
+			assertContains(t, string(data), "#{pane_id}\t#{@gt_ai}")
 		})
 	}
 }
