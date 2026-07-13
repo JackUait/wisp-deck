@@ -855,6 +855,11 @@ func TestAttentionRuntimeWrapperLifecycleOrdering(t *testing.T) {
 	if newSessionLine == "" {
 		t.Fatal("tmux new-session line not found")
 	}
+	startWatcher := strings.Index(wrapper, "start_tab_title_watcher")
+	newSession := strings.Index(wrapper, `"$TMUX_CMD" new-session`)
+	if startWatcher < 0 || newSession < 0 || startWatcher > newSession {
+		t.Fatalf("tab-title watcher must start before tmux new-session: watcher=%d new-session=%d", startWatcher, newSession)
+	}
 	for _, name := range []string{
 		"WISP_DECK_ATTENTION_ROOT",
 		"WISP_DECK_ATTENTION_DESCRIPTOR",
@@ -872,9 +877,16 @@ func TestAttentionRuntimeWrapperLifecycleOrdering(t *testing.T) {
 		t.Fatal("wrapper cleanup block not found")
 	}
 	cleanup := wrapper[cleanupStart:cleanupEnd]
+	titleCleanup := strings.Index(cleanup, "stop_tab_title_watcher")
+	heartbeatCleanup := strings.Index(cleanup, `kill_tree "$HEARTBEAT_PID"`)
 	tmuxCleanup := strings.Index(cleanup, "cleanup_tmux_session")
 	attentionCleanup := strings.Index(cleanup, "attention_cleanup")
-	if tmuxCleanup < 0 || attentionCleanup < 0 || tmuxCleanup > attentionCleanup {
-		t.Fatal("attention root must be removed after tmux and helper cleanup")
+	if titleCleanup < 0 || heartbeatCleanup < 0 || tmuxCleanup < 0 || attentionCleanup < 0 ||
+		!(titleCleanup < heartbeatCleanup && heartbeatCleanup < tmuxCleanup && tmuxCleanup < attentionCleanup) {
+		t.Fatalf("cleanup must stop title, heartbeat, and focus helpers before removing attention root: title=%d heartbeat=%d focus=%d attention=%d",
+			titleCleanup, heartbeatCleanup, tmuxCleanup, attentionCleanup)
+	}
+	if !strings.Contains(cleanup, `cleanup_tmux_session "$SESSION_NAME" "$WATCHER_PID" "$TMUX_CMD"`) {
+		t.Fatal("wrapper cleanup does not pass the focus watcher to cleanup_tmux_session")
 	}
 }

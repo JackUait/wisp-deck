@@ -108,7 +108,7 @@ apply_settings_to_all_sessions_if_changed() {
 _attention_watcher_read_record() {
   local file="${1-}" bytes line="" extra="" second_status=0
   [ -f "$file" ] || return 1
-  bytes="$(wc -c <"$file" 2>/dev/null | tr -d '[:space:]')" || return 1
+  bytes="$(wc -c 2>/dev/null <"$file" | tr -d '[:space:]')" || return 1
   case "$bytes" in
     ''|*[!0-9]*) return 1 ;;
   esac
@@ -375,6 +375,7 @@ attention_watcher_tick() {
   local snapshot_valid=0 tuple_new=0 title_state="active" keep_state="active"
   local previous_tool="$_ATTENTION_WATCH_LAST_TOOL"
   local settings_file="" current_title="$fallback_title" current_pane=""
+  local saved_title="" theme="" accent=""
 
   # A valid descriptor still supplies current tool identity when its state is
   # temporarily absent or malformed. The complete double-read snapshot below
@@ -425,19 +426,17 @@ attention_watcher_tick() {
 
   [ -n "$config_dir" ] && settings_file="$config_dir/settings"
   if [ -n "$settings_file" ] && [ -f "$settings_file" ]; then
-    local saved_title
     saved_title="$(read_settings_value "$settings_file" tab_title)"
     [ -n "$saved_title" ] && current_title="$saved_title"
-    if [ -n "$tool" ] \
-       && declare -f gt_resolve_theme >/dev/null 2>&1 \
-       && declare -f get_theme_accent >/dev/null 2>&1; then
-      local theme accent
-      theme="$(read_settings_value "$settings_file" theme)"
-      accent="$(get_theme_accent "$(gt_resolve_theme "$theme" "$tool")")"
-      if [ -n "$accent" ] && [ "$accent" != "$_ATTENTION_WATCH_LAST_ACCENT" ]; then
-        apply_session_theme "$tmux_cmd" "$session_name" "$accent"
-        _ATTENTION_WATCH_LAST_ACCENT="$accent"
-      fi
+    theme="$(read_settings_value "$settings_file" theme)"
+  fi
+  if [ -n "$tool" ] \
+     && declare -f gt_resolve_theme >/dev/null 2>&1 \
+     && declare -f get_theme_accent >/dev/null 2>&1; then
+    accent="$(get_theme_accent "$(gt_resolve_theme "$theme" "$tool")")"
+    if [ -n "$accent" ] && [ "$accent" != "$_ATTENTION_WATCH_LAST_ACCENT" ]; then
+      apply_session_theme "$tmux_cmd" "$session_name" "$accent"
+      _ATTENTION_WATCH_LAST_ACCENT="$accent"
     fi
   fi
 

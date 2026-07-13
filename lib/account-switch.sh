@@ -921,12 +921,14 @@ _tool_cmd_for() {
 # — respawn the AI pane under ANOTHER agent (the popup's "tool:<name>" result,
 # or a claude login picked while a different agent runs — then target_tool is
 # claude and chosen_account the login). Beyond the respawn it keeps every
-# tool-identity surface consistent: the tmux session env (WISP_DECK_TOOL — the
-# pill and the next switch read it), the pane border accent, and the relaunch
-# context itself (the next switch must know what the pane NOW runs). It
-# deliberately leaves the launcher's ai-tool preference alone — that file
+# tool-identity source consistent: the tmux session env (WISP_DECK_TOOL — the
+# pill and the next switch read it) and the relaunch context itself (the next
+# switch must know what the pane NOW runs). The semantic watcher consumes that
+# identity and remains the sole owner of title, sound, theme, and keep-awake
+# policy. This function deliberately leaves the launcher's ai-tool preference
+# alone — that file
 # chooses the tool for future/other sessions, and a mid-session switch is
-# session-scoped, so steering it would leak this choice everywhere. Leaving claude first
+# session-scoped, so steering it would leak this choice everywhere. Leaving Claude first
 # makes it persist any unsent draft into prompt history (Esc-Esc) — there is
 # no replay into a different agent's input, so the draft stays one Up-press
 # away for the user's next claude stint. Switching TO claude resumes the
@@ -1064,10 +1066,6 @@ relaunch_switch_tool() {
   [ -n "$pool" ] && pool_set "$pool/meta" last_tool "$target"
   if [ "$target" = "claude" ]; then
     "$tmux_cmd" set-environment WISP_DECK_CLAUDE_ACCOUNT "${new_dir##*/}" 2>/dev/null
-  fi
-  if command -v get_tool_accent >/dev/null 2>&1; then
-    "$tmux_cmd" set-option pane-active-border-style \
-      "fg=colour$(get_tool_accent "$target")" 2>/dev/null
   fi
   # NOTE: deliberately does NOT write the launcher's ai-tool preference. That
   # file steers which tool wrapper.sh picks for the NEXT launch and for OTHER

@@ -72,7 +72,7 @@ func TestWrapperInteractive_pops_restore_queue_into_current_window(t *testing.T)
 	assertContains(t, got, "WISP_DECK_PATH="+projDir)
 	// The entry's own conversation is resumed — not `claude -c`, which would
 	// open the same (most recent) conversation in every tab of the project.
-	assertContains(t, got, "claude --resume sid-42")
+	assertContains(t, normalizeShellEscapedSpaces(got), "claude --resume sid-42")
 
 	if _, err := os.Stat(filepath.Join(confDir, "restore-queue")); err == nil {
 		t.Error("queue entry must be consumed exactly once (file should be gone)")
@@ -261,7 +261,7 @@ exit 0
 		t.Fatalf("new-session was never invoked: %v", err)
 	}
 	got := string(data)
-	assertContains(t, got, "claude --resume sid-43")
+	assertContains(t, normalizeShellEscapedSpaces(got), "claude --resume sid-43")
 	assertNotContains(t, got, "sid-42")
 	// The restored sid must be stamped into the session env at creation.
 	assertContains(t, got, "WISP_DECK_CLAUDE_SESSION=sid-43")

@@ -385,6 +385,68 @@ func TestSpareTabs_set_accent_repaints_inner_bar(t *testing.T) {
 
 // --- watcher loop wiring: live re-read each tick ---
 
+func TestLiveSettings_semantic_watcher_applies_auto_theme_without_settings_file(t *testing.T) {
+	dir := t.TempDir()
+	attentionRoot := filepath.Join(dir, "attention")
+	if err := os.MkdirAll(attentionRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	genClaude := "generation.claude1"
+	genCodex := "generation.codex2"
+	stateClaude := writeAttentionState(t, attentionRoot, genClaude, "1", "working", "-")
+	stateCodex := writeAttentionState(t, attentionRoot, genCodex, "1", "working", "-")
+	descriptor := writeAttentionDescriptor(t, attentionRoot, genClaude, "claude", stateClaude)
+	config := filepath.Join(dir, "config-without-settings")
+	logFile := filepath.Join(dir, "watch.log")
+	binDir := mockCommand(t, dir, "tmux", `[ "$1" = list-panes ] && printf '%%6\t1\n'`)
+	tmuxPath := filepath.Join(binDir, "tmux")
+
+	script := fmt.Sprintf(`
+source %q
+WATCH_LOG=%q
+: > "$WATCH_LOG"
+apply_tab_title() { :; }
+gt_resolve_theme() {
+  printf 'resolve:<%%s>:%%s\n' "$1" "$2" >> "$WATCH_LOG"
+  printf 'auto-%%s\n' "$2"
+}
+get_theme_accent() { case "$1" in auto-claude) echo 10 ;; auto-codex) echo 20 ;; esac; }
+apply_session_theme() { printf 'theme:%%s\n' "$3" >> "$WATCH_LOG"; }
+attention_watcher_reset
+attention_watcher_tick sess project full %q %q %q
+printf '1\t%s\tcodex\t%s\n' > %q.tmp
+mv %q.tmp %q
+attention_watcher_tick sess project full %q %q %q
+`, filepath.Join(projectRoot(t), "lib", "tab-title-watcher.sh"), logFile,
+		tmuxPath, descriptor, config,
+		genCodex, stateCodex, descriptor, descriptor, descriptor,
+		tmuxPath, descriptor, config)
+	_, code := runBashSnippet(t, script, buildEnv(t, []string{binDir}))
+	assertExitCode(t, code, 0)
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	assertContains(t, got, "resolve:<>:claude")
+	assertContains(t, got, "theme:10")
+	assertContains(t, got, "resolve:<>:codex")
+	assertContains(t, got, "theme:20")
+}
+
+func TestLiveSettings_relaunch_switch_tool_leaves_theme_policy_to_watcher(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(projectRoot(t), "lib", "account-switch.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := shellFunctionBody(t, string(data), "relaunch_switch_tool", "auto_switch_relaunch")
+	for _, forbidden := range []string{"get_tool_accent", "pane-active-border-style"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("relaunch_switch_tool must leave theme policy to the semantic watcher; found %q", forbidden)
+		}
+	}
+}
+
 func TestLiveSettings_watcher_loop_rereads_settings_live(t *testing.T) {
 	dir := t.TempDir()
 	attentionRoot := filepath.Join(dir, "attention")

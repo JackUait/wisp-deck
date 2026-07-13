@@ -263,6 +263,14 @@ func TestTabTitleWatcher_missing_malformed_stale_and_unknown_never_alert(t *test
 	root := t.TempDir()
 	generation := "generation.safe1"
 	state := writeAttentionState(t, root, generation, "0", "unknown", "-")
+	missingGeneration := "generation.missing1"
+	missingStateDir := filepath.Join(root, missingGeneration)
+	if err := os.MkdirAll(missingStateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	missingState := filepath.Join(missingStateDir, "state")
+	malformedGeneration := "generation.malformed1"
+	malformedState := writeAttentionState(t, root, malformedGeneration, "0", "unknown", "-")
 	descriptor := filepath.Join(root, "descriptor")
 	logFile := filepath.Join(root, "watch.log")
 	binDir := mockCommand(t, root, "tmux", `
@@ -284,6 +292,13 @@ attention_watcher_tick sess-a project project %q %q %q
 # Malformed descriptor.
 printf 'broken\n' > %q
 attention_watcher_tick sess-a project project %q %q %q
+# Valid descriptor whose adapter state file is missing.
+printf '1\t%s\tclaude\t%s\n' > %q
+attention_watcher_tick sess-a project project %q %q %q
+# Valid descriptor whose adapter state record is malformed.
+printf '1\t%s\tclaude\t%s\n' > %q
+printf 'broken\n' > %q
+attention_watcher_tick sess-a project project %q %q %q
 # Valid descriptor with a state record from a stale generation.
 printf '1\t%s\tclaude\t%s\n' > %q
 printf '1\tgeneration.old\t1\tattention\tdone\n' > %q
@@ -294,6 +309,10 @@ attention_watcher_tick sess-a project project %q %q %q
 `, logFile,
 		tmuxPath, descriptor, root,
 		descriptor, tmuxPath, descriptor, root,
+		missingGeneration, missingState, descriptor,
+		tmuxPath, descriptor, root,
+		malformedGeneration, malformedState, descriptor, malformedState,
+		tmuxPath, descriptor, root,
 		generation, state, descriptor, state,
 		tmuxPath, descriptor, root,
 		generation, state, tmuxPath, descriptor, root))
@@ -306,8 +325,8 @@ attention_watcher_tick sess-a project project %q %q %q
 	}
 	got := string(data)
 	assertNotContains(t, got, "sound:")
-	if count := strings.Count(got, "awake:active\n"); count != 4 {
-		t.Fatalf("unknown keep-awake count = %d, want 4; log:\n%s", count, got)
+	if count := strings.Count(got, "awake:active\n"); count != 6 {
+		t.Fatalf("unknown keep-awake count = %d, want 6; log:\n%s", count, got)
 	}
 }
 

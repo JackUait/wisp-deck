@@ -74,6 +74,37 @@ esac
 	}
 }
 
+func TestWriteSessionSnapshot_excludesAttentionRuntimeFields(t *testing.T) {
+	dir := t.TempDir()
+	tmuxBody := `
+case "$1" in
+  list-sessions) echo "100 dev-app-1" ;;
+  show-environment)
+    printf 'WISP_DECK=1\nWISP_DECK_BOOT=111\nWISP_DECK_PROJECT=app\nWISP_DECK_PATH=/p/app\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\nWISP_DECK_ATTENTION_ROOT=/poison/root\nWISP_DECK_ATTENTION_DESCRIPTOR=/poison/descriptor\nWISP_DECK_ATTENTION_GENERATION=generation.poison\nWISP_DECK_ATTENTION_FILE=/poison/state\n' ;;
+  display-message) : ;;
+esac
+`
+	binDir := mockCommand(t, dir, "tmux", tmuxBody)
+	snapshot := filepath.Join(dir, "last-session")
+	_, code := runBashFunc(t, "lib/session-restore.sh", "write_session_snapshot",
+		[]string{"tmux", snapshot}, buildEnv(t, []string{binDir}))
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(snapshot)
+	if err != nil {
+		t.Fatalf("snapshot not written: %v", err)
+	}
+	got := strings.TrimSpace(string(data))
+	if want := "111|app|/p/app|claude|ghostty|||"; got != want {
+		t.Fatalf("snapshot imported attention runtime fields: got %q, want %q", got, want)
+	}
+	for _, poison := range []string{"/poison/root", "/poison/descriptor", "generation.poison", "/poison/state"} {
+		if strings.Contains(got, poison) {
+			t.Errorf("snapshot contains prior attention value %q", poison)
+		}
+	}
+}
+
 func TestMaybeRestore_carries_layout_into_queue(t *testing.T) {
 	// The captured layout must ride the snapshot through queue construction —
 	// including the unstamped-duplicate dedup pass — into the queue entry as a

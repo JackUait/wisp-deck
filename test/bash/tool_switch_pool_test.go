@@ -333,7 +333,7 @@ func TestRelaunchSwitchTool_returning_to_codex_resumes_stamped_session(t *testin
 	assertExitCode(t, code, 0)
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
 	assertContains(t, logOut, "/opt/codex resume "+uuid)
-	assertNotContains(t, logOut, "taking over")
+	assertNotContains(t, normalizeShellEscapedSpaces(logOut), "taking over")
 	if readTmuxEnv(t, dir, "WISP_DECK_CODEX_STARTED_AT") == "" {
 		t.Fatalf("expected WISP_DECK_CODEX_STARTED_AT stamped on switch to codex")
 	}
@@ -399,7 +399,7 @@ func TestRelaunchSwitchTool_claude_to_codex_seeds_handoff(t *testing.T) {
 	assertContains(t, string(meta), "claude=sid-1")
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
 	assertContains(t, logOut, "respawn-pane")
-	assertContains(t, logOut, "taking over")
+	assertContains(t, normalizeShellEscapedSpaces(logOut), "taking over")
 	assertContains(t, logOut, filepath.Join(pool, "handoff.md"))
 }
 
@@ -421,7 +421,7 @@ func TestRelaunchSwitchTool_codex_to_claude_seeds_handoff(t *testing.T) {
 	assertExitCode(t, code, 0)
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
 	assertContains(t, logOut, "/opt/claude")
-	assertContains(t, logOut, "taking over")
+	assertContains(t, normalizeShellEscapedSpaces(logOut), "taking over")
 	assertContains(t, logOut, "codex")
 }
 
@@ -466,7 +466,7 @@ func TestRelaunchSwitchTool_claude_to_opencode_seeds_handoff_via_prompt_flag(t *
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
 	assertContains(t, logOut, "/opt/opencode")
 	assertContains(t, logOut, "--prompt")
-	assertContains(t, logOut, "taking over")
+	assertContains(t, normalizeShellEscapedSpaces(logOut), "taking over")
 }
 
 // An opencode pane that already has its own session resumes it (--continue)
@@ -538,5 +538,5 @@ func TestRelaunchSwitchTool_new_closed_claude_clears_handoff(t *testing.T) {
 		t.Fatalf("expected handoff cleared after /new-closed claude conversation")
 	}
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
-	assertNotContains(t, logOut, "taking over")
+	assertNotContains(t, normalizeShellEscapedSpaces(logOut), "taking over")
 }

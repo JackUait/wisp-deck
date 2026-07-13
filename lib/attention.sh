@@ -95,7 +95,7 @@ _attention_parse_descriptor_file() {
   _attention_valid_field "$descriptor" || return 1
   [ -f "$descriptor" ] || return 1
 
-  bytes="$(wc -c <"$descriptor" 2>/dev/null | tr -d '[:space:]')" || return 1
+  bytes="$(wc -c 2>/dev/null <"$descriptor" | tr -d '[:space:]')" || return 1
   case "$bytes" in
     ''|*[!0-9]*) return 1 ;;
   esac
