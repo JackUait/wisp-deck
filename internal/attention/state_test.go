@@ -133,6 +133,32 @@ func TestStateMarshalTextRoundTrips(t *testing.T) {
 	}
 }
 
+func TestStateIdentityIsInMemoryOnly(t *testing.T) {
+	t.Parallel()
+
+	state := State{
+		Generation: "g-identity",
+		Sequence:   3,
+		Phase:      PhaseAttention,
+		Reason:     ReasonQuestion,
+		Identity:   "question-with-private-adapter-data",
+	}
+	record, err := state.MarshalText()
+	if err != nil {
+		t.Fatalf("MarshalText() error = %v", err)
+	}
+	if got, want := string(record), "1\tg-identity\t3\tattention\tquestion\n"; got != want {
+		t.Fatalf("MarshalText() = %q, want %q", got, want)
+	}
+	parsed, err := ParseState(record)
+	if err != nil {
+		t.Fatalf("ParseState() error = %v", err)
+	}
+	if parsed.Identity != "" {
+		t.Fatalf("ParseState() Identity = %q, want empty", parsed.Identity)
+	}
+}
+
 func TestStateMarshalTextRejectsInvalidState(t *testing.T) {
 	t.Parallel()
 
@@ -178,11 +204,11 @@ func TestAtomicWriterPublishesModeAndDeduplicates(t *testing.T) {
 	assertCurrentState(t, w, State{Generation: "generation-a", Sequence: 1, Phase: PhaseReady, Reason: ReasonNone})
 
 	mustPublish(t, w, PhaseAttention, ReasonQuestion, "question-1")
-	assertCurrentState(t, w, State{Generation: "generation-a", Sequence: 2, Phase: PhaseAttention, Reason: ReasonQuestion})
+	assertCurrentState(t, w, State{Generation: "generation-a", Sequence: 2, Phase: PhaseAttention, Reason: ReasonQuestion, Identity: "question-1"})
 	mustPublish(t, w, PhaseAttention, ReasonQuestion, "question-1")
-	assertCurrentState(t, w, State{Generation: "generation-a", Sequence: 2, Phase: PhaseAttention, Reason: ReasonQuestion})
+	assertCurrentState(t, w, State{Generation: "generation-a", Sequence: 2, Phase: PhaseAttention, Reason: ReasonQuestion, Identity: "question-1"})
 	mustPublish(t, w, PhaseAttention, ReasonQuestion, "question-2")
-	assertCurrentState(t, w, State{Generation: "generation-a", Sequence: 3, Phase: PhaseAttention, Reason: ReasonQuestion})
+	assertCurrentState(t, w, State{Generation: "generation-a", Sequence: 3, Phase: PhaseAttention, Reason: ReasonQuestion, Identity: "question-2"})
 
 	mustPublish(t, w, PhaseWorking, ReasonNone, "question-2")
 	assertCurrentState(t, w, State{Generation: "generation-a", Sequence: 4, Phase: PhaseWorking, Reason: ReasonNone})
@@ -206,9 +232,9 @@ func TestAtomicWriterResumesMatchingGeneration(t *testing.T) {
 	// The first identity after a restart attaches to the recovered semantic
 	// state without generating a duplicate alert. A later identity is new.
 	mustPublish(t, w, PhaseAttention, ReasonQuestion, "question-17")
-	assertCurrentState(t, w, State{Generation: "generation-a", Sequence: 17, Phase: PhaseAttention, Reason: ReasonQuestion})
+	assertCurrentState(t, w, State{Generation: "generation-a", Sequence: 17, Phase: PhaseAttention, Reason: ReasonQuestion, Identity: "question-17"})
 	mustPublish(t, w, PhaseAttention, ReasonQuestion, "question-18")
-	assertCurrentState(t, w, State{Generation: "generation-a", Sequence: 18, Phase: PhaseAttention, Reason: ReasonQuestion})
+	assertCurrentState(t, w, State{Generation: "generation-a", Sequence: 18, Phase: PhaseAttention, Reason: ReasonQuestion, Identity: "question-18"})
 }
 
 func TestAtomicWriterIgnoresOtherGenerationRecord(t *testing.T) {
@@ -381,7 +407,9 @@ func assertCurrentState(t *testing.T, w *AtomicWriter, want State) {
 	if err != nil {
 		t.Fatalf("ParseState(on disk) error = %v", err)
 	}
-	if got != want {
-		t.Fatalf("on-disk state = %#v, want %#v", got, want)
+	onDiskWant := want
+	onDiskWant.Identity = ""
+	if got != onDiskWant {
+		t.Fatalf("on-disk state = %#v, want %#v", got, onDiskWant)
 	}
 }

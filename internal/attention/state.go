@@ -46,14 +46,15 @@ const (
 	ReasonError      Reason = "error"
 )
 
-// State is the complete normalized state persisted by one adapter generation.
-// Adapter-specific event identities remain in memory and are represented on
-// disk only by Sequence advancing.
+// State is the complete normalized state for one adapter generation. Identity
+// is adapter-private dedupe state: it is returned in memory but never appears
+// in the serialized protocol, where only Sequence represents identity changes.
 type State struct {
 	Generation string
 	Sequence   uint64
 	Phase      Phase
 	Reason     Reason
+	Identity   string
 }
 
 // ParseState parses one complete protocol record without accepting partial or
@@ -152,7 +153,6 @@ type AtomicWriter struct {
 	state      State
 	hasState   bool
 
-	lastIdentity  string
 	identityKnown bool
 }
 
@@ -215,6 +215,9 @@ func (w *AtomicWriter) Publish(phase Phase, reason Reason, identity string) erro
 		Phase:      phase,
 		Reason:     reason,
 	}
+	if phase == PhaseAttention {
+		candidate.Identity = identity
+	}
 	if err := candidate.validate(); err != nil {
 		return err
 	}
@@ -226,11 +229,11 @@ func (w *AtomicWriter) Publish(phase Phase, reason Reason, identity string) erro
 	identityChanged := false
 	if !semanticChanged && phase == PhaseAttention && identity != "" {
 		if !w.identityKnown {
-			w.lastIdentity = identity
+			w.state.Identity = identity
 			w.identityKnown = true
 			return nil
 		}
-		identityChanged = identity != w.lastIdentity
+		identityChanged = identity != w.state.Identity
 	}
 	if !semanticChanged && !identityChanged {
 		return nil
@@ -250,13 +253,10 @@ func (w *AtomicWriter) Publish(phase Phase, reason Reason, identity string) erro
 	w.state = candidate
 	w.hasState = true
 	if phase == PhaseAttention && identity != "" {
-		w.lastIdentity = identity
 		w.identityKnown = true
 	} else if phase == PhaseAttention {
-		w.lastIdentity = ""
 		w.identityKnown = false
 	} else {
-		w.lastIdentity = ""
 		w.identityKnown = true
 	}
 	return nil
