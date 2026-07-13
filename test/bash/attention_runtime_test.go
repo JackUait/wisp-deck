@@ -514,6 +514,128 @@ attention_relaunch_lock_release "$2" || exit 92
 	}
 }
 
+func TestAttentionRuntimeNeverReclaimsOwnerlessLiveLock(t *testing.T) {
+	base := t.TempDir()
+	attention := createAttentionFixture(t, base, "claude")
+	module := filepath.Join(projectRoot(t), "lib", "attention.sh")
+	lockDir := filepath.Join(attention["root"], ".relaunch-lock")
+	chmodBlocked := filepath.Join(base, "chmod-blocked")
+	chmodRelease := filepath.Join(base, "chmod-release")
+	aAcquired := filepath.Join(base, "a-acquired-ownerless")
+	aRelease := filepath.Join(base, "a-release-ownerless")
+	bReady := filepath.Join(base, "b-ready-ownerless")
+	bAcquired := filepath.Join(base, "b-acquired-ownerless")
+	bRelease := filepath.Join(base, "b-release-ownerless")
+
+	realChmod, err := exec.LookPath("chmod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := mockCommand(t, base, "chmod", `
+last=""
+for arg in "$@"; do last="$arg"; done
+if [ "$last" = "$BLOCK_LOCK_DIR" ]; then
+  : > "$CHMOD_BLOCKED"
+  while [ ! -e "$CHMOD_RELEASE" ]; do sleep 0.01; done
+fi
+exec "$REAL_CHMOD" "$@"`)
+
+	start := func(script string, env []string, args ...string) (*exec.Cmd, <-chan error, *bytes.Buffer) {
+		t.Helper()
+		cmdArgs := append([]string{"-c", script, "attention-ownerless"}, args...)
+		cmd := exec.Command("bash", cmdArgs...)
+		cmd.Env = env
+		var output bytes.Buffer
+		cmd.Stdout = &output
+		cmd.Stderr = &output
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		return cmd, done, &output
+	}
+	waitFor := func(path string, done <-chan error, output *bytes.Buffer) {
+		t.Helper()
+		deadline := time.NewTimer(15 * time.Second)
+		defer deadline.Stop()
+		for {
+			if _, err := os.Stat(path); err == nil {
+				return
+			}
+			select {
+			case err := <-done:
+				t.Fatalf("process exited before %s: %v: %s", filepath.Base(path), err, output.String())
+			case <-deadline.C:
+				t.Fatalf("timed out waiting for %s: %s", filepath.Base(path), output.String())
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}
+	waitDone := func(cmd *exec.Cmd, done <-chan error, output *bytes.Buffer) error {
+		t.Helper()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(15 * time.Second):
+			_ = cmd.Process.Kill()
+			<-done
+			return fmt.Errorf("timed out: %s", output.String())
+		}
+	}
+
+	envA := buildEnv(t, []string{bin},
+		"BLOCK_LOCK_DIR="+lockDir,
+		"CHMOD_BLOCKED="+chmodBlocked,
+		"CHMOD_RELEASE="+chmodRelease,
+		"REAL_CHMOD="+realChmod,
+	)
+	cmdA, doneA, outputA := start(`
+source "$1" || exit 100
+attention_relaunch_lock_acquire "$2" || exit 101
+: > "$3"
+while [ ! -e "$4" ]; do sleep 0.01; done
+attention_relaunch_lock_release "$2" || exit 102
+`, envA, module, attention["root"], aAcquired, aRelease)
+	waitFor(chmodBlocked, doneA, outputA)
+
+	cmdB, doneB, outputB := start(`
+source "$1" || exit 110
+: > "$3"
+attention_relaunch_lock_acquire "$2" || exit 111
+: > "$4"
+while [ ! -e "$5" ]; do sleep 0.01; done
+attention_relaunch_lock_release "$2" || exit 112
+`, buildEnv(t, nil), module, attention["root"], bReady, bAcquired, bRelease)
+	waitFor(bReady, doneB, outputB)
+	time.Sleep(3 * time.Second)
+	_, earlyErr := os.Stat(bAcquired)
+
+	if err := os.WriteFile(chmodRelease, []byte("release\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(aAcquired, doneA, outputA)
+	if err := os.WriteFile(aRelease, []byte("release\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	aErr := waitDone(cmdA, doneA, outputA)
+	waitFor(bAcquired, doneB, outputB)
+	if err := os.WriteFile(bRelease, []byte("release\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bErr := waitDone(cmdB, doneB, outputB)
+
+	if earlyErr == nil {
+		t.Error("waiter reclaimed an ownerless lock while its creator was still alive")
+	}
+	if aErr != nil {
+		t.Errorf("owner process failed: %v: %s", aErr, outputA.String())
+	}
+	if bErr != nil {
+		t.Errorf("waiter process failed: %v: %s", bErr, outputB.String())
+	}
+}
+
 func TestAttentionRuntimeCleanupRemovesOnlySessionRoot(t *testing.T) {
 	base := t.TempDir()
 	out, code := runAttentionBash(t, `

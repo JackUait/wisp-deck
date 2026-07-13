@@ -239,11 +239,12 @@ attention_read_descriptor() {
 
 # attention_relaunch_lock_acquire <root>
 # Serialize the rotate/stamp/build/respawn transaction across the independent
-# ledger and auto-switch shells. Dead owners are reclaimed; a half-created
-# empty lock is removed only after a grace period and only with rmdir.
+# ledger and auto-switch shells. Dead recorded owners are reclaimed. An
+# ownerless lock is never reclaimed: its creator may be paused between mkdir
+# and publishing ownership, so removing it could admit two concurrent owners.
 attention_relaunch_lock_acquire() {
   local root="${1-}" lock owner owner_pid owner_token
-  local attempts=0 empty_attempts=0 token
+  local attempts=0 token
   _attention_valid_field "$root" || return 1
   [ -d "$root" ] || return 1
   [ -z "$_ATTENTION_RELAUNCH_LOCK_ROOT" ] || return 1
@@ -263,13 +264,6 @@ attention_relaunch_lock_acquire() {
           fi
           ;;
       esac
-      empty_attempts=0
-    else
-      empty_attempts=$((empty_attempts + 1))
-      if [ "$empty_attempts" -ge 20 ]; then
-        rmdir "$lock" 2>/dev/null || true
-        empty_attempts=0
-      fi
     fi
     attempts=$((attempts + 1))
     [ "$attempts" -lt 400 ] || return 1
