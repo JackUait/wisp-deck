@@ -23,6 +23,49 @@ if ! declare -f resolve_opencode_cmd >/dev/null 2>&1; then
   unset _as_lib_dir
 fi
 
+# The ledger and auto-switch paths source this module in fresh zsh/bash
+# processes, outside wrapper.sh's module stack. Load the generation runtime here
+# as well so every respawn can fence the previous adapter before rebuilding.
+if ! declare -f attention_begin_generation >/dev/null 2>&1; then
+  _as_attention_lib_dir="${WISP_DECK_LIB_DIR:-${BASH_SOURCE[0]%/*}}"
+  # shellcheck source=/dev/null
+  [ -f "$_as_attention_lib_dir/attention.sh" ] && source "$_as_attention_lib_dir/attention.sh"
+  unset _as_attention_lib_dir
+fi
+
+# Generation-local Claude settings must be rebuilt by the independent ledger
+# and auto-switch shells too; they do not inherit wrapper.sh's sourced helpers.
+if ! declare -f write_claude_launch_settings >/dev/null 2>&1; then
+  _as_settings_lib_dir="${WISP_DECK_LIB_DIR:-${BASH_SOURCE[0]%/*}}"
+  # shellcheck source=/dev/null
+  [ -f "$_as_settings_lib_dir/settings-json.sh" ] && source "$_as_settings_lib_dir/settings-json.sh"
+  unset _as_settings_lib_dir
+fi
+
+# A switch to OpenCode is also a launch boundary. Load the installer in the
+# independent ledger/auto-switch shells so they can atomically refresh the
+# plugin before rotating attention state or killing the current pane.
+if ! declare -f install_opencode_plugin >/dev/null 2>&1; then
+  _as_install_lib_dir="${WISP_DECK_LIB_DIR:-${BASH_SOURCE[0]%/*}}"
+  # shellcheck source=/dev/null
+  [ -f "$_as_install_lib_dir/install.sh" ] && source "$_as_install_lib_dir/install.sh"
+  unset _as_install_lib_dir
+fi
+
+# _prepare_opencode_plugin_launch <tool> — refresh OpenCode's event adapter at
+# every respawn boundary. Failure is a safe no-op for the switch: the caller
+# leaves the current pane and attention generation alive.
+_prepare_opencode_plugin_launch() {
+  [ "$1" = "opencode" ] || return 0
+  if declare -f install_opencode_plugin >/dev/null 2>&1 \
+     && install_opencode_plugin; then
+    return 0
+  fi
+  printf 'Failed to install OpenCode plugin; keeping the current agent running.\n' \
+    >>"${WISP_DECK_ERROR_LOG:-/dev/null}" 2>/dev/null || true
+  return 1
+}
+
 # reload_switcher_lib <lib_dir> — re-source THIS module from disk so a
 # long-running ledger picks up on-disk edits to the switcher (popup dimensions,
 # flags, backdrop) without the whole pane having to restart. Called right before
@@ -405,8 +448,8 @@ replay_ai_draft() {
 }
 
 # build_switch_launch_cmd <tool> <tool_cmd> <settings> <filter> \
-#   <project_dir> <new_account_dir> [resume_session] — build the launch command that
-# respawns the AI pane under new_account_dir.
+#   <project_dir> <new_account_dir> [resume_session] [claude_handoff_arg] — build
+# the launch command that respawns the AI pane under new_account_dir.
 #
 # resume_session is the id of THIS pane's active conversation (the statusline
 # stamps it only once the transcript is durable — see current_ai_session). Its
@@ -422,7 +465,8 @@ replay_ai_draft() {
 # left unset.
 build_switch_launch_cmd() {
   local tool="$1" tool_cmd="$2" settings="$3" filter="$4" \
-    project_dir="$5" new_account_dir="$6" resume_session="${7:-}"
+    project_dir="$5" new_account_dir="$6" resume_session="${7:-}" \
+    claude_handoff_arg="${8:-}"
   if [ -n "$resume_session" ]; then
     WISP_DECK_RESUME=1 \
     WISP_DECK_RESUME_SESSION="$resume_session" \
@@ -441,6 +485,7 @@ build_switch_launch_cmd() {
   # pane's.
   local extra=""
   [ "$tool" = "opencode" ] && extra="$project_dir"
+  [ "$tool" = "claude" ] && extra="$claude_handoff_arg"
   WISP_DECK_RESUME='' \
   WISP_DECK_RESUME_SESSION='' \
   WISP_DECK_CLAUDE_ACCOUNT_DIR="$new_account_dir" \
@@ -459,6 +504,7 @@ _read_relaunch_ctx() {
       tool) _rc_tool="$v" ;;
       tool_cmd) _rc_tool_cmd="$v" ;;
       settings) _rc_settings="$v" ;;
+      settings_source) _rc_settings_source="$v" ;;
       filter) _rc_filter="$v" ;;
       project_dir) _rc_project_dir="$v" ;;
       accounts_dir) _rc_accounts_dir="$v" ;;
@@ -471,13 +517,17 @@ _read_relaunch_ctx() {
       opencode_cmd) _rc_opencode_cmd="$v" ;;
       codex_cmd) _rc_codex_cmd="$v" ;;
       tool_pref) _rc_tool_pref="$v" ;;
+      attention_root) _rc_attention_root="$v" ;;
+      attention_descriptor) _rc_attention_descriptor="$v" ;;
     esac
   done < "$file"
 }
 
 # write_relaunch_context <out_file> <tool> <tool_cmd> <settings> \
 #   <filter> <project_dir> <cfg_root> [tools] [claude_cmd] [opencode_cmd] \
-#   [codex_cmd] — persist everything the mid-session switch needs to rebuild
+#   [codex_cmd] [attention_root] [attention_descriptor]
+#   [claude_settings_source] — persist everything
+# the mid-session switch needs to rebuild
 # the AI launch and locate the account files. wrapper.sh writes it once per
 # launch (every tool) and passes its path to the pane as
 # WISP_DECK_RELAUNCH_FILE. key=value, one per line — read back by
@@ -489,12 +539,15 @@ _read_relaunch_ctx() {
 write_relaunch_context() {
   local out="$1" tool="$2" tool_cmd="$3" settings="$4" \
     filter="$5" project_dir="$6" cfg_root="$7" tools="${8:-}" \
-    claude_cmd="${9:-}" opencode_cmd="${10:-}" codex_cmd="${11:-}"
+    claude_cmd="${9:-}" opencode_cmd="${10:-}" codex_cmd="${11:-}" \
+    attention_root="${12:-}" attention_descriptor="${13:-}" \
+    claude_settings_source="${14:-}"
   mkdir -p "$(dirname "$out")" 2>/dev/null
   {
     printf 'tool=%s\n' "$tool"
     printf 'tool_cmd=%s\n' "$tool_cmd"
     printf 'settings=%s\n' "$settings"
+    printf 'settings_source=%s\n' "$claude_settings_source"
     printf 'filter=%s\n' "$filter"
     printf 'project_dir=%s\n' "$project_dir"
     printf 'accounts_dir=%s\n' "$cfg_root/claude-accounts"
@@ -507,7 +560,105 @@ write_relaunch_context() {
     printf 'opencode_cmd=%s\n' "$opencode_cmd"
     printf 'codex_cmd=%s\n' "$codex_cmd"
     printf 'tool_pref=%s\n' "$cfg_root/ai-tool"
+    printf 'attention_root=%s\n' "$attention_root"
+    printf 'attention_descriptor=%s\n' "$attention_descriptor"
   } > "$out"
+}
+
+# stage_claude_relaunch_settings <tool> <previous-generated-path>
+#   <active-wisp-settings-source> <attention-root>
+# Build the complete launch overlay before fencing the live generation. The
+# staged file lives on the same private filesystem as the future generation, so
+# publication after rotation is one rename and never rereads a source that may
+# have been deleted or rewritten in the meantime. Print an empty line for tools
+# and legacy contexts that do not use a semantic Claude overlay.
+stage_claude_relaunch_settings() {
+  local tool="$1" previous="${2:-}" source="${3:-}" root="${4:-}"
+  local stage_dir stage_path
+  if [ "$tool" != "claude" ] || [ -z "$root" ]; then
+    printf '\n'
+    return 0
+  fi
+  [ -d "$root" ] || return 1
+  declare -f write_claude_launch_settings >/dev/null 2>&1 || return 1
+  # A pre-migration live context may carry its durable selected config in the
+  # old settings field. A deleted prior-generation path is never reused.
+  if [ -z "$source" ] && [ -f "$previous" ]; then
+    source="$previous"
+  fi
+  stage_dir="$(umask 077; mktemp -d "$root/generation.XXXXXX")" || return 1
+  if ! stage_path="$(write_claude_launch_settings "$stage_dir" "$source")"; then
+    rmdir "$stage_dir" 2>/dev/null || true
+    return 1
+  fi
+  printf '%s\n' "$stage_path"
+}
+
+# discard_claude_relaunch_settings_stage <attention-root> <staged-file>
+# Remove only the one-file staging directory created above.
+discard_claude_relaunch_settings_stage() {
+  local root="${1:-}" staged="${2:-}" stage_dir
+  [ -n "$root" ] && [ -n "$staged" ] || return 0
+  stage_dir="${staged%/*}"
+  case "$staged" in
+    "$root"/generation.*/claude-settings.json) ;;
+    *) return 1 ;;
+  esac
+  rm -f "$staged" || return 1
+  rmdir "$stage_dir" 2>/dev/null || true
+}
+
+# prepare_claude_relaunch_settings <tool> <previous-generated-path>
+#   <active-wisp-settings-source> <staged-file>
+# Publish the preflighted overlay into the generation that
+# prepare_attention_relaunch just created. Older contexts without a semantic
+# runtime keep their durable settings path.
+prepare_claude_relaunch_settings() {
+  local tool="$1" previous="${2:-}" source="${3:-}" staged="${4:-}"
+  local target stage_dir
+  if [ "$tool" != "claude" ] \
+     || [ -z "${WISP_DECK_ATTENTION_FILE:-}" ]; then
+    printf '%s\n' "$previous"
+    return 0
+  fi
+  [ -f "$staged" ] || return 1
+  stage_dir="${staged%/*}"
+  target="${WISP_DECK_ATTENTION_FILE%/state}/claude-settings.json"
+  if ! mv -f "$staged" "$target" || ! chmod 600 "$target"; then
+    return 1
+  fi
+  rmdir "$stage_dir" 2>/dev/null || true
+  printf '%s\n' "$target"
+}
+
+# prepare_attention_relaunch <tmux> <root> <descriptor> <tool>
+# Rotate first, stamp the environment the next pane inherits, then let callers
+# construct and respawn the command. Empty roots are legacy contexts and retain
+# their pre-attention fail-open behavior.
+prepare_attention_relaunch() {
+  local tmux_cmd="$1" root="$2" descriptor="$3" tool="$4"
+
+  WISP_DECK_TOOL="$tool"
+  export WISP_DECK_TOOL
+  if [ -z "$root" ]; then
+    "$tmux_cmd" set-environment WISP_DECK_TOOL "$tool" 2>/dev/null || true
+    return 0
+  fi
+  [ "$descriptor" = "$root/descriptor" ] || return 1
+  declare -f attention_begin_generation >/dev/null 2>&1 || return 1
+  attention_begin_generation "$root" "$tool" >/dev/null || return 1
+  [ "$WISP_DECK_ATTENTION_DESCRIPTOR" = "$descriptor" ] || return 1
+
+  "$tmux_cmd" set-environment WISP_DECK_TOOL "$tool" 2>/dev/null || return 1
+  "$tmux_cmd" set-environment WISP_DECK_ATTENTION_ROOT \
+    "$WISP_DECK_ATTENTION_ROOT" 2>/dev/null || return 1
+  "$tmux_cmd" set-environment WISP_DECK_ATTENTION_DESCRIPTOR \
+    "$WISP_DECK_ATTENTION_DESCRIPTOR" 2>/dev/null || return 1
+  "$tmux_cmd" set-environment WISP_DECK_ATTENTION_GENERATION \
+    "$WISP_DECK_ATTENTION_GENERATION" 2>/dev/null || return 1
+  "$tmux_cmd" set-environment WISP_DECK_ATTENTION_FILE \
+    "$WISP_DECK_ATTENTION_FILE" 2>/dev/null || return 1
+  return 0
 }
 
 # relaunch_ai_pane <tmux_cmd> <relaunch_file> [chosen] — respawn the AI pane
@@ -529,15 +680,16 @@ relaunch_ai_pane() {
     have_chosen=1
     chosen="$3"
   fi
-  local _rc_tool="" _rc_tool_cmd="" _rc_settings="" \
+  local _rc_tool="" _rc_tool_cmd="" _rc_settings="" _rc_settings_source="" \
     _rc_filter="" _rc_project_dir="" _rc_accounts_dir="" _rc_pointer="" \
     _rc_list="" _rc_colors="" _rc_default_label="" \
     _rc_tools="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_codex_cmd="" \
-    _rc_tool_pref=""
+    _rc_tool_pref="" _rc_attention_root="" _rc_attention_descriptor=""
   [ -f "$relaunch_file" ] || return 0
   _read_relaunch_ctx "$relaunch_file"
 
-  local new_dir pane cmd
+  local new_dir pane cmd launch_settings staged_settings="" \
+    background_mode=default attention_lock_held=0
   if [ "$have_chosen" = 1 ]; then
     new_dir=""
     if [ -n "$chosen" ] && [ "$chosen" != "default" ] && [ -d "$_rc_accounts_dir/$chosen" ]; then
@@ -551,6 +703,7 @@ relaunch_ai_pane() {
   # `claude -c` under it resumes the same history (mirrors wrapper.sh's per-account
   # sync at launch). Best-effort — helpers may be absent in a bare test source.
   if [ -n "$new_dir" ]; then
+    background_mode=isolated
     command -v sync_claude_shared_state >/dev/null 2>&1 \
       && sync_claude_shared_state "$HOME/.claude" "$new_dir"
     command -v sync_claude_shared_settings >/dev/null 2>&1 \
@@ -559,6 +712,12 @@ relaunch_ai_pane() {
 
   pane="$(find_ai_pane "$tmux_cmd")"
   [ -n "$pane" ] || return 0
+  _prepare_opencode_plugin_launch "$_rc_tool" || return 0
+  if [ -n "$_rc_attention_root" ]; then
+    declare -f attention_relaunch_lock_acquire >/dev/null 2>&1 || return 0
+    attention_relaunch_lock_acquire "$_rc_attention_root" || return 0
+    attention_lock_held=1
+  fi
 
   # Resume the exact conversation this pane was on (the statusline stamped its id),
   # so the switch carries over THIS session rather than the cwd's most-recent one.
@@ -566,8 +725,38 @@ relaunch_ai_pane() {
   # then launches a fresh claude rather than resuming (see build_switch_launch_cmd).
   local sid
   sid="$(current_ai_session "$tmux_cmd")"
+  staged_settings="$(stage_claude_relaunch_settings "$_rc_tool" \
+    "$_rc_settings" "$_rc_settings_source" "$_rc_attention_root")" || {
+    [ "$attention_lock_held" = 1 ] \
+      && attention_relaunch_lock_release "$_rc_attention_root" 2>/dev/null || true
+    return 0
+  }
+  if ! prepare_attention_relaunch "$tmux_cmd" "$_rc_attention_root" \
+    "$_rc_attention_descriptor" "$_rc_tool"; then
+    discard_claude_relaunch_settings_stage "$_rc_attention_root" \
+      "$staged_settings" 2>/dev/null || true
+    [ "$attention_lock_held" = 1 ] \
+      && attention_relaunch_lock_release "$_rc_attention_root" 2>/dev/null || true
+    return 0
+  fi
+  launch_settings="$(prepare_claude_relaunch_settings "$_rc_tool" \
+    "$_rc_settings" "$_rc_settings_source" "$staged_settings")" || {
+    discard_claude_relaunch_settings_stage "$_rc_attention_root" \
+      "$staged_settings" 2>/dev/null || true
+    [ "$attention_lock_held" = 1 ] \
+      && attention_relaunch_lock_release "$_rc_attention_root" 2>/dev/null || true
+    return 0
+  }
+  if [ "$_rc_tool" = "claude" ] \
+     && declare -f attention_start_claude_background_candidate >/dev/null 2>&1; then
+    attention_start_claude_background_candidate \
+      "$_rc_tool_cmd" "${new_dir:-$HOME/.claude}" \
+      "${_rc_accounts_dir%/claude-accounts}" "$_rc_attention_root" \
+      "$background_mode" \
+      "${WISP_DECK_ERROR_LOG:-/dev/null}" 2>/dev/null || true
+  fi
   cmd="$(build_switch_launch_cmd "$_rc_tool" "$_rc_tool_cmd" \
-    "$_rc_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir" "$sid")"
+    "$launch_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir" "$sid")"
 
   "$tmux_cmd" respawn-pane -k -t "$pane" -c "$_rc_project_dir" "$cmd; exec bash"
 
@@ -576,6 +765,8 @@ relaunch_ai_pane() {
   # than the global pointer. Default stamps an EMPTY value (set, not unset) —
   # an unset var means "pre-stamp session" and falls back to the pointer.
   "$tmux_cmd" set-environment WISP_DECK_CLAUDE_ACCOUNT "${new_dir##*/}" 2>/dev/null
+  [ "$attention_lock_held" = 1 ] \
+    && attention_relaunch_lock_release "$_rc_attention_root" 2>/dev/null || true
   return 0
 }
 
@@ -730,12 +921,14 @@ _tool_cmd_for() {
 # — respawn the AI pane under ANOTHER agent (the popup's "tool:<name>" result,
 # or a claude login picked while a different agent runs — then target_tool is
 # claude and chosen_account the login). Beyond the respawn it keeps every
-# tool-identity surface consistent: the tmux session env (WISP_DECK_TOOL — the
-# pill and the next switch read it), the pane border accent, and the relaunch
-# context itself (the next switch must know what the pane NOW runs). It
-# deliberately leaves the launcher's ai-tool preference alone — that file
+# tool-identity source consistent: the tmux session env (WISP_DECK_TOOL — the
+# pill and the next switch read it) and the relaunch context itself (the next
+# switch must know what the pane NOW runs). The semantic watcher consumes that
+# identity and remains the sole owner of title, sound, theme, and keep-awake
+# policy. This function deliberately leaves the launcher's ai-tool preference
+# alone — that file
 # chooses the tool for future/other sessions, and a mid-session switch is
-# session-scoped, so steering it would leak this choice everywhere. Leaving claude first
+# session-scoped, so steering it would leak this choice everywhere. Leaving Claude first
 # makes it persist any unsent draft into prompt history (Esc-Esc) — there is
 # no replay into a different agent's input, so the draft stays one Up-press
 # away for the user's next claude stint. Switching TO claude resumes the
@@ -743,19 +936,32 @@ _tool_cmd_for() {
 # Default login). Fail-open everywhere.
 relaunch_switch_tool() {
   local tmux_cmd="$1" relaunch_file="$2" target="$3" chosen_acct="${4:-}"
-  local _rc_tool="" _rc_tool_cmd="" _rc_settings="" \
+  local _rc_tool="" _rc_tool_cmd="" _rc_settings="" _rc_settings_source="" \
     _rc_filter="" _rc_project_dir="" _rc_accounts_dir="" _rc_pointer="" \
     _rc_list="" _rc_colors="" _rc_default_label="" \
     _rc_tools="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_codex_cmd="" \
-    _rc_tool_pref=""
+    _rc_tool_pref="" _rc_attention_root="" _rc_attention_descriptor=""
   [ -f "$relaunch_file" ] || return 0
   _read_relaunch_ctx "$relaunch_file"
 
-  local tool_cmd pane
+  local tool_cmd pane staged_settings="" attention_lock_held=0
   tool_cmd="$(_tool_cmd_for "$target")"
   [ -n "$tool_cmd" ] || return 0
   pane="$(find_ai_pane "$tmux_cmd")"
   [ -n "$pane" ] || return 0
+  _prepare_opencode_plugin_launch "$target" || return 0
+  if [ -n "$_rc_attention_root" ]; then
+    declare -f attention_relaunch_lock_acquire >/dev/null 2>&1 || return 0
+    attention_relaunch_lock_acquire "$_rc_attention_root" || return 0
+    attention_lock_held=1
+  fi
+
+  staged_settings="$(stage_claude_relaunch_settings "$target" \
+    "$_rc_settings" "$_rc_settings_source" "$_rc_attention_root")" || {
+    [ "$attention_lock_held" = 1 ] \
+      && attention_relaunch_lock_release "$_rc_attention_root" 2>/dev/null || true
+    return 0
+  }
 
   if [ "$_rc_tool" = "claude" ]; then
     stash_ai_draft "$tmux_cmd" "$pane" \
@@ -775,13 +981,14 @@ relaunch_switch_tool() {
   fi
   _pool_capture_leaving_tool "$tmux_cmd" "$pool"
 
-  local new_dir="" sid=""
+  local new_dir="" sid="" background_mode=default
   if [ "$target" = "claude" ]; then
     if [ -n "$chosen_acct" ] && [ "$chosen_acct" != "default" ] \
        && [ -d "$_rc_accounts_dir/$chosen_acct" ]; then
       new_dir="$_rc_accounts_dir/$chosen_acct"
     fi
     if [ -n "$new_dir" ]; then
+      background_mode=isolated
       command -v sync_claude_shared_state >/dev/null 2>&1 \
         && sync_claude_shared_state "$HOME/.claude" "$new_dir"
       command -v sync_claude_shared_settings >/dev/null 2>&1 \
@@ -817,19 +1024,48 @@ relaunch_switch_tool() {
     fi
   fi
 
-  local cmd
+  local cmd launch_settings builder_handoff="" trailing_handoff="$handoff_arg"
+  if ! prepare_attention_relaunch "$tmux_cmd" "$_rc_attention_root" \
+    "$_rc_attention_descriptor" "$target"; then
+    discard_claude_relaunch_settings_stage "$_rc_attention_root" \
+      "$staged_settings" 2>/dev/null || true
+    [ "$attention_lock_held" = 1 ] \
+      && attention_relaunch_lock_release "$_rc_attention_root" 2>/dev/null || true
+    return 0
+  fi
+  launch_settings="$(prepare_claude_relaunch_settings "$target" \
+    "$_rc_settings" "$_rc_settings_source" "$staged_settings")" || {
+    discard_claude_relaunch_settings_stage "$_rc_attention_root" \
+      "$staged_settings" 2>/dev/null || true
+    [ "$attention_lock_held" = 1 ] \
+      && attention_relaunch_lock_release "$_rc_attention_root" 2>/dev/null || true
+    return 0
+  }
+  if [ "$target" = "claude" ] \
+     && declare -f attention_start_claude_background_candidate >/dev/null 2>&1; then
+    attention_start_claude_background_candidate \
+      "$tool_cmd" "${new_dir:-$HOME/.claude}" \
+      "${_rc_accounts_dir%/claude-accounts}" "$_rc_attention_root" \
+      "$background_mode" \
+      "${WISP_DECK_ERROR_LOG:-/dev/null}" 2>/dev/null || true
+  fi
+  # The attention adapter wraps Claude's complete argv in `bash -c`. A
+  # cross-agent prompt therefore has to be part of the raw inner command;
+  # appending it to the built wrapper would turn it into bash's $0.
+  if [ "$target" = "claude" ] \
+     && [ -n "${WISP_DECK_ATTENTION_GENERATION:-}" ] \
+     && [ -n "${WISP_DECK_ATTENTION_FILE:-}" ]; then
+    builder_handoff="$handoff_arg"
+    trailing_handoff=""
+  fi
   cmd="$(build_switch_launch_cmd "$target" "$tool_cmd" \
-    "$_rc_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir" "$sid")"
-  "$tmux_cmd" respawn-pane -k -t "$pane" -c "$_rc_project_dir" "$cmd$handoff_arg; exec bash"
+    "$launch_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir" "$sid" \
+    "$builder_handoff")"
+  "$tmux_cmd" respawn-pane -k -t "$pane" -c "$_rc_project_dir" "$cmd$trailing_handoff; exec bash"
 
   [ -n "$pool" ] && pool_set "$pool/meta" last_tool "$target"
-  "$tmux_cmd" set-environment WISP_DECK_TOOL "$target" 2>/dev/null
   if [ "$target" = "claude" ]; then
     "$tmux_cmd" set-environment WISP_DECK_CLAUDE_ACCOUNT "${new_dir##*/}" 2>/dev/null
-  fi
-  if command -v get_tool_accent >/dev/null 2>&1; then
-    "$tmux_cmd" set-option pane-active-border-style \
-      "fg=colour$(get_tool_accent "$target")" 2>/dev/null
   fi
   # NOTE: deliberately does NOT write the launcher's ai-tool preference. That
   # file steers which tool wrapper.sh picks for the NEXT launch and for OTHER
@@ -840,7 +1076,11 @@ relaunch_switch_tool() {
   write_relaunch_context "$relaunch_file" "$target" "$tool_cmd" \
     "$_rc_settings" "$_rc_filter" "$_rc_project_dir" \
     "${_rc_accounts_dir%/claude-accounts}" "$_rc_tools" \
-    "$_rc_claude_cmd" "$_rc_opencode_cmd" "$_rc_codex_cmd"
+    "$_rc_claude_cmd" "$_rc_opencode_cmd" "$_rc_codex_cmd" \
+    "$_rc_attention_root" "$_rc_attention_descriptor" \
+    "$_rc_settings_source"
+  [ "$attention_lock_held" = 1 ] \
+    && attention_relaunch_lock_release "$_rc_attention_root" 2>/dev/null || true
   return 0
 }
 
@@ -854,11 +1094,11 @@ relaunch_switch_tool() {
 # switch).
 auto_switch_relaunch() {
   local tmux_cmd="$1" relaunch_file="$2" target="$3"
-  local _rc_tool="" _rc_tool_cmd="" _rc_settings="" \
+  local _rc_tool="" _rc_tool_cmd="" _rc_settings="" _rc_settings_source="" \
     _rc_filter="" _rc_project_dir="" _rc_accounts_dir="" _rc_pointer="" \
     _rc_list="" _rc_colors="" _rc_default_label="" \
     _rc_tools="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_codex_cmd="" \
-    _rc_tool_pref=""
+    _rc_tool_pref="" _rc_attention_root="" _rc_attention_descriptor=""
   [ -f "$relaunch_file" ] || return 0
   _read_relaunch_ctx "$relaunch_file"
   local session_acct want
@@ -886,11 +1126,11 @@ auto_switch_relaunch() {
 # old login (the account appeared to "switch back").
 open_account_switcher() {
   local tmux_cmd="$1" relaunch_file="$2"
-  local _rc_tool="" _rc_tool_cmd="" _rc_settings="" \
+  local _rc_tool="" _rc_tool_cmd="" _rc_settings="" _rc_settings_source="" \
     _rc_filter="" _rc_project_dir="" _rc_accounts_dir="" _rc_pointer="" \
     _rc_list="" _rc_colors="" _rc_default_label="" \
     _rc_tools="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_codex_cmd="" \
-    _rc_tool_pref=""
+    _rc_tool_pref="" _rc_attention_root="" _rc_attention_descriptor=""
   [ -f "$relaunch_file" ] || return 0
   _read_relaunch_ctx "$relaunch_file"
 

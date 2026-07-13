@@ -39,11 +39,16 @@ func TestNothingReachesTheSessionTerminalOnceTheAIToolOwnsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	logFile := filepath.Join(dir, "cfg", "logs", "sess.log")
+	attentionRoot := filepath.Join(dir, "attention")
+	generation := "generation.terminal1"
+	stateFile := writeAttentionState(t, attentionRoot, generation, "0", "working", "-")
+	descriptor := writeAttentionDescriptor(t, attentionRoot, generation, "claude", stateFile)
+	workingTick := filepath.Join(dir, "working-tick")
+	attentionTick := filepath.Join(dir, "attention-tick")
 
 	binDir := mockCommand(t, dir, "tmux", `
 case "$1" in
-  list-panes)   echo "0 0" ;;
-  capture-pane) echo "> " ;;
+  list-panes)   touch "$WORKING_TICK"; printf '%%1\t1\n' ;;
   new-session)  echo "tmux: a REAL launch failure" >&2 ;;
 esac
 exit 0
@@ -71,17 +76,29 @@ play_notification_sound() {
   echo "STRAY STDOUT"
   echo "STRAY STDERR" >&2
   cat /definitely/not/a/file
+  touch "$ATTENTION_TICK"
 }
-
-# The Stop-hook marker: makes the watcher see the agent as idle, which is the
-# tick that fires the tab title AND the notification sound (our leaky lib).
-touch %q
 
 exec 3>&2
 gt_mute_terminal_stderr %q
 export WISP_DECK_ERROR_LOG=%q
 
-start_tab_title_watcher "sess" "claude" "myproj" "full" "tmux" %q %q
+start_tab_title_watcher "sess" "myproj" "full" "tmux" %q %q
+
+# Prove the semantic consumer has read the initial working record before
+# publishing attention. The transition fires the notification callback above.
+for _i in {1..100}; do [ -f "$WORKING_TICK" ] && break; sleep 0.02; done
+if [ ! -f "$WORKING_TICK" ]; then
+  stop_tab_title_watcher
+  exit 70
+fi
+printf '1\t%%s\t1\tattention\tdone\n' %q > %q.tmp
+mv %q.tmp %q
+for _i in {1..100}; do [ -f "$ATTENTION_TICK" ] && break; sleep 0.02; done
+if [ ! -f "$ATTENTION_TICK" ]; then
+  stop_tab_title_watcher
+  exit 71
+fi
 
 # Meanwhile, the original race: other sessions unlinking holders out from under
 # this one's reaper, all day long.
@@ -93,12 +110,15 @@ done
 sleep 3
 tmux new-session 2>&3
 stop_tab_title_watcher
-`, root, filepath.Join(dir, "marker"), logFile, logFile,
-		filepath.Join(dir, "marker"), filepath.Join(dir, "cfg"),
+`, root, logFile, logFile, descriptor, filepath.Join(dir, "cfg"),
+		generation, stateFile, stateFile, stateFile,
 		holders, holders)
 
 	cmd := exec.Command("bash", "-c", script)
-	cmd.Env = buildEnv(t, []string{binDir})
+	cmd.Env = buildEnv(t, []string{binDir},
+		"WORKING_TICK="+workingTick,
+		"ATTENTION_TICK="+attentionTick,
+		"WISP_DECK_WATCH_INTERVAL=0.05")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {
 		t.Fatalf("failed to open pty: %v", err)
@@ -118,7 +138,15 @@ stop_tab_title_watcher
 		_ = cmd.Process.Kill()
 		t.Fatal("timed out")
 	}
-	_ = cmd.Wait()
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("terminal harness failed: %v\nfull terminal contents:\n%q", err, screen)
+	}
+	if _, err := os.Stat(workingTick); err != nil {
+		t.Fatalf("watcher never consumed the working semantic state: %v", err)
+	}
+	if _, err := os.Stat(attentionTick); err != nil {
+		t.Fatalf("watcher never consumed the attention semantic state: %v", err)
+	}
 
 	// Nothing that is not addressed to the user may appear on their terminal.
 	for _, forbidden := range []string{

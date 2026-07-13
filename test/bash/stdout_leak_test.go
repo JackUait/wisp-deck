@@ -81,39 +81,67 @@ func TestWrapperBackgroundJobsDoNotWriteToTheTerminal(t *testing.T) {
 func TestTabTitleWatcherSwallowsStrayOutputFromTheLibsItCalls(t *testing.T) {
 	root := projectRoot(t)
 	dir := t.TempDir()
+	generation := "generation.stdout1"
+	stateFile := writeAttentionState(t, dir, generation, "0", "working", "-")
+	descriptor := writeAttentionDescriptor(t, dir, generation, "claude", stateFile)
+	workingTick := filepath.Join(dir, "working-tick")
+	semanticTick := filepath.Join(dir, "semantic-tick")
+	errorLog := filepath.Join(dir, "watcher.log")
 
-	// A tmux stub that reports one pane, so the watcher gets past pane discovery
-	// and into the loop body, where our leaky lib is called.
+	// A current-format tmux pane record also witnesses that the watcher consumed
+	// the initial working snapshot before the test publishes attention.
 	binDir := mockCommand(t, dir, "tmux", `
 case "$1" in
-  list-panes)  echo "0 0" ;;
-  capture-pane) echo "> " ;;
+  list-panes) touch "$WORKING_TICK"; printf '%%1\t1\n' ;;
   *) : ;;
 esac
 `)
-	env := buildEnv(t, []string{binDir})
+	env := buildEnv(t, []string{binDir},
+		"WORKING_TICK="+workingTick,
+		"SEMANTIC_TICK="+semanticTick,
+		"WISP_DECK_ERROR_LOG="+errorLog,
+		"WISP_DECK_WATCH_INTERVAL=0.05")
 
-	// check_ai_tool_state is called every tick from inside the loop. Redefining
-	// it AFTER the module is sourced stands in for any lib on that path echoing.
+	// A semantic attention transition calls the notification lib. Redefining it
+	// after sourcing stands in for any library on that path writing by mistake.
+	// The marker is written last, so observing it proves both stray writes ran.
 	out, code := runBashSnippet(t, `
 		source "`+filepath.Join(root, "lib", "tui.sh")+`"
 		source "`+filepath.Join(root, "lib", "tab-title-watcher.sh")+`"
 
-		check_ai_tool_state() {
+		play_notification_sound() {
 			echo "STRAY LINE FROM A LIB"
 			echo "STRAY ERROR FROM A LIB" >&2
-			echo "waiting"
+			touch "$SEMANTIC_TICK"
 		}
-		play_notification_sound() { :; }
 
-		start_tab_title_watcher "sess" "claude" "proj" "project" "tmux" "`+dir+`/marker" ""
-		sleep 2
+		start_tab_title_watcher "sess" "proj" "project" "tmux" "`+descriptor+`" "`+dir+`"
+		for _i in {1..100}; do [ -f "$WORKING_TICK" ] && break; sleep 0.02; done
+		if [ ! -f "$WORKING_TICK" ]; then
+			stop_tab_title_watcher
+			exit 70
+		fi
+		printf '1\t`+generation+`\t1\tattention\tdone\n' > "`+stateFile+`.tmp"
+		mv "`+stateFile+`.tmp" "`+stateFile+`"
+		for _i in {1..100}; do [ -f "$SEMANTIC_TICK" ] && break; sleep 0.02; done
 		stop_tab_title_watcher
+		[ -f "$SEMANTIC_TICK" ] || exit 71
 	`, env)
 
 	assertExitCode(t, code, 0)
+	if _, err := os.Stat(workingTick); err != nil {
+		t.Fatalf("watcher never consumed the working semantic state: %v", err)
+	}
+	if _, err := os.Stat(semanticTick); err != nil {
+		t.Fatalf("watcher never reached the injected semantic attention tick: %v", err)
+	}
 	assertNotContains(t, out, "STRAY LINE FROM A LIB")
 	assertNotContains(t, out, "STRAY ERROR FROM A LIB")
+	logged, err := os.ReadFile(errorLog)
+	if err != nil {
+		t.Fatalf("watcher error log missing: %v", err)
+	}
+	assertContains(t, string(logged), "STRAY ERROR FROM A LIB")
 }
 
 // set_tab_title must reach the terminal directly rather than through stdout, so

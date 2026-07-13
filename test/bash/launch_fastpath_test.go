@@ -9,83 +9,6 @@ import (
 	"time"
 )
 
-// These tests pin the launch-time fast paths that avoid spawning python3 when
-// the relevant settings are already in their final form. A python3 cold start
-// is ~40-90ms; wrapper.sh runs add_waiting_indicator_hooks AND
-// set_claude_notif_channel synchronously on EVERY Claude launch, before the AI
-// tool can start. When settings.json is already current (the common case after
-// the first launch), no rewrite is needed, so python3 must not be invoked at
-// all — shaving that latency off the time-to-agent-ready.
-
-// currentFormatWaitingHooks is a settings.json whose waiting-indicator hooks are
-// already in the current format (Stop + AskUserQuestion -ask sidecar + catch-all
-// negative-lookahead matcher + PostToolUse cooldown). Mirrors the fixture in
-// TestSettingsJson_add_waiting_indicator_hooks_reports_exists_when_duplicate.
-const currentFormatWaitingHooks = `{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [{"type": "command", "command": "if [ -n \"$WISP_DECK_MARKER_FILE\" ]; then touch \"$WISP_DECK_MARKER_FILE\"; fi"}]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "AskUserQuestion",
-        "hooks": [{"type": "command", "command": "if [ -n \"$WISP_DECK_MARKER_FILE\" ]; then touch \"$WISP_DECK_MARKER_FILE\" \"${WISP_DECK_MARKER_FILE}-ask\"; fi"}]
-      },
-      {
-        "matcher": "^(?!AskUserQuestion$)",
-        "hooks": [{"type": "command", "command": "if [ -n \"$WISP_DECK_MARKER_FILE\" ]; then rm -f \"$WISP_DECK_MARKER_FILE\" \"${WISP_DECK_MARKER_FILE}-ask\"; fi"}]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "hooks": [{"type": "command", "command": "if [ -n \"$WISP_DECK_MARKER_FILE\" ]; then touch \"${WISP_DECK_MARKER_FILE}-cooldown\"; fi"}]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [{"type": "command", "command": "if [ -n \"$WISP_DECK_MARKER_FILE\" ]; then rm -f \"$WISP_DECK_MARKER_FILE\" \"${WISP_DECK_MARKER_FILE}-ask\"; fi"}]
-      }
-    ]
-  }
-}
-`
-
-// pythonProbeEnv returns (env, sentinelPath) where env shadows python3/python
-// with a mock that records its invocation by creating sentinelPath. If the
-// sentinel exists after the call, python3 was spawned.
-func pythonProbeEnv(t *testing.T, tmpDir string) ([]string, string) {
-	t.Helper()
-	sentinel := filepath.Join(tmpDir, "python3-was-called")
-	body := fmt.Sprintf("touch %q\nexit 0", sentinel)
-	binDir := mockCommand(t, tmpDir, "python3", body)
-	// Some code paths may call bare `python`; shadow it too for safety.
-	mockCommand(t, tmpDir, "python", body)
-	return buildEnv(t, []string{binDir}), sentinel
-}
-
-func TestFastPath_add_waiting_indicator_hooks_skips_python_when_current(t *testing.T) {
-	tmpDir := t.TempDir()
-	settingsFile := writeTempFile(t, tmpDir, "settings.json", currentFormatWaitingHooks)
-	before, _ := os.ReadFile(settingsFile)
-
-	env, sentinel := pythonProbeEnv(t, tmpDir)
-	snippet := settingsJsonSnippet(t,
-		fmt.Sprintf(`add_waiting_indicator_hooks %q`, settingsFile))
-	out, code := runBashSnippet(t, snippet, env)
-	assertExitCode(t, code, 0)
-	assertContains(t, strings.TrimSpace(out), "exists")
-
-	if _, err := os.Stat(sentinel); err == nil {
-		t.Error("python3 was spawned even though hooks are already current — fast path should skip it")
-	}
-	after, _ := os.ReadFile(settingsFile)
-	if string(before) != string(after) {
-		t.Error("settings.json was rewritten even though hooks are already current")
-	}
-}
-
 // screenshotLibSnippet sources screenshot.sh then runs body.
 func screenshotLibSnippet(t *testing.T, body string) string {
 	t.Helper()
@@ -165,35 +88,5 @@ func TestFastPath_claude_filter_prefix_caches_negative_result(t *testing.T) {
 	data, _ := os.ReadFile(counter)
 	if n := strings.Count(string(data), "x"); n != 1 {
 		t.Errorf("probe ran %d times, want 1 (negative result should be cached)", n)
-	}
-}
-
-func TestFastPath_set_claude_notif_channel_skips_python_when_already_silenced(t *testing.T) {
-	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, "config")
-	os.MkdirAll(configDir, 0755)
-	claudeDir := filepath.Join(tmpDir, "claude")
-	os.MkdirAll(claudeDir, 0755)
-	settingsFile := writeTempFile(t, claudeDir, "settings.json",
-		`{"preferredNotifChannel": "terminal_bell", "model": "opus"}`)
-	before, _ := os.ReadFile(settingsFile)
-
-	env, sentinel := pythonProbeEnv(t, tmpDir)
-	snippet := notificationSnippet(t,
-		fmt.Sprintf(`set_claude_notif_channel %q %q`, configDir, settingsFile))
-	_, code := runBashSnippet(t, snippet, env)
-	assertExitCode(t, code, 0)
-
-	if _, err := os.Stat(sentinel); err == nil {
-		t.Error("python3 was spawned even though channel is already terminal_bell — fast path should skip it")
-	}
-	after, _ := os.ReadFile(settingsFile)
-	if string(before) != string(after) {
-		t.Error("settings.json was rewritten even though channel is already terminal_bell")
-	}
-	// A second concurrent session must not clobber a previously-saved prev value;
-	// the fast path writes nothing, so no prev file is created here.
-	if _, err := os.Stat(filepath.Join(configDir, "prev-notif-channel")); err == nil {
-		t.Error("prev-notif-channel must not be written when channel is already silenced")
 	}
 }

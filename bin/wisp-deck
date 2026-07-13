@@ -216,20 +216,15 @@ else
   info "Status line features are only available with Claude Code"
 fi
 
-# OpenCode plugin (install/upgrade for idle notification debounce)
-if [ "$SELECTED_AI_TOOL" = "opencode" ]; then
-  header "Setting up OpenCode plugin..."
-  _oc_plugin_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins"
-  _oc_plugin_src="$SHARE_DIR/templates/opencode-plugin.ts"
-  _oc_plugin_dst="$_oc_plugin_dir/wisp-deck.ts"
-  if [ -f "$_oc_plugin_src" ]; then
-    mkdir -p "$_oc_plugin_dir"
-    cp "$_oc_plugin_src" "$_oc_plugin_dst"
-    success "OpenCode plugin installed at $_oc_plugin_dst"
-  else
-    warn "OpenCode plugin template not found at $_oc_plugin_src"
-  fi
+# OpenCode plugin — keep every setup capable of launching OpenCode later from
+# the in-session tool switcher, regardless of the default selected above.
+header "Setting up OpenCode plugin..."
+_oc_plugin_dst="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins/wisp-deck.ts"
+if ! install_opencode_plugin; then
+  error "Failed to install OpenCode plugin"
+  exit 1
 fi
+success "OpenCode plugin installed at $_oc_plugin_dst"
 
 # ---------- Summary ----------
 header "Setup complete!"
@@ -243,8 +238,8 @@ success "Config command:  wisp-deck (in ~/.local/bin/)"
 if [ -f ~/.claude/statusline-wrapper.sh ]; then
   success "Status line:     ~/.claude/statusline-wrapper.sh"
 fi
-if [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins/wisp-deck.ts" ]; then
-  success "OpenCode plugin: ~/.config/opencode/plugins/wisp-deck.ts"
+if [ -f "$_oc_plugin_dst" ]; then
+  success "OpenCode plugin: $_oc_plugin_dst"
 fi
 echo ""
 info "Run 'wisp-deck' to manage configuration, or open a new Ghostty window to start coding."

@@ -75,6 +75,7 @@ function isInstallIntact(dir) {
     'bin/wisp-deck',
     'bin/wisp-deck-config',
     'lib',
+    'templates/opencode-plugin.ts',
     'wrapper.sh',
     'VERSION',
   ].every((rel) => fs.existsSync(path.join(dir, rel)));

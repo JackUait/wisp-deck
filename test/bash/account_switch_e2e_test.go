@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/creack/pty"
 )
 
 // End-to-end regression guard for the mid-session account "switch back" bug,
@@ -104,21 +102,7 @@ exit 0
 	}
 
 	// display-popup needs an attached client; a pty client provides one.
-	client := exec.Command(tmuxBin, "-L", sock, "attach", "-t", "e2e")
-	ptmx, err := pty.StartWithSize(client, &pty.Winsize{Rows: 50, Cols: 200})
-	if err != nil {
-		t.Fatalf("pty attach: %v", err)
-	}
-	t.Cleanup(func() { _ = ptmx.Close(); _ = client.Process.Kill() })
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			if _, e := ptmx.Read(buf); e != nil {
-				return
-			}
-		}
-	}()
-	time.Sleep(500 * time.Millisecond)
+	attachPtyClient(t, tmuxBin, sock, "e2e")
 
 	// A tmux shim so the lib's literal `tmux` hits the private socket.
 	writeTempFile(t, binDir, "tmux", fmt.Sprintf("#!/bin/bash\nexec %q -L %q \"$@\"\n", tmuxBin, sock))

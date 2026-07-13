@@ -67,7 +67,7 @@ func TestWrapperRestore_resumes_sid_recorded_in_account_store(t *testing.T) {
 	}
 	// The tab must resume its own conversation — not fall back to `claude -c`,
 	// which opens whatever conversation the launch store considers most recent.
-	assertContains(t, string(data), "claude --resume "+sid)
+	assertContains(t, normalizeShellEscapedSpaces(string(data)), "claude --resume "+sid)
 
 	// And the account store is now a link into the shared store, so the resume
 	// works no matter which login the restored tab launches under.

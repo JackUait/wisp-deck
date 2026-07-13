@@ -330,50 +330,67 @@ func TestKeepAwakeTick_releases_when_setting_turned_off_mid_turn(t *testing.T) {
 	}
 }
 
-// End-to-end through the real watcher loop: a busy AI pane must raise the
-// kernel flag, and returning to the prompt must drop it. This is the behavior
-// the whole feature exists for — the unit tests above can all pass while the
-// watcher never calls into the module.
+// End-to-end through the semantic watcher tick: working and unknown keep the
+// machine awake, while ready and attention release it. Pane text is irrelevant.
 func TestTabTitleWatcher_holds_flag_while_agent_works(t *testing.T) {
 	dir := t.TempDir()
 	env, stateFile, _ := keepAwakeEnv(t, dir)
 	cfg := filepath.Join(dir, "config")
 	writeTempFile(t, cfg, "settings", "keep_awake=on\n")
 
-	// A fake tmux whose pane content is switched by a control file: "busy"
-	// renders a spinner-ish line, "idle" renders a shell prompt. The watcher's
-	// non-claude branch calls a pane idle when the last line ends in a prompt.
-	paneFile := writeTempFile(t, dir, "pane", "thinking hard\n")
+	attentionRoot := filepath.Join(dir, "attention")
+	if err := os.MkdirAll(attentionRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	generation := "generation.keep1"
+	attentionState := writeAttentionState(t, attentionRoot, generation, "0", "ready", "-")
+	descriptor := writeAttentionDescriptor(t, attentionRoot, generation, "opencode", attentionState)
 	binDir := mockCommand(t, dir, "faketmux", `
 case "$1" in
-  list-panes) echo "3 0" ;;
-  capture-pane) cat "$KA_PANE" ;;
-  *) exit 0 ;;
+  list-panes) printf '%%3\t1\n' ;;
+	  *) exit 0 ;;
 esac
 `)
-	env = append(env, "KA_PANE="+paneFile)
-	_ = binDir
+	env = append(env, "PATH="+binDir+":"+os.Getenv("PATH"))
 
 	root := projectRoot(t)
-	script := `
+	script := fmt.Sprintf(`
 set -e
-source "` + root + `/lib/keep-awake.sh"
-source "` + root + `/lib/tab-title-watcher.sh"
+source %q
+source %q
 set_tab_title() { :; }
 set_tab_title_waiting() { :; }
 play_notification_sound() { :; }
-start_tab_title_watcher sess-x opencode proj project "` + filepath.Join(binDir, "faketmux") + `" "` + dir + `/marker" "` + cfg + `"
-sleep 2
-echo "busy=$(cat "$KA_STATE" 2>/dev/null || echo none)"
-printf '$ \n' > "$KA_PANE"
-sleep 2
-echo "idle=$(cat "$KA_STATE" 2>/dev/null || echo none)"
-stop_tab_title_watcher "` + dir + `/marker"
-`
+publish_state() {
+  printf '1\t%s\t%%s\t%%s\t%%s\n' "$1" "$2" "$3" > %q.tmp
+  mv %q.tmp %q
+}
+attention_watcher_reset
+publish_state 1 working -
+attention_watcher_tick sess-x proj project %q %q %q
+echo "working=$(cat "$KA_STATE" 2>/dev/null || echo none)"
+publish_state 2 unknown -
+attention_watcher_tick sess-x proj project %q %q %q
+echo "unknown=$(cat "$KA_STATE" 2>/dev/null || echo none)"
+publish_state 3 ready -
+attention_watcher_tick sess-x proj project %q %q %q
+echo "ready=$(cat "$KA_STATE" 2>/dev/null || echo none)"
+publish_state 4 attention question
+attention_watcher_tick sess-x proj project %q %q %q
+echo "attention=$(cat "$KA_STATE" 2>/dev/null || echo none)"
+`, filepath.Join(root, "lib", "keep-awake.sh"),
+		filepath.Join(root, "lib", "tab-title-watcher.sh"),
+		generation, attentionState, attentionState, attentionState,
+		filepath.Join(binDir, "faketmux"), descriptor, cfg,
+		filepath.Join(binDir, "faketmux"), descriptor, cfg,
+		filepath.Join(binDir, "faketmux"), descriptor, cfg,
+		filepath.Join(binDir, "faketmux"), descriptor, cfg)
 	out, _ := runBashSnippet(t, script, env)
 
-	assertContains(t, out, "busy=1")
-	assertContains(t, out, "idle=0")
+	assertContains(t, out, "working=1")
+	assertContains(t, out, "unknown=1")
+	assertContains(t, out, "ready=0")
+	assertContains(t, out, "attention=0")
 	_ = stateFile
 }
 

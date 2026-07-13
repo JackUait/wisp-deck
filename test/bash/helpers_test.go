@@ -230,6 +230,12 @@ func assertNotContains(t *testing.T, output, unexpected string) {
 	}
 }
 
+// normalizeShellEscapedSpaces makes an already shell-quoted command readable
+// for semantic assertions without evaluating it.
+func normalizeShellEscapedSpaces(output string) string {
+	return strings.ReplaceAll(output, `\ `, " ")
+}
+
 // assertExitCode checks the exit code matches expected.
 func assertExitCode(t *testing.T, got, expected int) {
 	t.Helper()

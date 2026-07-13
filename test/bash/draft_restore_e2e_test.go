@@ -2,6 +2,7 @@ package bash_test
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -184,20 +185,37 @@ exit 0
 func attachPtyClient(t *testing.T, tmuxBin, sock, session string) {
 	t.Helper()
 	client := exec.Command(tmuxBin, "-L", sock, "attach", "-t", session)
+	client.Env = append(os.Environ(), "TERM=xterm-256color")
 	ptmx, err := pty.StartWithSize(client, &pty.Winsize{Rows: 50, Cols: 200})
 	if err != nil {
 		t.Fatalf("pty attach: %v", err)
 	}
 	t.Cleanup(func() { _ = ptmx.Close(); _ = client.Process.Kill() })
+	type clientExit struct {
+		err    error
+		output string
+	}
+	exited := make(chan clientExit, 1)
 	go func() {
-		buf := make([]byte, 4096)
-		for {
-			if _, e := ptmx.Read(buf); e != nil {
-				return
-			}
-		}
+		output, _ := io.ReadAll(ptmx)
+		exited <- clientExit{err: client.Wait(), output: string(output)}
 	}()
-	time.Sleep(500 * time.Millisecond)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		select {
+		case result := <-exited:
+			t.Fatalf("tmux attach exited before becoming a client: %v: %s", result.err, result.output)
+		default:
+		}
+		out, listErr := exec.Command(tmuxBin, "-L", sock, "list-clients").CombinedOutput()
+		if listErr == nil && strings.TrimSpace(string(out)) != "" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("tmux client did not attach within 10s: %v: %s", listErr, out)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // TestLiveClaude_draft_assumptions pins the three REAL-claude behaviors the
