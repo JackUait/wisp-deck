@@ -52,212 +52,143 @@ CSEOF
   fi
 }
 
-# Add waiting indicator hooks (Stop + PreToolUse + UserPromptSubmit) to settings.json.
-# Uses $WISP_DECK_MARKER_FILE env var so hooks are safe outside Wisp Deck.
-# Outputs "added", "upgraded", or "exists".
-add_waiting_indicator_hooks() {
-  local filepath="$1"
-  # Fast path: a python3 cold start (~40ms) runs synchronously on every Claude
-  # launch before the AI tool can start. When the file already carries all three
-  # distinguishing markers of the current format — the PostToolUse "-cooldown"
-  # hook, the AskUserQuestion "-ask" sidecar, and the catch-all negative-lookahead
-  # matcher — the python below would only print "exists" and write nothing. These
-  # three substrings are exactly the upgrade targets, so their joint presence is a
-  # conservative subset of python's "exists" condition: no older format has all of
-  # them. Skip the spawn (and the mkdir/dirname subshells) entirely in that common
-  # case. Runs before mkdir because the check only reads an existing file.
-  # The GHOST_TAB_MARKER_FILE exclusion is the Ghost Tab → Wisp Deck rename
-  # cleanup: an upgraded user keeps an orphaned legacy Stop hook that a still-
-  # running ghost-tab session polls to play an ungated sound. When that legacy
-  # marker is present the file is NOT up to date — fall through to the python so
-  # it gets stripped, even if all three current-format markers are also present.
-  if [ -f "$filepath" ] \
-    && grep -q -- '-cooldown' "$filepath" \
-    && grep -q -- '-ask' "$filepath" \
-    && grep -qF '(?!AskUserQuestion$)' "$filepath" \
-    && ! grep -q 'GHOST_TAB_MARKER_FILE' "$filepath"; then
-    echo "exists"
-    return 0
-  fi
-  mkdir -p "$(dirname "$filepath")"
-  python3 - "$filepath" << 'PYEOF'
-import json, sys, os
+# write_claude_launch_settings <generation-dir> [active-wisp-settings]
+#
+# Build the additional settings overlay passed to Claude for one attention
+# generation. The selected Wisp config is copied when present, then only
+# preferredNotifChannel is forced so Claude's native sound stays silent while
+# Wisp Deck owns notification playback. The source is never modified. A sibling
+# temporary file is renamed over the target so readers cannot observe partial
+# JSON. Prints the generated path on success.
+write_claude_launch_settings() {
+  local generation_dir="${1:-}" source_settings="${2:-}"
+  local generation suffix target tmp
 
-settings_path = sys.argv[1]
+  [ -d "$generation_dir" ] || return 1
+  generation="${generation_dir##*/}"
+  case "$generation" in
+    generation.*) suffix="${generation#generation.}" ;;
+    *) return 1 ;;
+  esac
+  case "$suffix" in
+    ''|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789]*) return 1 ;;
+  esac
 
-if os.path.exists(settings_path):
-    try:
-        with open(settings_path, "r") as f:
-            settings = json.load(f)
-    except (json.JSONDecodeError, ValueError):
-        settings = {}
-else:
-    settings = {}
+  target="$generation_dir/claude-settings.json"
+  tmp="$(umask 077; mktemp "$generation_dir/.claude-settings.XXXXXX")" || return 1
+  if ! chmod 600 "$tmp" \
+     || ! python3 - "$source_settings" "$tmp" << 'PYEOF'
+import json
+import sys
 
-hooks = settings.setdefault("hooks", {})
+source_path, output_path = sys.argv[1], sys.argv[2]
+settings = {}
 
-stop_cmd = 'if [ -n "$WISP_DECK_MARKER_FILE" ]; then touch "$WISP_DECK_MARKER_FILE"; fi'
-ask_cmd = 'if [ -n "$WISP_DECK_MARKER_FILE" ]; then touch "$WISP_DECK_MARKER_FILE" "${WISP_DECK_MARKER_FILE}-ask"; fi'
-clear_cmd = 'if [ -n "$WISP_DECK_MARKER_FILE" ]; then rm -f "$WISP_DECK_MARKER_FILE" "${WISP_DECK_MARKER_FILE}-ask"; fi'
-cooldown_cmd = 'if [ -n "$WISP_DECK_MARKER_FILE" ]; then touch "${WISP_DECK_MARKER_FILE}-cooldown"; fi'
+if source_path:
+    with open(source_path, "r", encoding="utf-8") as source:
+        settings = json.load(source)
+    if not isinstance(settings, dict):
+        raise ValueError("Claude settings overlay must be a JSON object")
 
-marker = "WISP_DECK_MARKER_FILE"
-# Legacy marker from before the Ghost Tab → Wisp Deck rename. Orphaned hooks
-# carrying it are never what wisp-deck watches, but a still-running ghost-tab
-# session polls the marker they touch and plays an ungated sound, defeating the
-# Sound=off setting. Always strip them.
-legacy_markers = ("GHOST_TAB_MARKER_FILE",)
-
-def _has_any_marker(command):
-    return marker in command or any(m in command for m in legacy_markers)
-
-# Any orphaned legacy-marker hook present means the file needs cleanup.
-legacy_exists = any(
-    any(m in h.get("command", "") for m in legacy_markers)
-    for event_list in hooks.values()
-    for entry in event_list
-    for h in entry.get("hooks", [])
-)
-
-# Check if current Stop-based format is already installed
-stop_list = hooks.get("Stop", [])
-stop_exists = any(
-    marker in h.get("command", "")
-    for entry in stop_list
-    for h in entry.get("hooks", [])
-)
-
-# Check if old Notification-based format exists (needs upgrade)
-notif_list = hooks.get("Notification", [])
-notif_exists = any(
-    marker in h.get("command", "")
-    for entry in notif_list
-    for h in entry.get("hooks", [])
-)
-
-# Check if old Stop format without matcher exists (needs upgrade)
-pre_list = hooks.get("PreToolUse", [])
-old_stop_needs_upgrade = stop_exists and not any(
-    entry.get("matcher") == "AskUserQuestion"
-    for entry in pre_list
-    if any(marker in h.get("command", "") for h in entry.get("hooks", []))
-)
-
-# Check if PostToolUse cooldown hook exists (needs upgrade if missing)
-post_list = hooks.get("PostToolUse", [])
-cooldown_exists = any(
-    "cooldown" in h.get("command", "")
-    for entry in post_list
-    for h in entry.get("hooks", [])
-)
-needs_cooldown_upgrade = stop_exists and not old_stop_needs_upgrade and not cooldown_exists
-
-# Check if catch-all PreToolUse has no matcher (needs upgrade to add negative lookahead)
-catchall_needs_fix = stop_exists and not old_stop_needs_upgrade and not needs_cooldown_upgrade and any(
-    not entry.get("matcher") and any("rm" in h.get("command", "") and marker in h.get("command", "") for h in entry.get("hooks", []))
-    for entry in pre_list
-)
-
-# Check if AskUserQuestion hook is missing the -ask sidecar (needs upgrade)
-ask_needs_sidecar = stop_exists and not old_stop_needs_upgrade and not needs_cooldown_upgrade and not catchall_needs_fix and any(
-    entry.get("matcher") == "AskUserQuestion" and not any("-ask" in h.get("command", "") for h in entry.get("hooks", []))
-    for entry in pre_list
-)
-
-if stop_exists and not old_stop_needs_upgrade and not needs_cooldown_upgrade and not catchall_needs_fix and not ask_needs_sidecar and not legacy_exists:
-    # Current format already installed (including PostToolUse cooldown)
-    print("exists")
-    sys.exit(0)
-elif notif_exists or old_stop_needs_upgrade or needs_cooldown_upgrade or catchall_needs_fix or ask_needs_sidecar or legacy_exists:
-    # Old format (or orphaned legacy markers) — remove wisp-deck and legacy
-    # hooks so the current wisp-deck hooks get re-added cleanly below.
-    for event in ["Stop", "Notification", "PreToolUse", "PostToolUse", "UserPromptSubmit"]:
-        event_list = hooks.get(event, [])
-        new_list = [
-            entry for entry in event_list
-            if not any(_has_any_marker(h.get("command", "")) for h in entry.get("hooks", []))
-        ]
-        if new_list:
-            hooks[event] = new_list
-        elif event in hooks:
-            del hooks[event]
-    action = "upgraded"
-else:
-    action = "added"
-
-# Add Stop hook (fires immediately when Claude stops generating)
-hooks.setdefault("Stop", []).append({
-    "hooks": [{"type": "command", "command": stop_cmd}]
-})
-
-# Add PreToolUse hook with matcher for AskUserQuestion (creates marker + -ask sidecar)
-hooks.setdefault("PreToolUse", []).append({
-    "matcher": "AskUserQuestion",
-    "hooks": [{"type": "command", "command": ask_cmd}]
-})
-
-# Add PreToolUse catch-all hook (clears marker — Claude is actively working)
-hooks.setdefault("PreToolUse", []).append({
-    "matcher": "^(?!AskUserQuestion$)",
-    "hooks": [{"type": "command", "command": clear_cmd}]
-})
-
-# Add PostToolUse catch-all hook (creates cooldown — suppresses subagent noise)
-hooks.setdefault("PostToolUse", []).append({
-    "hooks": [{"type": "command", "command": cooldown_cmd}]
-})
-
-# Add UserPromptSubmit hook (clears marker when user answers)
-hooks.setdefault("UserPromptSubmit", []).append({
-    "hooks": [{"type": "command", "command": clear_cmd}]
-})
-
-with open(settings_path, "w") as f:
-    json.dump(settings, f, indent=2)
-    f.write("\n")
-
-print(action)
+settings["preferredNotifChannel"] = "terminal_bell"
+with open(output_path, "w", encoding="utf-8") as output:
+    json.dump(settings, output, indent=2)
+    output.write("\n")
 PYEOF
+  then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv -f "$tmp" "$target"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  printf '%s\n' "$target"
 }
 
-# Remove waiting indicator hooks from settings.json.
+# Remove every historical Wisp Deck/Ghost Tab marker command from a Claude
+# settings file. Unrelated commands are retained even when they share the same
+# hook entry. This is an upgrade-only migration helper; semantic state is now
+# read from Claude's process registry instead of hooks. When a Wisp config root
+# is supplied, this mutation shares a process lock with the legacy notification
+# migration so concurrent upgraded wrappers cannot overwrite each other.
 # Outputs "removed" or "not_found".
 remove_waiting_indicator_hooks() {
   local filepath="$1"
+  local config_dir="${2:-}"
   if [ ! -f "$filepath" ]; then
     echo "not_found"
     return 0
   fi
-  python3 - "$filepath" << 'PYEOF'
-import json, sys, os
+  python3 - "$filepath" "$config_dir" << 'PYEOF'
+import fcntl
+import json
+import os
+import stat
+import sys
+import tempfile
 
-settings_path = sys.argv[1]
-# Also strip the legacy GHOST_TAB_MARKER_FILE hooks left behind by the
-# Ghost Tab → Wisp Deck rename (see add_waiting_indicator_hooks).
+settings_path, config_dir = sys.argv[1], sys.argv[2]
 markers = ("WISP_DECK_MARKER_FILE", "GHOST_TAB_MARKER_FILE")
 
+if config_dir:
+    try:
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        lock_fd = os.open(os.path.join(config_dir, ".settings-migration.lock"), flags, 0o600)
+        os.fchmod(lock_fd, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    except OSError:
+        print("not_found")
+        sys.exit(0)
+
 try:
-    with open(settings_path, "r") as f:
-        settings = json.load(f)
-except (json.JSONDecodeError, ValueError, FileNotFoundError):
+    with open(settings_path, "r", encoding="utf-8") as source:
+        source_stat = os.fstat(source.fileno())
+        settings = json.load(source)
+except (OSError, ValueError):
     print("not_found")
     sys.exit(0)
 
-hooks = settings.get("hooks", {})
-found = False
+if not isinstance(settings, dict):
+    print("not_found")
+    sys.exit(0)
 
-for event in ["Stop", "Notification", "PreToolUse", "PostToolUse", "UserPromptSubmit"]:
-    event_list = hooks.get(event, [])
-    new_list = [
-        entry for entry in event_list
-        if not any(m in h.get("command", "") for h in entry.get("hooks", []) for m in markers)
-    ]
-    if len(new_list) != len(event_list):
-        found = True
-        if new_list:
-            hooks[event] = new_list
-        else:
-            del hooks[event]
+hooks = settings.get("hooks")
+if not isinstance(hooks, dict):
+    print("not_found")
+    sys.exit(0)
+
+found = False
+for event, event_list in list(hooks.items()):
+    if not isinstance(event_list, list):
+        continue
+    kept_entries = []
+    for entry in event_list:
+        if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+            kept_entries.append(entry)
+            continue
+
+        entry_found = False
+        kept_commands = []
+        for hook in entry["hooks"]:
+            command = hook.get("command", "") if isinstance(hook, dict) else ""
+            if isinstance(command, str) and any(marker in command for marker in markers):
+                found = True
+                entry_found = True
+            else:
+                kept_commands.append(hook)
+
+        if not entry_found:
+            kept_entries.append(entry)
+        elif kept_commands:
+            kept_entry = dict(entry)
+            kept_entry["hooks"] = kept_commands
+            kept_entries.append(kept_entry)
+
+    if kept_entries:
+        hooks[event] = kept_entries
+    else:
+        del hooks[event]
 
 if not found:
     print("not_found")
@@ -266,10 +197,217 @@ if not found:
 if not hooks:
     del settings["hooks"]
 
-with open(settings_path, "w") as f:
-    json.dump(settings, f, indent=2)
-    f.write("\n")
+# Follow a settings symlink rather than replacing the link itself. The managed
+# Claude accounts intentionally share the standard login's settings this way.
+write_path = os.path.realpath(settings_path)
+directory = os.path.dirname(write_path) or "."
+try:
+    target_stat = os.stat(write_path)
+except OSError:
+    print("not_found")
+    sys.exit(0)
+if not stat.S_ISREG(target_stat.st_mode) or not os.path.samestat(source_stat, target_stat):
+    print("not_found")
+    sys.exit(0)
+
+def same_source_version(before, after):
+    return (
+        os.path.samestat(before, after)
+        and before.st_size == after.st_size
+        and before.st_mtime_ns == after.st_mtime_ns
+        and before.st_ctime_ns == after.st_ctime_ns
+    )
+
+mode = stat.S_IMODE(target_stat.st_mode)
+fd, temporary = tempfile.mkstemp(prefix=".wisp-hooks.", dir=directory)
+try:
+    os.fchmod(fd, mode)
+    with os.fdopen(fd, "w", encoding="utf-8") as output:
+        json.dump(settings, output, indent=2)
+        output.write("\n")
+        output.flush()
+        os.fsync(output.fileno())
+    try:
+        current_path_stat = os.stat(settings_path)
+        current_target_stat = os.stat(write_path)
+    except OSError:
+        current_path_stat = current_target_stat = None
+    if (
+        current_path_stat is None
+        or current_target_stat is None
+        or not same_source_version(source_stat, current_path_stat)
+        or not same_source_version(source_stat, current_target_stat)
+    ):
+        os.unlink(temporary)
+        print("not_found")
+        sys.exit(0)
+    os.replace(temporary, write_path)
+except Exception:
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    try:
+        os.unlink(temporary)
+    except OSError:
+        pass
+    raise
 
 print("removed")
+PYEOF
+}
+
+# migrate_legacy_claude_notif_channel <settings-file> <wisp-config-root>
+#
+# Old releases globally forced preferredNotifChannel=terminal_bell and saved the
+# displaced value in prev-notif-channel. A crash could strand both. Consume that
+# legacy lease once: restore it only while the global value is still the exact
+# value Wisp wrote, otherwise preserve the user's newer choice. Invalid settings
+# are left byte-for-byte intact and retain the lease for a later retry.
+#
+# The same permanent private lock used by hook removal serializes concurrent
+# upgraded wrappers. Writes follow a managed-account settings symlink and replace
+# its target atomically, leaving the symlink itself intact.
+migrate_legacy_claude_notif_channel() {
+  local settings_path="${1:-}" config_dir="${2:-}"
+  [ -n "$settings_path" ] && [ -d "$config_dir" ] || return 0
+  [ -f "$config_dir/prev-notif-channel" ] || return 0
+
+  python3 - "$settings_path" "$config_dir" << 'PYEOF'
+import fcntl
+import json
+import os
+import stat
+import sys
+import tempfile
+
+settings_path, config_dir = sys.argv[1], sys.argv[2]
+legacy_path = os.path.join(config_dir, "prev-notif-channel")
+lock_path = os.path.join(config_dir, ".settings-migration.lock")
+
+try:
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    lock_fd = os.open(lock_path, flags, 0o600)
+    os.fchmod(lock_fd, 0o600)
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+except OSError:
+    sys.exit(0)
+
+try:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    legacy_fd = os.open(legacy_path, flags)
+except FileNotFoundError:
+    sys.exit(0)
+except OSError:
+    sys.exit(0)
+
+try:
+    legacy_stat = os.fstat(legacy_fd)
+    if not stat.S_ISREG(legacy_stat.st_mode) or legacy_stat.st_size > 4096:
+        sys.exit(0)
+    with os.fdopen(legacy_fd, "rb") as legacy_file:
+        raw_saved = legacy_file.read(4097)
+    if len(raw_saved) > 4096:
+        sys.exit(0)
+    saved = raw_saved.decode("utf-8").strip("\n")
+except (OSError, UnicodeError):
+    try:
+        os.close(legacy_fd)
+    except OSError:
+        pass
+    sys.exit(0)
+
+try:
+    with open(settings_path, "r", encoding="utf-8") as source:
+        source_stat = os.fstat(source.fileno())
+        settings = json.load(source)
+except FileNotFoundError:
+    # The user removed the global settings after the legacy lease was written.
+    # Preserve that newer choice and discard only the stale lease.
+    try:
+        os.unlink(legacy_path)
+    except FileNotFoundError:
+        pass
+    sys.exit(0)
+except (OSError, ValueError):
+    sys.exit(0)
+
+if not isinstance(settings, dict):
+    sys.exit(0)
+
+if settings.get("preferredNotifChannel") != "terminal_bell":
+    try:
+        os.unlink(legacy_path)
+    except FileNotFoundError:
+        pass
+    sys.exit(0)
+
+if saved == "__UNSET__":
+    settings.pop("preferredNotifChannel", None)
+else:
+    settings["preferredNotifChannel"] = saved
+
+write_path = os.path.realpath(settings_path)
+try:
+    target_stat = os.stat(write_path)
+except OSError:
+    sys.exit(0)
+if not stat.S_ISREG(target_stat.st_mode) or not os.path.samestat(source_stat, target_stat):
+    sys.exit(0)
+
+def same_source_version(before, after):
+    return (
+        os.path.samestat(before, after)
+        and before.st_size == after.st_size
+        and before.st_mtime_ns == after.st_mtime_ns
+        and before.st_ctime_ns == after.st_ctime_ns
+    )
+
+directory = os.path.dirname(write_path) or "."
+fd, temporary = tempfile.mkstemp(prefix=".wisp-settings-migration.", dir=directory)
+try:
+    os.fchmod(fd, stat.S_IMODE(target_stat.st_mode))
+    with os.fdopen(fd, "w", encoding="utf-8") as output:
+        json.dump(settings, output, indent=2)
+        output.write("\n")
+        output.flush()
+        os.fsync(output.fileno())
+    try:
+        current_path_stat = os.stat(settings_path)
+        current_target_stat = os.stat(write_path)
+    except OSError:
+        current_path_stat = current_target_stat = None
+    if (
+        current_path_stat is None
+        or current_target_stat is None
+        or not same_source_version(source_stat, current_path_stat)
+        or not same_source_version(source_stat, current_target_stat)
+    ):
+        os.unlink(temporary)
+        sys.exit(0)
+    os.replace(temporary, write_path)
+    try:
+        directory_fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except OSError:
+        pass
+except Exception:
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    try:
+        os.unlink(temporary)
+    except OSError:
+        pass
+    sys.exit(0)
+
+try:
+    os.unlink(legacy_path)
+except FileNotFoundError:
+    pass
 PYEOF
 }

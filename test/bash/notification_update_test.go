@@ -32,8 +32,6 @@ func updateSnippet(t *testing.T, body string) string {
 
 // ==================== notification-setup.sh tests ====================
 
-// --- setup_sound_notification ---
-
 // --- is_sound_enabled ---
 
 func TestNotification_is_sound_enabled_returns_true_when_features_file_missing(t *testing.T) {
@@ -91,8 +89,6 @@ func TestNotification_is_sound_enabled_returns_false_when_sound_is_false(t *test
 		t.Errorf("expected 'false', got %q", strings.TrimSpace(out))
 	}
 }
-
-// --- remove_sound_notification ---
 
 // --- set_sound_feature_flag ---
 

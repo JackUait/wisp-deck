@@ -147,12 +147,28 @@ _attention_parse_descriptor_file() {
 # attention_session_create <tmp-base>
 # Allocate a private root and expose/print its stable descriptor location.
 attention_session_create() {
-  local tmp_base="${1-}" root
+  local tmp_base="${1-}" root owner_start owner_record
   _attention_valid_field "$tmp_base" || return 1
   [ -d "$tmp_base" ] || return 1
 
   root="$(umask 077; mktemp -d "$tmp_base/wisp-deck-attention.XXXXXX")" || return 1
   if ! chmod 700 "$root"; then
+    rm -rf "$root"
+    return 1
+  fi
+
+  # Background adapters outlive the short account-switch shells that may
+  # launch them. Record the exact wrapper process identity once in the stable
+  # session root so every generation and switch can validate the same owner;
+  # PID alone is unsafe after reuse.
+  owner_start="$(LC_ALL=C TZ=UTC /bin/ps -p "$$" -o lstart= 2>/dev/null \
+    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  if ! _attention_valid_field "$owner_start"; then
+    rm -rf "$root"
+    return 1
+  fi
+  owner_record="1"$'\t'"$$"$'\t'"$owner_start"
+  if ! _attention_atomic_replace "$root/owner" "$owner_record"; then
     rm -rf "$root"
     return 1
   fi
@@ -299,6 +315,52 @@ attention_relaunch_lock_release() {
   rm -rf "$lock" || return 1
   _ATTENTION_RELAUNCH_LOCK_ROOT=""
   _ATTENTION_RELAUNCH_LOCK_TOKEN=""
+  return 0
+}
+
+# attention_start_claude_background_candidate <claude> <config-root>
+#   <wisp-config-root> <owner-root> <default|isolated> [error-log]
+#
+# Start a terminal-detached candidate for one exact Claude account. The Go
+# broker uses owner-root/owner for wrapper PID+start validation, keeps one local
+# claim per owner/root, and elects the account-global leader. This helper is
+# deliberately best-effort: an unavailable broker must never prevent Claude or
+# an account/tool switch from launching.
+attention_start_claude_background_candidate() {
+  local claude="${1-}" config_root="${2-}" wisp_config="${3-}"
+  local owner_root="${4-}" config_mode="${5-}"
+  local error_log="${6:-/dev/null}" candidate_dir
+  local -a candidate_args
+
+  case "$claude" in /*) ;; *) return 0 ;; esac
+  case "$config_root" in /*) ;; *) return 0 ;; esac
+  case "$wisp_config" in /*) ;; *) return 0 ;; esac
+  case "$owner_root" in /*) ;; *) return 0 ;; esac
+  case "$config_mode" in default|isolated) ;; *) return 0 ;; esac
+  [ -d "$config_root" ] || return 0
+  [ -d "$wisp_config" ] || return 0
+  [ -d "$owner_root" ] && [ -f "$owner_root/owner" ] || return 0
+
+  candidate_dir="$owner_root/claude-background-candidates"
+  if ! (umask 077; mkdir -p "$candidate_dir") || ! chmod 700 "$candidate_dir"; then
+    return 0
+  fi
+  if ! : >>"$error_log" 2>/dev/null; then
+    error_log=/dev/null
+  fi
+
+  candidate_args=(
+    claude-background
+    --claude "$claude"
+    --config-dir "$config_root"
+    --wisp-config-dir "$wisp_config"
+    --owner-root "$owner_root"
+  )
+  [ "$config_mode" = default ] && candidate_args+=(--default-config)
+  (
+    exec 3>&-
+    exec nohup wisp-deck-tui "${candidate_args[@]}"
+  ) </dev/null >/dev/null 2>>"$error_log" &
   return 0
 }
 

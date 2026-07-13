@@ -326,13 +326,6 @@ WISP_DECK_ATTENTION_ROOT=""
 WISP_DECK_ATTENTION_DESCRIPTOR=""
 WISP_DECK_ATTENTION_GENERATION=""
 WISP_DECK_ATTENTION_FILE=""
-if [ "$SELECTED_AI_TOOL" = "claude" ]; then
-  _claude_settings="${HOME}/.claude/settings.json"
-  # Silence Claude's own idle notification (preferredNotifChannel=terminal_bell,
-  # silent in Ghostty) so the wisp-deck sound flag — including "off" — is the
-  # single source of truth for the idle sound.
-  setup_sound_notification "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" "$_claude_settings"
-fi
 
 # Background watcher: switch to the AI pane once it's ready. Resolves the AI
 # pane via gt_ai_pane (marker/geometry) rather than a fixed index, so it is
@@ -361,26 +354,6 @@ cleanup() {
   # machine unable to sleep is worse than leaving a temp file behind.
   keep_awake_drop "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" "$SESSION_NAME" 2>/dev/null || true
   [ -n "${HEARTBEAT_PID:-}" ] && kill_tree "$HEARTBEAT_PID" TERM 2>/dev/null || true
-  # Restore Claude's native notification channel only after the final live
-  # Claude session exits. Tool identity is dynamic because sessions can switch
-  # agents in place, so inspect each current tmux session rather than a launch
-  # marker.
-  if [ "$SELECTED_AI_TOOL" = "claude" ]; then
-    local _other_claude
-    _other_claude="$(
-      "$TMUX_CMD" list-sessions -F '#{session_name}' 2>/dev/null | while IFS= read -r _session; do
-        [ -n "$_session" ] || continue
-        [ "$_session" = "$SESSION_NAME" ] && continue
-        if [ "$("$TMUX_CMD" show-environment -t "$_session" WISP_DECK_TOOL 2>/dev/null | cut -d= -f2-)" = "claude" ]; then
-          printf 'yes\n'
-          break
-        fi
-      done
-    )"
-    if [ -z "$_other_claude" ]; then
-      remove_sound_notification "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" "${HOME}/.claude/settings.json" >/dev/null 2>&1 || true
-    fi
-  fi
   cleanup_tmux_session "$SESSION_NAME" "$WATCHER_PID" "$TMUX_CMD"
   attention_cleanup "${WISP_DECK_ATTENTION_ROOT:-}" 2>/dev/null || true
   rm -f "$SHARE_DIR/spare-${SESSION_NAME}.conf"
@@ -406,17 +379,37 @@ if [ "$RESTORE_MODE" -eq 1 ]; then
   WISP_DECK_RESUME=1
 fi
 
-# Resolve active Claude config (settings file) and export for build_ai_launch_cmd.
+# Resolve the active Wisp settings overlay, migrate obsolete marker hooks out of
+# the user's standard settings once, then build a private launch-local overlay
+# inside this attention generation. Claude merges the additional --settings file
+# with its normal user settings, so the global notification preference never
+# needs a lease or cleanup mutation.
 _gt_cfg_root="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
 WISP_DECK_CLAUDE_SETTINGS=""
+WISP_DECK_CLAUDE_SETTINGS_SOURCE="$(resolve_claude_config_path \
+  "$_gt_cfg_root/claude-configs" "$_gt_cfg_root/claude-config")"
+# Upgrade cleanup is launch-wide, not tied to the initially selected tool: a
+# Codex/OpenCode tab may switch to Claude later in the same wrapper lifetime.
+remove_waiting_indicator_hooks "$HOME/.claude/settings.json" "$_gt_cfg_root" >/dev/null 2>&1 || true
+# A pre-upgrade crash may have left the old global notification-channel lease
+# applied. Restore it only if terminal_bell is still the exact value Wisp wrote;
+# the launch-local overlay below owns notification suppression from now on.
+migrate_legacy_claude_notif_channel "$HOME/.claude/settings.json" "$_gt_cfg_root" >/dev/null 2>&1 || true
 if [ "$SELECTED_AI_TOOL" = "claude" ]; then
-  WISP_DECK_CLAUDE_SETTINGS="$(resolve_claude_config_path "$_gt_cfg_root/claude-configs" "$_gt_cfg_root/claude-config")"
+  if ! WISP_DECK_CLAUDE_SETTINGS="$(
+    write_claude_launch_settings "${WISP_DECK_ATTENTION_FILE%/state}" \
+      "$WISP_DECK_CLAUDE_SETTINGS_SOURCE"
+  )"; then
+    printf '\033[31mError:\033[0m Could not prepare Claude launch settings.\n' >&3
+    exit 1
+  fi
 fi
 
 # Resolve the active native Claude account (its isolated CLAUDE_CONFIG_DIR) and
 # export for build_ai_launch_cmd. Default (empty) leaves CLAUDE_CONFIG_DIR unset
 # so Claude uses the standard Keychain login.
 WISP_DECK_CLAUDE_ACCOUNT_DIR=""
+WISP_DECK_CLAUDE_BACKGROUND_MODE=default
 if [ "$SELECTED_AI_TOOL" = "claude" ]; then
   if [ "$RESTORE_MODE" -eq 1 ]; then
     # A restored tab must come back under the login ITS session ran (recorded
@@ -433,12 +426,25 @@ if [ "$SELECTED_AI_TOOL" = "claude" ]; then
   # settings while keeping its own credentials/session state. Self-heals drift on
   # each launch (Claude may rewrite a settings file in place, severing the link).
   if [ -n "$WISP_DECK_CLAUDE_ACCOUNT_DIR" ]; then
+    WISP_DECK_CLAUDE_BACKGROUND_MODE=isolated
     sync_claude_shared_settings "$HOME/.claude" "$WISP_DECK_CLAUDE_ACCOUNT_DIR"
     # Also share conversation state here (not only at wrapper start): an
     # account registered in the menu THIS launch didn't exist when the early
     # sync ran, and must not start a private transcript store.
     sync_claude_shared_state "$HOME/.claude" "$WISP_DECK_CLAUDE_ACCOUNT_DIR"
   fi
+fi
+
+# Every wrapper that has used an exact Claude account keeps one detached broker
+# candidate for that root until its stable attention root is removed. Account
+# and tool switches start additional roots through the same helper and never
+# stop prior-root candidates, because their background jobs remain global.
+if [ "$SELECTED_AI_TOOL" = "claude" ]; then
+  attention_start_claude_background_candidate \
+    "$CLAUDE_CMD" "${WISP_DECK_CLAUDE_ACCOUNT_DIR:-$HOME/.claude}" \
+    "$_gt_cfg_root" "$WISP_DECK_ATTENTION_ROOT" \
+    "$WISP_DECK_CLAUDE_BACKGROUND_MODE" \
+    "${WISP_DECK_ERROR_LOG:-/dev/null}" 2>/dev/null || true
 fi
 # Auto-switch accounts is IN-PLACE rotation: the statusline watches this
 # session's quota usage and, at the threshold, relaunches the AI pane under the
@@ -499,7 +505,8 @@ write_relaunch_context "$WISP_DECK_RELAUNCH_FILE" "$SELECTED_AI_TOOL" \
   "$AI_TOOL_CMD" "$WISP_DECK_CLAUDE_SETTINGS" \
   "$WISP_DECK_CLAUDE_FILTER" "$PROJECT_DIR" "$_gt_cfg_root" \
   "${AI_TOOLS_AVAILABLE[*]}" "$CLAUDE_CMD" "$OPENCODE_CMD" "$CODEX_CMD" \
-  "$WISP_DECK_ATTENTION_ROOT" "$WISP_DECK_ATTENTION_DESCRIPTOR"
+  "$WISP_DECK_ATTENTION_ROOT" "$WISP_DECK_ATTENTION_DESCRIPTOR" \
+  "$WISP_DECK_CLAUDE_SETTINGS_SOURCE"
 export WISP_DECK_RELAUNCH_FILE
 
 # Start the descriptor consumer before tmux (which blocks until session ends).

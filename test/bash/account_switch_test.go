@@ -1042,6 +1042,157 @@ printf '%%s|%%s\n' "$_rc_attention_root" "$_rc_attention_descriptor"`, outFile))
 	}
 }
 
+func TestWriteAndReadRelaunchContextPreservesClaudeSettingsSource(t *testing.T) {
+	dir := t.TempDir()
+	outFile := filepath.Join(dir, "relaunch")
+	cfg := filepath.Join(dir, "cfg")
+	root := filepath.Join(dir, "wisp-deck-attention.fixture")
+	descriptor := filepath.Join(root, "descriptor")
+	source := filepath.Join(cfg, "claude-configs", "active.json")
+	_, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+		`write_relaunch_context %q claude claude "/old/generated.json" "" "/proj" %q "claude codex" claude "" codex %q %q %q`,
+		outFile, cfg, root, descriptor, source)), nil)
+	assertExitCode(t, code, 0)
+
+	read, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(`
+_rc_settings_source=""
+_read_relaunch_ctx %q
+printf '%%s\n' "$_rc_settings_source"`, outFile)), nil)
+	assertExitCode(t, code, 0)
+	if got := strings.TrimSpace(read); got != source {
+		t.Fatalf("Claude settings source round trip = %q, want %q", got, source)
+	}
+}
+
+func TestRelaunchAIPaneRegeneratesClaudeSettingsInRotatedGeneration(t *testing.T) {
+	dir := t.TempDir()
+	attention := createAttentionFixture(t, dir, "claude")
+	oldGenerationDir := filepath.Dir(attention["state"])
+	source := writeTempFile(t, dir, "active.json", `{"model":"opus","preferredNotifChannel":"iterm2"}`)
+	ctx := writeTempFile(t, dir, "relaunch-settings", strings.Join([]string{
+		"tool=claude",
+		"tool_cmd=/opt/claude",
+		"settings=" + filepath.Join(oldGenerationDir, "claude-settings.json"),
+		"settings_source=" + source,
+		"filter=",
+		"project_dir=/proj",
+		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
+		"pointer=" + filepath.Join(dir, "claude-account"),
+		"list=" + filepath.Join(dir, "claude-accounts.list"),
+		"colors=" + filepath.Join(dir, "claude-account-colors"),
+		"default_label=" + filepath.Join(dir, "claude-account-default-label"),
+		"attention_root=" + attention["root"],
+		"attention_descriptor=" + attention["descriptor"],
+		"",
+	}, "\n"))
+	rec := filepath.Join(dir, "settings.log")
+	bin := poolMockTmux(t, dir, filepath.Join(dir, "tmux.log"))
+	body := fmt.Sprintf(`
+build_switch_launch_cmd() {
+  settings=$3
+  if [ "$settings" = "${WISP_DECK_ATTENTION_FILE%%/state}/claude-settings.json" ] \
+     && grep -q '"model": "opus"' "$settings" \
+     && grep -q '"preferredNotifChannel": "terminal_bell"' "$settings"; then
+    printf 'settings-ok:%%s\n' "$settings" >> %q
+  else
+    printf 'settings-stale:%%s\n' "$settings" >> %q
+  fi
+  printf 'claude'
+}
+relaunch_ai_pane tmux %q default
+`, rec, rec, ctx)
+	env := buildEnv(t, []string{bin}, "HOME="+dir, "WISP_DECK_LIB_DIR="+filepath.Join(projectRoot(t), "lib"))
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, body), env)
+	assertExitCode(t, code, 0)
+	if strings.Contains(out, "command not found") {
+		t.Fatalf("relaunch settings helper unavailable: %s", out)
+	}
+	logData, err := os.ReadFile(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertContains(t, string(logData), "settings-ok:")
+	assertNotContains(t, string(logData), "settings-stale:")
+	if _, err := os.Stat(oldGenerationDir); !os.IsNotExist(err) {
+		t.Fatalf("old settings generation remains after rotation: %v", err)
+	}
+}
+
+func TestRelaunchAIPaneInvalidSettingsSourceDoesNotFenceRunningGeneration(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		create func(*testing.T, string) string
+	}{
+		{
+			name: "invalid JSON",
+			create: func(t *testing.T, dir string) string {
+				t.Helper()
+				return writeTempFile(t, dir, "invalid-active.json", "{invalid\n")
+			},
+		},
+		{
+			name: "deleted source",
+			create: func(t *testing.T, dir string) string {
+				t.Helper()
+				return filepath.Join(dir, "deleted-active.json")
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			attention := createAttentionFixture(t, dir, "claude")
+			beforeDescriptor, err := os.ReadFile(attention["descriptor"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := tt.create(t, dir)
+			ctx := writeTempFile(t, dir, "relaunch-settings", strings.Join([]string{
+				"tool=claude",
+				"tool_cmd=/opt/claude",
+				"settings=" + filepath.Join(filepath.Dir(attention["state"]), "claude-settings.json"),
+				"settings_source=" + source,
+				"filter=",
+				"project_dir=/proj",
+				"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
+				"pointer=" + filepath.Join(dir, "claude-account"),
+				"list=" + filepath.Join(dir, "claude-accounts.list"),
+				"colors=" + filepath.Join(dir, "claude-account-colors"),
+				"default_label=" + filepath.Join(dir, "claude-account-default-label"),
+				"attention_root=" + attention["root"],
+				"attention_descriptor=" + attention["descriptor"],
+				"",
+			}, "\n"))
+			tmuxLog := filepath.Join(dir, "tmux.log")
+			bin := poolMockTmux(t, dir, tmuxLog)
+			body := fmt.Sprintf(`
+build_switch_launch_cmd() {
+  printf 'build-should-not-run\n' >> %q
+  printf 'claude'
+}
+relaunch_ai_pane tmux %q default
+`, tmuxLog, ctx)
+			env := buildEnv(t, []string{bin}, "HOME="+dir, "WISP_DECK_LIB_DIR="+filepath.Join(projectRoot(t), "lib"))
+			_, code := runBashSnippet(t, accountSwitchSnippet(t, body), env)
+			assertExitCode(t, code, 0)
+
+			afterDescriptor, err := os.ReadFile(attention["descriptor"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(afterDescriptor) != string(beforeDescriptor) {
+				t.Fatalf("invalid settings fenced running generation:\n before %q\n after  %q", beforeDescriptor, afterDescriptor)
+			}
+			if _, err := os.Stat(attention["state"]); err != nil {
+				t.Fatalf("running generation state was removed: %v", err)
+			}
+			if logData, err := os.ReadFile(tmuxLog); err == nil {
+				assertNotContains(t, string(logData), "respawn-pane")
+				assertNotContains(t, string(logData), "build-should-not-run")
+			}
+		})
+	}
+}
+
 func TestRelaunchAIPaneRotatesAndStampsAttentionBeforeBuild(t *testing.T) {
 	dir := t.TempDir()
 	attention := createAttentionFixture(t, dir, "claude")

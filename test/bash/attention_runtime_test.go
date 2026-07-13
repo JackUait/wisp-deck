@@ -116,6 +116,8 @@ printf 'read_output=%s\n' "$(attention_read_descriptor "$WISP_DECK_ATTENTION_DES
 	}
 
 	assertPerm(t, root, 0o700)
+	owner := filepath.Join(root, "owner")
+	assertPerm(t, owner, 0o600)
 	assertPerm(t, filepath.Dir(state), 0o700)
 	assertPerm(t, state, 0o600)
 	assertPerm(t, descriptor, 0o600)
@@ -132,6 +134,110 @@ printf 'read_output=%s\n' "$(attention_read_descriptor "$WISP_DECK_ATTENTION_DES
 	}
 	if want := fmt.Sprintf("1\t%s\tclaude\t%s\n", generation, state); string(descriptorRecord) != want {
 		t.Fatalf("descriptor = %q, want %q", descriptorRecord, want)
+	}
+	ownerRecord, err := os.ReadFile(owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerFields := strings.Split(strings.TrimSuffix(string(ownerRecord), "\n"), "\t")
+	if len(ownerFields) != 3 || ownerFields[0] != "1" || ownerFields[1] == "" {
+		t.Fatalf("owner record = %q, want version, PID, and UTC process start", ownerRecord)
+	}
+	if _, err := time.Parse("Mon Jan _2 15:04:05 2006", ownerFields[2]); err != nil {
+		t.Fatalf("owner start = %q: %v", ownerFields[2], err)
+	}
+}
+
+func TestAttentionRuntimeStartsClaudeBackgroundCandidateDetached(t *testing.T) {
+	dir := t.TempDir()
+	attention := createAttentionFixture(t, dir, "claude")
+	configRoot := filepath.Join(dir, "claude-account")
+	wispConfig := filepath.Join(dir, "wisp-config")
+	for _, path := range []string{configRoot, wispConfig} {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	callLog := filepath.Join(dir, "candidate.args")
+	errorLog := filepath.Join(dir, "candidate.err")
+	fd3Log := filepath.Join(dir, "candidate.fd3")
+	bin := mockCommand(t, dir, "wisp-deck-tui", `
+printf '%s\n' "$@" > "$CALL_LOG"
+if IFS= read -r leaked; then printf 'stdin-leak:%s\n' "$leaked" >> "$CALL_LOG"; fi
+printf 'fd3-leak\n' >&3 2>/dev/null || true
+printf 'stdout-must-be-dropped\n'
+printf 'stderr-goes-to-log\n' >&2
+`)
+	body := fmt.Sprintf(`
+exec 3>%q
+attention_start_claude_background_candidate %q %q %q %q isolated %q
+printf 'caller-continued\n'
+`, fd3Log, filepath.Join(dir, "bin", "claude"), configRoot, wispConfig, attention["root"], errorLog)
+	out, code := runBashSnippet(t,
+		fmt.Sprintf("source %q\n%s", filepath.Join(projectRoot(t), "lib", "attention.sh"), body),
+		buildEnv(t, []string{bin}, "CALL_LOG="+callLog))
+	assertExitCode(t, code, 0)
+	if out != "caller-continued\n" {
+		t.Fatalf("candidate leaked terminal output: %q", out)
+	}
+	args := waitForFile(t, callLog, "background candidate did not start")
+	wantArgs := strings.Join([]string{
+		"claude-background",
+		"--claude", filepath.Join(dir, "bin", "claude"),
+		"--config-dir", configRoot,
+		"--wisp-config-dir", wispConfig,
+		"--owner-root", attention["root"],
+	}, "\n") + "\n"
+	if args != wantArgs {
+		t.Fatalf("candidate argv = %q, want %q", args, wantArgs)
+	}
+	if strings.Contains(args, "stdin-leak") {
+		t.Fatalf("candidate inherited terminal stdin: %q", args)
+	}
+	if got := waitForFile(t, errorLog, "candidate stderr was not isolated"); !strings.Contains(got, "stderr-goes-to-log") {
+		t.Fatalf("candidate stderr log = %q", got)
+	}
+	if leaked, err := os.ReadFile(fd3Log); err != nil || len(leaked) != 0 {
+		t.Fatalf("candidate inherited wrapper fd3: %q, %v", leaked, err)
+	}
+	candidateDir := filepath.Join(attention["root"], "claude-background-candidates")
+	assertPerm(t, candidateDir, 0o700)
+}
+
+func TestAttentionRuntimeDefaultClaudeBackgroundCandidateUnsetsConfigMode(t *testing.T) {
+	dir := t.TempDir()
+	attention := createAttentionFixture(t, dir, "claude")
+	configRoot := filepath.Join(dir, ".claude")
+	wispConfig := filepath.Join(dir, "wisp-config")
+	for _, path := range []string{configRoot, wispConfig} {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	callLog := filepath.Join(dir, "candidate.args")
+	bin := mockCommand(t, dir, "wisp-deck-tui", `printf '%s\n' "$@" > "$CALL_LOG"`)
+	body := fmt.Sprintf(`
+attention_start_claude_background_candidate %q %q %q %q default /dev/null
+printf 'caller-continued\n'
+`, filepath.Join(dir, "bin", "claude"), configRoot, wispConfig, attention["root"])
+	out, code := runBashSnippet(t,
+		fmt.Sprintf("source %q\n%s", filepath.Join(projectRoot(t), "lib", "attention.sh"), body),
+		buildEnv(t, []string{bin}, "CALL_LOG="+callLog))
+	assertExitCode(t, code, 0)
+	if out != "caller-continued\n" {
+		t.Fatalf("candidate leaked terminal output: %q", out)
+	}
+	args := waitForFile(t, callLog, "default background candidate did not start")
+	wantArgs := strings.Join([]string{
+		"claude-background",
+		"--claude", filepath.Join(dir, "bin", "claude"),
+		"--config-dir", configRoot,
+		"--wisp-config-dir", wispConfig,
+		"--owner-root", attention["root"],
+		"--default-config",
+	}, "\n") + "\n"
+	if args != wantArgs {
+		t.Fatalf("default candidate argv = %q, want %q", args, wantArgs)
 	}
 }
 
@@ -200,8 +306,8 @@ printf '%s\n' "$root"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 0 {
-		t.Fatalf("invalid tool left runtime debris: %v", entries)
+	if len(entries) != 1 || entries[0].Name() != "owner" {
+		t.Fatalf("invalid tool left generation debris: %v", entries)
 	}
 	for name, tool := range map[string]string{
 		"empty":   "",
