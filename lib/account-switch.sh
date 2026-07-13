@@ -415,8 +415,8 @@ replay_ai_draft() {
 }
 
 # build_switch_launch_cmd <tool> <tool_cmd> <settings> <filter> \
-#   <project_dir> <new_account_dir> [resume_session] — build the launch command that
-# respawns the AI pane under new_account_dir.
+#   <project_dir> <new_account_dir> [resume_session] [claude_handoff_arg] — build
+# the launch command that respawns the AI pane under new_account_dir.
 #
 # resume_session is the id of THIS pane's active conversation (the statusline
 # stamps it only once the transcript is durable — see current_ai_session). Its
@@ -432,7 +432,8 @@ replay_ai_draft() {
 # left unset.
 build_switch_launch_cmd() {
   local tool="$1" tool_cmd="$2" settings="$3" filter="$4" \
-    project_dir="$5" new_account_dir="$6" resume_session="${7:-}"
+    project_dir="$5" new_account_dir="$6" resume_session="${7:-}" \
+    claude_handoff_arg="${8:-}"
   if [ -n "$resume_session" ]; then
     WISP_DECK_RESUME=1 \
     WISP_DECK_RESUME_SESSION="$resume_session" \
@@ -451,6 +452,7 @@ build_switch_launch_cmd() {
   # pane's.
   local extra=""
   [ "$tool" = "opencode" ] && extra="$project_dir"
+  [ "$tool" = "claude" ] && extra="$claude_handoff_arg"
   WISP_DECK_RESUME='' \
   WISP_DECK_RESUME_SESSION='' \
   WISP_DECK_CLAUDE_ACCOUNT_DIR="$new_account_dir" \
@@ -881,16 +883,26 @@ relaunch_switch_tool() {
     fi
   fi
 
-  local cmd
+  local cmd builder_handoff="" trailing_handoff="$handoff_arg"
   if ! prepare_attention_relaunch "$tmux_cmd" "$_rc_attention_root" \
     "$_rc_attention_descriptor" "$target"; then
     [ "$attention_lock_held" = 1 ] \
       && attention_relaunch_lock_release "$_rc_attention_root" 2>/dev/null || true
     return 0
   fi
+  # The attention adapter wraps Claude's complete argv in `bash -c`. A
+  # cross-agent prompt therefore has to be part of the raw inner command;
+  # appending it to the built wrapper would turn it into bash's $0.
+  if [ "$target" = "claude" ] \
+     && [ -n "${WISP_DECK_ATTENTION_GENERATION:-}" ] \
+     && [ -n "${WISP_DECK_ATTENTION_FILE:-}" ]; then
+    builder_handoff="$handoff_arg"
+    trailing_handoff=""
+  fi
   cmd="$(build_switch_launch_cmd "$target" "$tool_cmd" \
-    "$_rc_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir" "$sid")"
-  "$tmux_cmd" respawn-pane -k -t "$pane" -c "$_rc_project_dir" "$cmd$handoff_arg; exec bash"
+    "$_rc_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir" "$sid" \
+    "$builder_handoff")"
+  "$tmux_cmd" respawn-pane -k -t "$pane" -c "$_rc_project_dir" "$cmd$trailing_handoff; exec bash"
 
   [ -n "$pool" ] && pool_set "$pool/meta" last_tool "$target"
   if [ "$target" = "claude" ]; then

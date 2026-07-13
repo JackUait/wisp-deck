@@ -13,10 +13,32 @@ get_tool_accent() {
   esac
 }
 
-# Build the AI tool launch command string.
+# Build the AI tool launch command string. Claude's complete raw fallback chain
+# is supervised once when the generation runtime is present; the screenshot
+# filter remains inside that chain as its sole PTY boundary.
 # Usage: build_ai_launch_cmd <tool> <tool_cmd> [extra_args_or_project_dir]
-# tool_cmd is the binary for <tool> — resolve it with resolve_ai_tool_cmd.
 build_ai_launch_cmd() {
+  local tool="$1" raw config_root state_q generation_q config_q raw_q
+  raw="$(build_ai_launch_cmd_raw "$@")" || return 1
+  if [ "$tool" = "claude" ] \
+     && [ -n "${WISP_DECK_ATTENTION_FILE:-}" ] \
+     && [ -n "${WISP_DECK_ATTENTION_GENERATION:-}" ]; then
+    config_root="${WISP_DECK_CLAUDE_ACCOUNT_DIR:-$HOME/.claude}"
+    printf -v state_q '%q' "$WISP_DECK_ATTENTION_FILE"
+    printf -v generation_q '%q' "$WISP_DECK_ATTENTION_GENERATION"
+    printf -v config_q '%q' "$config_root"
+    printf -v raw_q '%q' "$raw"
+    printf 'wisp-deck-tui claude-attention --state-file %s --generation %s --config-dir %s -- bash -c %s\n' \
+      "$state_q" "$generation_q" "$config_q" "$raw_q"
+    return 0
+  fi
+  printf '%s\n' "$raw"
+}
+
+# Construct the tool command without semantic supervision. Keeping the entire
+# resume chain in this function ensures one outer adapter owns every fallback.
+# Usage: build_ai_launch_cmd_raw <tool> <tool_cmd> [extra_args_or_project_dir]
+build_ai_launch_cmd_raw() {
   local tool="$1" tool_cmd="$2"
   shift 2
   local extra="$*"
@@ -128,6 +150,10 @@ build_ai_launch_cmd() {
         chain="$chain; if [ \$_wd_rc -ne 0 ] && [ \$(( \$(date +%s) - _wd_t0 )) -lt $win ]; then _wd_t0=\$(date +%s); $launch; _wd_rc=\$?; fi"
       fi
     done
+    # Leave the complete chain's status equal to Claude's final status. The
+    # subshell preserves the caller's later `; exec bash` while allowing the
+    # outer attention supervisor's `bash -c` to observe the real exit code.
+    chain="$chain; (exit \"\$_wd_rc\")"
     echo "$chain"
     return 0
   fi
