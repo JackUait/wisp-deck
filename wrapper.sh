@@ -70,7 +70,7 @@ if [ ! -d "$_WRAPPER_DIR/lib" ]; then
   exit 1
 fi
 
-_gt_libs=(theme ai-tools projects process input tui menu-tui project-actions tmux-session settings-json notification-setup keep-awake tab-title-watcher terminals/ghostty session-restore claude-configs claude-accounts claude-shared-settings auto-switch account-switch compact-view screenshot spare-tabs)
+_gt_libs=(theme ai-tools projects process input tui menu-tui project-actions tmux-session settings-json notification-setup keep-awake tab-title-watcher terminals/ghostty session-restore claude-configs claude-accounts claude-shared-settings auto-switch attention account-switch compact-view screenshot spare-tabs)
 for _gt_lib in "${_gt_libs[@]}"; do
   if [ ! -f "$_WRAPPER_DIR/lib/${_gt_lib}.sh" ]; then
     printf '\033[31mError:\033[0m Missing library %s/lib/%s.sh\n' "$_WRAPPER_DIR" "$_gt_lib" >&2
@@ -322,6 +322,10 @@ fi
 
 # Tab title waiting indicator
 WISP_DECK_MARKER_FILE="/tmp/wisp-deck-waiting-$$"
+WISP_DECK_ATTENTION_ROOT=""
+WISP_DECK_ATTENTION_DESCRIPTOR=""
+WISP_DECK_ATTENTION_GENERATION=""
+WISP_DECK_ATTENTION_FILE=""
 if [ "$SELECTED_AI_TOOL" = "claude" ]; then
   _claude_settings="${HOME}/.claude/settings.json"
   add_waiting_indicator_hooks "$_claude_settings" >/dev/null
@@ -379,6 +383,7 @@ cleanup() {
     fi
   fi
   cleanup_tmux_session "$SESSION_NAME" "$WATCHER_PID" "$TMUX_CMD"
+  attention_cleanup "${WISP_DECK_ATTENTION_ROOT:-}" 2>/dev/null || true
   rm -f "$SHARE_DIR/spare-${SESSION_NAME}.conf"
   rm -f "$SHARE_DIR/proxy-${SESSION_NAME}.log"
   rm -f "$SHARE_DIR/proxy-account-${SESSION_NAME}"
@@ -386,6 +391,16 @@ cleanup() {
   rm -rf "$SHARE_DIR/spare-zdotdir-${SESSION_NAME}"
 }
 trap cleanup EXIT HUP TERM INT
+
+# Every wrapper invocation, including a restored tab, owns a fresh private
+# attention root and immutable launch generation. Build commands only after
+# these exports exist so the adapter receives the generation it must publish.
+if ! attention_session_create "${TMPDIR:-/tmp}" >/dev/null \
+   || ! attention_begin_generation "$WISP_DECK_ATTENTION_ROOT" \
+      "$SELECTED_AI_TOOL" >/dev/null; then
+  printf '\033[31mError:\033[0m Could not initialize the attention runtime.\n' >&2
+  exit 1
+fi
 
 if [ "$RESTORE_MODE" -eq 1 ]; then
   # shellcheck disable=SC2034  # read by build_ai_launch_cmd, sourced into this shell
@@ -484,7 +499,8 @@ WISP_DECK_RELAUNCH_FILE="$SHARE_DIR/relaunch-${SESSION_NAME}"
 write_relaunch_context "$WISP_DECK_RELAUNCH_FILE" "$SELECTED_AI_TOOL" \
   "$AI_TOOL_CMD" "$WISP_DECK_CLAUDE_SETTINGS" \
   "$WISP_DECK_CLAUDE_FILTER" "$PROJECT_DIR" "$_gt_cfg_root" \
-  "${AI_TOOLS_AVAILABLE[*]}" "$CLAUDE_CMD" "$OPENCODE_CMD" "$CODEX_CMD"
+  "${AI_TOOLS_AVAILABLE[*]}" "$CLAUDE_CMD" "$OPENCODE_CMD" "$CODEX_CMD" \
+  "$WISP_DECK_ATTENTION_ROOT" "$WISP_DECK_ATTENTION_DESCRIPTOR"
 export WISP_DECK_RELAUNCH_FILE
 
 # Start tab title watcher before tmux (which blocks until session ends)
@@ -550,7 +566,7 @@ if [ "$RESTORE_MODE" -eq 1 ] && [ -n "${WISP_DECK_RESUME_LAYOUT:-}" ]; then
   restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$WISP_DECK_RESUME_LAYOUT" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
 fi
 
-"$TMUX_CMD" new-session -s "$SESSION_NAME" -e "PATH=$PATH" -e "WISP_DECK_MARKER_FILE=$WISP_DECK_MARKER_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=${WISP_DECK_RESUME_SESSION:-}" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$WISP_DECK_RELAUNCH_FILE" -e "WISP_DECK_CLAUDE_ACCOUNT=${WISP_DECK_CLAUDE_ACCOUNT_DIR##*/}" -e "WISP_DECK_SEQ=${_wd_launch_seq}" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
+"$TMUX_CMD" new-session -s "$SESSION_NAME" -e "PATH=$PATH" -e "WISP_DECK_ATTENTION_ROOT=$WISP_DECK_ATTENTION_ROOT" -e "WISP_DECK_ATTENTION_DESCRIPTOR=$WISP_DECK_ATTENTION_DESCRIPTOR" -e "WISP_DECK_ATTENTION_GENERATION=$WISP_DECK_ATTENTION_GENERATION" -e "WISP_DECK_ATTENTION_FILE=$WISP_DECK_ATTENTION_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=${WISP_DECK_RESUME_SESSION:-}" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$WISP_DECK_RELAUNCH_FILE" -e "WISP_DECK_CLAUDE_ACCOUNT=${WISP_DECK_CLAUDE_ACCOUNT_DIR##*/}" -e "WISP_DECK_SEQ=${_wd_launch_seq}" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
   "$_pane0_cmd" \; \
   set-option status-left " ⬡ ${PROJECT_NAME} " \; \
   set-option status-left-style "fg=white,bg=colour236,bold" \; \

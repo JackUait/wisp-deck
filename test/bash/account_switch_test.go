@@ -52,6 +52,18 @@ func accountSwitchSnippet(t *testing.T, body string) string {
 	)
 }
 
+func assertSubstringsInOrder(t *testing.T, text string, parts ...string) {
+	t.Helper()
+	position := 0
+	for _, part := range parts {
+		next := strings.Index(text[position:], part)
+		if next < 0 {
+			t.Fatalf("%q missing after offset %d in:\n%s", part, position, text)
+		}
+		position += next + len(part)
+	}
+}
+
 func TestAccountPillEnabled_shows_when_relaunch_file_and_two_accounts(t *testing.T) {
 	dir := t.TempDir()
 	list := writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
@@ -1000,6 +1012,128 @@ printf '%%s|%%s|%%s|%%s\n' "$_rc_tools" "$_rc_claude_cmd" "$_rc_codex_cmd" "$_rc
 		ctx)), nil)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "claude codex|/opt/claude|codex|"+filepath.Join(dir, "ai-tool"))
+}
+
+func TestWriteAndReadRelaunchContext_preservesAttentionRuntime(t *testing.T) {
+	dir := t.TempDir()
+	outFile := filepath.Join(dir, "relaunch")
+	cfg := filepath.Join(dir, "cfg")
+	root := filepath.Join(dir, "wisp-deck-attention.fixture")
+	descriptor := filepath.Join(root, "descriptor")
+	_, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+		`write_relaunch_context %q claude claude "" "" "/proj" %q "claude codex" claude "" codex %q %q`,
+		outFile, cfg, root, descriptor)), nil)
+	assertExitCode(t, code, 0)
+
+	body, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertContains(t, string(body), "attention_root="+root)
+	assertContains(t, string(body), "attention_descriptor="+descriptor)
+
+	read, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(`
+_rc_attention_root="" _rc_attention_descriptor=""
+_read_relaunch_ctx %q
+printf '%%s|%%s\n' "$_rc_attention_root" "$_rc_attention_descriptor"`, outFile)), nil)
+	assertExitCode(t, code, 0)
+	if got, want := strings.TrimSpace(read), root+"|"+descriptor; got != want {
+		t.Fatalf("attention context round trip = %q, want %q", got, want)
+	}
+}
+
+func TestRelaunchAIPaneRotatesAndStampsAttentionBeforeBuild(t *testing.T) {
+	dir := t.TempDir()
+	attention := createAttentionFixture(t, dir, "claude")
+	oldGeneration := attention["generation"]
+	oldState := attention["state"]
+
+	ctx := writeTempFile(t, dir, "relaunch-attention", strings.Join([]string{
+		"tool=claude",
+		"tool_cmd=claude",
+		"settings=",
+		"filter=",
+		"project_dir=/proj",
+		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
+		"pointer=" + filepath.Join(dir, "claude-account"),
+		"list=" + filepath.Join(dir, "claude-accounts.list"),
+		"colors=" + filepath.Join(dir, "claude-account-colors"),
+		"default_label=" + filepath.Join(dir, "claude-account-default-label"),
+		"attention_root=" + attention["root"],
+		"attention_descriptor=" + attention["descriptor"],
+		"",
+	}, "\n"))
+	rec := filepath.Join(dir, "tmux.log")
+	bin := poolMockTmux(t, dir, rec)
+	envdir := filepath.Join(dir, "tmuxenv")
+	body := fmt.Sprintf(`
+build_switch_launch_cmd() {
+  if [ -n "${WISP_DECK_ATTENTION_GENERATION:-}" ] \
+     && [ -f "${WISP_DECK_ATTENTION_FILE:-}" ] \
+     && [ "$(cat %q/WISP_DECK_TOOL 2>/dev/null)" = "claude" ] \
+     && [ "$(cat %q/WISP_DECK_ATTENTION_ROOT 2>/dev/null)" = "$WISP_DECK_ATTENTION_ROOT" ] \
+     && [ "$(cat %q/WISP_DECK_ATTENTION_DESCRIPTOR 2>/dev/null)" = "$WISP_DECK_ATTENTION_DESCRIPTOR" ] \
+     && [ "$(cat %q/WISP_DECK_ATTENTION_GENERATION 2>/dev/null)" = "$WISP_DECK_ATTENTION_GENERATION" ] \
+     && [ "$(cat %q/WISP_DECK_ATTENTION_FILE 2>/dev/null)" = "$WISP_DECK_ATTENTION_FILE" ]; then
+    printf 'build-ok %%s\n' "$WISP_DECK_ATTENTION_GENERATION" >> %q
+  else
+    printf 'build-before-attention\n' >> %q
+  fi
+  printf 'claude'
+}
+relaunch_ai_pane tmux %q default`, envdir, envdir, envdir, envdir, envdir, rec, rec, ctx)
+	env := buildEnv(t, []string{bin}, "HOME="+dir, "WISP_DECK_LIB_DIR="+filepath.Join(projectRoot(t), "lib"))
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, body), env)
+	assertExitCode(t, code, 0)
+	if strings.Contains(out, "command not found") {
+		t.Fatalf("attention runtime was not available in relaunch shell: %s", out)
+	}
+
+	descriptorRecord, err := os.ReadFile(attention["descriptor"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Split(strings.TrimSuffix(string(descriptorRecord), "\n"), "\t")
+	if len(fields) != 4 {
+		t.Fatalf("rotated descriptor malformed: %q", descriptorRecord)
+	}
+	newGeneration, newState := fields[1], fields[3]
+	if fields[2] != "claude" || newGeneration == oldGeneration {
+		t.Fatalf("account relaunch did not rotate same-tool generation: %q", descriptorRecord)
+	}
+	if _, err := os.Stat(filepath.Dir(oldState)); !os.IsNotExist(err) {
+		t.Fatalf("old account generation was not fenced: %v", err)
+	}
+	if _, err := os.Stat(newState); err != nil {
+		t.Fatalf("new account generation state missing: %v", err)
+	}
+
+	for name, want := range map[string]string{
+		"WISP_DECK_TOOL":                 "claude",
+		"WISP_DECK_ATTENTION_ROOT":       attention["root"],
+		"WISP_DECK_ATTENTION_DESCRIPTOR": attention["descriptor"],
+		"WISP_DECK_ATTENTION_GENERATION": newGeneration,
+		"WISP_DECK_ATTENTION_FILE":       newState,
+	} {
+		if got := readTmuxEnv(t, dir, name); got != want {
+			t.Errorf("tmux %s = %q, want %q", name, got, want)
+		}
+	}
+	logData, err := os.ReadFile(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logText := string(logData)
+	assertNotContains(t, logText, "build-before-attention")
+	assertSubstringsInOrder(t, logText,
+		"set-environment WISP_DECK_TOOL claude",
+		"set-environment WISP_DECK_ATTENTION_ROOT ",
+		"set-environment WISP_DECK_ATTENTION_DESCRIPTOR ",
+		"set-environment WISP_DECK_ATTENTION_GENERATION ",
+		"set-environment WISP_DECK_ATTENTION_FILE ",
+		"build-ok ",
+		"respawn-pane",
+	)
 }
 
 // The relaunch context must be written for EVERY tool — opencode/codex
