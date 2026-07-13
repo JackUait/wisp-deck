@@ -341,7 +341,11 @@ func NewClaudeBackgroundTracker(path, configRoot string) (*ClaudeBackgroundTrack
 		configRoot: configRoot,
 		jobs:       make(map[string]ClaudeBackgroundStatus),
 	}
-	data, err := os.ReadFile(path)
+	data, err := readBoundedRegularFile(
+		path,
+		"Claude background persistence",
+		maxClaudeBackgroundPersistenceBytes,
+	)
 	if err == nil {
 		state, err = parseClaudeBackgroundPersistence(data)
 		if err != nil {
@@ -350,7 +354,7 @@ func NewClaudeBackgroundTracker(path, configRoot string) (*ClaudeBackgroundTrack
 		if state.configRoot != configRoot {
 			return nil, fmt.Errorf("Claude background persistence belongs to config root %q, not %q", state.configRoot, configRoot)
 		}
-	} else if !os.IsNotExist(err) {
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read Claude background persistence: %w", err)
 	}
 

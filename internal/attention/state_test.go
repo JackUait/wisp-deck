@@ -3,11 +3,20 @@ package attention
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
+)
+
+const (
+	recoveryAllocationProbeBytes    = 16 * 1024 * 1024
+	recoveryAllocationProbeMaxBytes = 4 * 1024 * 1024
 )
 
 func TestParseStateAcceptsCanonicalRecords(t *testing.T) {
@@ -254,6 +263,210 @@ func TestAtomicWriterIgnoresOtherGenerationRecord(t *testing.T) {
 	}
 	mustPublish(t, w, PhaseReady, ReasonNone, "")
 	assertCurrentState(t, w, State{Generation: "new", Sequence: 1, Phase: PhaseReady, Reason: ReasonNone})
+}
+
+func TestAtomicWriterSilentlyIgnoresInvalidRecoveryFiles(t *testing.T) {
+	assertInitialUnknown := func(t *testing.T, path string) {
+		t.Helper()
+		writer, err := NewAtomicWriter(path, "generation-a")
+		if err != nil {
+			t.Fatalf("NewAtomicWriter() error = %v, want silent recovery", err)
+		}
+		want := State{Generation: "generation-a", Phase: PhaseUnknown, Reason: ReasonNone}
+		if got := writer.Current(); got != want {
+			t.Fatalf("Current() = %#v, want %#v", got, want)
+		}
+	}
+
+	t.Run("oversized sparse file", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "state")
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := file.Truncate(MaxStateRecordBytes + 1); err != nil {
+			_ = file.Close()
+			t.Fatal(err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+		assertInitialUnknown(t, path)
+	})
+
+	t.Run("symlink", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(dir, "target")
+		link := filepath.Join(dir, "state")
+		if err := os.WriteFile(target, []byte("1\tgeneration-a\t17\tattention\tquestion\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		assertInitialUnknown(t, link)
+	})
+
+	t.Run("directory", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "state")
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		assertInitialUnknown(t, path)
+	})
+
+	t.Run("fifo does not block", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "state")
+		if err := syscall.Mkfifo(path, 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		type result struct {
+			writer *AtomicWriter
+			err    error
+		}
+		resultCh := make(chan result, 1)
+		go func() {
+			writer, err := NewAtomicWriter(path, "generation-a")
+			resultCh <- result{writer: writer, err: err}
+		}()
+
+		select {
+		case got := <-resultCh:
+			if got.err != nil {
+				t.Fatalf("NewAtomicWriter(FIFO) error = %v, want silent recovery", got.err)
+			}
+			want := State{Generation: "generation-a", Phase: PhaseUnknown, Reason: ReasonNone}
+			if current := got.writer.Current(); current != want {
+				t.Fatalf("Current() = %#v, want %#v", current, want)
+			}
+		case <-time.After(2 * time.Second):
+			releaseDone := make(chan struct{})
+			go func() {
+				_ = os.WriteFile(path, []byte("1\tgeneration-a\t17\tattention\tquestion\n"), 0o600)
+				close(releaseDone)
+			}()
+			select {
+			case <-resultCh:
+			case <-time.After(2 * time.Second):
+			}
+			select {
+			case <-releaseDone:
+			case <-time.After(2 * time.Second):
+			}
+			t.Fatal("NewAtomicWriter blocked opening a FIFO")
+		}
+	})
+}
+
+func TestAtomicWriterDoesNotSilenceOpenErrorAfterPathReplacement(t *testing.T) {
+	dir := t.TempDir()
+	regularWitness := filepath.Join(dir, "regular")
+	if err := os.WriteFile(regularWitness, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	regularInfo, err := os.Stat(regularWitness)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonRegularInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	openAttempted := false
+	openFlags := 0
+	ops := boundedRegularFileOps{
+		lstat: func(string) (os.FileInfo, error) {
+			if openAttempted {
+				return nonRegularInfo, nil
+			}
+			return regularInfo, nil
+		},
+		open: func(_ string, flags int, _ uint32) (int, error) {
+			openAttempted = true
+			openFlags = flags
+			return -1, syscall.EACCES
+		},
+	}
+	readRecovery := func(path, label string, maxBytes int64) ([]byte, error) {
+		return readBoundedRegularFileWithOps(path, label, maxBytes, ops)
+	}
+
+	_, err = newAtomicWriter(filepath.Join(dir, "state"), "generation-a", readRecovery)
+	if !errors.Is(err, syscall.EACCES) {
+		t.Fatalf("NewAtomicWriter(open EACCES followed by path replacement) error = %v, want EACCES", err)
+	}
+	if openFlags&syscall.O_CLOEXEC == 0 {
+		t.Fatal("recovery open flags omit O_CLOEXEC")
+	}
+}
+
+func TestRecoveryReadersRejectOversizedSparseFileBeforeAllocating(t *testing.T) {
+	if mode := os.Getenv("WISP_DECK_RECOVERY_ALLOCATION_PROBE"); mode != "" {
+		path := os.Getenv("WISP_DECK_RECOVERY_ALLOCATION_PATH")
+		runtime.GC()
+		var before runtime.MemStats
+		runtime.ReadMemStats(&before)
+
+		switch mode {
+		case "attention-state":
+			writer, err := NewAtomicWriter(path, "generation-a")
+			if err != nil {
+				t.Fatalf("NewAtomicWriter(oversized sparse file) error = %v, want silent recovery", err)
+			}
+			want := State{Generation: "generation-a", Phase: PhaseUnknown, Reason: ReasonNone}
+			if got := writer.Current(); got != want {
+				t.Fatalf("Current() = %#v, want %#v", got, want)
+			}
+		case "claude-background":
+			if _, err := NewClaudeBackgroundTracker(path, "/accounts/a"); err == nil {
+				t.Fatal("NewClaudeBackgroundTracker(oversized sparse file) error = nil")
+			}
+		default:
+			t.Fatalf("unknown recovery allocation probe mode %q", mode)
+		}
+
+		var after runtime.MemStats
+		runtime.ReadMemStats(&after)
+		allocated := after.TotalAlloc - before.TotalAlloc
+		if allocated > recoveryAllocationProbeMaxBytes {
+			t.Fatalf("recovery allocated %d bytes, want at most %d before size rejection", allocated, recoveryAllocationProbeMaxBytes)
+		}
+		return
+	}
+
+	for _, mode := range []string{"attention-state", "claude-background"} {
+		t.Run(mode, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "recovery")
+			file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := file.Truncate(recoveryAllocationProbeBytes); err != nil {
+				_ = file.Close()
+				t.Fatal(err)
+			}
+			if err := file.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			command := exec.Command(
+				os.Args[0],
+				"-test.run=^TestRecoveryReadersRejectOversizedSparseFileBeforeAllocating$",
+				"-test.count=1",
+			)
+			command.Env = append(
+				os.Environ(),
+				"WISP_DECK_RECOVERY_ALLOCATION_PROBE="+mode,
+				"WISP_DECK_RECOVERY_ALLOCATION_PATH="+path,
+			)
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("recovery allocation subprocess: %v\n%s", err, output)
+			}
+		})
+	}
 }
 
 func TestAtomicWriterNeverCreatesMissingParent(t *testing.T) {

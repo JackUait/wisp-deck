@@ -7,12 +7,14 @@ import (
 	"encoding"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 const (
@@ -26,6 +28,78 @@ const (
 // ErrStaleGeneration means the controller removed the writer's generation
 // directory. Adapters must stop publishing instead of recreating that parent.
 var ErrStaleGeneration = errors.New("attention generation is stale")
+
+var errInvalidRecoveryFile = errors.New("invalid recovery file")
+
+type boundedRegularFileOps struct {
+	lstat func(string) (os.FileInfo, error)
+	open  func(string, int, uint32) (int, error)
+}
+
+type boundedRecoveryReadFunc func(string, string, int64) ([]byte, error)
+
+// readBoundedRegularFile reads one private recovery record through the same
+// descriptor it validates. O_NONBLOCK prevents a substituted FIFO from
+// stalling startup, while O_NOFOLLOW prevents recovery through a final
+// symlink. The limit check after ReadAll also covers growth after fstat.
+func readBoundedRegularFile(path, label string, maxBytes int64) ([]byte, error) {
+	return readBoundedRegularFileWithOps(path, label, maxBytes, boundedRegularFileOps{
+		lstat: os.Lstat,
+		open:  syscall.Open,
+	})
+}
+
+func readBoundedRegularFileWithOps(
+	path, label string,
+	maxBytes int64,
+	ops boundedRegularFileOps,
+) ([]byte, error) {
+	pathInfo, err := ops.lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat %s: %w", label, err)
+	}
+	if !pathInfo.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %s is not a regular file", errInvalidRecoveryFile, label)
+	}
+
+	fd, err := ops.open(
+		path,
+		syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW|syscall.O_CLOEXEC,
+		0,
+	)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, fmt.Errorf("%w: %s is not a regular file", errInvalidRecoveryFile, label)
+		}
+		return nil, fmt.Errorf("open %s: %w", label, err)
+	}
+	file := os.NewFile(uintptr(fd), path)
+	if file == nil {
+		_ = syscall.Close(fd)
+		return nil, fmt.Errorf("open %s: invalid file descriptor", label)
+	}
+	defer func() { _ = file.Close() }()
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat %s: %w", label, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %s is not a regular file", errInvalidRecoveryFile, label)
+	}
+	if info.Size() > maxBytes {
+		return nil, fmt.Errorf("%w: %s exceeds %d bytes", errInvalidRecoveryFile, label, maxBytes)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", label, err)
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("%w: %s exceeds %d bytes", errInvalidRecoveryFile, label, maxBytes)
+	}
+	return data, nil
+}
 
 type Phase string
 
@@ -159,6 +233,10 @@ type AtomicWriter struct {
 // NewAtomicWriter opens a generation that was already created by the shell
 // controller. It never creates the parent directory.
 func NewAtomicWriter(path, generation string) (*AtomicWriter, error) {
+	return newAtomicWriter(path, generation, readBoundedRegularFile)
+}
+
+func newAtomicWriter(path, generation string, readRecovery boundedRecoveryReadFunc) (*AtomicWriter, error) {
 	if path == "" {
 		return nil, errors.New("attention state path is empty")
 	}
@@ -186,7 +264,7 @@ func NewAtomicWriter(path, generation string) (*AtomicWriter, error) {
 			Reason:     ReasonNone,
 		},
 	}
-	data, err := os.ReadFile(path)
+	data, err := readRecovery(path, "attention state", MaxStateRecordBytes)
 	if err == nil {
 		if recovered, parseErr := ParseState(data); parseErr == nil && recovered.Generation == generation {
 			w.state = recovered
@@ -196,7 +274,7 @@ func NewAtomicWriter(path, generation string) (*AtomicWriter, error) {
 			// identity without advancing, preferring no duplicate alert.
 			w.identityKnown = recovered.Phase != PhaseAttention
 		}
-	} else if !os.IsNotExist(err) {
+	} else if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, errInvalidRecoveryFile) {
 		return nil, fmt.Errorf("read attention state: %w", err)
 	}
 	return w, nil

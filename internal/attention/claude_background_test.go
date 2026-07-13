@@ -8,7 +8,9 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestParseClaudeBackgroundJobsUsesOfficialBackgroundRows(t *testing.T) {
@@ -407,6 +409,90 @@ func TestClaudeBackgroundTrackerRejectsCorruptPersistence(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestClaudeBackgroundTrackerRecoveryRequiresBoundedRegularFile(t *testing.T) {
+	t.Run("oversized sparse file", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "state.json")
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := file.Truncate(maxClaudeBackgroundPersistenceBytes + 1); err != nil {
+			_ = file.Close()
+			t.Fatal(err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := NewClaudeBackgroundTracker(path, "/accounts/a"); err == nil || !strings.Contains(err.Error(), "exceeds") {
+			t.Fatalf("NewClaudeBackgroundTracker(oversized sparse file) error = %v, want size-limit error", err)
+		}
+	})
+
+	t.Run("symlink", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(dir, "target.json")
+		link := filepath.Join(dir, "state.json")
+		data := []byte(`{"version":1,"configRoot":"/accounts/a","initialized":false,"jobs":[]}`)
+		if err := os.WriteFile(target, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := NewClaudeBackgroundTracker(link, "/accounts/a"); err == nil {
+			t.Fatal("NewClaudeBackgroundTracker(symlink) error = nil")
+		}
+	})
+
+	t.Run("directory", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "state.json")
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := NewClaudeBackgroundTracker(path, "/accounts/a"); err == nil || !strings.Contains(err.Error(), "regular file") {
+			t.Fatalf("NewClaudeBackgroundTracker(directory) error = %v, want regular-file error", err)
+		}
+	})
+
+	t.Run("fifo does not block", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "state.json")
+		if err := syscall.Mkfifo(path, 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		result := make(chan error, 1)
+		go func() {
+			_, err := NewClaudeBackgroundTracker(path, "/accounts/a")
+			result <- err
+		}()
+
+		select {
+		case err := <-result:
+			if err == nil || !strings.Contains(err.Error(), "regular file") {
+				t.Fatalf("NewClaudeBackgroundTracker(FIFO) error = %v, want regular-file error", err)
+			}
+		case <-time.After(2 * time.Second):
+			releaseDone := make(chan struct{})
+			go func() {
+				_ = os.WriteFile(path, []byte(`{}`), 0o600)
+				close(releaseDone)
+			}()
+			select {
+			case <-result:
+			case <-time.After(2 * time.Second):
+			}
+			select {
+			case <-releaseDone:
+			case <-time.After(2 * time.Second):
+			}
+			t.Fatal("NewClaudeBackgroundTracker blocked opening a FIFO")
+		}
+	})
 }
 
 func TestClaudeBackgroundTrackerDoesNotAdvanceAfterPersistenceFailure(t *testing.T) {
