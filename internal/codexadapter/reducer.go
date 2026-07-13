@@ -14,7 +14,7 @@ const (
 	// MaxReducerEntries bounds each long-lived correlation collection. Overflow
 	// latches unknown until a complete, bounded observer snapshot is installed.
 	MaxReducerEntries = 4096
-	// MaxReducerIDBytes bounds generation, thread, session, request, and OSC
+	// MaxReducerIDBytes bounds generation, thread, session, and OSC
 	// observation identities.
 	MaxReducerIDBytes = 256
 	// MaxReducerCWDBytes bounds the launcher project and observed thread cwd.
@@ -55,50 +55,16 @@ type Thread struct {
 	Status         ThreadStatus
 }
 
-// RequestKind classifies the server-to-client requests a passive observer may
-// see but must never answer.
-type RequestKind string
+// interactionKind classifies the aggregate attention states exposed by
+// ThreadStatus. Thread-scoped request delivery on the passive topology is not a
+// stable or complete census, so these status epochs are its interaction truth.
+type interactionKind string
 
 const (
-	RequestQuestion   RequestKind = "question"
-	RequestPermission RequestKind = "permission"
+	interactionQuestion   interactionKind = "question"
+	interactionPermission interactionKind = "permission"
+	interactionError      interactionKind = "error"
 )
-
-// PendingRequest is an opaque, already-decoded server request identity.
-// Task 8 must preserve the JSON string|number union by constructing RequestID
-// with StringRequestID or NumberRequestID; converting both variants to an
-// untyped string would make distinct server requests collide.
-type PendingRequest struct {
-	ThreadID  string
-	RequestID RequestID
-	Kind      RequestKind
-}
-
-type requestIDKind uint8
-
-const (
-	requestIDString requestIDKind = iota + 1
-	requestIDNumber
-)
-
-// RequestID is the comparable, lossless form of Codex's RequestId
-// string|number union. Its zero value is invalid.
-type RequestID struct {
-	kind        requestIDKind
-	stringValue string
-	numberValue int64
-}
-
-// StringRequestID constructs the string arm of Codex's RequestId union.
-func StringRequestID(value string) RequestID {
-	return RequestID{kind: requestIDString, stringValue: value}
-}
-
-// NumberRequestID constructs the integral number arm of Codex's RequestId
-// union. The Task 8 decoder rejects non-integral or out-of-range JSON numbers.
-func NumberRequestID(value int64) RequestID {
-	return RequestID{kind: requestIDNumber, numberValue: value}
-}
 
 // EventKind identifies one serialized reducer input. Network decoding and
 // WebSocket ownership deliberately remain outside this pure state machine.
@@ -108,10 +74,9 @@ const (
 	EventThreadObserved EventKind = iota + 1
 	EventThreadStatus
 	EventThreadClosed
-	EventRequestOpened
-	EventRequestResolved
 	EventOSC9Completion
 	EventObserverLost
+	EventObserverUnavailable
 	EventObserverSnapshot
 )
 
@@ -119,14 +84,12 @@ const (
 // read. Identity for EventOSC9Completion must be a supervisor-supplied
 // monotonic observation identity, not the fixed OSC message text.
 type ReducerEvent struct {
-	Kind      EventKind
-	Thread    Thread
-	ThreadID  string
-	Status    ThreadStatus
-	Request   PendingRequest
-	RequestID RequestID
-	Identity  string
-	Threads   []Thread
+	Kind     EventKind
+	Thread   Thread
+	ThreadID string
+	Status   ThreadStatus
+	Identity string
+	Threads  []Thread
 }
 
 // ReducerConfig fixes correlation to one Wisp launch. ResumeThreadID, when
@@ -139,9 +102,17 @@ type ReducerConfig struct {
 	BaselineThreadIDs []string
 }
 
-type requestKey struct {
-	threadID  string
-	requestID RequestID
+type statusRequestKey struct {
+	threadID string
+	kind     interactionKind
+}
+
+// statusEpoch remembers whether one aggregate (thread, kind) epoch already
+// alerted. uncertain is set when the same status spans missing evidence: the
+// passive topology cannot tell continuity from an unseen 1 -> 0 -> 1 cycle.
+type statusEpoch struct {
+	announced bool
+	uncertain bool
 }
 
 // Reducer is mutated only by its owner's serialized event loop.
@@ -153,11 +124,12 @@ type Reducer struct {
 
 	rootID       string
 	threads      map[string]Thread
-	requests     map[requestKey]PendingRequest
+	status       map[statusRequestKey]statusEpoch
 	closed       map[string]struct{}
 	ambiguous    bool
 	reliable     bool
 	observerLost bool
+	oscOnly      bool
 
 	rootArmed            bool
 	completionPending    bool
@@ -201,7 +173,7 @@ func NewReducer(config ReducerConfig) (*Reducer, error) {
 		baseline:   baseline,
 		rootID:     config.ResumeThreadID,
 		threads:    make(map[string]Thread),
-		requests:   make(map[requestKey]PendingRequest),
+		status:     make(map[statusRequestKey]statusEpoch),
 		closed:     make(map[string]struct{}),
 		reliable:   true,
 		state: attention.State{
@@ -223,14 +195,12 @@ func (r *Reducer) Reduce(event ReducerEvent) attention.State {
 		r.observeStatus(event.ThreadID, event.Status)
 	case EventThreadClosed:
 		r.closeThread(event.ThreadID)
-	case EventRequestOpened:
-		r.openRequest(event.Request)
-	case EventRequestResolved:
-		r.resolveRequest(event.ThreadID, event.RequestID)
 	case EventOSC9Completion:
 		r.observeCompletion(event.Identity)
 	case EventObserverLost:
 		r.loseObserver()
+	case EventObserverUnavailable:
+		r.useOSCOnly()
 	case EventObserverSnapshot:
 		r.installSnapshot(event.Threads)
 	default:
@@ -355,9 +325,9 @@ func (r *Reducer) closeThread(threadID string) {
 		r.closed[threadID] = struct{}{}
 	}
 	delete(r.threads, threadID)
-	for key := range r.requests {
+	for key := range r.status {
 		if key.threadID == threadID {
-			delete(r.requests, key)
+			delete(r.status, key)
 		}
 	}
 	if threadID == r.rootID {
@@ -368,51 +338,14 @@ func (r *Reducer) closeThread(threadID string) {
 	}
 }
 
-func (r *Reducer) openRequest(request PendingRequest) {
-	if err := validateReducerField("request thread id", request.ThreadID, MaxReducerIDBytes, false); err != nil {
-		r.latchUnknown()
-		return
-	}
-	if _, stale := r.closed[request.ThreadID]; stale {
-		return
-	}
-	if err := validateRequest(request); err != nil {
-		r.latchUnknown()
-		return
-	}
-	if !r.threadIsCorrelated(request.ThreadID) {
-		return
-	}
-	key := requestKey{threadID: request.ThreadID, requestID: request.RequestID}
-	if _, exists := r.requests[key]; !exists && len(r.requests) >= MaxReducerEntries {
-		r.latchUnknown()
-		return
-	}
-	r.requests[key] = request
-	// A request arriving after an already visible completion proves that Codex
-	// is active again; a later OSC observation must re-establish completion.
-	r.completionPending = false
-	r.completionDuringLoss = false
-	r.completionID = ""
-}
-
-func (r *Reducer) resolveRequest(threadID string, requestID RequestID) {
-	if err := validateReducerField("thread id", threadID, MaxReducerIDBytes, false); err != nil {
-		r.latchUnknown()
-		return
-	}
-	if _, stale := r.closed[threadID]; stale {
-		return
-	}
-	if err := validateRequestID(requestID); err != nil {
-		r.latchUnknown()
-		return
-	}
-	delete(r.requests, requestKey{threadID: threadID, requestID: requestID})
-}
-
 func (r *Reducer) observeCompletion(identity string) {
 	if err := validateReducerField("OSC observation identity", identity, MaxReducerIDBytes, false); err != nil {
+		return
+	}
+	if r.oscOnly {
+		r.completionPending = true
+		r.completionDuringLoss = false
+		r.completionID = identity
 		return
 	}
 	if r.observerLost {
@@ -433,14 +366,30 @@ func (r *Reducer) observeCompletion(identity string) {
 func (r *Reducer) loseObserver() {
 	r.reliable = false
 	r.observerLost = true
+	r.oscOnly = false
 	r.rootArmed = false
 	r.completionPending = false
 	r.completionDuringLoss = false
 	r.completionID = ""
-	r.requests = make(map[requestKey]PendingRequest)
+	// Keep the attention status epochs privately. A reconnect snapshot needs them
+	// to distinguish a definitely new 0 -> 1 transition from an ambiguous status
+	// that was already 1 before observation was lost.
+}
+
+func (r *Reducer) useOSCOnly() {
+	r.reliable = false
+	r.observerLost = false
+	r.oscOnly = true
+	r.rootArmed = false
+	r.completionPending = false
+	r.completionDuringLoss = false
+	r.completionID = ""
+	r.status = make(map[statusRequestKey]statusEpoch)
 }
 
 func (r *Reducer) installSnapshot(threads []Thread) {
+	wasLost := r.observerLost
+	previousStatus := r.status
 	outageCompletion := r.observerLost && r.completionPending && r.completionDuringLoss
 	outageIdentity := r.completionID
 	if len(threads) > MaxReducerEntries {
@@ -474,19 +423,10 @@ func (r *Reducer) installSnapshot(threads []Thread) {
 		return
 	}
 
-	r.threads = next
-	r.requests = make(map[requestKey]PendingRequest)
-	r.closed = make(map[string]struct{})
-	r.reliable = true
-	r.observerLost = false
-	r.ambiguous = false
-	r.rootArmed = false
-	r.completionPending = false
-	r.completionDuringLoss = false
-	r.completionID = ""
-
+	nextRoot := ""
+	nextAmbiguous := false
 	if r.resumeID != "" {
-		r.rootID = r.resumeID
+		nextRoot = r.resumeID
 	} else {
 		candidates := make([]string, 0, 2)
 		for _, thread := range next {
@@ -497,14 +437,78 @@ func (r *Reducer) installSnapshot(threads []Thread) {
 		sort.Strings(candidates)
 		switch len(candidates) {
 		case 0:
-			r.rootID = ""
 		case 1:
-			r.rootID = candidates[0]
+			nextRoot = candidates[0]
 		default:
-			r.rootID = ""
-			r.ambiguous = true
+			nextAmbiguous = true
 		}
 	}
+
+	correlated := correlatedThreadIDsFor(next, nextRoot)
+	correlationTrusted := !nextAmbiguous && nextRoot != ""
+	if _, rootPresent := next[nextRoot]; !rootPresent {
+		correlationTrusted = false
+	}
+	if r.hasLostProjectAncestryIn(next, correlated) {
+		correlationTrusted = false
+	}
+
+	var nextStatus map[statusRequestKey]statusEpoch
+	if !correlationTrusted {
+		// An uncorrelated barrier cannot prove that any prior status cleared. Carry
+		// every epoch forward privately so a later clean barrier cannot re-alert it.
+		nextStatus = make(map[statusRequestKey]statusEpoch, len(previousStatus))
+		for key, epoch := range previousStatus {
+			epoch.uncertain = true
+			nextStatus[key] = epoch
+		}
+	} else {
+		activeStatus := aggregateStatusKeysFor(next, correlated)
+		if len(activeStatus) > MaxReducerEntries {
+			r.latchUnknown()
+			return
+		}
+		unknownStatusThreads := notLoadedThreadIDsFor(next, correlated)
+		nextStatus = make(map[statusRequestKey]statusEpoch, len(activeStatus)+len(previousStatus))
+		for key := range activeStatus {
+			epoch, existed := previousStatus[key]
+			if wasLost && existed {
+				// The status might be the old epoch or a new epoch hidden by a 1 -> 0 -> 1
+				// cycle during the outage. Suppress both guesses until a clear is seen.
+				epoch.uncertain = true
+			}
+			nextStatus[key] = epoch
+		}
+		for key, epoch := range previousStatus {
+			if _, unknown := unknownStatusThreads[key.threadID]; !unknown {
+				continue
+			}
+			if _, exists := nextStatus[key]; !exists && len(nextStatus) >= MaxReducerEntries {
+				r.latchUnknown()
+				return
+			}
+			// notLoaded carries no evidence that an existing status cleared. Keep
+			// the epoch private and uncertain until a known status omits that kind.
+			epoch.uncertain = true
+			nextStatus[key] = epoch
+		}
+	}
+
+	// Commit the validated thread barrier and its derived aggregate epochs at
+	// once. There is deliberately no request census on this passive connection.
+	r.threads = next
+	r.status = nextStatus
+	r.closed = make(map[string]struct{})
+	r.reliable = true
+	r.observerLost = false
+	r.oscOnly = false
+	r.ambiguous = nextAmbiguous
+	r.rootID = nextRoot
+	r.rootArmed = false
+	r.completionPending = false
+	r.completionDuringLoss = false
+	r.completionID = ""
+
 	if root, ok := r.threads[r.rootID]; ok && root.Status.Type == ThreadStatusActive {
 		r.rootArmed = true
 	}
@@ -516,8 +520,13 @@ func (r *Reducer) installSnapshot(threads []Thread) {
 }
 
 func (r *Reducer) latchUnknown() {
+	for key, epoch := range r.status {
+		epoch.uncertain = true
+		r.status[key] = epoch
+	}
 	r.reliable = false
 	r.observerLost = false
+	r.oscOnly = false
 	r.rootArmed = false
 	r.completionPending = false
 	r.completionDuringLoss = false
@@ -532,12 +541,16 @@ func (r *Reducer) recompute() attention.State {
 			Reason:     attention.ReasonNone,
 		}
 	}
-	if r.observerLost {
-		if r.completionPending && r.completionDuringLoss {
+	if r.oscOnly {
+		if r.completionPending {
 			r.state = r.attentionState(attention.ReasonDone, "osc:"+r.completionID)
 		} else {
 			r.state = unknown()
 		}
+		return r.state
+	}
+	if r.observerLost {
+		r.state = unknown()
 		return r.state
 	}
 	if !r.reliable || r.ambiguous || r.rootID == "" {
@@ -554,9 +567,10 @@ func (r *Reducer) recompute() attention.State {
 		r.state = unknown()
 		return r.state
 	}
-	questions := make(map[string]struct{})
-	permissions := make(map[string]struct{})
-	errorsByThread := make(map[string]struct{})
+	questionStatuses := make(map[string]struct{})
+	permissionStatuses := make(map[string]struct{})
+	errorStatuses := make(map[string]struct{})
+	unknownStatusThreads := make(map[string]struct{})
 	anyActive := false
 	anyUnknown := false
 
@@ -571,37 +585,69 @@ func (r *Reducer) recompute() attention.State {
 			for _, flag := range thread.Status.ActiveFlags {
 				switch flag {
 				case ActiveWaitingOnUserInput:
-					questions[id] = struct{}{}
+					questionStatuses[id] = struct{}{}
 				case ActiveWaitingOnApproval:
-					permissions[id] = struct{}{}
+					permissionStatuses[id] = struct{}{}
 				}
 			}
 		case ThreadStatusSystemError:
-			errorsByThread[id] = struct{}{}
+			errorStatuses[id] = struct{}{}
 		case ThreadStatusIdle:
 		case ThreadStatusNotLoaded:
 			anyUnknown = true
+			unknownStatusThreads[id] = struct{}{}
 		}
 	}
-	for _, request := range r.requests {
-		if _, ok := correlated[request.ThreadID]; !ok {
-			continue
-		}
-		switch request.Kind {
-		case RequestQuestion:
-			questions[request.ThreadID] = struct{}{}
-		case RequestPermission:
-			permissions[request.ThreadID] = struct{}{}
-		}
+	activeStatus := make(map[statusRequestKey]struct{}, len(questionStatuses)+len(permissionStatuses)+len(errorStatuses))
+	for threadID := range questionStatuses {
+		activeStatus[statusRequestKey{threadID: threadID, kind: interactionQuestion}] = struct{}{}
+	}
+	for threadID := range permissionStatuses {
+		activeStatus[statusRequestKey{threadID: threadID, kind: interactionPermission}] = struct{}{}
+	}
+	for threadID := range errorStatuses {
+		activeStatus[statusRequestKey{threadID: threadID, kind: interactionError}] = struct{}{}
+	}
+	if !r.syncStatusEpochs(activeStatus, unknownStatusThreads) {
+		r.state = unknown()
+		return r.state
+	}
+
+	if state, ok := r.statusAttentionState(
+		interactionQuestion, attention.ReasonQuestion, questionStatuses,
+	); ok {
+		r.state = state
+		return r.state
+	}
+	if r.hasUncertainStatusEpoch(interactionQuestion) {
+		// Question dominates permission even when its epoch cannot be trusted.
+		r.state = unknown()
+		return r.state
+	}
+	if state, ok := r.statusAttentionState(
+		interactionPermission, attention.ReasonPermission, permissionStatuses,
+	); ok {
+		r.state = state
+		return r.state
+	}
+	if r.hasUncertainStatusEpoch(interactionPermission) {
+		// A flag spanning a connection outage cannot safely be called either the
+		// old epoch or a new one. Stay unknown until a status update clears it.
+		r.state = unknown()
+		return r.state
+	}
+	if state, ok := r.statusAttentionState(
+		interactionError, attention.ReasonError, errorStatuses,
+	); ok {
+		r.state = state
+		return r.state
 	}
 
 	switch {
-	case len(questions) > 0:
-		r.state = r.attentionState(attention.ReasonQuestion, "question:"+sortedSet(questions))
-	case len(permissions) > 0:
-		r.state = r.attentionState(attention.ReasonPermission, "permission:"+sortedSet(permissions))
-	case len(errorsByThread) > 0:
-		r.state = r.attentionState(attention.ReasonError, "error:"+sortedSet(errorsByThread))
+	case r.hasUncertainStatusEpoch(interactionError):
+		// A system-error status with missing evidence cannot safely be re-alerted
+		// until a known status proves that its prior epoch cleared.
+		r.state = unknown()
 	case r.completionPending:
 		r.state = r.attentionState(attention.ReasonDone, "osc:"+r.completionID)
 	case anyActive:
@@ -614,8 +660,99 @@ func (r *Reducer) recompute() attention.State {
 	return r.state
 }
 
+// syncStatusEpochs closes entries as soon as a known status clears their kind
+// and creates a fresh, alertable epoch on the next observed 0 -> 1 transition.
+func (r *Reducer) syncStatusEpochs(
+	active map[statusRequestKey]struct{},
+	unknownThreads map[string]struct{},
+) bool {
+	for key, epoch := range r.status {
+		if _, exists := active[key]; !exists {
+			if _, unknown := unknownThreads[key.threadID]; unknown {
+				epoch.uncertain = true
+				r.status[key] = epoch
+				continue
+			}
+			delete(r.status, key)
+		}
+	}
+	for key := range active {
+		if epoch, exists := r.status[key]; exists {
+			if epoch.uncertain && !epoch.announced {
+				// Whether the status continued or restarted while evidence was missing,
+				// it has never alerted. The exact active observation is safely alertable.
+				epoch.uncertain = false
+				r.status[key] = epoch
+			}
+			continue
+		}
+		if len(r.status) >= MaxReducerEntries {
+			r.latchUnknown()
+			return false
+		}
+		r.status[key] = statusEpoch{}
+	}
+	return true
+}
+
+func (r *Reducer) statusAttentionState(
+	kind interactionKind,
+	reason attention.Reason,
+	statusThreads map[string]struct{},
+) (attention.State, bool) {
+	unannounced := make(map[string]struct{})
+	certain := make(map[string]struct{})
+	for threadID := range statusThreads {
+		key := statusRequestKey{threadID: threadID, kind: kind}
+		epoch := r.status[key]
+		if epoch.uncertain {
+			continue
+		}
+		certain[threadID] = struct{}{}
+		if !epoch.announced {
+			unannounced[threadID] = struct{}{}
+			epoch.announced = true
+			r.status[key] = epoch
+		}
+	}
+	if len(unannounced) > 0 {
+		identity := string(kind) + ":" + sortedSet(unannounced)
+		if r.state.Phase == attention.PhaseAttention && r.state.Reason == reason && r.state.Identity == identity {
+			// Another same-kind blocker may have kept attention continuously visible
+			// while this exact (thread, kind) epoch cleared and re-entered. Toggle the
+			// identity so the new 0 -> 1 transition still alerts exactly once.
+			identity += ":epoch"
+		}
+		return r.attentionState(reason, identity), true
+	}
+	if len(certain) == 0 {
+		return attention.State{}, false
+	}
+	identity := string(kind) + ":" + sortedSet(certain)
+	if r.state.Phase == attention.PhaseAttention && r.state.Reason == reason {
+		identity = r.state.Identity
+	}
+	return r.attentionState(reason, identity), true
+}
+
+func (r *Reducer) hasUncertainStatusEpoch(kind interactionKind) bool {
+	for key, epoch := range r.status {
+		if key.kind == kind && epoch.uncertain {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Reducer) hasLostProjectAncestry(correlated map[string]struct{}) bool {
-	for id, thread := range r.threads {
+	return r.hasLostProjectAncestryIn(r.threads, correlated)
+}
+
+func (r *Reducer) hasLostProjectAncestryIn(
+	threads map[string]Thread,
+	correlated map[string]struct{},
+) bool {
+	for id, thread := range threads {
 		if _, ok := correlated[id]; ok {
 			continue
 		}
@@ -684,20 +821,61 @@ func (r *Reducer) threadIsCorrelated(threadID string) bool {
 }
 
 func (r *Reducer) correlatedThreadIDs() map[string]struct{} {
+	return correlatedThreadIDsFor(r.threads, r.rootID)
+}
+
+func aggregateStatusKeysFor(
+	threads map[string]Thread,
+	correlated map[string]struct{},
+) map[statusRequestKey]struct{} {
+	active := make(map[statusRequestKey]struct{})
+	for threadID := range correlated {
+		status := threads[threadID].Status
+		switch status.Type {
+		case ThreadStatusActive:
+			for _, flag := range status.ActiveFlags {
+				switch flag {
+				case ActiveWaitingOnUserInput:
+					active[statusRequestKey{threadID: threadID, kind: interactionQuestion}] = struct{}{}
+				case ActiveWaitingOnApproval:
+					active[statusRequestKey{threadID: threadID, kind: interactionPermission}] = struct{}{}
+				}
+			}
+		case ThreadStatusSystemError:
+			active[statusRequestKey{threadID: threadID, kind: interactionError}] = struct{}{}
+		}
+	}
+	return active
+}
+
+func notLoadedThreadIDsFor(
+	threads map[string]Thread,
+	correlated map[string]struct{},
+) map[string]struct{} {
+	unknown := make(map[string]struct{})
+	for threadID := range correlated {
+		if threads[threadID].Status.Type == ThreadStatusNotLoaded {
+			unknown[threadID] = struct{}{}
+		}
+	}
+	return unknown
+}
+
+func correlatedThreadIDsFor(threads map[string]Thread, rootID string) map[string]struct{} {
 	correlated := make(map[string]struct{})
-	root, rootKnown := r.threads[r.rootID]
-	if r.rootID == "" || !rootKnown {
+	root, rootKnown := threads[rootID]
+	if rootID == "" || !rootKnown {
 		return correlated
 	}
-	correlated[r.rootID] = struct{}{}
+	correlated[rootID] = struct{}{}
 
-	children := make(map[string][]string, len(r.threads))
-	queue := []string{r.rootID}
-	for id, thread := range r.threads {
+	children := make(map[string][]string, len(threads))
+	queue := []string{rootID}
+	for id, thread := range threads {
 		if thread.ParentThreadID != "" {
 			children[thread.ParentThreadID] = append(children[thread.ParentThreadID], id)
 		}
-		if id != r.rootID && thread.ParentThreadID != "" && thread.SessionID == root.SessionID {
+		if id != rootID && thread.ParentThreadID != "" && thread.SessionID == root.SessionID {
 			correlated[id] = struct{}{}
 			queue = append(queue, id)
 		}
@@ -775,38 +953,6 @@ func validateThreadStatus(status ThreadStatus) error {
 		return fmt.Errorf("unknown thread status %q", status.Type)
 	}
 	return nil
-}
-
-func validateRequest(request PendingRequest) error {
-	if err := validateReducerField("request thread id", request.ThreadID, MaxReducerIDBytes, false); err != nil {
-		return err
-	}
-	if err := validateRequestID(request.RequestID); err != nil {
-		return err
-	}
-	switch request.Kind {
-	case RequestQuestion, RequestPermission:
-		return nil
-	default:
-		return fmt.Errorf("unknown request kind %q", request.Kind)
-	}
-}
-
-func validateRequestID(id RequestID) error {
-	switch id.kind {
-	case requestIDString:
-		if id.numberValue != 0 {
-			return errors.New("string request id contains a numeric value")
-		}
-		return validateReducerField("request id", id.stringValue, MaxReducerIDBytes, false)
-	case requestIDNumber:
-		if id.stringValue != "" {
-			return errors.New("numeric request id contains a string value")
-		}
-		return nil
-	default:
-		return errors.New("request id has an unknown union arm")
-	}
 }
 
 func validateReducerField(name, value string, limit int, allowEmpty bool) error {
@@ -891,10 +1037,14 @@ func hasParentSessionContradiction(threads map[string]Thread) bool {
 func sortedSet(values map[string]struct{}) string {
 	ordered := make([]string, 0, len(values))
 	for value := range values {
-		value = strings.ReplaceAll(value, "%", "%25")
-		value = strings.ReplaceAll(value, ",", "%2C")
-		ordered = append(ordered, value)
+		ordered = append(ordered, escapeIdentityComponent(value))
 	}
 	sort.Strings(ordered)
 	return strings.Join(ordered, ",")
+}
+
+func escapeIdentityComponent(value string) string {
+	value = strings.ReplaceAll(value, "%", "%25")
+	value = strings.ReplaceAll(value, ",", "%2C")
+	return strings.ReplaceAll(value, ":", "%3A")
 }

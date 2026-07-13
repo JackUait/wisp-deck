@@ -701,7 +701,7 @@ func TestCodexSupervisorNeverFallbacksForBoundaryLateZeroOrSignal(t *testing.T) 
 	}
 }
 
-func TestCodexSupervisorObserverReadyBeforeTUIAndSerializesOSCState(t *testing.T) {
+func TestCodexSupervisorObserverReadyBeforeTUIAndAcceptsConfiguredOSCCompletionPayload(t *testing.T) {
 	observerReady := false
 	observer := newFakeObserverSession(testSupervisorThread(supervisorResumeID, "session", "", ThreadStatusActive))
 	options := supervisorOptions(t, supervisorResumeID, "")
@@ -717,6 +717,8 @@ func TestCodexSupervisorObserverReadyBeforeTUIAndSerializesOSCState(t *testing.T
 			if !observerReady {
 				t.Fatal("TUI started before observer coherent snapshot")
 			}
+			// The configured event is agent-turn-complete, while Codex uses the
+			// OSC9 payload for dynamic user-facing response text.
 			onOSC(OSC9Event{Message: "dynamic response preview"})
 			return CodexExitResult{}, nil
 		},
@@ -789,8 +791,8 @@ func TestCodexSupervisorObserverLossPublishesUnknownReconnectsAndPreservesOutage
 			if err != nil {
 				return CodexExitResult{}, err
 			}
-			if state.Phase != attention.PhaseAttention {
-				return CodexExitResult{}, errors.New("outage OSC did not publish attention")
+			if state.Phase != attention.PhaseUnknown {
+				return CodexExitResult{}, errors.New("outage OSC escaped observer uncertainty")
 			}
 			close(allowReconnect)
 			deadline = time.Now().Add(2 * time.Second)
@@ -800,6 +802,9 @@ func TestCodexSupervisorObserverLossPublishesUnknownReconnectsAndPreservesOutage
 					return CodexExitResult{}, err
 				}
 				if openCalls.Load() >= 2 && state.Phase == attention.PhaseAttention {
+					if state.Reason != attention.ReasonDone {
+						return CodexExitResult{}, fmt.Errorf("idle reconnect state = %+v, want done", state)
+					}
 					return CodexExitResult{}, nil
 				}
 				time.Sleep(time.Millisecond)
@@ -812,6 +817,101 @@ func TestCodexSupervisorObserverLossPublishesUnknownReconnectsAndPreservesOutage
 	}
 	if got := openCalls.Load(); launches != 1 || got != 2 {
 		t.Fatalf("launches=%d observer opens=%d, want 1 and 2", launches, got)
+	}
+}
+
+func TestCodexSupervisorReconnectSuppressesStatusFlagThatSpansOutage(t *testing.T) {
+	waiting := testSupervisorThread(supervisorResumeID, "session", "", ThreadStatusActive)
+	waiting.Status.ActiveFlags = []ActiveFlag{ActiveWaitingOnUserInput}
+	first := newFakeObserverSession(waiting)
+	second := newFakeObserverSession(waiting)
+	first.next <- observerNext{err: errors.New("socket lost")}
+	// This known status is queued behind the reconnect snapshot. Reaching ready
+	// therefore proves the snapshot was applied; observing the second Open call
+	// alone is too early because it happens before the manager publishes the barrier.
+	second.next <- observerNext{event: statusEvent(supervisorResumeID, idleStatus())}
+	var openCalls atomic.Int32
+	options := supervisorOptions(t, supervisorResumeID, "")
+	terminal := CodexExitResult{Elapsed: options.FallbackWindow}
+	supervisor := CodexSupervisor{
+		TempBase:    t.TempDir(),
+		StartServer: func(context.Context, []string, io.Writer) (AppServerProcess, error) { return &fakeServerProcess{}, nil },
+		OpenObserver: func(context.Context, ObserverConfig) (ObserverConnection, error) {
+			if openCalls.Add(1) == 1 {
+				return first, nil
+			}
+			return second, nil
+		},
+		ReconnectDelay: time.Millisecond,
+		EnterRaw:       func() (func(), error) { return func() {}, nil },
+		RunPTY: func(context.Context, []string, func(OSC9Event)) (CodexExitResult, error) {
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				state := readSupervisorState(t, options.StateFile)
+				if openCalls.Load() >= 2 && state.Phase == attention.PhaseReady {
+					// Initial question attention, observer-loss unknown, and this final ready
+					// are the only transitions. A duplicate reconnect alert makes this 4.
+					if state.Sequence != 3 {
+						return terminal, fmt.Errorf("post-reconnect ready sequence = %d, want 3", state.Sequence)
+					}
+					return terminal, nil
+				}
+				time.Sleep(time.Millisecond)
+			}
+			return terminal, errors.New("reconnect snapshot and final idle status were not processed")
+		},
+	}
+	if _, err := supervisor.Run(context.Background(), options); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCodexSupervisorReconnectNotLoadedDoesNotRestartWaitingEpoch(t *testing.T) {
+	waiting := testSupervisorThread(supervisorResumeID, "session", "", ThreadStatusActive)
+	waiting.Status.ActiveFlags = []ActiveFlag{ActiveWaitingOnUserInput}
+	unknown := waiting
+	unknown.Status = ThreadStatus{Type: ThreadStatusNotLoaded}
+
+	first := newFakeObserverSession(waiting)
+	second := newFakeObserverSession(unknown)
+	first.next <- observerNext{err: errors.New("socket lost")}
+	second.next <- observerNext{event: statusEvent(supervisorResumeID, waiting.Status)}
+	second.next <- observerNext{event: statusEvent(supervisorResumeID, idleStatus())}
+
+	var openCalls atomic.Int32
+	options := supervisorOptions(t, supervisorResumeID, "")
+	terminal := CodexExitResult{Elapsed: options.FallbackWindow}
+	supervisor := CodexSupervisor{
+		TempBase:    t.TempDir(),
+		StartServer: func(context.Context, []string, io.Writer) (AppServerProcess, error) { return &fakeServerProcess{}, nil },
+		OpenObserver: func(context.Context, ObserverConfig) (ObserverConnection, error) {
+			if openCalls.Add(1) == 1 {
+				return first, nil
+			}
+			return second, nil
+		},
+		ReconnectDelay: time.Millisecond,
+		EnterRaw:       func() (func(), error) { return func() {}, nil },
+		RunPTY: func(context.Context, []string, func(OSC9Event)) (CodexExitResult, error) {
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				state := readSupervisorState(t, options.StateFile)
+				if openCalls.Load() >= 2 && state.Phase == attention.PhaseReady {
+					// Initial waiting, observer loss, and the final known idle are the
+					// only semantic transitions. Re-alerting the same waiting flag after
+					// the notLoaded snapshot would add a fourth sequence step.
+					if state.Sequence != 3 {
+						return terminal, fmt.Errorf("post-notLoaded sequence = %d, want 3", state.Sequence)
+					}
+					return terminal, nil
+				}
+				time.Sleep(time.Millisecond)
+			}
+			return terminal, errors.New("reconnect did not process the final known idle status")
+		},
+	}
+	if _, err := supervisor.Run(context.Background(), options); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -853,8 +953,8 @@ func TestCodexSupervisorNonIdleReconnectSupersedesOutageOSC(t *testing.T) {
 				return CodexExitResult{}, errors.New("observer loss did not publish unknown before reconnect")
 			}
 			onOSC(OSC9Event{Message: "outage completion"})
-			if state := readSupervisorState(t, options.StateFile); state.Phase != attention.PhaseAttention {
-				return CodexExitResult{}, errors.New("outage OSC did not publish attention")
+			if state := readSupervisorState(t, options.StateFile); state.Phase != attention.PhaseUnknown {
+				return CodexExitResult{}, errors.New("outage OSC escaped observer uncertainty")
 			}
 			close(allowReconnect)
 			deadline = time.Now().Add(2 * time.Second)
@@ -918,7 +1018,7 @@ func TestCodexSupervisorEmptyReconnectSnapshotIsExplicitAndCanRecover(t *testing
 	}
 }
 
-func TestCodexRunAttemptPreservesAdmittedLossBeforeLaterOSC(t *testing.T) {
+func TestCodexRunAttemptPreservesAdmittedLossAsUnknownAfterLaterOSC(t *testing.T) {
 	for iteration := 0; iteration < 64; iteration++ {
 		reducer, err := NewReducer(ReducerConfig{
 			Generation: "generation.Order", ProjectCWD: "/repo", ResumeThreadID: supervisorResumeID,
@@ -964,8 +1064,8 @@ func TestCodexRunAttemptPreservesAdmittedLossBeforeLaterOSC(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if last.Phase != attention.PhaseAttention || last.Reason != attention.ReasonDone {
-			t.Fatalf("iteration %d final state = %+v, loss was admitted before OSC", iteration, last)
+		if last.Phase != attention.PhaseUnknown || last.Reason != attention.ReasonNone {
+			t.Fatalf("iteration %d final state = %+v, admitted loss must dominate OSC", iteration, last)
 		}
 	}
 }

@@ -213,6 +213,47 @@ func TestReducerDeterministicallySortsAttentionIdentities(t *testing.T) {
 	}
 }
 
+func TestReducerReenteredStatusEpochAlertsWhileSameKindRemainsActive(t *testing.T) {
+	t.Parallel()
+
+	reducer := newResumeReducer(t)
+	writer, err := attention.NewAtomicWriter(filepath.Join(t.TempDir(), "state"), "generation-resume")
+	if err != nil {
+		t.Fatal(err)
+	}
+	publish := func(event ReducerEvent) {
+		state := reducer.Reduce(event)
+		if err := writer.Publish(state.Phase, state.Reason, state.Identity); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	publish(threadEvent(testThread(
+		"resume-root", "session-root", "", "/repo",
+		activeStatus(ActiveWaitingOnUserInput),
+	)))
+	publish(threadEvent(testThread(
+		"child", "session-root", "resume-root", "/repo",
+		activeStatus(ActiveWaitingOnUserInput),
+	)))
+	if got := writer.Current().Sequence; got != 2 {
+		t.Fatalf("two question epochs sequence = %d, want 2", got)
+	}
+
+	publish(statusEvent("child", activeStatus()))
+	if got := writer.Current().Sequence; got != 2 {
+		t.Fatalf("clearing one of two questions sequence = %d, want 2", got)
+	}
+	publish(statusEvent("child", activeStatus(ActiveWaitingOnUserInput)))
+	if got := writer.Current().Sequence; got != 3 {
+		t.Fatalf("re-entered question epoch sequence = %d, want 3", got)
+	}
+	publish(statusEvent("child", activeStatus(ActiveWaitingOnUserInput)))
+	if got := writer.Current().Sequence; got != 3 {
+		t.Fatalf("repeated active status sequence = %d, want 3", got)
+	}
+}
+
 func TestReducerAttentionIdentityCannotCollideOnIDDelimiters(t *testing.T) {
 	t.Parallel()
 
@@ -234,39 +275,6 @@ func TestReducerAttentionIdentityCannotCollideOnIDDelimiters(t *testing.T) {
 	if firstState.Identity == secondState.Identity {
 		t.Fatalf("distinct pending sets share identity %q", firstState.Identity)
 	}
-}
-
-func TestReducerTracksRequestsWithoutDuplicatingStatusFlags(t *testing.T) {
-	t.Parallel()
-
-	reducer := newResumeReducer(t)
-	reducer.Reduce(threadEvent(testThread("resume-root", "session-root", "", "/repo", activeStatus())))
-	reducer.Reduce(threadEvent(testThread("child", "session-root", "resume-root", "/repo", activeStatus(ActiveWaitingOnUserInput))))
-	want := reducer.Current()
-
-	opened := ReducerEvent{
-		Kind: EventRequestOpened,
-		Request: PendingRequest{
-			ThreadID:  "child",
-			RequestID: StringRequestID("request-7"),
-			Kind:      RequestQuestion,
-		},
-	}
-	if got := reducer.Reduce(opened); got != want {
-		t.Fatalf("request plus matching active flag = %#v, want stable %#v", got, want)
-	}
-
-	resolved := ReducerEvent{Kind: EventRequestResolved, ThreadID: "child", RequestID: StringRequestID("request-7")}
-	if got := reducer.Reduce(resolved); got != want {
-		t.Fatalf("resolution while status flag remains = %#v, want stable %#v", got, want)
-	}
-
-	reducer.Reduce(statusEvent("child", activeStatus()))
-	assertReducerState(t, reducer.Current(), attention.PhaseWorking, attention.ReasonNone, "")
-
-	permission := opened
-	permission.Request = PendingRequest{ThreadID: "child", RequestID: StringRequestID("request-8"), Kind: RequestPermission}
-	assertReducerState(t, reducer.Reduce(permission), attention.PhaseAttention, attention.ReasonPermission, "permission:child")
 }
 
 func TestReducerObserverLossAndRecoveryFailUnknown(t *testing.T) {
@@ -294,7 +302,400 @@ func TestReducerObserverLossAndRecoveryFailUnknown(t *testing.T) {
 	assertReducerState(t, fresh.Reduce(ambiguous), attention.PhaseUnknown, attention.ReasonNone, "")
 }
 
-func TestReducerObserverLossAcceptsIndependentOSCAndIdleSnapshotPreservesIt(t *testing.T) {
+func TestReducerReconnectSuppressesUncertainStatusEpochUntilItClears(t *testing.T) {
+	t.Parallel()
+
+	reducer := newResumeReducer(t)
+	waiting := testThread(
+		"resume-root", "session-root", "", "/repo",
+		activeStatus(ActiveWaitingOnUserInput),
+	)
+	assertReducerState(t, reducer.Reduce(ReducerEvent{
+		Kind: EventObserverSnapshot, Threads: []Thread{waiting},
+	}), attention.PhaseAttention, attention.ReasonQuestion, "question:"+testResumeID)
+
+	assertReducerState(t, reducer.Reduce(ReducerEvent{Kind: EventObserverLost}),
+		attention.PhaseUnknown, attention.ReasonNone, "")
+	// The passive connection can only see aggregate flags. If the same flag is
+	// present after an outage, it cannot distinguish one continuous prompt from
+	// an unseen 1 -> 0 -> 1 cycle, so it must neither duplicate nor invent one.
+	assertReducerState(t, reducer.Reduce(ReducerEvent{
+		Kind: EventObserverSnapshot, Threads: []Thread{waiting},
+	}), attention.PhaseUnknown, attention.ReasonNone, "")
+	assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, activeStatus(ActiveWaitingOnUserInput))),
+		attention.PhaseUnknown, attention.ReasonNone, "")
+
+	assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, activeStatus())),
+		attention.PhaseWorking, attention.ReasonNone, "")
+	assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, activeStatus(ActiveWaitingOnUserInput))),
+		attention.PhaseAttention, attention.ReasonQuestion, "question:"+testResumeID)
+}
+
+func TestReducerReconnectSuppressesContinuousSystemErrorUntilKnownClear(t *testing.T) {
+	t.Parallel()
+
+	reducer := newResumeReducer(t)
+	writer, err := attention.NewAtomicWriter(filepath.Join(t.TempDir(), "state"), "generation-resume")
+	if err != nil {
+		t.Fatal(err)
+	}
+	publish := func(event ReducerEvent) attention.State {
+		t.Helper()
+		state := reducer.Reduce(event)
+		if err := writer.Publish(state.Phase, state.Reason, state.Identity); err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+
+	failed := testThread("resume-root", "session-root", "", "/repo", systemErrorStatus())
+	assertReducerState(t, publish(ReducerEvent{
+		Kind: EventObserverSnapshot, Threads: []Thread{failed},
+	}), attention.PhaseAttention, attention.ReasonError, "error:"+testResumeID)
+	if got := writer.Current().Sequence; got != 1 {
+		t.Fatalf("initial system-error sequence = %d, want 1", got)
+	}
+
+	assertReducerState(t, publish(ReducerEvent{Kind: EventObserverLost}),
+		attention.PhaseUnknown, attention.ReasonNone, "")
+	assertReducerState(t, publish(ReducerEvent{
+		Kind: EventObserverSnapshot, Threads: []Thread{failed},
+	}), attention.PhaseUnknown, attention.ReasonNone, "")
+	assertReducerState(t, publish(statusEvent(testResumeID, systemErrorStatus())),
+		attention.PhaseUnknown, attention.ReasonNone, "")
+	if got := writer.Current().Sequence; got != 2 {
+		t.Fatalf("continuous system-error sequence = %d, want 2", got)
+	}
+
+	assertReducerState(t, publish(statusEvent(testResumeID, idleStatus())),
+		attention.PhaseReady, attention.ReasonNone, "")
+	assertReducerState(t, publish(statusEvent(testResumeID, systemErrorStatus())),
+		attention.PhaseAttention, attention.ReasonError, "error:"+testResumeID)
+	if got := writer.Current().Sequence; got != 4 {
+		t.Fatalf("new system-error sequence = %d, want 4", got)
+	}
+}
+
+func TestReducerSystemErrorEpochSurvivesMissingEvidence(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		makeUnknown func(*Reducer) attention.State
+		recover     func(*Reducer, Thread) attention.State
+	}{
+		{
+			name: "live notLoaded",
+			makeUnknown: func(reducer *Reducer) attention.State {
+				return reducer.Reduce(statusEvent(testResumeID, notLoadedStatus()))
+			},
+			recover: func(reducer *Reducer, root Thread) attention.State {
+				return reducer.Reduce(statusEvent(root.ID, root.Status))
+			},
+		},
+		{
+			name: "untrusted root-missing barrier",
+			makeUnknown: func(reducer *Reducer) attention.State {
+				return reducer.Reduce(ReducerEvent{Kind: EventObserverSnapshot})
+			},
+			recover: func(reducer *Reducer, root Thread) attention.State {
+				return reducer.Reduce(ReducerEvent{Kind: EventObserverSnapshot, Threads: []Thread{root}})
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reducer := newResumeReducer(t)
+			failed := testThread("resume-root", "session-root", "", "/repo", systemErrorStatus())
+			assertReducerState(t, reducer.Reduce(ReducerEvent{
+				Kind: EventObserverSnapshot, Threads: []Thread{failed},
+			}), attention.PhaseAttention, attention.ReasonError, "error:"+testResumeID)
+
+			assertReducerState(t, test.makeUnknown(reducer),
+				attention.PhaseUnknown, attention.ReasonNone, "")
+			assertReducerState(t, test.recover(reducer, failed),
+				attention.PhaseUnknown, attention.ReasonNone, "")
+
+			assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, idleStatus())),
+				attention.PhaseReady, attention.ReasonNone, "")
+			assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, systemErrorStatus())),
+				attention.PhaseAttention, attention.ReasonError, "error:"+testResumeID)
+		})
+	}
+}
+
+func TestReducerKnownSystemErrorClearEndsEpoch(t *testing.T) {
+	t.Parallel()
+
+	t.Run("active status", func(t *testing.T) {
+		reducer := newResumeReducer(t)
+		failed := testThread("resume-root", "session-root", "", "/repo", systemErrorStatus())
+		reducer.Reduce(ReducerEvent{Kind: EventObserverSnapshot, Threads: []Thread{failed}})
+		assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, activeStatus())),
+			attention.PhaseWorking, attention.ReasonNone, "")
+		assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, systemErrorStatus())),
+			attention.PhaseAttention, attention.ReasonError, "error:"+testResumeID)
+	})
+
+	t.Run("idle status", func(t *testing.T) {
+		reducer := newResumeReducer(t)
+		failed := testThread("resume-root", "session-root", "", "/repo", systemErrorStatus())
+		reducer.Reduce(ReducerEvent{Kind: EventObserverSnapshot, Threads: []Thread{failed}})
+		assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, idleStatus())),
+			attention.PhaseReady, attention.ReasonNone, "")
+		assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, systemErrorStatus())),
+			attention.PhaseAttention, attention.ReasonError, "error:"+testResumeID)
+	})
+
+	t.Run("thread close", func(t *testing.T) {
+		reducer := newResumeReducer(t)
+		root := testThread("resume-root", "session-root", "", "/repo", idleStatus())
+		failed := testThread("error-child", "session-root", "resume-root", "/repo", systemErrorStatus())
+		reducer.Reduce(ReducerEvent{Kind: EventObserverSnapshot, Threads: []Thread{root, failed}})
+		assertReducerState(t, reducer.Reduce(ReducerEvent{Kind: EventThreadClosed, ThreadID: failed.ID}),
+			attention.PhaseReady, attention.ReasonNone, "")
+		assertReducerState(t, reducer.Reduce(ReducerEvent{
+			Kind: EventObserverSnapshot, Threads: []Thread{root, failed},
+		}), attention.PhaseAttention, attention.ReasonError, "error:error-child")
+	})
+
+	t.Run("trusted snapshot absence", func(t *testing.T) {
+		reducer := newResumeReducer(t)
+		root := testThread("resume-root", "session-root", "", "/repo", idleStatus())
+		failed := testThread("error-child", "session-root", "resume-root", "/repo", systemErrorStatus())
+		reducer.Reduce(ReducerEvent{Kind: EventObserverSnapshot, Threads: []Thread{root, failed}})
+		assertReducerState(t, reducer.Reduce(ReducerEvent{
+			Kind: EventObserverSnapshot, Threads: []Thread{root},
+		}), attention.PhaseReady, attention.ReasonNone, "")
+		assertReducerState(t, reducer.Reduce(ReducerEvent{
+			Kind: EventObserverSnapshot, Threads: []Thread{root, failed},
+		}), attention.PhaseAttention, attention.ReasonError, "error:error-child")
+	})
+}
+
+func TestReducerNewSystemErrorAlertsDespiteOldUncertainError(t *testing.T) {
+	t.Parallel()
+
+	reducer := newResumeReducer(t)
+	failed := testThread("resume-root", "session-root", "", "/repo", systemErrorStatus())
+	assertReducerState(t, reducer.Reduce(ReducerEvent{
+		Kind: EventObserverSnapshot, Threads: []Thread{failed},
+	}), attention.PhaseAttention, attention.ReasonError, "error:"+testResumeID)
+	reducer.Reduce(ReducerEvent{Kind: EventObserverLost})
+
+	newFailure := testThread("new-error", "session-root", "resume-root", "/repo", systemErrorStatus())
+	assertReducerState(t, reducer.Reduce(ReducerEvent{
+		Kind: EventObserverSnapshot, Threads: []Thread{failed, newFailure},
+	}), attention.PhaseAttention, attention.ReasonError, "error:new-error")
+}
+
+func TestReducerPrioritySuppressedSystemErrorRemainsAlertableAfterUncertainty(t *testing.T) {
+	t.Parallel()
+
+	reducer := newResumeReducer(t)
+	waiting := testThread(
+		"resume-root", "session-root", "", "/repo",
+		activeStatus(ActiveWaitingOnUserInput),
+	)
+	failed := testThread("error-child", "session-root", "resume-root", "/repo", systemErrorStatus())
+	assertReducerState(t, reducer.Reduce(ReducerEvent{
+		Kind: EventObserverSnapshot, Threads: []Thread{waiting, failed},
+	}), attention.PhaseAttention, attention.ReasonQuestion, "question:"+testResumeID)
+	reducer.Reduce(ReducerEvent{Kind: EventObserverLost})
+	assertReducerState(t, reducer.Reduce(ReducerEvent{
+		Kind: EventObserverSnapshot, Threads: []Thread{waiting, failed},
+	}), attention.PhaseUnknown, attention.ReasonNone, "")
+
+	assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, idleStatus())),
+		attention.PhaseAttention, attention.ReasonError, "error:error-child")
+}
+
+func TestReducerLiveNotLoadedPreservesStatusEpochUntilKnownClear(t *testing.T) {
+	t.Parallel()
+
+	reducer := newResumeReducer(t)
+	waiting := activeStatus(ActiveWaitingOnUserInput)
+	root := testThread("resume-root", "session-root", "", "/repo", waiting)
+	assertReducerState(t, reducer.Reduce(ReducerEvent{
+		Kind: EventObserverSnapshot, Threads: []Thread{root},
+	}), attention.PhaseAttention, attention.ReasonQuestion, "question:"+testResumeID)
+
+	// notLoaded is missing evidence, not evidence that the waiting flag cleared.
+	assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, notLoadedStatus())),
+		attention.PhaseUnknown, attention.ReasonNone, "")
+	assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, waiting)),
+		attention.PhaseUnknown, attention.ReasonNone, "")
+
+	// A known status without the flag proves the old epoch ended. Its next
+	// 0 -> 1 transition is therefore new and alertable.
+	assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, activeStatus())),
+		attention.PhaseWorking, attention.ReasonNone, "")
+	assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, waiting)),
+		attention.PhaseAttention, attention.ReasonQuestion, "question:"+testResumeID)
+}
+
+func TestReducerUnannouncedStatusEpochRemainsAlertableAfterUncertainty(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		makeUnknown func(*Reducer) attention.State
+		recover     func(*Reducer, Thread) attention.State
+	}{
+		{
+			name: "live notLoaded",
+			makeUnknown: func(reducer *Reducer) attention.State {
+				return reducer.Reduce(statusEvent(testResumeID, notLoadedStatus()))
+			},
+			recover: func(reducer *Reducer, root Thread) attention.State {
+				return reducer.Reduce(statusEvent(root.ID, root.Status))
+			},
+		},
+		{
+			name: "malformed event and clean snapshot",
+			makeUnknown: func(reducer *Reducer) attention.State {
+				return reducer.Reduce(statusEvent(testResumeID, ThreadStatus{
+					Type: ThreadStatusActive, ActiveFlags: []ActiveFlag{"future-flag"},
+				}))
+			},
+			recover: func(reducer *Reducer, root Thread) attention.State {
+				return reducer.Reduce(ReducerEvent{Kind: EventObserverSnapshot, Threads: []Thread{root}})
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reducer := newResumeReducer(t)
+			root := testThread("resume-root", "session-root", "", "/repo", activeStatus(
+				ActiveWaitingOnUserInput, ActiveWaitingOnApproval,
+			))
+			assertReducerState(t, reducer.Reduce(ReducerEvent{
+				Kind: EventObserverSnapshot, Threads: []Thread{root},
+			}), attention.PhaseAttention, attention.ReasonQuestion, "question:"+testResumeID)
+			assertReducerState(t, test.makeUnknown(reducer),
+				attention.PhaseUnknown, attention.ReasonNone, "")
+
+			// Permission was priority-suppressed and never announced. Once an exact
+			// known status clears question but retains permission, alerting permission
+			// is safe whether its epoch spanned the uncertainty or restarted within it.
+			root.Status = activeStatus(ActiveWaitingOnApproval)
+			assertReducerState(t, test.recover(reducer, root),
+				attention.PhaseAttention, attention.ReasonPermission, "permission:"+testResumeID)
+		})
+	}
+}
+
+func TestReducerUncertainQuestionBlocksNewPermissionUntilQuestionClears(t *testing.T) {
+	t.Parallel()
+
+	reducer := newResumeReducer(t)
+	root := testThread(
+		"resume-root", "session-root", "", "/repo",
+		activeStatus(ActiveWaitingOnUserInput),
+	)
+	assertReducerState(t, reducer.Reduce(ReducerEvent{
+		Kind: EventObserverSnapshot, Threads: []Thread{root},
+	}), attention.PhaseAttention, attention.ReasonQuestion, "question:"+testResumeID)
+	reducer.Reduce(ReducerEvent{Kind: EventObserverLost})
+
+	root.Status = activeStatus(ActiveWaitingOnUserInput, ActiveWaitingOnApproval)
+	assertReducerState(t, reducer.Reduce(ReducerEvent{
+		Kind: EventObserverSnapshot, Threads: []Thread{root},
+	}), attention.PhaseUnknown, attention.ReasonNone, "")
+
+	// The permission is definitely new, but cannot bypass a higher-priority
+	// question whose epoch is uncertain across the outage.
+	assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, activeStatus(ActiveWaitingOnApproval))),
+		attention.PhaseAttention, attention.ReasonPermission, "permission:"+testResumeID)
+	assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, activeStatus(ActiveWaitingOnApproval))),
+		attention.PhaseAttention, attention.ReasonPermission, "permission:"+testResumeID)
+}
+
+func TestReducerTrustLossMakesSurvivingStatusEpochUncertain(t *testing.T) {
+	t.Parallel()
+
+	reducer := newResumeReducer(t)
+	waiting := testThread(
+		"resume-root", "session-root", "", "/repo",
+		activeStatus(ActiveWaitingOnUserInput),
+	)
+	assertReducerState(t, reducer.Reduce(ReducerEvent{
+		Kind: EventObserverSnapshot, Threads: []Thread{waiting},
+	}), attention.PhaseAttention, attention.ReasonQuestion, "question:"+testResumeID)
+
+	malformed := statusEvent(testResumeID, ThreadStatus{
+		Type: ThreadStatusActive, ActiveFlags: []ActiveFlag{"future-flag"},
+	})
+	assertReducerState(t, reducer.Reduce(malformed), attention.PhaseUnknown, attention.ReasonNone, "")
+	assertReducerState(t, reducer.Reduce(ReducerEvent{
+		Kind: EventObserverSnapshot, Threads: []Thread{waiting},
+	}), attention.PhaseUnknown, attention.ReasonNone, "")
+
+	assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, activeStatus())),
+		attention.PhaseWorking, attention.ReasonNone, "")
+	assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, activeStatus(ActiveWaitingOnUserInput))),
+		attention.PhaseAttention, attention.ReasonQuestion, "question:"+testResumeID)
+}
+
+func TestReducerUntrustedReconnectSnapshotCannotErasePriorStatusEpoch(t *testing.T) {
+	t.Parallel()
+
+	reducer := newResumeReducer(t)
+	waiting := testThread(
+		"resume-root", "session-root", "", "/repo",
+		activeStatus(ActiveWaitingOnUserInput),
+	)
+	assertReducerState(t, reducer.Reduce(ReducerEvent{
+		Kind: EventObserverSnapshot, Threads: []Thread{waiting},
+	}), attention.PhaseAttention, attention.ReasonQuestion, "question:"+testResumeID)
+	reducer.Reduce(ReducerEvent{Kind: EventObserverLost})
+
+	// A root-missing barrier is not evidence that the old flag cleared. If it
+	// erased the epoch, a later snapshot would incorrectly alert the same flag.
+	assertReducerState(t, reducer.Reduce(ReducerEvent{Kind: EventObserverSnapshot}),
+		attention.PhaseUnknown, attention.ReasonNone, "")
+	assertReducerState(t, reducer.Reduce(ReducerEvent{
+		Kind: EventObserverSnapshot, Threads: []Thread{waiting},
+	}), attention.PhaseUnknown, attention.ReasonNone, "")
+
+	assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, activeStatus())),
+		attention.PhaseWorking, attention.ReasonNone, "")
+	assertReducerState(t, reducer.Reduce(statusEvent(testResumeID, activeStatus(ActiveWaitingOnUserInput))),
+		attention.PhaseAttention, attention.ReasonQuestion, "question:"+testResumeID)
+}
+
+func TestReducerReconnectAlertsOnlyStatusEpochsKnownToBeNew(t *testing.T) {
+	t.Parallel()
+
+	t.Run("inactive before loss and active after reconnect", func(t *testing.T) {
+		reducer := newResumeReducer(t)
+		root := testThread("resume-root", "session-root", "", "/repo", activeStatus())
+		assertReducerState(t, reducer.Reduce(ReducerEvent{
+			Kind: EventObserverSnapshot, Threads: []Thread{root},
+		}), attention.PhaseWorking, attention.ReasonNone, "")
+		reducer.Reduce(ReducerEvent{Kind: EventObserverLost})
+		root.Status = activeStatus(ActiveWaitingOnApproval)
+		assertReducerState(t, reducer.Reduce(ReducerEvent{
+			Kind: EventObserverSnapshot, Threads: []Thread{root},
+		}), attention.PhaseAttention, attention.ReasonPermission, "permission:"+testResumeID)
+	})
+
+	t.Run("active before loss and clear after reconnect", func(t *testing.T) {
+		reducer := newResumeReducer(t)
+		root := testThread(
+			"resume-root", "session-root", "", "/repo",
+			activeStatus(ActiveWaitingOnApproval),
+		)
+		reducer.Reduce(ReducerEvent{Kind: EventObserverSnapshot, Threads: []Thread{root}})
+		reducer.Reduce(ReducerEvent{Kind: EventObserverLost})
+		root.Status = activeStatus()
+		assertReducerState(t, reducer.Reduce(ReducerEvent{
+			Kind: EventObserverSnapshot, Threads: []Thread{root},
+		}), attention.PhaseWorking, attention.ReasonNone, "")
+	})
+}
+
+func TestReducerObserverLossRetainsOSCPrivatelyUntilCleanIdleSnapshot(t *testing.T) {
 	t.Parallel()
 
 	reducer := newResumeReducer(t)
@@ -316,24 +717,26 @@ func TestReducerObserverLossAcceptsIndependentOSCAndIdleSnapshotPreservesIt(t *t
 	assertReducerState(t, publish(threadEvent(root)), attention.PhaseReady, attention.ReasonNone, "")
 	assertReducerState(t, publish(oscEvent("initial-unarmed")), attention.PhaseReady, attention.ReasonNone, "")
 	assertReducerState(t, publish(ReducerEvent{Kind: EventObserverLost}), attention.PhaseUnknown, attention.ReasonNone, "")
-	assertReducerState(t, publish(oscEvent("outage-1")), attention.PhaseAttention, attention.ReasonDone, "osc:outage-1")
-	assertReducerState(t, publish(oscEvent("outage-1")), attention.PhaseAttention, attention.ReasonDone, "osc:outage-1")
-	if got := writer.Current().Sequence; got != 3 {
-		t.Fatalf("repeated outage OSC sequence = %d, want 3", got)
+	assertReducerState(t, publish(oscEvent("outage-1")), attention.PhaseUnknown, attention.ReasonNone, "")
+	assertReducerState(t, publish(oscEvent("outage-1")), attention.PhaseUnknown, attention.ReasonNone, "")
+	if got := writer.Current().Sequence; got != 2 {
+		t.Fatalf("repeated outage OSC sequence = %d, want 2", got)
 	}
-	assertReducerState(t, publish(oscEvent("outage-2")), attention.PhaseAttention, attention.ReasonDone, "osc:outage-2")
-	assertReducerState(t, publish(ReducerEvent{Kind: EventObserverSnapshot, Threads: []Thread{root}}), attention.PhaseAttention, attention.ReasonDone, "osc:outage-2")
-	if got := writer.Current().Sequence; got != 4 {
-		t.Fatalf("idle reconnect sequence = %d, want 4", got)
+	assertReducerState(t, publish(oscEvent("outage-2")), attention.PhaseUnknown, attention.ReasonNone, "")
+	assertReducerState(t, publish(ReducerEvent{
+		Kind: EventObserverSnapshot, Threads: []Thread{root},
+	}), attention.PhaseAttention, attention.ReasonDone, "osc:outage-2")
+	if got := writer.Current().Sequence; got != 3 {
+		t.Fatalf("idle reconnect sequence = %d, want 3", got)
 	}
 
 	// Embedded fallback has no correlated app-server root. Explicit observer
-	// loss tells the reducer that configured OSC is the independent truth source.
+	// unavailability tells the reducer that configured OSC is the independent truth source.
 	fallback, err := NewReducer(ReducerConfig{Generation: "generation-fallback", ProjectCWD: "/repo"})
 	if err != nil {
 		t.Fatalf("NewReducer() error = %v", err)
 	}
-	fallback.Reduce(ReducerEvent{Kind: EventObserverLost})
+	fallback.Reduce(ReducerEvent{Kind: EventObserverUnavailable})
 	assertReducerState(t, fallback.Reduce(oscEvent("fallback-1")), attention.PhaseAttention, attention.ReasonDone, "osc:fallback-1")
 }
 
@@ -493,53 +896,6 @@ func TestReducerThreadCorrelationFieldsAreImmutableUntilSnapshot(t *testing.T) {
 	}
 }
 
-func TestReducerRequestIDPreservesStringNumberUnion(t *testing.T) {
-	t.Parallel()
-
-	reducer := newResumeReducer(t)
-	reducer.Reduce(threadEvent(testThread("resume-root", "session-root", "", "/repo", activeStatus())))
-	reducer.Reduce(ReducerEvent{
-		Kind:    EventRequestOpened,
-		Request: PendingRequest{ThreadID: testResumeID, RequestID: NumberRequestID(1), Kind: RequestQuestion},
-	})
-	reducer.Reduce(ReducerEvent{
-		Kind:    EventRequestOpened,
-		Request: PendingRequest{ThreadID: testResumeID, RequestID: StringRequestID("1"), Kind: RequestPermission},
-	})
-	assertReducerState(t, reducer.Current(), attention.PhaseAttention, attention.ReasonQuestion, "question:"+testResumeID)
-
-	assertReducerState(t, reducer.Reduce(ReducerEvent{
-		Kind: EventRequestResolved, ThreadID: testResumeID, RequestID: NumberRequestID(1),
-	}), attention.PhaseAttention, attention.ReasonPermission, "permission:"+testResumeID)
-	assertReducerState(t, reducer.Reduce(ReducerEvent{
-		Kind: EventRequestResolved, ThreadID: testResumeID, RequestID: StringRequestID("1"),
-	}), attention.PhaseWorking, attention.ReasonNone, "")
-}
-
-func TestReducerRejectsMalformedRequestIDs(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		id   RequestID
-	}{
-		{name: "zero value", id: RequestID{}},
-		{name: "oversize string", id: StringRequestID(strings.Repeat("x", MaxReducerIDBytes+1))},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			reducer := newResumeReducer(t)
-			reducer.Reduce(threadEvent(testThread("resume-root", "session-root", "", "/repo", activeStatus())))
-			event := ReducerEvent{
-				Kind:    EventRequestOpened,
-				Request: PendingRequest{ThreadID: testResumeID, RequestID: tt.id, Kind: RequestQuestion},
-			}
-			assertReducerState(t, reducer.Reduce(event), attention.PhaseUnknown, attention.ReasonNone, "")
-		})
-	}
-}
-
 func TestReducerReconnectWithLostProjectAncestryIsUnknown(t *testing.T) {
 	t.Parallel()
 
@@ -557,13 +913,7 @@ func TestReducerMalformedAndUnmappedEventsCannotCreateAttention(t *testing.T) {
 	root := testThread("resume-root", "session-root", "", "/repo", idleStatus())
 	reducer.Reduce(threadEvent(root))
 
-	unmapped := []ReducerEvent{
-		statusEvent("foreign", activeStatus(ActiveWaitingOnUserInput)),
-		{
-			Kind:    EventRequestOpened,
-			Request: PendingRequest{ThreadID: "foreign", RequestID: StringRequestID("request-x"), Kind: RequestQuestion},
-		},
-	}
+	unmapped := []ReducerEvent{statusEvent("foreign", activeStatus(ActiveWaitingOnUserInput))}
 	for _, event := range unmapped {
 		assertReducerState(t, reducer.Reduce(event), attention.PhaseReady, attention.ReasonNone, "")
 	}
@@ -602,10 +952,6 @@ func TestReducerThreadClosedRemovesChildContributionAndRootBecomesUnknown(t *tes
 	staleChild := testThread("child", "session-root", "resume-root", "/repo", activeStatus(ActiveWaitingOnUserInput))
 	assertReducerState(t, reducer.Reduce(threadEvent(staleChild)), attention.PhaseWorking, attention.ReasonNone, "")
 	assertReducerState(t, reducer.Reduce(statusEvent("child", activeStatus(ActiveWaitingOnUserInput))), attention.PhaseWorking, attention.ReasonNone, "")
-	assertReducerState(t, reducer.Reduce(ReducerEvent{
-		Kind:    EventRequestOpened,
-		Request: PendingRequest{ThreadID: "child", RequestID: StringRequestID("stale"), Kind: RequestQuestion},
-	}), attention.PhaseWorking, attention.ReasonNone, "")
 
 	closedRoot := ReducerEvent{Kind: EventThreadClosed, ThreadID: testResumeID}
 	assertReducerState(t, reducer.Reduce(closedRoot), attention.PhaseUnknown, attention.ReasonNone, "")
@@ -659,7 +1005,7 @@ func TestReducerDuplicateKnownActiveFlagsAreIdempotent(t *testing.T) {
 	assertReducerState(t, reducer.Reduce(threadEvent(root)), attention.PhaseAttention, attention.ReasonQuestion, "question:"+testResumeID)
 }
 
-func TestReducerBoundsLongLivedCorrelationStateAndRecoversFromCleanSnapshot(t *testing.T) {
+func TestReducerBoundsSnapshotAndRecoversFromCleanSnapshot(t *testing.T) {
 	t.Parallel()
 
 	if MaxReducerEntries != 4096 || MaxReducerIDBytes != 256 {
@@ -669,34 +1015,45 @@ func TestReducerBoundsLongLivedCorrelationStateAndRecoversFromCleanSnapshot(t *t
 	root := testThread("resume-root", "session-root", "", "/repo", activeStatus())
 	reducer.Reduce(threadEvent(root))
 
-	for i := 0; i < MaxReducerEntries; i++ {
-		event := ReducerEvent{
-			Kind: EventRequestOpened,
-			Request: PendingRequest{
-				ThreadID:  testResumeID,
-				RequestID: StringRequestID(fmt.Sprintf("request-%04d", i)),
-				Kind:      RequestQuestion,
-			},
-		}
-		reducer.Reduce(event)
-	}
-	overflow := ReducerEvent{
-		Kind: EventRequestOpened,
-		Request: PendingRequest{
-			ThreadID:  testResumeID,
-			RequestID: StringRequestID("request-overflow"),
-			Kind:      RequestQuestion,
-		},
-	}
-	assertReducerState(t, reducer.Reduce(overflow), attention.PhaseUnknown, attention.ReasonNone, "")
-	assertReducerState(t, reducer.Reduce(ReducerEvent{Kind: EventObserverSnapshot, Threads: []Thread{root}}), attention.PhaseWorking, attention.ReasonNone, "")
-
 	tooMany := make([]Thread, MaxReducerEntries+1)
 	for i := range tooMany {
 		tooMany[i] = testThread(fmt.Sprintf("thread-%04d", i), fmt.Sprintf("session-%04d", i), "", "/other", idleStatus())
 	}
 	assertReducerState(t, reducer.Reduce(ReducerEvent{Kind: EventObserverSnapshot, Threads: tooMany}), attention.PhaseUnknown, attention.ReasonNone, "")
 	assertReducerState(t, reducer.Reduce(ReducerEvent{Kind: EventObserverSnapshot, Threads: []Thread{root}}), attention.PhaseWorking, attention.ReasonNone, "")
+}
+
+func TestReducerBoundsActiveAndPreservedUnknownEpochUnion(t *testing.T) {
+	t.Parallel()
+
+	reducer := newResumeReducer(t)
+	preservedThreads := MaxReducerEntries / 3
+	snapshot := make([]Thread, 0, preservedThreads+1)
+	for i := 0; i < preservedThreads; i++ {
+		threadID := fmt.Sprintf("unknown-%04d", i)
+		parentID := testResumeID
+		if i == 0 {
+			threadID = testResumeID
+			parentID = ""
+		}
+		snapshot = append(snapshot, testThread(
+			threadID, "session-root", parentID, "/repo", notLoadedStatus(),
+		))
+		reducer.status[statusRequestKey{threadID: threadID, kind: interactionQuestion}] = statusEpoch{announced: true}
+		reducer.status[statusRequestKey{threadID: threadID, kind: interactionPermission}] = statusEpoch{announced: true}
+		reducer.status[statusRequestKey{threadID: threadID, kind: interactionError}] = statusEpoch{announced: true}
+	}
+	snapshot = append(snapshot, testThread(
+		"new-active", "session-root", testResumeID, "/repo",
+		activeStatus(ActiveWaitingOnUserInput, ActiveWaitingOnApproval),
+	))
+
+	assertReducerState(t, reducer.Reduce(ReducerEvent{
+		Kind: EventObserverSnapshot, Threads: snapshot,
+	}), attention.PhaseUnknown, attention.ReasonNone, "")
+	if got := len(reducer.status); got > MaxReducerEntries {
+		t.Fatalf("status epoch union contains %d entries, limit %d", got, MaxReducerEntries)
+	}
 }
 
 func TestReducerBoundsClosedThreadTombstones(t *testing.T) {

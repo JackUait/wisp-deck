@@ -324,7 +324,7 @@ func (s *CodexSupervisor) Run(ctx context.Context, options CodexSupervisorOption
 		if reliable {
 			publish(reducer.Reduce(ReducerEvent{Kind: EventObserverSnapshot, Threads: snapshot}))
 		} else {
-			publish(reducer.Reduce(ReducerEvent{Kind: EventObserverLost}))
+			publish(reducer.Reduce(ReducerEvent{Kind: EventObserverUnavailable}))
 		}
 		return reducer, nil
 	}
@@ -614,6 +614,10 @@ func (s *CodexSupervisor) runAttempt(
 	}, 1)
 	go func() {
 		result, err := runPTY(ctx, argv, func(event OSC9Event) {
+			// The exact launch overrides admit only agent-turn-complete, while Codex
+			// puts its dynamic display text (usually a response preview) in OSC9.
+			// The parser already bounds the payload, so provenance—not its text—is
+			// the completion discriminator.
 			_ = event
 			observation := supervisorMessage{epoch: epoch, kind: supervisorOSC9, ack: make(chan struct{})}
 			select {

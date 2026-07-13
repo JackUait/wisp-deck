@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -71,9 +70,6 @@ func decodeWireEnvelope(payload []byte) (wireEnvelope, error) {
 			return wireEnvelope{}, errors.New("malformed app-server response envelope")
 		}
 	case hasID && hasMethod:
-		if _, err := decodeRequestID(envelope.ID); err != nil {
-			return wireEnvelope{}, err
-		}
 		if hasResult || hasError {
 			return wireEnvelope{}, errors.New("malformed app-server request envelope")
 		}
@@ -284,7 +280,10 @@ func decodeThreadStatus(raw json.RawMessage) (ThreadStatus, error) {
 
 func decodeNotification(envelope wireEnvelope) (ReducerEvent, bool, error) {
 	if len(envelope.ID) != 0 {
-		// Server-to-client requests are deliberately observed but never answered.
+		// Initialized connections can be auto-attached to newly created threads,
+		// but this passive initialize/list/read topology has no stable or complete
+		// census of thread-scoped requests. Do not answer request envelopes or
+		// pretend their identities are part of the observer's truth model.
 		return ReducerEvent{}, false, nil
 	}
 	switch envelope.Method {
@@ -347,26 +346,4 @@ func validateObserverString(name, value string, limit int, emptyOK bool) error {
 		return fmt.Errorf("%s contains invalid bytes", name)
 	}
 	return nil
-}
-
-func decodeRequestID(raw json.RawMessage) (RequestID, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return RequestID{}, errors.New("missing request id")
-	}
-	if trimmed[0] == '"' {
-		var value string
-		if err := json.Unmarshal(trimmed, &value); err != nil {
-			return RequestID{}, err
-		}
-		if err := validateObserverString("request id", value, MaxReducerIDBytes, false); err != nil {
-			return RequestID{}, err
-		}
-		return StringRequestID(value), nil
-	}
-	value, err := strconv.ParseInt(string(trimmed), 10, 64)
-	if err != nil || strings.ContainsAny(string(trimmed), ".eE") {
-		return RequestID{}, errors.New("request id must be a string or int64")
-	}
-	return NumberRequestID(value), nil
 }

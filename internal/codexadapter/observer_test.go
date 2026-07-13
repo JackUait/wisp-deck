@@ -212,11 +212,11 @@ func TestObserverUsesExactPassiveProtocolAndBuildsCoherentSnapshot(t *testing.T)
 		if readRoot["method"] != "thread/read" || !reflect.DeepEqual(readRoot["params"], map[string]any{"threadId": "root", "includeTurns": false}) {
 			return errors.New("root read request was malformed")
 		}
-		// This notification precedes the read response and is therefore
-		// superseded by the later synthetic upsert.
+		// An equal notification before the read response is idempotent even though
+		// response wire order alone does not reveal which value was sampled first.
 		if err := wsWriteObject(ctx, conn, map[string]any{
 			"method": "thread/status/changed", "params": map[string]any{
-				"threadId": "root", "status": map[string]any{"type": "active", "activeFlags": []string{}},
+				"threadId": "root", "status": map[string]any{"type": "idle"},
 			},
 		}); err != nil {
 			return err
@@ -240,9 +240,10 @@ func TestObserverUsesExactPassiveProtocolAndBuildsCoherentSnapshot(t *testing.T)
 			return err
 		}
 
-		// Put a server request ahead of the recognized notification so Next must
-		// consume and skip it before returning the status event. A passive
-		// observer sees these requests but never answers them.
+		// Initialized connections may receive requests for some newly attached
+		// threads, but that is not a stable or complete request census. Inject one
+		// to prove it is ignored and never answered; the following global status
+		// notification remains the observer's interaction truth.
 		if err := wsWriteObject(ctx, conn, map[string]any{
 			"id": 91, "method": "item/tool/requestUserInput", "params": map[string]any{"threadId": "child"},
 		}); err != nil {
@@ -308,6 +309,317 @@ func TestObserverUsesExactPassiveProtocolAndBuildsCoherentSnapshot(t *testing.T)
 	if !reflect.DeepEqual(methods, wantMethods) {
 		t.Fatalf("client methods = %v, want %v", methods, wantMethods)
 	}
+}
+
+func TestObserverSnapshotCarriesPreexistingPendingStatusFromThreadRead(t *testing.T) {
+	const rootID = "11111111-1111-4111-8111-111111111111"
+	server := startUDSWSServer(t, func(ctx context.Context, conn *websocket.Conn) error {
+		if err := serveObserverInitialize(ctx, conn, validInitializeResult()); err != nil {
+			return err
+		}
+		list, err := wsReadObject(ctx, conn)
+		if err != nil {
+			return err
+		}
+		if err := wsWriteObject(ctx, conn, map[string]any{
+			"id": list["id"], "result": map[string]any{"data": []string{rootID}, "nextCursor": nil},
+		}); err != nil {
+			return err
+		}
+		read, err := wsReadObject(ctx, conn)
+		if err != nil {
+			return err
+		}
+		return wsWriteObject(ctx, conn, map[string]any{
+			"id": read["id"], "result": map[string]any{"thread": observerThread(
+				rootID, "session", "", "/repo", "active", "waitingOnUserInput",
+			)},
+		})
+	})
+
+	observer, err := NewObserver(ObserverConfig{
+		SocketPath: server.socketPath, ClientVersion: observerTestVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	session, err := observer.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	snapshot := session.Snapshot()
+	if len(snapshot) != 1 || !reflect.DeepEqual(
+		snapshot[0].Status.ActiveFlags, []ActiveFlag{ActiveWaitingOnUserInput},
+	) {
+		t.Fatalf("snapshot = %#v, want preexisting waiting status from thread/read", snapshot)
+	}
+}
+
+func TestObserverPreResponseStatusConflictIsConservativelyUnknown(t *testing.T) {
+	tests := []struct {
+		name              string
+		notificationNewer bool
+	}{
+		{name: "notification newer than sampled read", notificationNewer: true},
+		{name: "notification older than sampled read"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			const rootID = "11111111-1111-4111-8111-111111111111"
+			server := startUDSWSServer(t, func(ctx context.Context, conn *websocket.Conn) error {
+				if err := serveObserverInitialize(ctx, conn, validInitializeResult()); err != nil {
+					return err
+				}
+				list, err := wsReadObject(ctx, conn)
+				if err != nil {
+					return err
+				}
+				if err := wsWriteObject(ctx, conn, map[string]any{
+					"id": list["id"], "result": map[string]any{"data": []string{rootID}, "nextCursor": nil},
+				}); err != nil {
+					return err
+				}
+				read, err := wsReadObject(ctx, conn)
+				if err != nil {
+					return err
+				}
+
+				var sampledRead map[string]any
+				if test.notificationNewer {
+					// Upstream sampled idle first, then published the newer active
+					// notification before sending the older response.
+					sampledRead = observerThread(rootID, "session", "", "/repo", "idle")
+				}
+				if err := wsWriteObject(ctx, conn, map[string]any{
+					"method": "thread/status/changed", "params": map[string]any{
+						"threadId": rootID,
+						"status": map[string]any{
+							"type": "active", "activeFlags": []string{"waitingOnUserInput"},
+						},
+					},
+				}); err != nil {
+					return err
+				}
+				if !test.notificationNewer {
+					// Upstream published active first, then sampled the newer idle read;
+					// its wire sequence is indistinguishable from the case above.
+					sampledRead = observerThread(rootID, "session", "", "/repo", "idle")
+				}
+				return wsWriteObject(ctx, conn, map[string]any{
+					"id": read["id"], "result": map[string]any{"thread": sampledRead},
+				})
+			})
+
+			observer, err := NewObserver(ObserverConfig{
+				SocketPath: server.socketPath, ClientVersion: observerTestVersion,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			session, err := observer.Open(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer session.Close()
+
+			snapshot := session.Snapshot()
+			if len(snapshot) != 1 || snapshot[0].Status.Type != ThreadStatusNotLoaded {
+				t.Fatalf("snapshot = %#v, want one thread with conservative notLoaded status", snapshot)
+			}
+		})
+	}
+}
+
+func TestObserverStatusBeforeTargetReadWindowIsSuperseded(t *testing.T) {
+	server := startUDSWSServer(t, func(ctx context.Context, conn *websocket.Conn) error {
+		if err := serveObserverInitialize(ctx, conn, validInitializeResult()); err != nil {
+			return err
+		}
+		list, err := wsReadObject(ctx, conn)
+		if err != nil {
+			return err
+		}
+		if err := wsWriteObject(ctx, conn, map[string]any{
+			"id": list["id"], "result": map[string]any{
+				"data": []string{"root", "child"}, "nextCursor": nil,
+			},
+		}); err != nil {
+			return err
+		}
+
+		rootRead, err := wsReadObject(ctx, conn)
+		if err != nil {
+			return err
+		}
+		// This child update is received while root/read is outstanding, before
+		// child/read is even sent. The later child read is causally authoritative.
+		if err := wsWriteObject(ctx, conn, map[string]any{
+			"method": "thread/status/changed", "params": map[string]any{
+				"threadId": "child", "status": map[string]any{
+					"type": "active", "activeFlags": []string{"waitingOnUserInput"},
+				},
+			},
+		}); err != nil {
+			return err
+		}
+		if err := wsWriteObject(ctx, conn, map[string]any{
+			"id": rootRead["id"], "result": map[string]any{
+				"thread": observerThread("root", "session", "", "/repo", "idle"),
+			},
+		}); err != nil {
+			return err
+		}
+
+		childRead, err := wsReadObject(ctx, conn)
+		if err != nil {
+			return err
+		}
+		return wsWriteObject(ctx, conn, map[string]any{
+			"id": childRead["id"], "result": map[string]any{
+				"thread": observerThread("child", "session", "root", "/repo", "idle"),
+			},
+		})
+	})
+
+	observer, err := NewObserver(ObserverConfig{
+		SocketPath: server.socketPath, ClientVersion: observerTestVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	session, err := observer.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	for _, thread := range session.Snapshot() {
+		if thread.ID == "child" {
+			if thread.Status.Type != ThreadStatusIdle {
+				t.Fatalf("child status = %#v, want later read's idle status", thread.Status)
+			}
+			return
+		}
+	}
+	t.Fatal("child missing from snapshot")
+}
+
+func TestReplaySnapshotJournalReconcilesReadStatusWithoutInventingOrder(t *testing.T) {
+	root := Thread{ID: "root", SessionID: "session", CWD: "/repo", Status: idleStatus()}
+	active := statusEvent("root", activeStatus(ActiveWaitingOnUserInput))
+	idle := statusEvent("root", idleStatus())
+	read := journalEntry{event: threadEvent(root), readUpsert: true}
+	startedActive := root
+	startedActive.Status = activeStatus(ActiveWaitingOnUserInput)
+	activeReadThread := root
+	activeReadThread.Status = activeStatus(ActiveWaitingOnApproval, ActiveWaitingOnUserInput)
+	activeRead := journalEntry{event: threadEvent(activeReadThread), readUpsert: true}
+	reorderedActive := statusEvent(
+		"root", activeStatus(ActiveWaitingOnUserInput, ActiveWaitingOnApproval),
+	)
+	duringRootRead := func(event ReducerEvent) journalEntry {
+		return journalEntry{event: event, outstandingReadThreadID: "root"}
+	}
+	loaded := map[string]struct{}{"root": {}}
+
+	tests := []struct {
+		name    string
+		journal []journalEntry
+		want    ThreadStatus
+	}{
+		{
+			name:    "newer notification arrives before older response",
+			journal: []journalEntry{duringRootRead(active), read},
+			want:    ThreadStatus{Type: ThreadStatusNotLoaded},
+		},
+		{
+			name:    "older notification arrives before newer response",
+			journal: []journalEntry{duringRootRead(active), read},
+			want:    ThreadStatus{Type: ThreadStatusNotLoaded},
+		},
+		{
+			name:    "pre-read thread started status also conflicts conservatively",
+			journal: []journalEntry{duringRootRead(threadEvent(startedActive)), read},
+			want:    ThreadStatus{Type: ThreadStatusNotLoaded},
+		},
+		{
+			name: "any differing pre-read sample remains unknown",
+			journal: []journalEntry{
+				duringRootRead(active), duringRootRead(idle), read,
+			},
+			want: ThreadStatus{Type: ThreadStatusNotLoaded},
+		},
+		{
+			name:    "same value before response is idempotent",
+			journal: []journalEntry{duringRootRead(idle), read},
+			want:    idleStatus(),
+		},
+		{
+			name:    "active flag order is semantically equal",
+			journal: []journalEntry{duringRootRead(reorderedActive), activeRead},
+			want:    activeReadThread.Status,
+		},
+		{
+			name:    "status before target read window is superseded",
+			journal: []journalEntry{{event: active}, read},
+			want:    idleStatus(),
+		},
+		{
+			name:    "thread started before target read window is superseded",
+			journal: []journalEntry{{event: threadEvent(startedActive)}, read},
+			want:    idleStatus(),
+		},
+		{
+			name:    "notification after response is authoritative",
+			journal: []journalEntry{read, {event: active}},
+			want:    activeStatus(ActiveWaitingOnUserInput),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			threads, err := replaySnapshotJournal(test.journal, loaded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := threads["root"].Status; !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("status = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestReplaySnapshotJournalCloseOrderingNeverResurrectsThread(t *testing.T) {
+	root := Thread{ID: "root", SessionID: "session", CWD: "/repo", Status: idleStatus()}
+	read := journalEntry{event: threadEvent(root), readUpsert: true}
+	closed := ReducerEvent{Kind: EventThreadClosed, ThreadID: "root"}
+	loaded := map[string]struct{}{"root": {}}
+
+	t.Run("close before response rejects stale read", func(t *testing.T) {
+		_, err := replaySnapshotJournal([]journalEntry{
+			{event: closed, outstandingReadThreadID: "root"}, read,
+		}, loaded)
+		if err == nil {
+			t.Fatal("replay accepted a read upsert after thread close")
+		}
+	})
+
+	t.Run("close after response removes thread", func(t *testing.T) {
+		threads, err := replaySnapshotJournal([]journalEntry{read, {event: closed}}, loaded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := threads["root"]; exists {
+			t.Fatal("thread survived close after read upsert")
+		}
+	})
 }
 
 func TestObserverRejectsMalformedKnownMessagesAndRepeatedPagination(t *testing.T) {

@@ -112,19 +112,23 @@ func (s *ObserverSession) Next(ctx context.Context) (ReducerEvent, error) {
 }
 
 type journalEntry struct {
-	event      ReducerEvent
-	readUpsert bool
+	event                   ReducerEvent
+	readUpsert              bool
+	outstandingReadThreadID string
 }
 
 func (s *ObserverSession) initializeAndSnapshot(ctx context.Context, version string) error {
 	journal := make([]journalEntry, 0, 32)
-	appendNotification := func(event ReducerEvent) error {
+	appendJournal := func(event ReducerEvent, outstandingReadThreadID string) error {
 		if len(journal) >= MaxObserverJournal {
 			return errors.New("observer snapshot journal limit exceeded")
 		}
-		journal = append(journal, journalEntry{event: event})
+		journal = append(journal, journalEntry{
+			event: event, outstandingReadThreadID: outstandingReadThreadID,
+		})
 		return nil
 	}
+	appendNotification := func(event ReducerEvent) error { return appendJournal(event, "") }
 
 	initializeResultRaw, err := s.request(ctx, "wisp-1", methodInitialize, map[string]any{
 		"clientInfo": map[string]any{
@@ -192,9 +196,12 @@ func (s *ObserverSession) initializeAndSnapshot(ctx context.Context, version str
 	for _, threadID := range loaded {
 		id := fmt.Sprintf("wisp-%d", nextID)
 		nextID++
+		appendReadNotification := func(event ReducerEvent) error {
+			return appendJournal(event, threadID)
+		}
 		resultRaw, err := s.request(ctx, id, methodThreadRead, map[string]any{
 			"threadId": threadID, "includeTurns": false,
-		}, appendNotification)
+		}, appendReadNotification)
 		if err != nil {
 			return err
 		}
@@ -303,6 +310,8 @@ func replaySnapshotJournal(journal []journalEntry, loaded map[string]struct{}) (
 	threads := make(map[string]Thread)
 	closed := make(map[string]struct{})
 	started := make(map[string]struct{})
+	read := make(map[string]struct{})
+	preReadStatuses := make(map[string][]ThreadStatus)
 	for _, entry := range journal {
 		event := entry.event
 		switch event.Kind {
@@ -315,20 +324,49 @@ func replaySnapshotJournal(journal []journalEntry, loaded map[string]struct{}) (
 					return nil, fmt.Errorf("duplicate thread/started for %q", event.Thread.ID)
 				}
 				started[event.Thread.ID] = struct{}{}
+				if _, willBeRead := loaded[event.Thread.ID]; willBeRead {
+					if _, wasRead := read[event.Thread.ID]; !wasRead &&
+						entry.outstandingReadThreadID == event.Thread.ID {
+						preReadStatuses[event.Thread.ID] = append(
+							preReadStatuses[event.Thread.ID], cloneObservedStatus(event.Thread.Status),
+						)
+					}
+				}
 			}
 			if _, exists := threads[event.Thread.ID]; !exists && len(threads) >= MaxObserverThreads {
 				return nil, errors.New("snapshot thread limit exceeded")
 			}
-			threads[event.Thread.ID] = cloneObservedThread(event.Thread)
+			thread := cloneObservedThread(event.Thread)
+			if entry.readUpsert {
+				read[event.Thread.ID] = struct{}{}
+				for _, status := range preReadStatuses[event.Thread.ID] {
+					if !observedStatusesEqual(status, thread.Status) {
+						thread.Status = ThreadStatus{Type: ThreadStatusNotLoaded}
+						break
+					}
+				}
+				delete(preReadStatuses, event.Thread.ID)
+			}
+			threads[event.Thread.ID] = thread
 
 		case EventThreadStatus:
-			thread, exists := threads[event.ThreadID]
-			if !exists {
-				if _, willBeRead := loaded[event.ThreadID]; willBeRead {
-					// The later synthetic read is authoritative at its exact wire
-					// position, so this update has no surviving field to mutate.
+			if _, willBeRead := loaded[event.ThreadID]; willBeRead {
+				if _, wasRead := read[event.ThreadID]; !wasRead {
+					if entry.outstandingReadThreadID == event.ThreadID {
+						// A thread/read result is sampled before its response is sent, while
+						// status notifications publish independently. Differing values received
+						// in that exact request window have no recoverable order.
+						preReadStatuses[event.ThreadID] = append(
+							preReadStatuses[event.ThreadID], cloneObservedStatus(event.Status),
+						)
+					}
+					// Events received before this thread's read request are causally older
+					// than its future sample and are therefore superseded.
 					continue
 				}
+			}
+			thread, exists := threads[event.ThreadID]
+			if !exists {
 				return nil, fmt.Errorf("status for unknown thread %q", event.ThreadID)
 			}
 			thread.Status = cloneObservedStatus(event.Status)
@@ -348,6 +386,25 @@ func replaySnapshotJournal(journal []journalEntry, loaded map[string]struct{}) (
 		}
 	}
 	return threads, nil
+}
+
+func observedStatusesEqual(first, second ThreadStatus) bool {
+	if first.Type != second.Type || len(first.ActiveFlags) != len(second.ActiveFlags) {
+		return false
+	}
+	for _, firstFlag := range first.ActiveFlags {
+		found := false
+		for _, secondFlag := range second.ActiveFlags {
+			if firstFlag == secondFlag {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *ObserverSession) applyLive(event ReducerEvent) error {
