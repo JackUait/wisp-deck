@@ -320,15 +320,14 @@ else
   set_tab_title "$PROJECT_NAME"
 fi
 
-# Tab title waiting indicator
-WISP_DECK_MARKER_FILE="/tmp/wisp-deck-waiting-$$"
+# Semantic attention runtime. A fresh generation is published below before the
+# launch command is built; the watcher follows the stable descriptor.
 WISP_DECK_ATTENTION_ROOT=""
 WISP_DECK_ATTENTION_DESCRIPTOR=""
 WISP_DECK_ATTENTION_GENERATION=""
 WISP_DECK_ATTENTION_FILE=""
 if [ "$SELECTED_AI_TOOL" = "claude" ]; then
   _claude_settings="${HOME}/.claude/settings.json"
-  add_waiting_indicator_hooks "$_claude_settings" >/dev/null
   # Silence Claude's own idle notification (preferredNotifChannel=terminal_bell,
   # silent in Ghostty) so the wisp-deck sound flag — including "off" — is the
   # single source of truth for the idle sound.
@@ -352,7 +351,7 @@ WATCHER_PID=$!
 keep_awake_sync "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" 2>/dev/null || true
 
 cleanup() {
-  stop_tab_title_watcher "$WISP_DECK_MARKER_FILE"
+  stop_tab_title_watcher
   # A session that logged nothing leaves no file behind; one that hit a real
   # error keeps its log (pruned after a week by gt_mute_terminal_stderr).
   if [ -n "${_WD_ERROR_LOG:-}" ] && [ ! -s "$_WD_ERROR_LOG" ]; then
@@ -362,23 +361,23 @@ cleanup() {
   # machine unable to sleep is worse than leaving a temp file behind.
   keep_awake_drop "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" "$SESSION_NAME" 2>/dev/null || true
   [ -n "${HEARTBEAT_PID:-}" ] && kill_tree "$HEARTBEAT_PID" TERM 2>/dev/null || true
-  # Remove waiting indicator hooks if no other Wisp Deck sessions are running
+  # Restore Claude's native notification channel only after the final live
+  # Claude session exits. Tool identity is dynamic because sessions can switch
+  # agents in place, so inspect each current tmux session rather than a launch
+  # marker.
   if [ "$SELECTED_AI_TOOL" = "claude" ]; then
-    # Clean up orphaned markers and cooldown files from dead sessions (e.g., after SIGKILL)
-    for marker in /tmp/wisp-deck-waiting-*; do
-      [ -f "$marker" ] || continue
-      # Skip cooldown files — they'll be cleaned with their parent marker
-      [[ "$marker" == *-cooldown ]] && continue
-      [[ "$marker" == *-ask ]] && continue
-      local pid="${marker##*-}"
-      if ! kill -0 "$pid" 2>/dev/null; then
-        rm -f "$marker" "${marker}-cooldown" "${marker}-ask"
-      fi
-    done
-    if ! ls /tmp/wisp-deck-waiting-* &>/dev/null; then
-      remove_waiting_indicator_hooks "${HOME}/.claude/settings.json" >/dev/null 2>&1 || true
-      # Restore the notification channel only when the last session exits, so a
-      # concurrent session keeps Claude silenced.
+    local _other_claude
+    _other_claude="$(
+      "$TMUX_CMD" list-sessions -F '#{session_name}' 2>/dev/null | while IFS= read -r _session; do
+        [ -n "$_session" ] || continue
+        [ "$_session" = "$SESSION_NAME" ] && continue
+        if [ "$("$TMUX_CMD" show-environment -t "$_session" WISP_DECK_TOOL 2>/dev/null | cut -d= -f2-)" = "claude" ]; then
+          printf 'yes\n'
+          break
+        fi
+      done
+    )"
+    if [ -z "$_other_claude" ]; then
       remove_sound_notification "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" "${HOME}/.claude/settings.json" >/dev/null 2>&1 || true
     fi
   fi
@@ -503,8 +502,8 @@ write_relaunch_context "$WISP_DECK_RELAUNCH_FILE" "$SELECTED_AI_TOOL" \
   "$WISP_DECK_ATTENTION_ROOT" "$WISP_DECK_ATTENTION_DESCRIPTOR"
 export WISP_DECK_RELAUNCH_FILE
 
-# Start tab title watcher before tmux (which blocks until session ends)
-start_tab_title_watcher "$SESSION_NAME" "$SELECTED_AI_TOOL" "$PROJECT_NAME" "$_tab_title_setting" "$TMUX_CMD" "$WISP_DECK_MARKER_FILE" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
+# Start the descriptor consumer before tmux (which blocks until session ends).
+start_tab_title_watcher "$SESSION_NAME" "$PROJECT_NAME" "$_tab_title_setting" "$TMUX_CMD" "$WISP_DECK_ATTENTION_DESCRIPTOR" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
 
 # Session-restore snapshot: stamp metadata into the tmux session env via -e
 # flags on new-session (below), and run a heartbeat that re-derives the

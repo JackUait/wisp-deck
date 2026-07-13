@@ -9,690 +9,577 @@ import (
 	"time"
 )
 
-// tabTitleSnippet sources tui.sh and tab-title-watcher.sh, then runs the provided bash code.
+// tabTitleSnippet sources tui.sh and tab-title-watcher.sh, then runs body.
 func tabTitleSnippet(t *testing.T, body string) string {
 	t.Helper()
 	root := projectRoot(t)
-	tuiPath := filepath.Join(root, "lib", "tui.sh")
-	watcherPath := filepath.Join(root, "lib", "tab-title-watcher.sh")
-	return fmt.Sprintf("source %q && source %q && %s", tuiPath, watcherPath, body)
+	return fmt.Sprintf("source %q && source %q && %s",
+		filepath.Join(root, "lib", "tui.sh"),
+		filepath.Join(root, "lib", "tab-title-watcher.sh"), body)
 }
 
-// --- check_ai_tool_state: Claude with marker file ---
+func writeAttentionState(t *testing.T, root, generation, sequence, phase, reason string) string {
+	t.Helper()
+	dir := filepath.Join(root, generation)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(dir, "state")
+	record := fmt.Sprintf("1\t%s\t%s\t%s\t%s\n", generation, sequence, phase, reason)
+	if err := os.WriteFile(state, []byte(record), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
 
-func TestTabTitleWatcher_check_ai_tool_state_claude_returns_waiting_when_marker_exists_and_prompt_visible(t *testing.T) {
-	tmpDir := t.TempDir()
-	markerFile := filepath.Join(tmpDir, "marker")
-	os.WriteFile(markerFile, []byte(""), 0644)
-	binDir := mockCommand(t, tmpDir, "tmux", `
-if [ "$1" = "capture-pane" ]; then
-  printf 'Some output\n> \n'
-  exit 0
-fi
-exit 0
-`)
-	env := buildEnv(t, []string{binDir})
-	tmuxPath := filepath.Join(binDir, "tmux")
+func writeAttentionDescriptor(t *testing.T, root, generation, tool, state string) string {
+	t.Helper()
+	descriptor := filepath.Join(root, "descriptor")
+	record := fmt.Sprintf("1\t%s\t%s\t%s\n", generation, tool, state)
+	if err := os.WriteFile(descriptor, []byte(record), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return descriptor
+}
 
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`check_ai_tool_state "claude" "dev-test-123" %q %q`, tmuxPath, markerFile))
+func TestTabTitleWatcher_reads_strict_descriptor_and_state_records(t *testing.T) {
+	root := t.TempDir()
+	generation := "generation.Abc123"
+	state := writeAttentionState(t, root, generation, "18446744073709551615", "attention", "question")
+	descriptor := writeAttentionDescriptor(t, root, generation, "codex", state)
 
-	out, code := runBashSnippet(t, snippet, env)
+	out, code := runBashSnippet(t, tabTitleSnippet(t,
+		fmt.Sprintf(`attention_watcher_read_descriptor %q && attention_watcher_read_state %q %q`,
+			descriptor, state, generation)), nil)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "waiting" {
-		t.Errorf("expected 'waiting', got %q", strings.TrimSpace(out))
+	want := generation + "\tcodex\t" + state + "\n" +
+		generation + "\t18446744073709551615\tattention\tquestion"
+	if strings.TrimSpace(out) != want {
+		t.Fatalf("strict records = %q, want %q", strings.TrimSpace(out), want)
 	}
 }
 
-func TestTabTitleWatcher_check_ai_tool_state_claude_waiting_when_marker_and_no_spinner(t *testing.T) {
-	// Detection requires the marker AND no working spinner in the pane. Pane
-	// text without a recognized spinner indicator (no token counter, no
-	// gerund timer, no "esc to interrupt") counts as idle → "waiting".
-	tmpDir := t.TempDir()
-	markerFile := filepath.Join(tmpDir, "marker")
-	os.WriteFile(markerFile, []byte(""), 0644)
-	binDir := mockCommand(t, tmpDir, "tmux", `
-if [ "$1" = "capture-pane" ]; then
-  printf 'Processing request...\nGenerating code\n'
-  exit 0
-fi
-exit 0
-`)
-	env := buildEnv(t, []string{binDir})
-	tmuxPath := filepath.Join(binDir, "tmux")
+func TestTabTitleWatcher_rejects_malformed_descriptors(t *testing.T) {
+	root := t.TempDir()
+	generation := "generation.good1"
+	state := writeAttentionState(t, root, generation, "0", "ready", "-")
+	descriptor := filepath.Join(root, "descriptor")
 
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`check_ai_tool_state "claude" "dev-test-123" %q %q`, tmuxPath, markerFile))
-
-	out, code := runBashSnippet(t, snippet, env)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "waiting" {
-		t.Errorf("expected 'waiting' (marker exists = Claude idle), got %q", strings.TrimSpace(out))
+	tests := map[string]string{
+		"empty":                "",
+		"missing newline":      "1\t" + generation + "\tclaude\t" + state,
+		"extra newline":        "1\t" + generation + "\tclaude\t" + state + "\n\n",
+		"wrong version":        "2\t" + generation + "\tclaude\t" + state + "\n",
+		"invalid generation":   "1\tgeneration../escape\tclaude\t" + state + "\n",
+		"invalid tool":         "1\t" + generation + "\tother\t" + state + "\n",
+		"outside state":        "1\t" + generation + "\tclaude\t/tmp/state\n",
+		"wrong generation dir": "1\t" + generation + "\tclaude\t" + filepath.Join(root, "generation.other", "state") + "\n",
+		"extra field":          "1\t" + generation + "\tclaude\t" + state + "\textra\n",
+		"oversized":            strings.Repeat("x", 4097),
 	}
+	for name, record := range tests {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(descriptor, []byte(record), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, code := runBashSnippet(t, tabTitleSnippet(t,
+				fmt.Sprintf(`attention_watcher_read_descriptor %q`, descriptor)), nil)
+			if code == 0 {
+				t.Fatalf("accepted malformed descriptor %q", record)
+			}
+		})
+	}
+
+	t.Run("missing", func(t *testing.T) {
+		_ = os.Remove(descriptor)
+		_, code := runBashSnippet(t, tabTitleSnippet(t,
+			fmt.Sprintf(`attention_watcher_read_descriptor %q`, descriptor)), nil)
+		if code == 0 {
+			t.Fatal("accepted a missing descriptor")
+		}
+	})
 }
 
-// --- Claude pane-aware suppression (working-spinner detection) ---
-
-// claudePaneMock returns a mock-tmux body whose capture-pane prints the given
-// pane content. Used to simulate Claude's TUI in working vs idle states.
-func claudePaneMock(content string) string {
-	return fmt.Sprintf(`
-if [ "$1" = "capture-pane" ]; then
-  cat <<'PANE_EOF'
-%s
-PANE_EOF
-  exit 0
-fi
-exit 0
-`, content)
-}
-
-func TestTabTitleWatcher_check_ai_tool_state_claude_suppresses_when_pane_shows_working_spinner(t *testing.T) {
-	// Marker exists (Stop fired) BUT the pane shows Claude actively working
-	// (spinner line with live token counter). This is a mid-turn "thinking"
-	// gap, not a genuine idle — must report "active" so no sound fires.
-	tmpDir := t.TempDir()
-	markerFile := filepath.Join(tmpDir, "marker")
-	os.WriteFile(markerFile, []byte(""), 0644)
-
-	working := "" +
-		"⏺ Let me check the files.\n" +
-		"✢ Clauding… (7m 56s · ↓ 28.1k tokens · thought for 3s)\n" +
-		"                                              ◎ /goal active (8m)\n" +
-		"────────────────────────────\n" +
-		"❯ \n" +
-		"────────────────────────────\n" +
-		"  wisp-deck | Opus 4.8 (1M context) [high]\n"
-
-	binDir := mockCommand(t, tmpDir, "tmux", claudePaneMock(working))
-	env := buildEnv(t, []string{binDir})
-	tmuxPath := filepath.Join(binDir, "tmux")
-
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`check_ai_tool_state "claude" "dev-test-123" %q %q`, tmuxPath, markerFile))
-
-	out, code := runBashSnippet(t, snippet, env)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "active" {
-		t.Errorf("expected 'active' (pane shows working spinner = not genuinely idle), got %q", strings.TrimSpace(out))
+func TestTabTitleWatcher_rejects_malformed_or_stale_states(t *testing.T) {
+	root := t.TempDir()
+	generation := "generation.good2"
+	state := filepath.Join(root, generation, "state")
+	if err := os.MkdirAll(filepath.Dir(state), 0700); err != nil {
+		t.Fatal(err)
 	}
-}
 
-func TestTabTitleWatcher_check_ai_tool_state_claude_waiting_when_marker_and_pane_idle(t *testing.T) {
-	// Marker exists AND the pane shows no working spinner (just the finished
-	// response and an idle input box) — Claude is genuinely waiting for the
-	// user. Must report "waiting" so the sound fires.
-	tmpDir := t.TempDir()
-	markerFile := filepath.Join(tmpDir, "marker")
-	os.WriteFile(markerFile, []byte(""), 0644)
-
-	idle := "" +
-		"⏺ All done — the fix is in place and tests pass.\n" +
-		"────────────────────────────\n" +
-		"❯ \n" +
-		"────────────────────────────\n" +
-		"  wisp-deck | Opus 4.8 (1M context) [high]\n"
-
-	binDir := mockCommand(t, tmpDir, "tmux", claudePaneMock(idle))
-	env := buildEnv(t, []string{binDir})
-	tmuxPath := filepath.Join(binDir, "tmux")
-
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`check_ai_tool_state "claude" "dev-test-123" %q %q`, tmuxPath, markerFile))
-
-	out, code := runBashSnippet(t, snippet, env)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "waiting" {
-		t.Errorf("expected 'waiting' (marker + idle pane = genuinely waiting), got %q", strings.TrimSpace(out))
+	tests := map[string]string{
+		"empty":                    "",
+		"missing newline":          "1\t" + generation + "\t0\tready\t-",
+		"extra newline":            "1\t" + generation + "\t0\tready\t-\n\n",
+		"wrong version":            "2\t" + generation + "\t0\tready\t-\n",
+		"stale generation":         "1\tgeneration.old\t1\tattention\tdone\n",
+		"leading-zero sequence":    "1\t" + generation + "\t01\tready\t-\n",
+		"overflow sequence":        "1\t" + generation + "\t18446744073709551616\tready\t-\n",
+		"unknown phase":            "1\t" + generation + "\t1\tidle\t-\n",
+		"reason on working":        "1\t" + generation + "\t1\tworking\tdone\n",
+		"missing attention reason": "1\t" + generation + "\t1\tattention\t-\n",
+		"unknown attention reason": "1\t" + generation + "\t1\tattention\tinput\n",
+		"extra field":              "1\t" + generation + "\t1\tready\t-\textra\n",
+		"oversized":                strings.Repeat("x", 4097),
 	}
-}
-
-func TestTabTitleWatcher_claude_pane_working_detects_indicators(t *testing.T) {
-	tests := []struct {
-		name string
-		line string
-		want string // "0" = working (true), "1" = not working
-	}{
-		{"token counter", "· Deliberating… (8m 34s · ↓ 34.1k tokens)", "0"},
-		{"gerund timer", "✶ Cascading… (5m 19s · thinking more)", "0"},
-		{"gerund timer seconds only", "✽ Ebbing… (0s · ↓ 12 tokens)", "0"},
-		{"upload counter (no down arrow)", "✶ Hatching… (4m 20s · ↑ 7.6k tokens)", "0"},
-		{"esc to interrupt", "Working (esc to interrupt)", "0"},
-		{"idle response prose", "⏺ Here are the results, all done.", "1"},
-		{"empty prompt", "❯ ", "1"},
-		{"statusline", "  wisp-deck | 10.0% | Opus 4.8 (1M context) [high]", "1"},
-		// Regression: idle prose must not match. The ellipsis-then-paren and
-		// bare down-arrow patterns appear naturally in idle summaries; matching
-		// them would silence the sound forever (worst-case false negative).
-		{"idle ellipsis paren count", "⏺ Updated files… (12 insertions, 4 deletions). All tests pass.", "1"},
-		{"idle down-arrow non-token", "Jump to bottom (ctrl+End) ↓ 5 results below", "1"},
-		{"idle ellipsis paren viable", "⏺ Options considered… (2 viable).", "1"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// claude_pane_working returns 0 (true) when the content shows a
-			// working indicator, non-zero otherwise.
-			snippet := tabTitleSnippet(t,
-				fmt.Sprintf(`if claude_pane_working %q; then echo 0; else echo 1; fi`, tt.line))
-			out, code := runBashSnippet(t, snippet, nil)
-			assertExitCode(t, code, 0)
-			if strings.TrimSpace(out) != tt.want {
-				t.Errorf("claude_pane_working(%q) = %q, want %q", tt.line, strings.TrimSpace(out), tt.want)
+	for name, record := range tests {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(state, []byte(record), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, code := runBashSnippet(t, tabTitleSnippet(t,
+				fmt.Sprintf(`attention_watcher_read_state %q %q`, state, generation)), nil)
+			if code == 0 {
+				t.Fatalf("accepted malformed state %q", record)
 			}
 		})
 	}
 }
 
-func TestTabTitleWatcher_check_ai_tool_state_claude_returns_active_when_marker_absent_after_user_submits(t *testing.T) {
-	tmpDir := t.TempDir()
-	// No marker file — simulates UserPromptSubmit hook having removed it
-	markerFile := filepath.Join(tmpDir, "marker")
+func TestTabTitleWatcher_rejects_snapshot_that_straddles_rotation(t *testing.T) {
+	root := t.TempDir()
+	gen1 := "generation.race1"
+	gen2 := "generation.race2"
+	state1 := writeAttentionState(t, root, gen1, "1", "attention", "question")
+	state2 := writeAttentionState(t, root, gen2, "0", "ready", "-")
+	descriptor := writeAttentionDescriptor(t, root, gen1, "claude", state1)
 
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`check_ai_tool_state "claude" "" "" %q`, markerFile))
-
-	out, code := runBashSnippet(t, snippet, nil)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "active" {
-		t.Errorf("expected 'active' (marker removed by UserPromptSubmit), got %q", strings.TrimSpace(out))
-	}
-}
-
-func TestTabTitleWatcher_check_ai_tool_state_claude_returns_active_when_marker_absent(t *testing.T) {
-	tmpDir := t.TempDir()
-	markerFile := filepath.Join(tmpDir, "marker")
-
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`check_ai_tool_state "claude" "" "" %q`, markerFile))
-
-	out, code := runBashSnippet(t, snippet, nil)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "active" {
-		t.Errorf("expected 'active', got %q", strings.TrimSpace(out))
-	}
-}
-
-// --- check_ai_tool_state: non-Claude with mock tmux ---
-
-func TestTabTitleWatcher_check_ai_tool_state_opencode_returns_waiting_when_prompt_detected(t *testing.T) {
-	tmpDir := t.TempDir()
-	binDir := mockCommand(t, tmpDir, "tmux", `
-if [ "$1" = "capture-pane" ]; then
-  printf 'some output\n❯ \n'
-  exit 0
-fi
-exit 0
-`)
-	env := buildEnv(t, []string{binDir})
-	tmuxPath := filepath.Join(binDir, "tmux")
-
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`check_ai_tool_state "opencode" "dev-test-123" %q ""`, tmuxPath))
-
-	out, code := runBashSnippet(t, snippet, env)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "waiting" {
-		t.Errorf("expected 'waiting', got %q", strings.TrimSpace(out))
-	}
-}
-
-func TestTabTitleWatcher_check_ai_tool_state_opencode_returns_active_when_no_prompt(t *testing.T) {
-	tmpDir := t.TempDir()
-	binDir := mockCommand(t, tmpDir, "tmux", `
-if [ "$1" = "capture-pane" ]; then
-  printf 'Processing request...\nGenerating code\n'
-  exit 0
-fi
-exit 0
-`)
-	env := buildEnv(t, []string{binDir})
-	tmuxPath := filepath.Join(binDir, "tmux")
-
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`check_ai_tool_state "opencode" "dev-test-123" %q ""`, tmuxPath))
-
-	out, code := runBashSnippet(t, snippet, env)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "active" {
-		t.Errorf("expected 'active', got %q", strings.TrimSpace(out))
-	}
-}
-
-func TestTabTitleWatcher_check_ai_tool_state_detects_dollar_prompt(t *testing.T) {
-	tmpDir := t.TempDir()
-	binDir := mockCommand(t, tmpDir, "tmux", `
-if [ "$1" = "capture-pane" ]; then
-  printf 'Welcome to opencode\n$ \n'
-  exit 0
-fi
-exit 0
-`)
-	env := buildEnv(t, []string{binDir})
-	tmuxPath := filepath.Join(binDir, "tmux")
-
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`check_ai_tool_state "opencode" "dev-test-123" %q ""`, tmuxPath))
-
-	out, code := runBashSnippet(t, snippet, env)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "waiting" {
-		t.Errorf("expected 'waiting', got %q", strings.TrimSpace(out))
-	}
-}
-
-func TestTabTitleWatcher_check_ai_tool_state_detects_gt_prompt(t *testing.T) {
-	tmpDir := t.TempDir()
-	binDir := mockCommand(t, tmpDir, "tmux", `
-if [ "$1" = "capture-pane" ]; then
-  printf 'Ready\n> \n'
-  exit 0
-fi
-exit 0
-`)
-	env := buildEnv(t, []string{binDir})
-	tmuxPath := filepath.Join(binDir, "tmux")
-
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`check_ai_tool_state "opencode" "dev-test-123" %q ""`, tmuxPath))
-
-	out, code := runBashSnippet(t, snippet, env)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "waiting" {
-		t.Errorf("expected 'waiting', got %q", strings.TrimSpace(out))
-	}
-}
-
-// --- check_ai_tool_state: pane targeting ---
-
-func TestTabTitleWatcher_check_ai_tool_state_targets_correct_pane(t *testing.T) {
-	tmpDir := t.TempDir()
-	// Mock tmux that only returns a prompt for pane 0.3
-	binDir := mockCommand(t, tmpDir, "tmux", `
-for arg in "$@"; do
-  if [ "$arg" = "dev-test-123:0.3" ]; then
-    printf 'Some output\n❯ \n'
-    exit 0
+	script := tabTitleSnippet(t, fmt.Sprintf(`
+eval "$(declare -f _attention_watcher_parse_descriptor | sed '1s/_attention_watcher_parse_descriptor/_attention_watcher_parse_descriptor_original/')"
+descriptor_reads=0
+_attention_watcher_parse_descriptor() {
+  descriptor_reads=$((descriptor_reads + 1))
+  if [ "$descriptor_reads" -eq 2 ]; then
+    printf '1\t%s\tcodex\t%s\n' > %q.tmp
+    mv %q.tmp %q
   fi
-done
-printf 'no prompt here\n'
-exit 0
-`)
-	env := buildEnv(t, []string{binDir})
-	tmuxPath := filepath.Join(binDir, "tmux")
-
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`check_ai_tool_state "opencode" "dev-test-123" %q "" "3"`, tmuxPath))
-
-	out, code := runBashSnippet(t, snippet, env)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "waiting" {
-		t.Errorf("expected 'waiting' (pane 0.3 targeted), got %q", strings.TrimSpace(out))
-	}
+  _attention_watcher_parse_descriptor_original "$@"
 }
-
-func TestTabTitleWatcher_check_ai_tool_state_targets_pane_with_base_index_1(t *testing.T) {
-	tmpDir := t.TempDir()
-	// Mock tmux that only returns a prompt for pane 0.1 (pane-base-index 1 scenario)
-	binDir := mockCommand(t, tmpDir, "tmux", `
-for arg in "$@"; do
-  if [ "$arg" = "dev-test-123:0.1" ]; then
-    printf 'Some output\n❯ \n'
-    exit 0
-  fi
-done
-printf 'no prompt here\n'
-exit 0
-`)
-	env := buildEnv(t, []string{binDir})
-	tmuxPath := filepath.Join(binDir, "tmux")
-
-	// Pass pane_index "1" — simulating pane-base-index 1
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`check_ai_tool_state "opencode" "dev-test-123" %q "" "1"`, tmuxPath))
-
-	out, code := runBashSnippet(t, snippet, env)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "waiting" {
-		t.Errorf("expected 'waiting' (pane 0.1 targeted), got %q", strings.TrimSpace(out))
-	}
-}
-
-// --- discover_ai_pane: dynamic pane discovery ---
-
-func TestTabTitleWatcher_discover_ai_pane_finds_rightmost_pane(t *testing.T) {
-	tmpDir := t.TempDir()
-	// Mock tmux list-panes returning 4 panes with different pane_left values
-	// Pane 3 has the largest pane_left (rightmost), should be selected
-	binDir := mockCommand(t, tmpDir, "tmux", `
-if [ "$1" = "list-panes" ]; then
-  printf '0 0\n1 0\n2 80\n3 80\n'
-  exit 0
+if _attention_watcher_read_snapshot %q; then
+  echo accepted-stale-snapshot
+  exit 1
 fi
-exit 0
+`, gen2, state2, descriptor, descriptor, descriptor, descriptor))
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertNotContains(t, out, "accepted-stale-snapshot")
+}
+
+func TestTabTitleWatcher_discovers_exactly_one_tagged_pane_by_stable_id(t *testing.T) {
+	tests := []struct {
+		name     string
+		panes    string
+		want     string
+		wantCode int
+	}{
+		{"one tagged", "%1\t0\n%42\t1\n%9\t0\n", "%42", 0},
+		{"none tagged", "%1\t0\n%42\t0\n", "", 1},
+		{"multiple tagged", "%3\t1\n%42\t1\n", "", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			calls := filepath.Join(dir, "calls")
+			binDir := mockCommand(t, dir, "tmux", `
+printf '%s\n' "$*" >> "$TMUX_CALLS"
+[ "$1" = list-panes ] && printf '%b' "$TMUX_PANES"
 `)
-	env := buildEnv(t, []string{binDir})
+			env := buildEnv(t, []string{binDir}, "TMUX_CALLS="+calls, "TMUX_PANES="+tt.panes)
+			out, code := runBashSnippet(t, tabTitleSnippet(t,
+				fmt.Sprintf(`discover_ai_pane sess-a %q`, filepath.Join(binDir, "tmux"))), env)
+			assertExitCode(t, code, tt.wantCode)
+			if strings.TrimSpace(out) != tt.want {
+				t.Fatalf("pane = %q, want %q", strings.TrimSpace(out), tt.want)
+			}
+			data, err := os.ReadFile(calls)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertContains(t, string(data), `#{pane_id}\t#{@gt_ai}`)
+		})
+	}
+}
+
+func TestTabTitleWatcher_alerts_once_per_attention_tuple(t *testing.T) {
+	root := t.TempDir()
+	generation := "generation.dedupe1"
+	state := writeAttentionState(t, root, generation, "0", "ready", "-")
+	descriptor := writeAttentionDescriptor(t, root, generation, "claude", state)
+	logFile := filepath.Join(root, "watch.log")
+
+	binDir := mockCommand(t, root, "tmux", `
+case "$1" in
+  list-panes) printf '%%7\t1\n' ;;
+  display-message) printf 'task title\n' ;;
+esac
+`)
+	tmuxPath := filepath.Join(binDir, "tmux")
+	script := tabTitleSnippet(t, fmt.Sprintf(`
+WATCH_LOG=%q
+apply_tab_title() { printf 'title:%%s:%%s:%%s:%%s\n' "$1" "$2" "$3" "$4" >> "$WATCH_LOG"; }
+play_notification_sound() { printf 'sound:%%s\n' "$1" >> "$WATCH_LOG"; }
+keep_awake_tick() { printf 'awake:%%s\n' "$4" >> "$WATCH_LOG"; }
+publish_state() {
+  printf '1\t%s\t%%s\t%%s\t%%s\n' "$1" "$2" "$3" > %q.tmp
+  mv %q.tmp %q
+}
+attention_watcher_reset
+attention_watcher_tick sess-a project full %q %q %q
+publish_state 1 attention question
+attention_watcher_tick sess-a project full %q %q %q
+attention_watcher_tick sess-a project full %q %q %q
+publish_state 2 working -
+attention_watcher_tick sess-a project full %q %q %q
+publish_state 3 attention question
+attention_watcher_tick sess-a project full %q %q %q
+`, logFile, generation, state, state, state,
+		tmuxPath, descriptor, root,
+		tmuxPath, descriptor, root,
+		tmuxPath, descriptor, root,
+		tmuxPath, descriptor, root,
+		tmuxPath, descriptor, root))
+
+	_, code := runBashSnippet(t, script, buildEnv(t, []string{binDir}))
+	assertExitCode(t, code, 0)
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	if count := strings.Count(got, "sound:claude\n"); count != 2 {
+		t.Fatalf("sound count = %d, want 2; log:\n%s", count, got)
+	}
+	if count := strings.Count(got, "title:waiting:full:project:claude\n"); count != 2 {
+		t.Fatalf("waiting title count = %d, want 2; log:\n%s", count, got)
+	}
+	assertContains(t, got, "title:active:full:project:claude")
+	assertContains(t, got, "awake:active")
+}
+
+func TestTabTitleWatcher_missing_malformed_stale_and_unknown_never_alert(t *testing.T) {
+	root := t.TempDir()
+	generation := "generation.safe1"
+	state := writeAttentionState(t, root, generation, "0", "unknown", "-")
+	descriptor := filepath.Join(root, "descriptor")
+	logFile := filepath.Join(root, "watch.log")
+	binDir := mockCommand(t, root, "tmux", `
+case "$1" in
+  list-panes) printf '%%8\t1\n' ;;
+  capture-pane) printf 'THIS MUST NEVER BE READ\n'; exit 99 ;;
+esac
+`)
 	tmuxPath := filepath.Join(binDir, "tmux")
 
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`discover_ai_pane "dev-session" %q`, tmuxPath))
+	script := tabTitleSnippet(t, fmt.Sprintf(`
+WATCH_LOG=%q
+apply_tab_title() { :; }
+play_notification_sound() { printf 'sound:%%s\n' "$1" >> "$WATCH_LOG"; }
+keep_awake_tick() { printf 'awake:%%s\n' "$4" >> "$WATCH_LOG"; }
+attention_watcher_reset
+# Missing descriptor.
+attention_watcher_tick sess-a project project %q %q %q
+# Malformed descriptor.
+printf 'broken\n' > %q
+attention_watcher_tick sess-a project project %q %q %q
+# Valid descriptor with a state record from a stale generation.
+printf '1\t%s\tclaude\t%s\n' > %q
+printf '1\tgeneration.old\t1\tattention\tdone\n' > %q
+attention_watcher_tick sess-a project project %q %q %q
+# Valid unknown is active for keep-awake but never alerts.
+printf '1\t%s\t0\tunknown\t-\n' > %q
+attention_watcher_tick sess-a project project %q %q %q
+`, logFile,
+		tmuxPath, descriptor, root,
+		descriptor, tmuxPath, descriptor, root,
+		generation, state, descriptor, state,
+		tmuxPath, descriptor, root,
+		generation, state, tmuxPath, descriptor, root))
 
-	out, code := runBashSnippet(t, snippet, env)
+	_, code := runBashSnippet(t, script, buildEnv(t, []string{binDir}))
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "3" {
-		t.Errorf("expected rightmost pane '3', got %q", strings.TrimSpace(out))
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	assertNotContains(t, got, "sound:")
+	if count := strings.Count(got, "awake:active\n"); count != 4 {
+		t.Fatalf("unknown keep-awake count = %d, want 4; log:\n%s", count, got)
 	}
 }
 
-func TestTabTitleWatcher_discover_ai_pane_with_base_index_1(t *testing.T) {
-	tmpDir := t.TempDir()
-	// Mock tmux list-panes with pane-base-index 1:
-	// Panes are numbered 1-4 instead of 0-3
-	// Pane 4 has the largest pane_left (rightmost)
-	binDir := mockCommand(t, tmpDir, "tmux", `
-if [ "$1" = "list-panes" ]; then
-  printf '1 0\n2 0\n3 80\n4 80\n'
-  exit 0
-fi
-exit 0
+func TestTabTitleWatcher_generation_rotation_rereads_tool_for_title_theme_and_sound(t *testing.T) {
+	root := t.TempDir()
+	gen1 := "generation.one1"
+	gen2 := "generation.two2"
+	state1 := writeAttentionState(t, root, gen1, "0", "ready", "-")
+	state2 := writeAttentionState(t, root, gen2, "0", "ready", "-")
+	descriptor := writeAttentionDescriptor(t, root, gen1, "claude", state1)
+	logFile := filepath.Join(root, "watch.log")
+	writeTempFile(t, root, "settings", "theme=auto\ntab_title=full\n")
+
+	binDir := mockCommand(t, root, "tmux", `
+[ "$1" = list-panes ] && printf '%%9\t1\n'
 `)
-	env := buildEnv(t, []string{binDir})
+	tmuxPath := filepath.Join(binDir, "tmux")
+	script := tabTitleSnippet(t, fmt.Sprintf(`
+WATCH_LOG=%q
+apply_tab_title() { printf 'title:%%s:%%s\n' "$1" "$4" >> "$WATCH_LOG"; }
+play_notification_sound() { printf 'sound:%%s\n' "$1" >> "$WATCH_LOG"; }
+keep_awake_tick() { :; }
+gt_resolve_theme() { printf 'theme-%%s\n' "$2"; }
+get_theme_accent() { case "$1" in theme-claude) echo 10 ;; theme-codex) echo 20 ;; esac; }
+apply_session_theme() { printf 'theme:%%s\n' "$3" >> "$WATCH_LOG"; }
+attention_watcher_reset
+attention_watcher_tick sess-a project full %q %q %q
+printf '1\t%s\tcodex\t%s\n' > %q.tmp
+mv %q.tmp %q
+attention_watcher_tick sess-a project full %q %q %q
+printf '1\t%s\t1\tattention\tpermission\n' > %q.tmp
+mv %q.tmp %q
+attention_watcher_tick sess-a project full %q %q %q
+`, logFile,
+		tmuxPath, descriptor, root,
+		gen2, state2, descriptor, descriptor, descriptor,
+		tmuxPath, descriptor, root,
+		gen2, state2, state2, state2,
+		tmuxPath, descriptor, root))
+
+	_, code := runBashSnippet(t, script, buildEnv(t, []string{binDir}))
+	assertExitCode(t, code, 0)
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	assertContains(t, got, "theme:10")
+	assertContains(t, got, "theme:20")
+	assertContains(t, got, "title:active:claude")
+	assertContains(t, got, "title:active:codex")
+	assertContains(t, got, "title:waiting:codex")
+	if count := strings.Count(got, "sound:codex\n"); count != 1 {
+		t.Fatalf("codex sound count = %d, want 1; log:\n%s", count, got)
+	}
+	assertNotContains(t, got, "sound:claude")
+}
+
+func TestTabTitleWatcher_generation_rotation_resets_dedupe_without_alerting_initial_ready(t *testing.T) {
+	root := t.TempDir()
+	gen1 := "generation.old1"
+	gen2 := "generation.new2"
+	state1 := writeAttentionState(t, root, gen1, "7", "attention", "done")
+	state2 := writeAttentionState(t, root, gen2, "0", "ready", "-")
+	descriptor := writeAttentionDescriptor(t, root, gen1, "claude", state1)
+	logFile := filepath.Join(root, "watch.log")
+	binDir := mockCommand(t, root, "tmux", `[ "$1" = list-panes ] && printf '%%4\t1\n'`)
 	tmuxPath := filepath.Join(binDir, "tmux")
 
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`discover_ai_pane "dev-session" %q`, tmuxPath))
-
-	out, code := runBashSnippet(t, snippet, env)
+	script := tabTitleSnippet(t, fmt.Sprintf(`
+WATCH_LOG=%q
+apply_tab_title() { :; }
+play_notification_sound() { printf 'sound:%%s\n' "$1" >> "$WATCH_LOG"; }
+attention_watcher_reset
+attention_watcher_tick s p full %q %q %q
+printf '1\t%s\tcodex\t%s\n' > %q.tmp; mv %q.tmp %q
+attention_watcher_tick s p full %q %q %q
+printf '1\t%s\t1\tattention\tquestion\n' > %q.tmp; mv %q.tmp %q
+attention_watcher_tick s p full %q %q %q
+`, logFile,
+		tmuxPath, descriptor, root,
+		gen2, state2, descriptor, descriptor, descriptor,
+		tmuxPath, descriptor, root,
+		gen2, state2, state2, state2,
+		tmuxPath, descriptor, root))
+	_, code := runBashSnippet(t, script, buildEnv(t, []string{binDir}))
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "4" {
-		t.Errorf("expected rightmost pane '4' (base-index 1), got %q", strings.TrimSpace(out))
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatal(err)
 	}
+	got := string(data)
+	if count := strings.Count(got, "sound:"); count != 2 {
+		t.Fatalf("sound count = %d, want old attention + new attention only; log:\n%s", count, got)
+	}
+	assertContains(t, got, "sound:claude")
+	assertContains(t, got, "sound:codex")
 }
 
-func TestTabTitleWatcher_discover_ai_pane_picks_highest_index_among_tied_pane_left(t *testing.T) {
-	tmpDir := t.TempDir()
-	// When multiple panes share the same pane_left (rightmost column),
-	// we want the one with the highest pane_left. The AI pane is the
-	// top-right pane (created by split-window -h), which has the highest
-	// pane_left. sort -k2 -rn then head -1 picks the first among ties,
-	// but sort is stable so input order is preserved for ties.
-	// In real tmux, the AI pane (split-window -h first) will appear first
-	// among panes sharing the same pane_left.
-	binDir := mockCommand(t, tmpDir, "tmux", `
-if [ "$1" = "list-panes" ]; then
-  printf '0 0\n1 0\n2 80\n3 80\n'
-  exit 0
-fi
-exit 0
-`)
-	env := buildEnv(t, []string{binDir})
+func TestTabTitleWatcher_same_generation_sequence_regression_never_alerts(t *testing.T) {
+	root := t.TempDir()
+	generation := "generation.monotonic1"
+	state := writeAttentionState(t, root, generation, "5", "attention", "question")
+	descriptor := writeAttentionDescriptor(t, root, generation, "claude", state)
+	logFile := filepath.Join(root, "watch.log")
+	binDir := mockCommand(t, root, "tmux", `[ "$1" = list-panes ] && printf '%%4\t1\n'`)
 	tmuxPath := filepath.Join(binDir, "tmux")
 
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`discover_ai_pane "dev-session" %q`, tmuxPath))
-
-	out, code := runBashSnippet(t, snippet, env)
+	script := tabTitleSnippet(t, fmt.Sprintf(`
+WATCH_LOG=%q
+apply_tab_title() { :; }
+play_notification_sound() { printf 'sound:%%s\n' "$1" >> "$WATCH_LOG"; }
+keep_awake_tick() { printf 'awake:%%s\n' "$4" >> "$WATCH_LOG"; }
+publish_state() { printf '1\t%s\t%%s\tattention\tquestion\n' "$1" > %q.tmp; mv %q.tmp %q; }
+attention_watcher_reset
+attention_watcher_tick s p full %q %q %q
+publish_state 4
+attention_watcher_tick s p full %q %q %q
+publish_state 6
+attention_watcher_tick s p full %q %q %q
+`, logFile, generation, state, state, state,
+		tmuxPath, descriptor, root,
+		tmuxPath, descriptor, root,
+		tmuxPath, descriptor, root))
+	_, code := runBashSnippet(t, script, buildEnv(t, []string{binDir}))
 	assertExitCode(t, code, 0)
-	result := strings.TrimSpace(out)
-	// Should return one of the rightmost panes (pane_left=80)
-	if result != "2" && result != "3" {
-		t.Errorf("expected a rightmost pane (2 or 3), got %q", result)
-	}
-}
-
-func TestTabTitleWatcher_start_tab_title_watcher_takes_seven_params(t *testing.T) {
-	root := projectRoot(t)
-	watcherPath := filepath.Join(root, "lib", "tab-title-watcher.sh")
-	data, err := os.ReadFile(watcherPath)
+	data, err := os.ReadFile(logFile)
 	if err != nil {
-		t.Fatalf("failed to read tab-title-watcher.sh: %v", err)
+		t.Fatal(err)
 	}
-	content := string(data)
-
-	// start_tab_title_watcher should accept config_dir as 7th parameter
-	if !strings.Contains(content, `config_dir="${7`) {
-		t.Error("start_tab_title_watcher should accept a config_dir parameter (7th argument) for sound notifications")
+	got := string(data)
+	if count := strings.Count(got, "sound:claude\n"); count != 2 {
+		t.Fatalf("sound count = %d, want sequences 5 and 6 only; log:\n%s", count, got)
 	}
-
-	// It should call play_notification_sound on waiting transition
-	if !strings.Contains(content, "play_notification_sound") {
-		t.Error("start_tab_title_watcher should call play_notification_sound when state transitions to waiting")
-	}
-
-	// It should use discover_ai_pane for dynamic discovery
-	if !strings.Contains(content, "discover_ai_pane") {
-		t.Error("start_tab_title_watcher should use discover_ai_pane for dynamic pane discovery")
-	}
+	assertContains(t, got, "awake:active")
 }
 
-func TestTabTitleWatcher_watcher_uses_stop_hook_with_marker_age_debounce(t *testing.T) {
-	root := projectRoot(t)
-	watcherPath := filepath.Join(root, "lib", "tab-title-watcher.sh")
-	data, err := os.ReadFile(watcherPath)
-	if err != nil {
-		t.Fatalf("failed to read tab-title-watcher.sh: %v", err)
-	}
-	content := string(data)
+func TestTabTitleWatcher_finds_tagged_pane_after_start(t *testing.T) {
+	root := t.TempDir()
+	generation := "generation.late1"
+	state := writeAttentionState(t, root, generation, "0", "ready", "-")
+	descriptor := writeAttentionDescriptor(t, root, generation, "codex", state)
+	panes := filepath.Join(root, "panes")
+	calls := filepath.Join(root, "calls")
+	sounds := filepath.Join(root, "sounds")
+	titles := filepath.Join(root, "titles")
+	binDir := mockCommand(t, root, "tmux", `
+printf '%s\n' "$*" >> "$TMUX_CALLS"
+case "$1" in
+  list-panes) [ -f "$TMUX_PANES" ] && cat "$TMUX_PANES" ;;
+  display-message) printf 'Late task title\n' ;;
+  capture-pane) exit 97 ;;
+esac
+`)
+	tmuxPath := filepath.Join(binDir, "tmux")
+	env := buildEnv(t, []string{binDir},
+		"TMUX_CALLS="+calls, "TMUX_PANES="+panes, "WISP_DECK_WATCH_INTERVAL=0.05")
+	script := tabTitleSnippet(t, fmt.Sprintf(`
+set_tab_title() { printf '%%s\n' "$*" >> %q; }
+set_tab_title_waiting() { :; }
+play_notification_sound() { printf '%%s\n' "$1" >> %q; }
+start_tab_title_watcher sess-late project model %q %q %q
+for _i in 1 2 3 4 5 6 7 8 9 10; do [ -s %q ] && break; sleep 0.05; done
+printf '%%s\t1\n' '%%42' > %q.tmp; mv %q.tmp %q
+printf '1\t%s\t1\tattention\tquestion\n' > %q.tmp; mv %q.tmp %q
+for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do [ -s %q ] && [ -s %q ] && break; sleep 0.05; done
+stop_tab_title_watcher
+`, titles, sounds, tmuxPath, descriptor, root,
+		calls, panes, panes, panes,
+		generation, state, state, state,
+		sounds, titles))
 
-	// Should use marker_age for debounce (Stop hook needs filtering)
-	if !strings.Contains(content, "marker_age") {
-		t.Error("watcher should contain marker_age function for debounce filtering")
-	}
-
-	// Should NOT reference .ask marker (removed)
-	if strings.Contains(content, ".ask") {
-		t.Error("watcher should NOT reference .ask marker")
-	}
-
-	// Should still poll at 0.5s
-	if !strings.Contains(content, "sleep 0.5") {
-		t.Error("watcher loop should poll every 0.5 seconds")
-	}
-
-	// Should still use play_notification_sound
-	if !strings.Contains(content, "play_notification_sound") {
-		t.Error("watcher should call play_notification_sound when state transitions to waiting")
-	}
-
-	// Should still use discover_ai_pane
-	if !strings.Contains(content, "discover_ai_pane") {
-		t.Error("watcher should use discover_ai_pane for dynamic pane discovery")
-	}
-}
-
-func TestTabTitleWatcher_watcher_suppresses_active_work_via_pane_check(t *testing.T) {
-	// The watcher no longer relies on a cooldown / 15s extended debounce to
-	// filter mid-turn "thinking" noise — that delayed genuine notifications.
-	// Instead check_ai_tool_state confirms idleness against the live pane via
-	// claude_pane_working, and the loop uses a single short debounce.
-	root := projectRoot(t)
-	watcherPath := filepath.Join(root, "lib", "tab-title-watcher.sh")
-	data, err := os.ReadFile(watcherPath)
-	if err != nil {
-		t.Fatalf("failed to read tab-title-watcher.sh: %v", err)
-	}
-	content := string(data)
-
-	// Should suppress active work via the pane working-spinner check.
-	if !strings.Contains(content, "claude_pane_working") {
-		t.Error("watcher should use claude_pane_working to confirm idleness against the pane")
-	}
-
-	// Should NOT use a 15s extended debounce threshold anymore.
-	if strings.Contains(content, "debounce_threshold=15") {
-		t.Error("watcher should no longer use a 15s extended debounce (caused late notifications)")
-	}
-}
-
-func TestTabTitleWatcher_check_ai_tool_state_claude_comment_references_stop_hook(t *testing.T) {
-	root := projectRoot(t)
-	watcherPath := filepath.Join(root, "lib", "tab-title-watcher.sh")
-	data, err := os.ReadFile(watcherPath)
-	if err != nil {
-		t.Fatalf("failed to read tab-title-watcher.sh: %v", err)
-	}
-	content := string(data)
-
-	if !strings.Contains(content, "Stop hook") {
-		t.Error("check_ai_tool_state comment should reference Stop hook")
-	}
-}
-
-// --- stop_tab_title_watcher: cleanup ---
-
-func TestTabTitleWatcher_stop_tab_title_watcher_removes_marker_file(t *testing.T) {
-	tmpDir := t.TempDir()
-	markerFile := filepath.Join(tmpDir, "marker")
-	os.WriteFile(markerFile, []byte(""), 0644)
-
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`_TAB_TITLE_WATCHER_PID=""; stop_tab_title_watcher %q`, markerFile))
-
-	_, code := runBashSnippet(t, snippet, nil)
+	_, code := runBashSnippet(t, script, env)
 	assertExitCode(t, code, 0)
+	soundData, err := os.ReadFile(sounds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(soundData)) != "codex" {
+		t.Fatalf("sounds = %q, want codex", strings.TrimSpace(string(soundData)))
+	}
+	titleData, err := os.ReadFile(titles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertContains(t, string(titleData), "Late task title")
+	callData, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertContains(t, string(callData), `display-message -p -t %42 #{pane_title}`)
+	assertNotContains(t, string(callData), "capture-pane")
+}
 
-	if _, err := os.Stat(markerFile); !os.IsNotExist(err) {
-		t.Errorf("expected marker file to be removed")
+func TestTabTitleWatcher_has_no_heuristic_attention_paths(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(projectRoot(t), "lib", "tab-title-watcher.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(data)
+	for _, forbidden := range []string{
+		"capture-pane", "marker_age", "claude_pane_working", "check_ai_tool_state",
+		"WISP_DECK_MARKER_FILE", "-cooldown", "-ask",
+	} {
+		if strings.Contains(src, forbidden) {
+			t.Errorf("semantic watcher still contains legacy heuristic %q", forbidden)
+		}
 	}
 }
 
-func TestTabTitleWatcher_stop_tab_title_watcher_removes_cooldown_file(t *testing.T) {
-	tmpDir := t.TempDir()
-	markerFile := filepath.Join(tmpDir, "marker")
-	cooldownFile := markerFile + "-cooldown"
-	os.WriteFile(markerFile, []byte(""), 0644)
-	os.WriteFile(cooldownFile, []byte(""), 0644)
-
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`_TAB_TITLE_WATCHER_PID=""; stop_tab_title_watcher %q`, markerFile))
-
-	_, code := runBashSnippet(t, snippet, nil)
-	assertExitCode(t, code, 0)
-
-	if _, err := os.Stat(cooldownFile); !os.IsNotExist(err) {
-		t.Errorf("expected cooldown file to be removed")
+func TestTabTitleWatcher_wrapper_uses_semantic_watcher_api(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(projectRoot(t), "wrapper.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(data)
+	want := `start_tab_title_watcher "$SESSION_NAME" "$PROJECT_NAME" "$_tab_title_setting" "$TMUX_CMD" "$WISP_DECK_ATTENTION_DESCRIPTOR"`
+	if !strings.Contains(src, want) {
+		t.Errorf("wrapper does not use semantic watcher API; want call containing %q", want)
+	}
+	for _, forbidden := range []string{"WISP_DECK_MARKER_FILE", "add_waiting_indicator_hooks"} {
+		if strings.Contains(src, forbidden) {
+			t.Errorf("wrapper still uses legacy marker hook %q", forbidden)
+		}
 	}
 }
 
-func TestTabTitleWatcher_stop_tab_title_watcher_succeeds_when_marker_absent(t *testing.T) {
-	tmpDir := t.TempDir()
-	markerFile := filepath.Join(tmpDir, "no-such-marker")
-
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`_TAB_TITLE_WATCHER_PID=""; stop_tab_title_watcher %q`, markerFile))
-
-	_, code := runBashSnippet(t, snippet, nil)
+func TestTabTitleWatcher_stop_is_idempotent_without_marker_cleanup(t *testing.T) {
+	out, code := runBashSnippet(t, tabTitleSnippet(t,
+		`_TAB_TITLE_WATCHER_PID=""; stop_tab_title_watcher; stop_tab_title_watcher`), nil)
 	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("idempotent stop wrote output: %q", out)
+	}
 }
-
-// --- wrapper.sh: tmux set-titles off ---
 
 func TestTabTitleWatcher_wrapper_disables_tmux_set_titles(t *testing.T) {
-	root := projectRoot(t)
-	wrapperPath := filepath.Join(root, "wrapper.sh")
-	data, err := os.ReadFile(wrapperPath)
+	data, err := os.ReadFile(filepath.Join(projectRoot(t), "wrapper.sh"))
 	if err != nil {
-		t.Fatalf("failed to read wrapper.sh: %v", err)
+		t.Fatal(err)
 	}
-	content := string(data)
-
-	// The tmux new-session command must keep set-titles off so tmux never
-	// overwrites the tab title: Wisp Deck's watcher owns it in every mode,
-	// including model mode where the watcher mirrors the AI pane's own title.
-	if !strings.Contains(content, "set-option set-titles off") {
-		t.Error("wrapper.sh must contain 'set-option set-titles off' so tmux does not overwrite Wisp Deck's tab title")
+	if !strings.Contains(string(data), `set-option set-titles off`) {
+		t.Error("wrapper.sh must disable tmux set-titles so tmux cannot overwrite the watcher title")
 	}
 }
 
-// --- wrapper.sh: WISP_DECK_MARKER_FILE passed to tmux via -e ---
-
-func TestTabTitleWatcher_wrapper_passes_marker_file_to_tmux(t *testing.T) {
-	root := projectRoot(t)
-	wrapperPath := filepath.Join(root, "wrapper.sh")
-	data, err := os.ReadFile(wrapperPath)
-	if err != nil {
-		t.Fatalf("failed to read wrapper.sh: %v", err)
-	}
-	content := string(data)
-
-	// The tmux new-session command must pass WISP_DECK_MARKER_FILE via -e flag
-	// so that hooks inside tmux panes can access the marker file path
-	if !strings.Contains(content, `-e "WISP_DECK_MARKER_FILE=$WISP_DECK_MARKER_FILE"`) {
-		t.Error("wrapper.sh must pass WISP_DECK_MARKER_FILE to tmux new-session via -e flag")
-	}
-
-	// Verify the variable is defined BEFORE the tmux new-session command
-	lines := strings.Split(content, "\n")
-	definitionLine := -1
-	tmuxNewSessionLine := -1
-	for i, line := range lines {
-		if strings.Contains(line, `WISP_DECK_MARKER_FILE="/tmp/wisp-deck-waiting-`) && !strings.HasPrefix(strings.TrimSpace(line), "#") {
-			definitionLine = i
-		}
-		if strings.Contains(line, "new-session") && strings.Contains(line, "WISP_DECK_MARKER_FILE") {
-			tmuxNewSessionLine = i
-		}
-	}
-	if definitionLine == -1 {
-		t.Fatal("wrapper.sh must define WISP_DECK_MARKER_FILE variable")
-	}
-	if tmuxNewSessionLine == -1 {
-		t.Fatal("wrapper.sh must use WISP_DECK_MARKER_FILE in tmux new-session command")
-	}
-	if definitionLine >= tmuxNewSessionLine {
-		t.Errorf("WISP_DECK_MARKER_FILE must be defined (line %d) before tmux new-session (line %d)", definitionLine+1, tmuxNewSessionLine+1)
-	}
-
-	// Cleanup should also remove cooldown file
-	if !strings.Contains(content, "cooldown") {
-		t.Error("wrapper.sh cleanup should handle cooldown file removal")
-	}
-}
-
-// --- play_notification_sound ---
-
-// soundWatcherSnippet sources tui.sh, settings-json.sh, notification-setup.sh,
-// and tab-title-watcher.sh, then runs the provided bash code.
+// soundWatcherSnippet sources the notification stack and watcher.
 func soundWatcherSnippet(t *testing.T, body string) string {
 	t.Helper()
 	root := projectRoot(t)
-	tuiPath := filepath.Join(root, "lib", "tui.sh")
-	settingsJsonPath := filepath.Join(root, "lib", "settings-json.sh")
-	notifPath := filepath.Join(root, "lib", "notification-setup.sh")
-	watcherPath := filepath.Join(root, "lib", "tab-title-watcher.sh")
 	return fmt.Sprintf("source %q && source %q && source %q && source %q && %s",
-		tuiPath, settingsJsonPath, notifPath, watcherPath, body)
+		filepath.Join(root, "lib", "tui.sh"),
+		filepath.Join(root, "lib", "settings-json.sh"),
+		filepath.Join(root, "lib", "notification-setup.sh"),
+		filepath.Join(root, "lib", "tab-title-watcher.sh"), body)
 }
 
 func TestTabTitleWatcher_play_notification_sound_calls_afplay_when_enabled(t *testing.T) {
-	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, "config")
-	os.MkdirAll(configDir, 0755)
-	writeTempFile(t, configDir, "claude-features.json", `{"sound": true, "sound_name": "Glass"}`)
-
-	logFile := filepath.Join(tmpDir, "afplay.log")
-	binDir := mockCommand(t, tmpDir, "afplay", fmt.Sprintf(`echo "$1" >> %q`, logFile))
-	env := buildEnv(t, []string{binDir})
-
-	snippet := soundWatcherSnippet(t,
-		fmt.Sprintf(`play_notification_sound "claude" %q`, configDir))
-
-	_, code := runBashSnippet(t, snippet, env)
+	dir := t.TempDir()
+	config := filepath.Join(dir, "config")
+	if err := os.MkdirAll(config, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTempFile(t, config, "claude-features.json", `{"sound": true, "sound_name": "Glass"}`)
+	logFile := filepath.Join(dir, "afplay.log")
+	binDir := mockCommand(t, dir, "afplay", fmt.Sprintf(`echo "$1" >> %q`, logFile))
+	_, code := runBashSnippet(t, soundWatcherSnippet(t,
+		fmt.Sprintf(`play_notification_sound claude %q`, config)), buildEnv(t, []string{binDir}))
 	assertExitCode(t, code, 0)
-
-	data := waitForFile(t, logFile, "expected afplay to be called")
-	assertContains(t, data, "Glass.aiff")
+	assertContains(t, waitForFile(t, logFile, "expected afplay to be called"), "Glass.aiff")
 }
 
-// Poll for a background job's artifact instead of sleeping a fixed 200ms.
-//
-// The sleep used to be redundant: afplay inherited the snippet's stdout, which
-// is the harness's capture pipe, so CombinedOutput() blocked until the sound
-// process itself exited. That is the very coupling this suite now forbids — a
-// background job holding the user's terminal open — so play_notification_sound
-// sends afplay's output to /dev/null, the snippet returns as soon as bash exits,
-// and the fork+exec of the mock can land well after 200ms on a loaded machine.
-// Wait on the artifact, which is what the test actually cares about.
-func waitForFile(t *testing.T, path string, msg string) string {
+// waitForFile polls for background-job artifacts and is shared by this package.
+func waitForFile(t *testing.T, path, msg string) string {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -707,9 +594,8 @@ func waitForFile(t *testing.T, path string, msg string) string {
 	}
 }
 
-// waitForFile's mirror image, for a background job whose contract is to REMOVE
-// a file.
-func waitForFileGone(t *testing.T, path string, msg string) {
+// waitForFileGone is the mirror helper for asynchronous removal.
+func waitForFileGone(t *testing.T, path, msg string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -724,378 +610,97 @@ func waitForFileGone(t *testing.T, path string, msg string) {
 }
 
 func TestTabTitleWatcher_play_notification_sound_skips_when_sound_disabled(t *testing.T) {
-	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, "config")
-	os.MkdirAll(configDir, 0755)
-	writeTempFile(t, configDir, "claude-features.json", `{"sound": false}`)
-
-	logFile := filepath.Join(tmpDir, "afplay.log")
-	binDir := mockCommand(t, tmpDir, "afplay", fmt.Sprintf(`echo "$1" >> %q`, logFile))
-	env := buildEnv(t, []string{binDir})
-
-	snippet := soundWatcherSnippet(t,
-		fmt.Sprintf(`play_notification_sound "claude" %q`, configDir))
-
-	_, code := runBashSnippet(t, snippet, env)
+	dir := t.TempDir()
+	config := filepath.Join(dir, "config")
+	if err := os.MkdirAll(config, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTempFile(t, config, "claude-features.json", `{"sound": false}`)
+	logFile := filepath.Join(dir, "afplay.log")
+	binDir := mockCommand(t, dir, "afplay", fmt.Sprintf(`echo "$1" >> %q`, logFile))
+	_, code := runBashSnippet(t, soundWatcherSnippet(t,
+		fmt.Sprintf(`play_notification_sound claude %q`, config)), buildEnv(t, []string{binDir}))
 	assertExitCode(t, code, 0)
-
-	// Absence cannot be polled for, so wait out the window in which a spawned
-	// afplay would have written. Generous, because a short wait here does not
-	// fail the test — it passes it, wrongly.
 	time.Sleep(1 * time.Second)
-
 	if _, err := os.Stat(logFile); !os.IsNotExist(err) {
-		t.Errorf("expected afplay NOT to be called when sound is disabled")
+		t.Error("afplay was called while sound was disabled")
 	}
 }
 
-func TestTabTitleWatcher_play_notification_sound_uses_default_when_features_file_missing(t *testing.T) {
-	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, "nonexistent")
-
-	logFile := filepath.Join(tmpDir, "afplay.log")
-	binDir := mockCommand(t, tmpDir, "afplay", fmt.Sprintf(`echo "$1" >> %q`, logFile))
-	env := buildEnv(t, []string{binDir})
-
-	snippet := soundWatcherSnippet(t,
-		fmt.Sprintf(`play_notification_sound "claude" %q`, configDir))
-
-	_, code := runBashSnippet(t, snippet, env)
+func TestTabTitleWatcher_play_notification_sound_uses_default_when_features_missing(t *testing.T) {
+	dir := t.TempDir()
+	config := filepath.Join(dir, "missing")
+	logFile := filepath.Join(dir, "afplay.log")
+	binDir := mockCommand(t, dir, "afplay", fmt.Sprintf(`echo "$1" >> %q`, logFile))
+	_, code := runBashSnippet(t, soundWatcherSnippet(t,
+		fmt.Sprintf(`play_notification_sound claude %q`, config)), buildEnv(t, []string{binDir}))
 	assertExitCode(t, code, 0)
-
-	data := waitForFile(t, logFile, "expected afplay to be called with default sound")
-	assertContains(t, data, "Bottle.aiff")
+	assertContains(t, waitForFile(t, logFile, "expected default sound"), "Bottle.aiff")
 }
 
-func TestTabTitleWatcher_wrapper_passes_config_dir_to_watcher(t *testing.T) {
-	root := projectRoot(t)
-	wrapperPath := filepath.Join(root, "wrapper.sh")
-	data, err := os.ReadFile(wrapperPath)
-	if err != nil {
-		t.Fatalf("failed to read wrapper.sh: %v", err)
+func TestTabTitleWatcher_apply_tab_title_modes(t *testing.T) {
+	tests := []struct {
+		name, state, mode, want, unwanted string
+	}{
+		{"full active", "active", "full", "myproj · claude", "●"},
+		{"full waiting", "waiting", "full", "myproj · claude", "●"},
+		{"project", "active", "project", "myproj", "claude"},
 	}
-	content := string(data)
-
-	for _, line := range strings.Split(content, "\n") {
-		if strings.Contains(line, "start_tab_title_watcher") && !strings.HasPrefix(strings.TrimSpace(line), "#") {
-			if !strings.Contains(line, "wisp-deck") {
-				t.Errorf("start_tab_title_watcher call should pass wisp-deck config dir, got: %s", line)
-			}
-			return
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, code := runBashSnippet(t, tabTitleSnippet(t,
+				fmt.Sprintf(`apply_tab_title %q %q myproj claude`, tt.state, tt.mode)), nil)
+			assertExitCode(t, code, 0)
+			assertContains(t, out, tt.want)
+			assertNotContains(t, out, tt.unwanted)
+		})
+	}
+	for _, state := range []string{"active", "waiting"} {
+		out, code := runBashSnippet(t, tabTitleSnippet(t,
+			fmt.Sprintf(`apply_tab_title %q model myproj claude`, state)), nil)
+		assertExitCode(t, code, 0)
+		if strings.TrimSpace(out) != "" {
+			t.Errorf("model/%s wrote %q", state, out)
 		}
 	}
-	t.Error("start_tab_title_watcher call not found in wrapper.sh")
 }
 
-// --- Full marker lifecycle ---
-
-func TestTabTitleWatcher_check_ai_tool_state_claude_full_marker_lifecycle(t *testing.T) {
-	// Tests the complete lifecycle:
-	// 1. Initially no marker → "active"
-	// 2. Notification hook touches marker → "waiting"
-	// 3. UserPromptSubmit hook removes marker → "active"
-	// 4. Notification hook touches marker again → "waiting"
-	// 5. PreToolUse hook removes marker → "active"
-
-	tmpDir := t.TempDir()
-	markerFile := filepath.Join(tmpDir, "marker")
-
-	snippet := tabTitleSnippet(t, fmt.Sprintf(`check_ai_tool_state "claude" "" "" %q`, markerFile))
-
-	// Step 1: No marker → active
-	out, code := runBashSnippet(t, snippet, nil)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "active" {
-		t.Errorf("step 1: expected 'active' (no marker initially), got %q", strings.TrimSpace(out))
+func TestTabTitleWatcher_model_tab_title(t *testing.T) {
+	tests := []struct{ pane, host, project, want string }{
+		{"Refactoring auth", "host.local", "blok", "Refactoring auth"},
+		{"host.local", "host.local", "blok", "blok"},
+		{"", "host.local", "blok", "blok"},
 	}
-
-	// Step 2: Simulate Notification hook (touch marker) → waiting
-	if err := os.WriteFile(markerFile, []byte(""), 0644); err != nil {
-		t.Fatalf("step 2: failed to create marker file: %v", err)
-	}
-	out, code = runBashSnippet(t, snippet, nil)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "waiting" {
-		t.Errorf("step 2: expected 'waiting' (Notification hook created marker), got %q", strings.TrimSpace(out))
-	}
-
-	// Step 3: Simulate UserPromptSubmit hook (rm -f marker) → active
-	if err := os.Remove(markerFile); err != nil {
-		t.Fatalf("step 3: failed to remove marker file: %v", err)
-	}
-	out, code = runBashSnippet(t, snippet, nil)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "active" {
-		t.Errorf("step 3: expected 'active' (UserPromptSubmit removed marker), got %q", strings.TrimSpace(out))
-	}
-
-	// Step 4: Simulate Notification hook again (touch marker) → waiting
-	if err := os.WriteFile(markerFile, []byte(""), 0644); err != nil {
-		t.Fatalf("step 4: failed to create marker file: %v", err)
-	}
-	out, code = runBashSnippet(t, snippet, nil)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "waiting" {
-		t.Errorf("step 4: expected 'waiting' (Notification hook created marker again), got %q", strings.TrimSpace(out))
-	}
-
-	// Step 5: Simulate PreToolUse hook (rm -f marker) → active
-	if err := os.Remove(markerFile); err != nil {
-		t.Fatalf("step 5: failed to remove marker file: %v", err)
-	}
-	out, code = runBashSnippet(t, snippet, nil)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "active" {
-		t.Errorf("step 5: expected 'active' (PreToolUse removed marker), got %q", strings.TrimSpace(out))
+	for _, tt := range tests {
+		out, code := runBashSnippet(t, tabTitleSnippet(t,
+			fmt.Sprintf(`model_tab_title %q %q %q`, tt.pane, tt.host, tt.project)), nil)
+		assertExitCode(t, code, 0)
+		if strings.TrimSpace(out) != tt.want {
+			t.Errorf("model title = %q, want %q", strings.TrimSpace(out), tt.want)
+		}
 	}
 }
 
-func TestTabTitleWatcher_hook_commands_manage_marker_file_correctly(t *testing.T) {
-	// Verifies the actual hook commands (from settings-json.sh) work correctly:
-	// 1. Notification command creates marker file
-	// 2. UserPromptSubmit command removes it
-	// 3. PreToolUse command removes it
-	// 4. All commands exit 0 even when file doesn't exist
-
-	tmpDir := t.TempDir()
-	markerFile := filepath.Join(tmpDir, "marker")
-
-	stopCmd := fmt.Sprintf(`WISP_DECK_MARKER_FILE=%q; if [ -n "$WISP_DECK_MARKER_FILE" ]; then touch "$WISP_DECK_MARKER_FILE"; fi`, markerFile)
-	clearCmd := fmt.Sprintf(`WISP_DECK_MARKER_FILE=%q; if [ -n "$WISP_DECK_MARKER_FILE" ]; then rm -f "$WISP_DECK_MARKER_FILE"; fi`, markerFile)
-
-	// Step 1: Notification command creates marker file
-	_, code := runBashSnippet(t, stopCmd, nil)
-	assertExitCode(t, code, 0)
-	if _, err := os.Stat(markerFile); os.IsNotExist(err) {
-		t.Error("step 1: Notification hook should create marker file")
-	}
-
-	// Step 2: UserPromptSubmit command removes marker file
-	_, code = runBashSnippet(t, clearCmd, nil)
-	assertExitCode(t, code, 0)
-	if _, err := os.Stat(markerFile); !os.IsNotExist(err) {
-		t.Error("step 2: UserPromptSubmit hook should remove marker file")
-	}
-
-	// Step 3: Notification command creates marker again
-	_, code = runBashSnippet(t, stopCmd, nil)
-	assertExitCode(t, code, 0)
-	if _, err := os.Stat(markerFile); os.IsNotExist(err) {
-		t.Error("step 3: Notification hook should create marker file again")
-	}
-
-	// Step 4: PreToolUse command removes marker (same clear_cmd)
-	_, code = runBashSnippet(t, clearCmd, nil)
-	assertExitCode(t, code, 0)
-	if _, err := os.Stat(markerFile); !os.IsNotExist(err) {
-		t.Error("step 4: PreToolUse hook should remove marker file")
-	}
-
-	// Step 5: Clear command succeeds even when file already gone
-	_, code = runBashSnippet(t, clearCmd, nil)
-	assertExitCode(t, code, 0)
-
-	// Step 6: Clear command is a noop when WISP_DECK_MARKER_FILE is empty
-	noopCmd := `WISP_DECK_MARKER_FILE=""; if [ -n "$WISP_DECK_MARKER_FILE" ]; then rm -f "$WISP_DECK_MARKER_FILE"; fi`
-	_, code = runBashSnippet(t, noopCmd, nil)
-	assertExitCode(t, code, 0)
-}
-
-// --- ask sidecar file tests ---
-
-func TestTabTitleWatcher_watcher_source_contains_ask_sidecar_bypass(t *testing.T) {
-	root := projectRoot(t)
-	watcherPath := filepath.Join(root, "lib", "tab-title-watcher.sh")
-	data, err := os.ReadFile(watcherPath)
-	if err != nil {
-		t.Fatalf("failed to read tab-title-watcher.sh: %v", err)
-	}
-	content := string(data)
-
-	// The watcher should check for an -ask sidecar file
-	if !strings.Contains(content, "-ask") {
-		t.Error("watcher should reference -ask sidecar file suffix")
-	}
-}
-
-func TestTabTitleWatcher_stop_tab_title_watcher_removes_ask_sidecar(t *testing.T) {
-	tmpDir := t.TempDir()
-	markerFile := filepath.Join(tmpDir, "marker")
-	askFile := markerFile + "-ask"
-	os.WriteFile(markerFile, []byte(""), 0644)
-	os.WriteFile(askFile, []byte(""), 0644)
-
-	snippet := tabTitleSnippet(t,
-		fmt.Sprintf(`_TAB_TITLE_WATCHER_PID=""; stop_tab_title_watcher %q`, markerFile))
-
-	_, code := runBashSnippet(t, snippet, nil)
-	assertExitCode(t, code, 0)
-
-	if _, err := os.Stat(askFile); !os.IsNotExist(err) {
-		t.Errorf("expected -ask sidecar file to be removed")
-	}
-}
-
-// --- apply_tab_title: per-mode title writing ---
-//
-// apply_tab_title <state> <mode> <project> <tool> writes the terminal title for
-// the active/waiting state, EXCEPT in "model" mode where it leaves the title
-// untouched so the AI tool's own title (the one the model set) shows through.
-
-func TestTabTitleWatcher_apply_tab_title_full_active_includes_tool(t *testing.T) {
-	snippet := tabTitleSnippet(t, `apply_tab_title "active" "full" "myproj" "claude"`)
-	out, code := runBashSnippet(t, snippet, nil)
-	assertExitCode(t, code, 0)
-	assertContains(t, out, "myproj · claude")
-	assertNotContains(t, out, "●") // no waiting dot when active
-}
-
-func TestTabTitleWatcher_apply_tab_title_full_waiting_has_no_dot(t *testing.T) {
-	snippet := tabTitleSnippet(t, `apply_tab_title "waiting" "full" "myproj" "claude"`)
-	out, code := runBashSnippet(t, snippet, nil)
-	assertExitCode(t, code, 0)
-	assertContains(t, out, "myproj · claude")
-	assertNotContains(t, out, "●") // bell icon is the only waiting indicator, no dot
-}
-
-func TestTabTitleWatcher_apply_tab_title_project_active_omits_tool(t *testing.T) {
-	snippet := tabTitleSnippet(t, `apply_tab_title "active" "project" "myproj" "claude"`)
-	out, code := runBashSnippet(t, snippet, nil)
-	assertExitCode(t, code, 0)
-	assertContains(t, out, "myproj")
-	assertNotContains(t, out, "claude")
-}
-
-func TestTabTitleWatcher_apply_tab_title_model_active_writes_nothing(t *testing.T) {
-	snippet := tabTitleSnippet(t, `apply_tab_title "active" "model" "myproj" "claude"`)
-	out, code := runBashSnippet(t, snippet, nil)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "" {
-		t.Errorf("model mode must leave the title untouched, got %q", out)
-	}
-}
-
-func TestTabTitleWatcher_apply_tab_title_model_waiting_writes_nothing(t *testing.T) {
-	snippet := tabTitleSnippet(t, `apply_tab_title "waiting" "model" "myproj" "claude"`)
-	out, code := runBashSnippet(t, snippet, nil)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "" {
-		t.Errorf("model mode must leave the title untouched even when waiting, got %q", out)
-	}
-}
-
-// The watcher loop must route title writes through apply_tab_title and must
-// still play the notification sound regardless of mode (so "model" mode still
-// signals idle audibly even though it never writes the title).
-func TestTabTitleWatcher_loop_uses_apply_tab_title(t *testing.T) {
-	root := projectRoot(t)
-	watcherPath := filepath.Join(root, "lib", "tab-title-watcher.sh")
-	data, err := os.ReadFile(watcherPath)
-	if err != nil {
-		t.Fatalf("failed to read tab-title-watcher.sh: %v", err)
-	}
-	content := string(data)
-	if !strings.Contains(content, "apply_tab_title") {
-		t.Error("watcher loop should route title writes through apply_tab_title")
-	}
-	if !strings.Contains(content, "play_notification_sound") {
-		t.Error("watcher should still call play_notification_sound on the waiting transition")
-	}
-}
-
-// --- model_tab_title: mirror the AI pane's own title in model mode ---
-//
-// In "model" mode the AI tool sets its tmux pane's title (via an OSC escape) to
-// describe its task. The watcher reads that pane title and mirrors it to the
-// terminal tab. When the pane has no meaningful title yet, tmux reports the
-// hostname — so fall back to the project name instead of showing the host.
-
-func TestTabTitleWatcher_model_tab_title_uses_pane_title(t *testing.T) {
-	snippet := tabTitleSnippet(t,
-		`model_tab_title "Refactoring auth module" "myhost.local" "blok"`)
-	out, code := runBashSnippet(t, snippet, nil)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "Refactoring auth module" {
-		t.Errorf("model_tab_title should echo the AI pane title, got %q", strings.TrimSpace(out))
-	}
-}
-
-func TestTabTitleWatcher_model_tab_title_falls_back_to_project_on_hostname(t *testing.T) {
-	snippet := tabTitleSnippet(t,
-		`model_tab_title "myhost.local" "myhost.local" "blok"`)
-	out, code := runBashSnippet(t, snippet, nil)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "blok" {
-		t.Errorf("model_tab_title should fall back to project when the pane title is just the hostname, got %q", strings.TrimSpace(out))
-	}
-}
-
-func TestTabTitleWatcher_model_tab_title_falls_back_to_project_on_empty(t *testing.T) {
-	snippet := tabTitleSnippet(t,
-		`model_tab_title "" "myhost.local" "blok"`)
-	out, code := runBashSnippet(t, snippet, nil)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "blok" {
-		t.Errorf("model_tab_title should fall back to project when the pane title is empty, got %q", strings.TrimSpace(out))
-	}
-}
-
-// The watcher loop, in model mode, must read the AI pane's title and mirror it
-// to the tab (so the model's own title shows). It reads #{pane_title} and routes
-// it through model_tab_title with a hostname/project fallback.
-func TestTabTitleWatcher_loop_mirrors_ai_pane_title_in_model_mode(t *testing.T) {
-	root := projectRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, "lib", "tab-title-watcher.sh"))
-	if err != nil {
-		t.Fatalf("failed to read tab-title-watcher.sh: %v", err)
-	}
-	content := string(data)
-	if !strings.Contains(content, "model_tab_title") {
-		t.Error("watcher loop should mirror the AI pane title via model_tab_title in model mode")
-	}
-	if !strings.Contains(content, "pane_title") {
-		t.Error("watcher loop should read #{pane_title} of the AI pane in model mode")
-	}
-}
-
-// The watcher loop runs in a background subshell that inherits wrapper.sh's
-// stderr — which is the session terminal, the one the AI tool is painting a
-// full-screen UI onto. So a single stray stderr byte from anything the loop
-// calls (tmux, keep_awake_tick, a future addition) lands on top of that UI; the
-// keep-awake reap race showed up as a "No such file or directory" line sitting
-// in Claude's input box. Silencing the source is necessary but not sufficient:
-// nothing in this loop has any business writing to that terminal, so the loop
-// must be muted at the boundary too. Mock tmux writes to stderr on every call
-// to stand in for any such future leak.
-func TestTabTitleWatcher_background_loop_never_writes_to_the_session_terminal(t *testing.T) {
-	tmpDir := t.TempDir()
-	markerFile := filepath.Join(tmpDir, "marker")
-	binDir := mockCommand(t, tmpDir, "tmux", `
-case "$1" in
-  list-panes) echo "1 80" ;;
-  capture-pane) printf 'idle\n> \n' ;;
-esac
-exit 0
+func TestTabTitleWatcher_background_loop_never_writes_to_session_terminal(t *testing.T) {
+	root := t.TempDir()
+	generation := "generation.quiet1"
+	state := writeAttentionState(t, root, generation, "0", "working", "-")
+	descriptor := writeAttentionDescriptor(t, root, generation, "claude", state)
+	binDir := mockCommand(t, root, "tmux", `
+echo 'tmux noise' >&2
+[ "$1" = list-panes ] && printf '%%1\t1\n'
 `)
-	env := buildEnv(t, []string{binDir})
-	tmuxPath := filepath.Join(binDir, "tmux")
-
-	// A per-tick helper that writes to stderr, standing in for the real leak
-	// (keep_awake_tick's failing read) and for any future one. The loop's own
-	// tmux calls each redirect their stderr already; the hole is that a *function*
-	// it calls has a direct line to the terminal.
-	//
-	// stdout is the watcher's legitimate channel (tab-title escape codes), so
-	// send it to /dev/null: whatever the test captures is stderr, i.e. a leak.
-	snippet := tabTitleSnippet(t, fmt.Sprintf(
-		`keep_awake_tick() { echo "WATCHER-NOISE: a helper wrote to stderr" >&2; }
-start_tab_title_watcher "dev-test-1" "claude" "proj" "static" %q %q %q >/dev/null
-sleep 2
-stop_tab_title_watcher %q`,
-		tmuxPath, markerFile, tmpDir, markerFile))
-
-	out, _ := runBashSnippet(t, snippet, env)
+	env := buildEnv(t, []string{binDir}, "WISP_DECK_WATCH_INTERVAL=0.05")
+	script := tabTitleSnippet(t, fmt.Sprintf(`
+keep_awake_tick() { echo 'WATCHER-NOISE' >&2; }
+set_tab_title() { :; }
+set_tab_title_waiting() { :; }
+start_tab_title_watcher sess project project %q %q %q >/dev/null
+sleep 0.2
+stop_tab_title_watcher
+`, filepath.Join(binDir, "tmux"), descriptor, root))
+	out, _ := runBashSnippet(t, script, env)
 	if strings.TrimSpace(out) != "" {
-		t.Errorf("watcher leaked stderr onto the session terminal, over the AI tool's UI:\n%s", out)
+		t.Fatalf("watcher leaked onto session terminal:\n%s", out)
 	}
 }

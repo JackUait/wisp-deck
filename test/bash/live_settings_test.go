@@ -386,24 +386,46 @@ func TestSpareTabs_set_accent_repaints_inner_bar(t *testing.T) {
 // --- watcher loop wiring: live re-read each tick ---
 
 func TestLiveSettings_watcher_loop_rereads_settings_live(t *testing.T) {
-	root := projectRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, "lib", "tab-title-watcher.sh"))
-	if err != nil {
-		t.Fatalf("failed to read tab-title-watcher.sh: %v", err)
+	dir := t.TempDir()
+	attentionRoot := filepath.Join(dir, "attention")
+	if err := os.MkdirAll(attentionRoot, 0700); err != nil {
+		t.Fatal(err)
 	}
-	content := string(data)
+	generation := "generation.live1"
+	state := writeAttentionState(t, attentionRoot, generation, "1", "working", "-")
+	descriptor := writeAttentionDescriptor(t, attentionRoot, generation, "claude", state)
+	config := filepath.Join(dir, "config")
+	settings := writeTempFile(t, config, "settings", "tab_title=project\ntheme=first\n")
+	logFile := filepath.Join(dir, "watch.log")
+	binDir := mockCommand(t, dir, "tmux", `[ "$1" = list-panes ] && printf '%%6\t1\n'`)
+	tmuxPath := filepath.Join(binDir, "tmux")
 
-	if !strings.Contains(content, "read_settings_value") {
-		t.Error("watcher loop should re-read settings live via read_settings_value")
+	script := fmt.Sprintf(`
+source %q
+WATCH_LOG=%q
+apply_tab_title() { printf 'title:%%s:%%s:%%s\n' "$1" "$2" "$4" >> "$WATCH_LOG"; }
+play_notification_sound() { :; }
+gt_resolve_theme() { printf '%%s-%%s\n' "$1" "$2"; }
+get_theme_accent() { case "$1" in first-claude) echo 11 ;; second-claude) echo 22 ;; esac; }
+apply_session_theme() { printf 'theme:%%s\n' "$3" >> "$WATCH_LOG"; }
+attention_watcher_reset
+attention_watcher_tick sess project full %q %q %q
+printf 'tab_title=full\ntheme=second\n' > %q.tmp; mv %q.tmp %q
+attention_watcher_tick sess project full %q %q %q
+`, filepath.Join(projectRoot(t), "lib", "tab-title-watcher.sh"), logFile,
+		tmuxPath, descriptor, config, settings, settings, settings,
+		tmuxPath, descriptor, config)
+	_, code := runBashSnippet(t, script, buildEnv(t, []string{binDir}))
+	assertExitCode(t, code, 0)
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(content, "apply_session_theme") {
-		t.Error("watcher loop should re-apply the theme live via apply_session_theme")
-	}
-	// The tab-title mode must be read live (not only the frozen launch arg), so
-	// a mid-session change reaches the running watcher.
-	if !strings.Contains(content, "cur_tab_title") {
-		t.Error("watcher loop should track a live tab-title value (cur_tab_title), not only the frozen launch arg")
-	}
+	got := string(data)
+	assertContains(t, got, "title:active:project:claude")
+	assertContains(t, got, "title:active:full:claude")
+	assertContains(t, got, "theme:11")
+	assertContains(t, got, "theme:22")
 }
 
 // spare_tabs_config must build its status-left through spare_tabs_status_left so
