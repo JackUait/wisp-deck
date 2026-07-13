@@ -686,6 +686,42 @@ function requestJSON(base, path, directory, authorization, signal) {
   })
 }
 
+function usableClient(client) {
+  return isObject(client) && isObject(client.session) &&
+    typeof client.session.list === "function" && typeof client.session.status === "function" &&
+    isObject(client._client) && typeof client._client.get === "function"
+}
+
+async function requestClient(client, path, directory, signal) {
+  const options = { query: { directory }, signal, throwOnError: true }
+  let result
+  if (path === "/session") result = await client.session.list(options)
+  else if (path === "/session/status") result = await client.session.status(options)
+  else result = await client._client.get({ ...options, url: path })
+  if (!isObject(result) || result.error !== undefined || !("data" in result)) {
+    throw new Error("OpenCode SDK hydration request failed")
+  }
+  return result.data
+}
+
+function requestClientSnapshot(client, directory, controller) {
+  const work = Promise.all([
+    requestClient(client, "/session", directory, controller.signal),
+    requestClient(client, "/session/status", directory, controller.signal),
+    requestClient(client, "/question", directory, controller.signal),
+    requestClient(client, "/permission", directory, controller.signal),
+  ])
+  void work.catch(() => {})
+  let timer
+  const deadline = new Promise((resolve, reject) => {
+    timer = globalThis.setTimeout(() => {
+      controller.abort()
+      reject(new Error("OpenCode SDK hydration request exceeded its absolute deadline"))
+    }, HTTP_TIMEOUT_MS)
+  })
+  return Promise.race([work, deadline]).finally(() => globalThis.clearTimeout(timer))
+}
+
 function snapshotModel(sessions, statuses, questions, permissions) {
   if (!Array.isArray(sessions) || !isObject(statuses) ||
     !Array.isArray(questions) || !Array.isArray(permissions)) return null
@@ -779,6 +815,7 @@ export const WispDeck = async (context = {}) => {
     : ""
   const directory = typeof context.directory === "string" ? context.directory : ""
   const serverUrl = context.serverUrl
+  const client = usableClient(context.client) ? context.client : null
   const publisher = await createPublisher(stateFile, generation)
   if (!publisher) return { event: async () => {} }
 
@@ -792,6 +829,7 @@ export const WispDeck = async (context = {}) => {
   let retryLaunchScheduled = false
   let requestedRetryAt = null
   let cleanHydrationRequired = false
+  let legacyFenced = false
   let queue = Promise.resolve()
 
   function serialize(operation) {
@@ -809,7 +847,7 @@ export const WispDeck = async (context = {}) => {
   }
 
   async function hydrate(startedAt = epoch) {
-    if (!serverUrl || !directory) return
+    if (legacyFenced || (!client && !serverUrl) || !directory) return
     const attempt = hydrationAttempt + 1
     hydrationAttempt = attempt
     if (activeHydration && !activeHydration.settled) activeHydration.controller.abort()
@@ -819,12 +857,14 @@ export const WispDeck = async (context = {}) => {
     let values
     let failed = false
     try {
-      values = await Promise.all([
-        requestJSON(serverUrl, "/session", directory, authorization, controller.signal),
-        requestJSON(serverUrl, "/session/status", directory, authorization, controller.signal),
-        requestJSON(serverUrl, "/question", directory, authorization, controller.signal),
-        requestJSON(serverUrl, "/permission", directory, authorization, controller.signal),
-      ])
+      values = client
+        ? await requestClientSnapshot(client, directory, controller)
+        : await Promise.all([
+            requestJSON(serverUrl, "/session", directory, authorization, controller.signal),
+            requestJSON(serverUrl, "/session/status", directory, authorization, controller.signal),
+            requestJSON(serverUrl, "/question", directory, authorization, controller.signal),
+            requestJSON(serverUrl, "/permission", directory, authorization, controller.signal),
+          ])
     } catch {
       failed = true
       controller.abort()
@@ -859,6 +899,7 @@ export const WispDeck = async (context = {}) => {
   }
 
   function runHydrationRetry() {
+    if (legacyFenced) return
     const target = epoch
     if (retryRunning) {
       if (target > retryStartedEpoch) retryQueued = true
@@ -872,9 +913,11 @@ export const WispDeck = async (context = {}) => {
           retryQueued = false
           await hydrate(retryStartedEpoch)
           retryStartedEpoch = epoch
-        } while (retryQueued && (cleanHydrationRequired || chooseState(model).phase === "unknown"))
+        } while (!legacyFenced && retryQueued &&
+          (cleanHydrationRequired || chooseState(model).phase === "unknown"))
       } finally {
-        const repeat = retryQueued && (cleanHydrationRequired || chooseState(model).phase === "unknown")
+        const repeat = !legacyFenced && retryQueued &&
+          (cleanHydrationRequired || chooseState(model).phase === "unknown")
         retryRunning = false
         retryQueued = false
         if (repeat) requestHydrationRetry(epoch)
@@ -883,7 +926,7 @@ export const WispDeck = async (context = {}) => {
   }
 
   function requestHydrationRetry(requestedAt) {
-    if (!serverUrl || !directory) return
+    if (legacyFenced || (!client && !serverUrl) || !directory) return
     if (retryRunning) {
       runHydrationRetry()
       return
@@ -905,19 +948,30 @@ export const WispDeck = async (context = {}) => {
     event: async ({ event: value } = {}) => {
       if (!isObject(value) || typeof value.type !== "string") return
       if (!EVENT_TYPES.has(value.type)) return
+      if (legacyFenced) return
       let retryAt = null
       if (!isIdentifier(value.id)) {
         await serialize(async () => {
-          await markActiveHydrationDirty()
+          if (legacyFenced) return
+          legacyFenced = true
+          hydrationAttempt += 1
+          if (activeHydration && !activeHydration.settled) {
+            activeHydration.settled = true
+            activeHydration.controller.abort()
+          }
+          activeHydration = null
+          retryQueued = false
+          requestedRetryAt = null
+          cleanHydrationRequired = false
+          model.dirty = false
           model.invalid = true
           await emit(model, publisher)
           epoch += 1
-          if (chooseState(model).phase === "unknown") retryAt = epoch
         })
-        if (retryAt !== null) requestHydrationRetry(retryAt)
         return
       }
       await serialize(async () => {
+        if (legacyFenced) return
         await markActiveHydrationDirty()
         await applyEvent(model, publisher, value)
         epoch += 1
@@ -927,6 +981,6 @@ export const WispDeck = async (context = {}) => {
     },
   }
 
-  if (serverUrl && directory) void hydrate()
+  if ((client || serverUrl) && directory) void hydrate()
   return hooks
 }

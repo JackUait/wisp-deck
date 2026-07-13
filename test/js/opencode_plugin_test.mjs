@@ -94,6 +94,7 @@ async function makeRuntime(options = {}) {
   })
   const mod = await pluginModule()
   const hooks = await withProcessEnv(env, () => mod.WispDeck({
+    client: options.client,
     directory: options.directory || "/project",
     serverUrl: options.serverUrl,
   }))
@@ -696,6 +697,42 @@ test("recognized live events without the raw v2 event identity fail to unknown",
   }
 })
 
+test("the first recognized id-less legacy event permanently fences hydration and later events", async () => {
+  let releaseRetry
+  const retryGate = new Promise((resolve) => { releaseRetry = resolve })
+  const server = await startJSONServer(async ({ url, number }) => {
+    if (number > 4 && number <= 8) await retryGate
+    if (number <= 4 && url.pathname === "/session/status") {
+      return { body: { root: { type: "busy" } } }
+    }
+    return { body: cleanSnapshot(url.pathname) }
+  })
+  const runtime = await makeRuntime({ serverUrl: server.url })
+  try {
+    await waitFor(async () => (await record(runtime)).endsWith("\tworking\t-\n"), "armed startup snapshot")
+
+    await send(runtime, event("question.asked"))
+    await waitFor(() => server.requests.length === 8, "blocked reconciliation hydration")
+
+    const legacy = sessionError("legacy-error", "root")
+    delete legacy.id
+    await send(runtime, legacy)
+    assert.ok((await record(runtime)).endsWith("\tunknown\t-\n"))
+
+    releaseRetry()
+    await send(runtime, status("root", "idle"))
+    await send(runtime, questionAsked("ignored-question", "root"))
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    assert.ok((await record(runtime)).endsWith("\tunknown\t-\n"), "legacy launch escaped unknown")
+    assert.equal(server.requests.length, 8, "legacy launch started another hydration attempt")
+  } finally {
+    releaseRetry()
+    await runtime.cleanup()
+    await server.close()
+  }
+})
+
 test("session deletion recursively clears correlated requests and roots", async () => {
   const runtime = await makeRuntime()
   try {
@@ -763,6 +800,93 @@ function configuredSnapshot(pathname, snapshot) {
   if (pathname === "/permission") return snapshot.permissions || []
   throw new Error(`unexpected endpoint ${pathname}`)
 }
+
+test("ordinary in-process TUI startup hydrates through the injected SDK client", async () => {
+  const calls = []
+  const snapshot = {
+    sessions: [session("root"), session("child", "root")],
+    statuses: { root: { type: "busy" } },
+    questions: [{
+      id: "q-in-process",
+      sessionID: "child",
+      questions: [{ header: "Choice", question: "Continue?", options: [] }],
+    }],
+    permissions: [],
+  }
+  const invoke = async (pathname, options = {}) => {
+    calls.push({
+      directory: options.query?.directory,
+      pathname,
+      signaled: options.signal instanceof AbortSignal,
+      throwOnError: options.throwOnError,
+    })
+    return { data: configuredSnapshot(pathname, snapshot) }
+  }
+  const client = {
+    _client: {
+      get: (options) => invoke(options.url, options),
+    },
+    session: {
+      list: (options) => invoke("/session", options),
+      status: (options) => invoke("/session/status", options),
+    },
+  }
+  const runtime = await makeRuntime({
+    client,
+    serverUrl: new URL("http://127.0.0.1:1/"),
+  })
+  try {
+    await waitFor(async () => (await record(runtime)).endsWith("\tattention\tquestion\n"), "in-process hydration")
+    assert.deepEqual(calls.map((item) => item.pathname).sort(), [
+      "/permission", "/question", "/session", "/session/status",
+    ])
+    for (const call of calls) {
+      assert.equal(call.directory, "/project")
+      assert.equal(call.signaled, true)
+      assert.equal(call.throwOnError, true)
+    }
+  } finally {
+    await runtime.cleanup()
+  }
+})
+
+test("a never-settling SDK retry times out unknown and a later event can recover", async () => {
+  let calls = 0
+  const invoke = async (pathname) => {
+    calls += 1
+    if (calls <= 4) throw new Error("startup hydration failed")
+    if (calls <= 8) return new Promise(() => {})
+    return { data: cleanSnapshot(pathname) }
+  }
+  const client = {
+    _client: {
+      get: (options) => invoke(options.url),
+    },
+    session: {
+      list: () => invoke("/session"),
+      status: () => invoke("/session/status"),
+    },
+  }
+  const runtime = await makeRuntime({
+    client,
+    serverUrl: new URL("http://127.0.0.1:1/"),
+  })
+  try {
+    await waitFor(() => calls === 4, "failed SDK startup hydration")
+    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    await send(runtime, created("live-root"))
+    await waitFor(() => calls === 8, "never-settling SDK retry")
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+    assert.ok((await record(runtime)).endsWith("\tunknown\t-\n"), "hung SDK retry escaped unknown")
+
+    await send(runtime, updated("live-root"))
+    await waitFor(() => calls === 12, "post-timeout SDK retry")
+    await waitFor(async () => (await record(runtime)).endsWith("\tready\t-\n"), "SDK retry recovery")
+  } finally {
+    await runtime.cleanup()
+  }
+})
 
 async function makeBlockedSnapshotRuntime(snapshot) {
   let releaseStartup

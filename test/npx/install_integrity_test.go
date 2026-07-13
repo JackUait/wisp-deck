@@ -60,6 +60,30 @@ func TestLauncher_skips_copy_when_install_is_complete(t *testing.T) {
 	}
 }
 
+func TestLauncher_repairs_missing_opencode_template_despite_version_marker(t *testing.T) {
+	sb := newLauncherSandbox(t)
+	env := append(sb.env, "WISP_DECK_SKIP_TUI_DOWNLOAD=1")
+
+	if _, stderr, code := runLauncher(t, env); code != 0 {
+		t.Fatalf("first run failed: %d %s", code, stderr)
+	}
+	template := filepath.Join(sb.installDir, "templates", "opencode-plugin.ts")
+	if err := os.Remove(template); err != nil {
+		t.Fatalf("remove installed OpenCode template: %v", err)
+	}
+
+	stdout, stderr, code := runLauncher(t, env)
+	if code != 0 {
+		t.Fatalf("repair run failed: %d %s", code, stderr)
+	}
+	if strings.Contains(stdout, "already up to date") {
+		t.Fatalf("missing OpenCode template was treated as intact: %s", stdout)
+	}
+	if _, err := os.Stat(template); err != nil {
+		t.Fatalf("repair run did not restore OpenCode template: %v", err)
+	}
+}
+
 // homeWithSpace returns a temp HOME whose path contains a space — the classic
 // shell-quoting minefield, and a real macOS setup ("/Users/Jane Smith").
 func homeWithSpace(t *testing.T) string {
