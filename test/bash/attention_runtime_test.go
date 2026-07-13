@@ -246,6 +246,7 @@ printf '%s\n' "$root"
 		"empty generation":    "1\t\tclaude\t/tmp/state\n",
 		"unsupported tool":    "1\tg\tother\t/tmp/state\n",
 		"empty state":         "1\tg\tclaude\t\n",
+		"mismatched state":    "1\tgeneration.abcdef\tclaude\t/tmp/state\n",
 		"extra field":         "1\tg\tclaude\t/tmp/state\textra\n",
 		"carriage return":     "1\tg\tclaude\t/tmp/state\r\n",
 		"second partial line": "1\tg\tclaude\t/tmp/state\ntrailer",
@@ -261,6 +262,57 @@ printf '%s\n' "$root"
 				t.Fatalf("accepted malformed descriptor %q: %q", record, output)
 			}
 		})
+	}
+}
+
+func TestAttentionRuntimeRejectsDescriptorThatEscapesSessionRoot(t *testing.T) {
+	base := t.TempDir()
+	attention := createAttentionFixture(t, base, "claude")
+	victim := filepath.Join(base, "victim")
+	sentinel := filepath.Join(victim, "keep")
+	if err := os.Mkdir(victim, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sentinel, []byte("do not delete\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	escapingState := filepath.Join(attention["root"], "..", "victim", "state")
+	forged := fmt.Sprintf("1\t../victim\tclaude\t%s\n", escapingState)
+	if err := os.WriteFile(attention["descriptor"], []byte(forged), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	readOutput, readStatus := runAttentionBash(t, `attention_read_descriptor "$1"`, attention["descriptor"])
+	rotateOutput, rotateStatus := runAttentionBash(t,
+		`attention_begin_generation "$1" codex`, attention["root"])
+	if readStatus == 0 {
+		t.Errorf("reader accepted escaping descriptor: %q", readOutput)
+	}
+	if rotateStatus == 0 {
+		t.Errorf("rotation accepted escaping descriptor: %q", rotateOutput)
+	}
+	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "do not delete\n" {
+		t.Fatalf("escaping descriptor deleted or changed sibling data: data=%q err=%v", data, err)
+	}
+}
+
+func TestAttentionRuntimeCleanupRejectsUnownedLookalike(t *testing.T) {
+	base := t.TempDir()
+	lookalike := filepath.Join(base, "wisp-deck-attention.forged")
+	sentinel := filepath.Join(lookalike, "keep")
+	if err := os.Mkdir(lookalike, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sentinel, []byte("owned elsewhere\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	output, status := runAttentionBash(t, `attention_cleanup "$1"`, lookalike)
+	if status == 0 {
+		t.Errorf("cleanup accepted unowned lookalike: %q", output)
+	}
+	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "owned elsewhere\n" {
+		t.Fatalf("cleanup deleted or changed unowned data: data=%q err=%v", data, err)
 	}
 }
 
@@ -367,6 +419,101 @@ exec "$REAL_MV" "$@"`)
 	}
 }
 
+func TestAttentionRuntimeRelaunchLockSerializesProcesses(t *testing.T) {
+	base := t.TempDir()
+	attention := createAttentionFixture(t, base, "claude")
+	module := filepath.Join(projectRoot(t), "lib", "attention.sh")
+	aAcquired := filepath.Join(base, "a-acquired")
+	aRelease := filepath.Join(base, "a-release")
+	bReady := filepath.Join(base, "b-ready")
+	bAcquired := filepath.Join(base, "b-acquired")
+
+	start := func(script string, args ...string) (*exec.Cmd, <-chan error, *bytes.Buffer) {
+		t.Helper()
+		cmdArgs := append([]string{"-c", script, "attention-lock"}, args...)
+		cmd := exec.Command("bash", cmdArgs...)
+		var output bytes.Buffer
+		cmd.Stdout = &output
+		cmd.Stderr = &output
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		return cmd, done, &output
+	}
+	waitForPath := func(path string, done <-chan error, output *bytes.Buffer) {
+		t.Helper()
+		deadline := time.NewTimer(15 * time.Second)
+		defer deadline.Stop()
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			if _, err := os.Stat(path); err == nil {
+				return
+			}
+			select {
+			case err := <-done:
+				t.Fatalf("lock process exited before creating %s: %v: %s", filepath.Base(path), err, output.String())
+			case <-deadline.C:
+				t.Fatalf("timed out waiting for %s: %s", filepath.Base(path), output.String())
+			case <-ticker.C:
+			}
+		}
+	}
+	waitDone := func(cmd *exec.Cmd, done <-chan error, output *bytes.Buffer) error {
+		t.Helper()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(15 * time.Second):
+			_ = cmd.Process.Kill()
+			<-done
+			t.Fatalf("lock process timed out: %s", output.String())
+			return nil
+		}
+	}
+
+	cmdA, doneA, outputA := start(`
+source "$1" || exit 80
+attention_relaunch_lock_acquire "$2" || exit 81
+: > "$3"
+while [ ! -e "$4" ]; do sleep 0.01; done
+attention_relaunch_lock_release "$2" || exit 82
+`, module, attention["root"], aAcquired, aRelease)
+	waitForPath(aAcquired, doneA, outputA)
+
+	cmdB, doneB, outputB := start(`
+source "$1" || exit 90
+: > "$3"
+attention_relaunch_lock_acquire "$2" || exit 91
+: > "$4"
+attention_relaunch_lock_release "$2" || exit 92
+`, module, attention["root"], bReady, bAcquired)
+	waitForPath(bReady, doneB, outputB)
+	time.Sleep(750 * time.Millisecond)
+	_, earlyErr := os.Stat(bAcquired)
+
+	if err := os.WriteFile(aRelease, []byte("release\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitDone(cmdA, doneA, outputA); err != nil {
+		t.Fatalf("first lock process failed: %v: %s", err, outputA.String())
+	}
+	if err := waitDone(cmdB, doneB, outputB); err != nil {
+		t.Fatalf("second lock process failed: %v: %s", err, outputB.String())
+	}
+	if earlyErr == nil {
+		t.Fatal("second process acquired relaunch lock before the first released it")
+	}
+	if _, err := os.Stat(bAcquired); err != nil {
+		t.Fatalf("second process never acquired lock after release: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(attention["root"], ".relaunch-lock")); !os.IsNotExist(err) {
+		t.Fatalf("relaunch lock leaked after both releases: %v", err)
+	}
+}
+
 func TestAttentionRuntimeCleanupRemovesOnlySessionRoot(t *testing.T) {
 	base := t.TempDir()
 	out, code := runAttentionBash(t, `
@@ -427,6 +574,8 @@ func TestAttentionRuntimeWorksWhenSourcedByZsh(t *testing.T) {
 source "$1" || exit 70
 attention_session_create "$2" >/dev/null || exit 71
 attention_begin_generation "$WISP_DECK_ATTENTION_ROOT" codex >/dev/null || exit 72
+attention_relaunch_lock_acquire "$WISP_DECK_ATTENTION_ROOT" || exit 73
+attention_relaunch_lock_release "$WISP_DECK_ATTENTION_ROOT" || exit 74
 attention_read_descriptor "$WISP_DECK_ATTENTION_DESCRIPTOR"`, "attention-zsh", module, base)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

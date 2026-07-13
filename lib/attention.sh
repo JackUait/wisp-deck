@@ -2,6 +2,12 @@
 # Private, generation-fenced runtime shared by semantic attention adapters.
 # Compatible with the stock Bash 3.2 shipped by macOS.
 
+# Cleanup authority is process-local: only roots allocated by this sourced
+# runtime may be recursively removed by the same shell.
+_ATTENTION_OWNED_ROOTS=$'\n'
+_ATTENTION_RELAUNCH_LOCK_ROOT=""
+_ATTENTION_RELAUNCH_LOCK_TOKEN=""
+
 _attention_has_record_delimiter() {
   case "${1-}" in
     *$'\t'*|*$'\r'*|*$'\n'*) return 0 ;;
@@ -18,6 +24,45 @@ _attention_valid_tool() {
     claude|codex|opencode) return 0 ;;
   esac
   return 1
+}
+
+_attention_valid_generation() {
+  local generation="${1-}" suffix
+  case "$generation" in
+    generation.*) suffix="${generation#generation.}" ;;
+    *) return 1 ;;
+  esac
+  case "$suffix" in
+    ''|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789]*) return 1 ;;
+  esac
+  return 0
+}
+
+_attention_track_root() {
+  local root="${1-}"
+  case "$_ATTENTION_OWNED_ROOTS" in
+    *$'\n'"$root"$'\n'*) return 0 ;;
+  esac
+  _ATTENTION_OWNED_ROOTS="${_ATTENTION_OWNED_ROOTS}${root}"$'\n'
+}
+
+_attention_root_is_owned() {
+  local root="${1-}"
+  case "$_ATTENTION_OWNED_ROOTS" in
+    *$'\n'"$root"$'\n'*) return 0 ;;
+  esac
+  return 1
+}
+
+_attention_forget_root() {
+  local root="${1-}" line rebuilt=$'\n'
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    [ "$line" = "$root" ] || rebuilt="${rebuilt}${line}"$'\n'
+  done <<EOF
+$_ATTENTION_OWNED_ROOTS
+EOF
+  _ATTENTION_OWNED_ROOTS="$rebuilt"
 }
 
 # _attention_atomic_replace <target> <record-without-newline>
@@ -46,7 +91,7 @@ _attention_atomic_replace() {
 # On success, populate private descriptor fields without printing them.
 _attention_parse_descriptor_file() {
   local descriptor="${1-}" bytes line extra second_status tab
-  local version generation tool state rest
+  local version generation tool state rest root
   _attention_valid_field "$descriptor" || return 1
   [ -f "$descriptor" ] || return 1
 
@@ -87,9 +132,11 @@ _attention_parse_descriptor_file() {
   esac
 
   [ "$version" = "1" ] || return 1
-  _attention_valid_field "$generation" || return 1
+  _attention_valid_generation "$generation" || return 1
   _attention_valid_tool "$tool" || return 1
   _attention_valid_field "$state" || return 1
+  root="${descriptor%/*}"
+  [ "$state" = "$root/$generation/state" ] || return 1
 
   _ATTENTION_DESCRIPTOR_GENERATION="$generation"
   _ATTENTION_DESCRIPTOR_TOOL="$tool"
@@ -109,6 +156,8 @@ attention_session_create() {
     rm -rf "$root"
     return 1
   fi
+
+  _attention_track_root "$root"
 
   WISP_DECK_ATTENTION_ROOT="$root"
   WISP_DECK_ATTENTION_DESCRIPTOR="$root/descriptor"
@@ -139,7 +188,8 @@ attention_begin_generation() {
   generation_dir="$(umask 077; mktemp -d "$root/generation.XXXXXX")" || return 1
   generation="${generation_dir##*/}"
   state="$generation_dir/state"
-  if ! chmod 700 "$generation_dir"; then
+  if ! _attention_valid_generation "$generation" \
+     || ! chmod 700 "$generation_dir"; then
     rm -rf "$generation_dir"
     return 1
   fi
@@ -169,7 +219,7 @@ attention_begin_generation() {
       old_dir="$root/$old_generation"
       if [ "$old_generation" != "$generation" ] \
          && [ "$old_state" = "$old_dir/state" ]; then
-        rm -rf "$old_dir"
+        rm -rf "$old_dir" || return 1
       fi
       ;;
   esac
@@ -187,16 +237,90 @@ attention_read_descriptor() {
     "$_ATTENTION_DESCRIPTOR_STATE"
 }
 
+# attention_relaunch_lock_acquire <root>
+# Serialize the rotate/stamp/build/respawn transaction across the independent
+# ledger and auto-switch shells. Dead owners are reclaimed; a half-created
+# empty lock is removed only after a grace period and only with rmdir.
+attention_relaunch_lock_acquire() {
+  local root="${1-}" lock owner owner_pid owner_token
+  local attempts=0 empty_attempts=0 token
+  _attention_valid_field "$root" || return 1
+  [ -d "$root" ] || return 1
+  [ -z "$_ATTENTION_RELAUNCH_LOCK_ROOT" ] || return 1
+  lock="$root/.relaunch-lock"
+  owner="$lock/owner"
+
+  while ! mkdir "$lock" 2>/dev/null; do
+    if [ -f "$owner" ]; then
+      owner_pid=""
+      owner_token=""
+      IFS=$'\t' read -r owner_pid owner_token <"$owner" || true
+      case "$owner_pid" in
+        ''|*[!0-9]*) ;;
+        *)
+          if ! kill -0 "$owner_pid" 2>/dev/null; then
+            rm -rf "$lock" 2>/dev/null || true
+          fi
+          ;;
+      esac
+      empty_attempts=0
+    else
+      empty_attempts=$((empty_attempts + 1))
+      if [ "$empty_attempts" -ge 20 ]; then
+        rmdir "$lock" 2>/dev/null || true
+        empty_attempts=0
+      fi
+    fi
+    attempts=$((attempts + 1))
+    [ "$attempts" -lt 400 ] || return 1
+    sleep 0.05
+  done
+
+  if ! chmod 700 "$lock"; then
+    rmdir "$lock" 2>/dev/null || true
+    return 1
+  fi
+  token="$$.${RANDOM:-0}.${RANDOM:-0}"
+  if ! printf '%s\t%s\n' "$$" "$token" >"$owner" \
+     || ! chmod 600 "$owner"; then
+    rm -f "$owner"
+    rmdir "$lock" 2>/dev/null || true
+    return 1
+  fi
+
+  _ATTENTION_RELAUNCH_LOCK_ROOT="$root"
+  _ATTENTION_RELAUNCH_LOCK_TOKEN="$token"
+  return 0
+}
+
+# attention_relaunch_lock_release <root>
+attention_relaunch_lock_release() {
+  local root="${1-}" lock owner owner_pid="" owner_token=""
+  [ -n "$root" ] && [ "$root" = "$_ATTENTION_RELAUNCH_LOCK_ROOT" ] || return 1
+  lock="$root/.relaunch-lock"
+  owner="$lock/owner"
+  IFS=$'\t' read -r owner_pid owner_token <"$owner" || return 1
+  [ "$owner_pid" = "$$" ] \
+    && [ "$owner_token" = "$_ATTENTION_RELAUNCH_LOCK_TOKEN" ] || return 1
+  rm -rf "$lock" || return 1
+  _ATTENTION_RELAUNCH_LOCK_ROOT=""
+  _ATTENTION_RELAUNCH_LOCK_TOKEN=""
+  return 0
+}
+
 # attention_cleanup <root>
 # Idempotently remove only a root produced by attention_session_create.
 attention_cleanup() {
   local root="${1-}"
   _attention_valid_field "$root" || return 1
+  [ -e "$root" ] || return 0
+  _attention_root_is_owned "$root" || return 1
   case "${root##*/}" in
     wisp-deck-attention.*) ;;
     *) return 1 ;;
   esac
   rm -rf "$root" || return 1
+  _attention_forget_root "$root"
   if [ "${WISP_DECK_ATTENTION_ROOT-}" = "$root" ]; then
     unset WISP_DECK_ATTENTION_ROOT WISP_DECK_ATTENTION_DESCRIPTOR
     unset WISP_DECK_ATTENTION_GENERATION WISP_DECK_ATTENTION_FILE

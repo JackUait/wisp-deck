@@ -1136,6 +1136,45 @@ relaunch_ai_pane tmux %q default`, envdir, envdir, envdir, envdir, envdir, rec, 
 	)
 }
 
+func TestAttentionRelaunchFunctionsHoldLockAcrossRespawn(t *testing.T) {
+	path := filepath.Join(projectRoot(t), "lib", "account-switch.sh")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(data)
+	tests := []struct {
+		name string
+		next string
+	}{
+		{name: "relaunch_ai_pane", next: "_relaunch_preserving_draft"},
+		{name: "relaunch_switch_tool", next: "auto_switch_relaunch"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start := strings.Index(source, tt.name+"() {")
+			if start < 0 {
+				t.Fatalf("%s not found", tt.name)
+			}
+			endOffset := strings.Index(source[start:], "\n"+tt.next+"() {")
+			if endOffset < 0 {
+				t.Fatalf("end of %s not found", tt.name)
+			}
+			body := source[start : start+endOffset]
+			acquire := strings.Index(body, "attention_relaunch_lock_acquire")
+			rotate := strings.Index(body, "prepare_attention_relaunch")
+			build := strings.Index(body, `cmd="$(build_switch_launch_cmd`)
+			respawn := strings.Index(body, "respawn-pane")
+			release := strings.LastIndex(body, "attention_relaunch_lock_release")
+			if acquire < 0 || rotate < 0 || build < 0 || respawn < 0 || release < 0 ||
+				!(acquire < rotate && rotate < build && build < respawn && respawn < release) {
+				t.Fatalf("%s must hold relaunch lock across rotate/stamp/build/respawn: acquire=%d rotate=%d build=%d respawn=%d release=%d",
+					tt.name, acquire, rotate, build, respawn, release)
+			}
+		})
+	}
+}
+
 // The relaunch context must be written for EVERY tool — opencode/codex
 // sessions need it so their ledger pill can switch agents too. The old
 // claude-only gate around the WISP_DECK_RELAUNCH_FILE block must be gone, and

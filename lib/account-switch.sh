@@ -583,7 +583,7 @@ relaunch_ai_pane() {
   [ -f "$relaunch_file" ] || return 0
   _read_relaunch_ctx "$relaunch_file"
 
-  local new_dir pane cmd
+  local new_dir pane cmd attention_lock_held=0
   if [ "$have_chosen" = 1 ]; then
     new_dir=""
     if [ -n "$chosen" ] && [ "$chosen" != "default" ] && [ -d "$_rc_accounts_dir/$chosen" ]; then
@@ -605,6 +605,11 @@ relaunch_ai_pane() {
 
   pane="$(find_ai_pane "$tmux_cmd")"
   [ -n "$pane" ] || return 0
+  if [ -n "$_rc_attention_root" ]; then
+    declare -f attention_relaunch_lock_acquire >/dev/null 2>&1 || return 0
+    attention_relaunch_lock_acquire "$_rc_attention_root" || return 0
+    attention_lock_held=1
+  fi
 
   # Resume the exact conversation this pane was on (the statusline stamped its id),
   # so the switch carries over THIS session rather than the cwd's most-recent one.
@@ -612,8 +617,12 @@ relaunch_ai_pane() {
   # then launches a fresh claude rather than resuming (see build_switch_launch_cmd).
   local sid
   sid="$(current_ai_session "$tmux_cmd")"
-  prepare_attention_relaunch "$tmux_cmd" "$_rc_attention_root" \
-    "$_rc_attention_descriptor" "$_rc_tool" || return 0
+  if ! prepare_attention_relaunch "$tmux_cmd" "$_rc_attention_root" \
+    "$_rc_attention_descriptor" "$_rc_tool"; then
+    [ "$attention_lock_held" = 1 ] \
+      && attention_relaunch_lock_release "$_rc_attention_root" 2>/dev/null || true
+    return 0
+  fi
   cmd="$(build_switch_launch_cmd "$_rc_tool" "$_rc_tool_cmd" \
     "$_rc_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir" "$sid")"
 
@@ -624,6 +633,8 @@ relaunch_ai_pane() {
   # than the global pointer. Default stamps an EMPTY value (set, not unset) —
   # an unset var means "pre-stamp session" and falls back to the pointer.
   "$tmux_cmd" set-environment WISP_DECK_CLAUDE_ACCOUNT "${new_dir##*/}" 2>/dev/null
+  [ "$attention_lock_held" = 1 ] \
+    && attention_relaunch_lock_release "$_rc_attention_root" 2>/dev/null || true
   return 0
 }
 
@@ -799,11 +810,16 @@ relaunch_switch_tool() {
   [ -f "$relaunch_file" ] || return 0
   _read_relaunch_ctx "$relaunch_file"
 
-  local tool_cmd pane
+  local tool_cmd pane attention_lock_held=0
   tool_cmd="$(_tool_cmd_for "$target")"
   [ -n "$tool_cmd" ] || return 0
   pane="$(find_ai_pane "$tmux_cmd")"
   [ -n "$pane" ] || return 0
+  if [ -n "$_rc_attention_root" ]; then
+    declare -f attention_relaunch_lock_acquire >/dev/null 2>&1 || return 0
+    attention_relaunch_lock_acquire "$_rc_attention_root" || return 0
+    attention_lock_held=1
+  fi
 
   if [ "$_rc_tool" = "claude" ]; then
     stash_ai_draft "$tmux_cmd" "$pane" \
@@ -866,8 +882,12 @@ relaunch_switch_tool() {
   fi
 
   local cmd
-  prepare_attention_relaunch "$tmux_cmd" "$_rc_attention_root" \
-    "$_rc_attention_descriptor" "$target" || return 0
+  if ! prepare_attention_relaunch "$tmux_cmd" "$_rc_attention_root" \
+    "$_rc_attention_descriptor" "$target"; then
+    [ "$attention_lock_held" = 1 ] \
+      && attention_relaunch_lock_release "$_rc_attention_root" 2>/dev/null || true
+    return 0
+  fi
   cmd="$(build_switch_launch_cmd "$target" "$tool_cmd" \
     "$_rc_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir" "$sid")"
   "$tmux_cmd" respawn-pane -k -t "$pane" -c "$_rc_project_dir" "$cmd$handoff_arg; exec bash"
@@ -891,6 +911,8 @@ relaunch_switch_tool() {
     "${_rc_accounts_dir%/claude-accounts}" "$_rc_tools" \
     "$_rc_claude_cmd" "$_rc_opencode_cmd" "$_rc_codex_cmd" \
     "$_rc_attention_root" "$_rc_attention_descriptor"
+  [ "$attention_lock_held" = 1 ] \
+    && attention_relaunch_lock_release "$_rc_attention_root" 2>/dev/null || true
   return 0
 }
 
