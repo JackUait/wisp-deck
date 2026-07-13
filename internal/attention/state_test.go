@@ -259,6 +259,48 @@ func TestAtomicWriterNeverCreatesMissingParent(t *testing.T) {
 	if _, err := os.Stat(parent); !os.IsNotExist(err) {
 		t.Fatalf("Publish recreated removed parent: %v", err)
 	}
+
+	dedupeParent := filepath.Join(root, "dedupe-gone")
+	if err := os.Mkdir(dedupeParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dedupePath := filepath.Join(dedupeParent, "state")
+	dedupeWriter, err := NewAtomicWriter(dedupePath, "generation-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustPublish(t, dedupeWriter, PhaseReady, ReasonNone, "")
+	if err := os.RemoveAll(dedupeParent); err != nil {
+		t.Fatal(err)
+	}
+	if err := dedupeWriter.Publish(PhaseReady, ReasonNone, ""); !errors.Is(err, ErrStaleGeneration) {
+		t.Fatalf("deduplicated Publish() error = %v, want ErrStaleGeneration", err)
+	}
+	if _, err := os.Stat(dedupeParent); !os.IsNotExist(err) {
+		t.Fatalf("deduplicated Publish recreated removed parent: %v", err)
+	}
+
+	recoveredParent := filepath.Join(root, "recovered-gone")
+	if err := os.Mkdir(recoveredParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	recoveredPath := filepath.Join(recoveredParent, "state")
+	if err := os.WriteFile(recoveredPath, []byte("1\tgeneration-c\t7\tattention\tquestion\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recoveredWriter, err := NewAtomicWriter(recoveredPath, "generation-c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(recoveredParent); err != nil {
+		t.Fatal(err)
+	}
+	if err := recoveredWriter.Publish(PhaseAttention, ReasonQuestion, "question-7"); !errors.Is(err, ErrStaleGeneration) {
+		t.Fatalf("recovered-identity Publish() error = %v, want ErrStaleGeneration", err)
+	}
+	if _, err := os.Stat(recoveredParent); !os.IsNotExist(err) {
+		t.Fatalf("recovered-identity Publish recreated removed parent: %v", err)
+	}
 }
 
 func TestAtomicWriterConcurrentReadersNeverSeePartialRecord(t *testing.T) {

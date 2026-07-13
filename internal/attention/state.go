@@ -218,6 +218,9 @@ func (w *AtomicWriter) Publish(phase Phase, reason Reason, identity string) erro
 	if err := candidate.validate(); err != nil {
 		return err
 	}
+	if err := ensureGenerationParent(w.path); err != nil {
+		return err
+	}
 
 	semanticChanged := !w.hasState || w.state.Phase != phase || w.state.Reason != reason
 	identityChanged := false
@@ -268,15 +271,11 @@ func (w *AtomicWriter) Current() State {
 }
 
 func atomicReplace(path string, data []byte) error {
-	parent := filepath.Dir(path)
-	info, err := os.Stat(parent)
-	if err != nil || !info.IsDir() {
-		if err == nil || os.IsNotExist(err) {
-			return ErrStaleGeneration
-		}
-		return fmt.Errorf("stat attention generation: %w", err)
+	if err := ensureGenerationParent(path); err != nil {
+		return err
 	}
 
+	parent := filepath.Dir(path)
 	tmp, err := os.CreateTemp(parent, ".attention-*")
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -304,6 +303,18 @@ func atomicReplace(path string, data []byte) error {
 			return ErrStaleGeneration
 		}
 		return fmt.Errorf("replace attention state: %w", err)
+	}
+	return nil
+}
+
+func ensureGenerationParent(path string) error {
+	parent := filepath.Dir(path)
+	info, err := os.Stat(parent)
+	if err != nil || !info.IsDir() {
+		if err == nil || os.IsNotExist(err) {
+			return ErrStaleGeneration
+		}
+		return fmt.Errorf("stat attention generation: %w", err)
 	}
 	return nil
 }
