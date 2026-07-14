@@ -15,6 +15,14 @@ import (
 	"github.com/creack/pty"
 )
 
+func init() {
+	// This file is the parity suite for the retained shell renderer. Interactive
+	// compact_view now selects the native renderer when an installed binary
+	// advertises it, so pin these legacy assertions to the documented fallback.
+	// Native PTY behavior is exercised separately in native_ledger_pty_test.go.
+	_ = os.Setenv("WISP_DECK_LEDGER_SHELL_FALLBACK", "1")
+}
+
 // waitForFrame drains the pty until a frame containing want shows up, or the
 // deadline passes. A fixed sleep asserts how FAST the render is, which a loaded
 // 3-core CI runner will lose; polling asserts that it renders at all.
