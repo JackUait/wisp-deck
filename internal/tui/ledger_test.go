@@ -432,3 +432,173 @@ func TestLedgerRefreshSupersedesAndCancelsPriorLoad(t *testing.T) {
 func ledgerRuneKey(r rune) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
 }
+
+type fakeLedgerMutator struct {
+	mu    sync.Mutex
+	calls int
+	dir   string
+	paths []string
+	err   error
+}
+
+func (m *fakeLedgerMutator) Discard(_ context.Context, dir string, paths []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls++
+	m.dir = dir
+	m.paths = append([]string(nil), paths...)
+	return m.err
+}
+
+func (m *fakeLedgerMutator) result() (int, string, []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls, m.dir, append([]string(nil), m.paths...)
+}
+
+func TestLedgerSelectionKeyboardAndCheckboxClickToggleHoveredPath(t *testing.T) {
+	snapshot := ledgerTestSnapshot(3)
+	m := NewLedgerModel(nil, snapshot, LedgerOptions{})
+	sizeLedger(m, 80, 14)
+	m.state.Hovered = snapshot.Rows[1].ID
+
+	m.Update(ledgerRuneKey('x'))
+	if !m.state.IsSelected(snapshot.Rows[1].Path) {
+		t.Fatal("x did not select the hovered path")
+	}
+	m.Update(tea.MouseMsg{X: 1, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if m.state.IsSelected(snapshot.Rows[1].Path) {
+		t.Fatal("checkbox click did not deselect the file row")
+	}
+	m.Update(tea.MouseMsg{X: 4, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if m.state.IsSelected(snapshot.Rows[1].Path) {
+		t.Fatal("click outside the checkbox changed selection")
+	}
+}
+
+func TestLedgerSelectionDiscardArmsSelectedOrHoveredAndSnapsTop(t *testing.T) {
+	snapshot := ledgerTestSnapshot(100)
+	m := NewLedgerModel(nil, snapshot, LedgerOptions{})
+	sizeLedger(m, 80, 14)
+	m.state.ToggleSelected(snapshot.Rows[10].Path)
+	m.state.ToggleSelected(snapshot.Rows[20].Path)
+	m.state.ScrollTo(50)
+
+	m.Update(ledgerRuneKey('d'))
+
+	if !m.discardArmed || m.state.Scroll != 0 {
+		t.Fatalf("armed=%v scroll=%d, want true and 0", m.discardArmed, m.state.Scroll)
+	}
+	if got := strings.Join(m.discardPaths, ","); got != snapshot.Rows[10].Path+","+snapshot.Rows[20].Path {
+		t.Fatalf("discard paths = %q", got)
+	}
+	if out := stripANSI(m.View()); !strings.Contains(out, "Discard 2 files? [ yes ] [ no ]") {
+		t.Fatalf("armed confirmation missing:\n%s", out)
+	}
+
+	m.Update(ledgerRuneKey('n'))
+	if m.discardArmed || len(m.state.Selected) != 2 {
+		t.Fatalf("n cancel armed=%v selected=%v", m.discardArmed, m.state.Selected)
+	}
+
+	m.state.Selected = make(map[string]struct{})
+	m.state.Hovered = snapshot.Rows[2].ID
+	m.Update(ledgerRuneKey('d'))
+	if !m.discardArmed || len(m.discardPaths) != 1 || m.discardPaths[0] != snapshot.Rows[2].Path {
+		t.Fatalf("hover fallback armed=%v paths=%v", m.discardArmed, m.discardPaths)
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.discardArmed {
+		t.Fatal("Esc did not cancel discard confirmation")
+	}
+}
+
+func TestLedgerSelectionDiscardClickSpansMatchRenderedControls(t *testing.T) {
+	snapshot := ledgerTestSnapshot(3)
+	m := NewLedgerModel(nil, snapshot, LedgerOptions{})
+	sizeLedger(m, 80, 14)
+	m.state.ToggleSelected(snapshot.Rows[1].Path)
+	plain := stripANSI(m.View())
+	x, y, ok := cellOf(plain, "discard 1")
+	if !ok {
+		t.Fatalf("discard button missing:\n%s", plain)
+	}
+
+	m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if !m.discardArmed {
+		t.Fatal("clicking rendered discard button did not arm")
+	}
+	plain = stripANSI(m.View())
+	noX, noY, ok := cellOf(plain, "no")
+	if !ok {
+		t.Fatalf("no button missing:\n%s", plain)
+	}
+	m.Update(tea.MouseMsg{X: noX, Y: noY, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if m.discardArmed {
+		t.Fatal("clicking rendered no button did not cancel")
+	}
+}
+
+func TestLedgerSelectionDiscardRunsAsyncAndBlocksDuplicateConfirmation(t *testing.T) {
+	snapshot := ledgerTestSnapshot(3)
+	mutator := &fakeLedgerMutator{}
+	m := NewLedgerModel(nil, snapshot, LedgerOptions{ProjectDir: "/repo", Mutator: mutator})
+	m.state.ToggleSelected(snapshot.Rows[2].Path)
+	m.Update(ledgerRuneKey('d'))
+
+	_, cmd := m.Update(ledgerRuneKey('y'))
+	if cmd == nil || !m.discarding {
+		t.Fatalf("confirm cmd=%v discarding=%v", cmd, m.discarding)
+	}
+	_, duplicate := m.Update(ledgerRuneKey('y'))
+	if duplicate != nil {
+		t.Fatal("duplicate confirmation started a second command")
+	}
+	if calls, _, _ := mutator.result(); calls != 0 {
+		t.Fatal("discard ran synchronously on the Tea update loop")
+	}
+	msg := cmd()
+	if calls, dir, paths := mutator.result(); calls != 1 || dir != "/repo" || strings.Join(paths, ",") != snapshot.Rows[2].Path {
+		t.Fatalf("mutator calls=%d dir=%q paths=%v", calls, dir, paths)
+	}
+	m.Update(msg)
+	if m.discarding || m.discardArmed || len(m.state.Selected) != 0 || m.actionError != nil {
+		t.Fatalf("completed discard state: active=%v armed=%v selected=%v err=%v", m.discarding, m.discardArmed, m.state.Selected, m.actionError)
+	}
+}
+
+func TestLedgerSelectionDiscardFailureRetainsSelectionAndShowsPath(t *testing.T) {
+	snapshot := ledgerTestSnapshot(3)
+	wantErr := errors.New("discard \"src/file-000001.go\": permission denied")
+	mutator := &fakeLedgerMutator{err: wantErr}
+	m := NewLedgerModel(nil, snapshot, LedgerOptions{Mutator: mutator})
+	m.state.ToggleSelected(snapshot.Rows[2].Path)
+	m.Update(ledgerRuneKey('d'))
+	_, cmd := m.Update(ledgerRuneKey('y'))
+
+	m.Update(cmd())
+
+	if m.discarding || !m.discardArmed || !m.state.IsSelected(snapshot.Rows[2].Path) || !errors.Is(m.actionError, wantErr) {
+		t.Fatalf("failure state: active=%v armed=%v selected=%v err=%v", m.discarding, m.discardArmed, m.state.Selected, m.actionError)
+	}
+	if out := stripANSI(m.View()); !strings.Contains(out, snapshot.Rows[2].Path) {
+		t.Fatalf("failing path not rendered:\n%s", out)
+	}
+}
+
+func TestLedgerSelectionStaleHoverDoesNotArmOrMutate(t *testing.T) {
+	mutator := &fakeLedgerMutator{}
+	m := NewLedgerModel(nil, ledgerTestSnapshot(3), LedgerOptions{Mutator: mutator})
+	m.state.Hovered = ledger.RowID{Group: ledger.GroupModified, Path: "missing.txt"}
+
+	m.Update(ledgerRuneKey('x'))
+	m.Update(ledgerRuneKey('d'))
+	_, cmd := m.Update(ledgerRuneKey('y'))
+
+	if len(m.state.Selected) != 0 || m.discardArmed || cmd != nil {
+		t.Fatalf("stale hover selected=%v armed=%v cmd=%v", m.state.Selected, m.discardArmed, cmd)
+	}
+	if calls, _, _ := mutator.result(); calls != 0 {
+		t.Fatalf("stale hover caused %d mutations", calls)
+	}
+}

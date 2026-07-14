@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,6 +30,7 @@ type LedgerOptions struct {
 	Loading         bool
 	RefreshError    error
 	RefreshInterval time.Duration
+	Mutator         ledger.Mutator
 }
 
 // LedgerModel renders the changes ledger from a viewport-bounded state slice.
@@ -43,6 +45,11 @@ type LedgerModel struct {
 	refreshInterval     time.Duration
 	requestedGeneration uint64
 	loadCancel          context.CancelFunc
+	mutator             ledger.Mutator
+	discardArmed        bool
+	discardPaths        []string
+	discarding          bool
+	actionError         error
 	renderRow           func(ledger.Row, int, ledger.RowVisualState) string
 }
 
@@ -57,6 +64,10 @@ type ledgerLoadErrMsg struct {
 }
 
 type ledgerRefreshTickMsg struct{}
+
+type ledgerDiscardDoneMsg struct {
+	err error
+}
 
 // NewLedgerModel creates a native ledger model around an immutable snapshot.
 func NewLedgerModel(source LedgerSource, snapshot ledger.Snapshot, options LedgerOptions) *LedgerModel {
@@ -76,6 +87,7 @@ func NewLedgerModel(source LedgerSource, snapshot ledger.Snapshot, options Ledge
 		refreshError:        options.RefreshError,
 		refreshInterval:     interval,
 		requestedGeneration: snapshot.Generation,
+		mutator:             options.Mutator,
 		renderRow:           renderLedgerRow,
 	}
 }
@@ -93,11 +105,9 @@ func (m *LedgerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.state.Resize(msg.Width, msg.Height, ledgerHeaderHeight, ledgerFooterHeight)
 		return m, nil
 	case tea.MouseMsg:
-		m.handleLedgerMouse(msg)
-		return m, nil
+		return m, m.handleLedgerMouse(msg)
 	case tea.KeyMsg:
-		m.handleLedgerKey(msg)
-		return m, nil
+		return m, m.handleLedgerKey(msg)
 	case ledgerRefreshTickMsg:
 		return m, m.startLoad()
 	case ledgerSnapshotMsg:
@@ -117,6 +127,17 @@ func (m *LedgerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.refreshError = msg.err
 		return m, m.scheduleRefresh()
+	case ledgerDiscardDoneMsg:
+		m.discarding = false
+		if msg.err != nil {
+			m.actionError = msg.err
+			return m, nil
+		}
+		m.discardArmed = false
+		m.discardPaths = nil
+		m.actionError = nil
+		m.state.Selected = make(map[string]struct{})
+		return m, m.startLoad()
 	default:
 		return m, nil
 	}
@@ -157,20 +178,32 @@ func (m *LedgerModel) scheduleRefresh() tea.Cmd {
 	})
 }
 
-func (m *LedgerModel) handleLedgerMouse(msg tea.MouseMsg) {
+func (m *LedgerModel) handleLedgerMouse(msg tea.MouseMsg) tea.Cmd {
 	switch msg.Button {
 	case tea.MouseButtonWheelDown:
 		m.state.ScrollBy(3)
 		m.hoverLedgerMouse(msg)
-		return
+		return nil
 	case tea.MouseButtonWheelUp:
 		m.state.ScrollBy(-3)
 		m.hoverLedgerMouse(msg)
-		return
+		return nil
 	}
 	if msg.Action == tea.MouseActionMotion {
 		m.hoverLedgerMouse(msg)
+		return nil
 	}
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return nil
+	}
+	if cmd, handled := m.handleLedgerDiscardClick(msg); handled {
+		return cmd
+	}
+	m.hoverLedgerMouse(msg)
+	if msg.X >= 0 && msg.X < 3 {
+		m.toggleHoveredSelection()
+	}
+	return nil
 }
 
 func (m *LedgerModel) hoverLedgerMouse(msg tea.MouseMsg) {
@@ -183,31 +216,54 @@ func (m *LedgerModel) hoverLedgerMouse(msg tea.MouseMsg) {
 	m.state.HoverScreenRow(msg.Y + 1)
 }
 
-func (m *LedgerModel) handleLedgerKey(msg tea.KeyMsg) {
+func (m *LedgerModel) handleLedgerKey(msg tea.KeyMsg) tea.Cmd {
+	if msg.Type == tea.KeyEsc && m.discardArmed && !m.discarding {
+		m.cancelDiscard()
+		return nil
+	}
 	switch msg.Type {
 	case tea.KeyDown:
 		m.state.ScrollBy(1)
-		return
+		return nil
 	case tea.KeyUp:
 		m.state.ScrollBy(-1)
-		return
+		return nil
 	case tea.KeyPgDown:
 		m.state.PageBy(1)
-		return
+		return nil
 	case tea.KeyPgUp:
 		m.state.PageBy(-1)
-		return
+		return nil
 	case tea.KeyHome:
 		m.state.ScrollTo(0)
-		return
+		return nil
 	case tea.KeyEnd:
 		m.state.ScrollTo(m.state.MaxScroll())
-		return
+		return nil
 	}
 	if msg.Type != tea.KeyRunes || len(msg.Runes) != 1 {
-		return
+		return nil
 	}
 	switch msg.Runes[0] {
+	case 'x':
+		if !m.discardArmed && !m.discarding {
+			m.toggleHoveredSelection()
+		}
+	case 'd':
+		if m.discarding {
+			return nil
+		}
+		if m.discardArmed {
+			m.cancelDiscard()
+		} else {
+			m.armDiscard()
+		}
+	case 'y':
+		return m.startDiscard()
+	case 'n':
+		if m.discardArmed && !m.discarding {
+			m.cancelDiscard()
+		}
 	case 'j':
 		m.state.ScrollBy(1)
 	case 'k':
@@ -220,6 +276,68 @@ func (m *LedgerModel) handleLedgerKey(msg tea.KeyMsg) {
 		m.state.ScrollTo(0)
 	case 'G':
 		m.state.ScrollTo(m.state.MaxScroll())
+	}
+	return nil
+}
+
+func (m *LedgerModel) hoveredPath() (string, bool) {
+	if m.state.Hovered == (ledger.RowID{}) {
+		return "", false
+	}
+	index, ok := m.state.Snapshot.Index(m.state.Hovered)
+	if !ok || index < 0 || index >= len(m.state.Snapshot.Rows) {
+		return "", false
+	}
+	row := m.state.Snapshot.Rows[index]
+	if row.Kind != ledger.RowFile || row.ID != m.state.Hovered || row.Path == "" {
+		return "", false
+	}
+	return row.Path, true
+}
+
+func (m *LedgerModel) toggleHoveredSelection() {
+	if path, ok := m.hoveredPath(); ok {
+		m.state.ToggleSelected(path)
+		m.actionError = nil
+	}
+}
+
+func (m *LedgerModel) armDiscard() {
+	paths := make([]string, 0, len(m.state.Selected))
+	for path := range m.state.Selected {
+		paths = append(paths, path)
+	}
+	if len(paths) == 0 {
+		if path, ok := m.hoveredPath(); ok {
+			paths = append(paths, path)
+		}
+	}
+	if len(paths) == 0 {
+		return
+	}
+	sort.Strings(paths)
+	m.discardPaths = paths
+	m.discardArmed = true
+	m.actionError = nil
+	m.state.ScrollTo(0)
+}
+
+func (m *LedgerModel) cancelDiscard() {
+	m.discardArmed = false
+	m.discardPaths = nil
+	m.actionError = nil
+}
+
+func (m *LedgerModel) startDiscard() tea.Cmd {
+	if !m.discardArmed || m.discarding || m.mutator == nil || len(m.discardPaths) == 0 {
+		return nil
+	}
+	paths := append([]string(nil), m.discardPaths...)
+	m.discarding = true
+	m.actionError = nil
+	return func() tea.Msg {
+		err := m.mutator.Discard(context.Background(), m.projectDir, paths)
+		return ledgerDiscardDoneMsg{err: err}
 	}
 }
 
@@ -243,12 +361,18 @@ func (m *LedgerModel) View() string {
 		}
 		lines = append(lines, ledgerFitPlain(message, width))
 	} else {
-		for _, row := range visible {
+		for index, row := range visible {
 			visual := ledger.RowVisualState{
 				Hovered:  row.Kind == ledger.RowFile && row.ID == m.state.Hovered,
 				Selected: row.Kind == ledger.RowFile && m.state.IsSelected(row.Path),
 			}
-			lines = append(lines, m.renderRow(row, width, visual))
+			line := m.renderRow(row, width, visual)
+			if m.state.Scroll+index == 0 && row.Kind == ledger.RowGroup {
+				if control, _ := m.ledgerDiscardControl(); control != "" {
+					line = ledgerFitPlain(ledgerGroupLabel(row)+"  "+control, width)
+				}
+			}
+			lines = append(lines, line)
 		}
 	}
 
@@ -257,7 +381,7 @@ func (m *LedgerModel) View() string {
 		lines = append(lines, "")
 		bodyLines++
 	}
-	lines = append(lines, renderLedgerFooter(m.state, width))
+	lines = append(lines, renderLedgerFooter(m.state, width, m.actionError))
 	return strings.Join(lines, "\n")
 }
 
@@ -289,8 +413,7 @@ func renderLedgerHeader(metadata ledger.Metadata, width int) []string {
 func renderLedgerRow(row ledger.Row, width int, visual ledger.RowVisualState) string {
 	switch row.Kind {
 	case ledger.RowGroup:
-		label := fmt.Sprintf(" ● %s  (%d)", row.Label, row.Count)
-		return ledgerFitPlain(label, width)
+		return ledgerFitPlain(ledgerGroupLabel(row), width)
 	case ledger.RowSpacer:
 		return ""
 	case ledger.RowFile:
@@ -298,6 +421,79 @@ func renderLedgerRow(row ledger.Row, width int, visual ledger.RowVisualState) st
 	default:
 		return ""
 	}
+}
+
+func ledgerGroupLabel(row ledger.Row) string {
+	return fmt.Sprintf(" ● %s  (%d)", row.Label, row.Count)
+}
+
+type ledgerDiscardSpans struct {
+	discardStart int
+	discardEnd   int
+	yesStart     int
+	yesEnd       int
+	noStart      int
+	noEnd        int
+}
+
+func (m *LedgerModel) ledgerDiscardControl() (string, ledgerDiscardSpans) {
+	if m.state.Scroll != 0 || len(m.state.Snapshot.Rows) == 0 || m.state.Snapshot.Rows[0].Kind != ledger.RowGroup {
+		return "", ledgerDiscardSpans{}
+	}
+	base := visibleRuneWidth(ledgerGroupLabel(m.state.Snapshot.Rows[0])) + 2
+	spans := ledgerDiscardSpans{}
+	if m.discardArmed {
+		count := len(m.discardPaths)
+		unit := "files"
+		if count == 1 {
+			unit = "file"
+		}
+		prefix := fmt.Sprintf("Discard %d %s? ", count, unit)
+		spans.yesStart = base + visibleRuneWidth(prefix)
+		spans.yesEnd = spans.yesStart + visibleRuneWidth("[ yes ]")
+		spans.noStart = spans.yesEnd + 1
+		spans.noEnd = spans.noStart + visibleRuneWidth("[ no ]")
+		if spans.noEnd > m.width {
+			return ledgerFitPlain(prefix+"[ yes ] [ no ]", m.width-base), ledgerDiscardSpans{}
+		}
+		return prefix + "[ yes ] [ no ]", spans
+	}
+	count := len(m.state.Selected)
+	if count == 0 {
+		return "", spans
+	}
+	control := fmt.Sprintf("[ discard %d ]", count)
+	spans.discardStart = base
+	spans.discardEnd = base + visibleRuneWidth(control)
+	if spans.discardEnd > m.width {
+		return ledgerFitPlain(control, m.width-base), ledgerDiscardSpans{}
+	}
+	return control, spans
+}
+
+func (m *LedgerModel) handleLedgerDiscardClick(msg tea.MouseMsg) (tea.Cmd, bool) {
+	if msg.Y != ledgerHeaderHeight || m.state.Scroll != 0 {
+		return nil, false
+	}
+	_, spans := m.ledgerDiscardControl()
+	inside := func(start, end int) bool { return end > start && msg.X >= start && msg.X < end }
+	if m.discardArmed {
+		if inside(spans.yesStart, spans.yesEnd) {
+			return m.startDiscard(), true
+		}
+		if inside(spans.noStart, spans.noEnd) {
+			if !m.discarding {
+				m.cancelDiscard()
+			}
+			return nil, true
+		}
+		return nil, false
+	}
+	if inside(spans.discardStart, spans.discardEnd) {
+		m.armDiscard()
+		return nil, true
+	}
+	return nil, false
 }
 
 func renderLedgerFileRow(row ledger.Row, width int, visual ledger.RowVisualState) string {
@@ -340,7 +536,12 @@ func renderLedgerFileRow(row ledger.Row, width int, visual ledger.RowVisualState
 	return line
 }
 
-func renderLedgerFooter(state *ledger.State, width int) string {
+func renderLedgerFooter(state *ledger.State, width int, actionError error) string {
+	if actionError != nil {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(
+			ledgerFitPlain(" discard failed · "+actionError.Error(), width),
+		)
+	}
 	metadata := state.Snapshot.Metadata
 	branch := metadata.Branch
 	if branch == "" {
