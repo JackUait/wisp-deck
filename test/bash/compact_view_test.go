@@ -12,6 +12,123 @@ import (
 	"time"
 )
 
+func initCompactViewDispatchRepo(t *testing.T) string {
+	t.Helper()
+	repo := filepath.Join(t.TempDir(), "project with spaces")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	return repo
+}
+
+func TestCompactView_uses_native_when_command_is_advertised(t *testing.T) {
+	repo := initCompactViewDispatchRepo(t)
+	directory := t.TempDir()
+	logPath := filepath.Join(directory, "native.log")
+	fallbackPath := filepath.Join(directory, "fallback")
+	bin := mockCommand(t, directory, "wisp-deck-tui", fmt.Sprintf(`
+if [ "$1" = ledger ] && [ "$2" = --help ]; then exit 0; fi
+printf 'PLAN=%%s\n' "$WISP_DECK_PLAN" >> %q
+for arg in "$@"; do printf 'ARG=%%s\n' "$arg" >> %q; done
+exit 0`, logPath, logPath))
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+	script := fmt.Sprintf(`source %q
+compact_view_shell() { : > %q; }
+compact_view %q`, module, fallbackPath, repo)
+	env := buildEnv(t, []string{bin},
+		"WISP_DECK_LEDGER_NATIVE_TEST=1", "WISP_DECK_TOOL=opencode", "WISP_DECK_PLAN=Max Plan")
+
+	out, code := runBashSnippet(t, script, env)
+
+	assertExitCode(t, code, 0)
+	if _, err := os.Stat(fallbackPath); !os.IsNotExist(err) {
+		t.Fatalf("native dispatch also entered shell fallback: %v\n%s", err, out)
+	}
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"PLAN=Max Plan", "ARG=--ai-tool", "ARG=opencode", "ARG=ledger", "ARG=" + repo} {
+		if !strings.Contains(string(log), want+"\n") {
+			t.Errorf("native invocation missing %q:\n%s", want, log)
+		}
+	}
+}
+
+func TestCompactView_falls_back_for_older_binary_and_override(t *testing.T) {
+	repo := initCompactViewDispatchRepo(t)
+	directory := t.TempDir()
+	probeLog := filepath.Join(directory, "probe.log")
+	bin := mockCommand(t, directory, "wisp-deck-tui", fmt.Sprintf(`
+printf '%%s\n' "$*" >> %q
+exit 1`, probeLog))
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+	base := fmt.Sprintf(`source %q
+compact_view_shell() { printf 'LEGACY'; }
+compact_view %q`, module, repo)
+
+	out, code := runBashSnippet(t, base, buildEnv(t, []string{bin}, "WISP_DECK_LEDGER_NATIVE_TEST=1"))
+	assertExitCode(t, code, 0)
+	if out != "LEGACY" {
+		t.Fatalf("older binary fallback output = %q", out)
+	}
+	probe, err := os.ReadFile(probeLog)
+	if err != nil || !strings.Contains(string(probe), "ledger --help") {
+		t.Fatalf("feature probe = %q, %v", probe, err)
+	}
+
+	if err := os.Remove(probeLog); err != nil {
+		t.Fatal(err)
+	}
+	out, code = runBashSnippet(t, base, buildEnv(t, []string{bin},
+		"WISP_DECK_LEDGER_NATIVE_TEST=1", "WISP_DECK_LEDGER_SHELL_FALLBACK=1"))
+	assertExitCode(t, code, 0)
+	if out != "LEGACY" {
+		t.Fatalf("forced fallback output = %q", out)
+	}
+	if _, err := os.Stat(probeLog); !os.IsNotExist(err) {
+		t.Fatalf("forced fallback still probed native binary: %v", err)
+	}
+}
+
+func TestCompactView_forwards_native_context_safely(t *testing.T) {
+	repo := initCompactViewDispatchRepo(t)
+	directory := t.TempDir()
+	logPath := filepath.Join(directory, "native.log")
+	relaunch := filepath.Join(directory, "relaunch context")
+	libDir := filepath.Join(directory, "lib dir")
+	bin := mockCommand(t, directory, "wisp-deck-tui", fmt.Sprintf(`
+if [ "$1" = ledger ] && [ "$2" = --help ]; then exit 0; fi
+for arg in "$@"; do printf 'ARG=%%s\n' "$arg" >> %q; done
+printf 'PLAN=%%s\n' "$WISP_DECK_PLAN" >> %q`, logPath, logPath))
+	module := filepath.Join(projectRoot(t), "lib", "compact-view.sh")
+	script := fmt.Sprintf("source %q && compact_view %q", module, repo)
+	env := buildEnv(t, []string{bin},
+		"WISP_DECK_LEDGER_NATIVE_TEST=1", "WISP_DECK_TOOL=claude",
+		"WISP_DECK_PLAN=Team Max", "WISP_DECK_RELAUNCH_FILE="+relaunch,
+		"WISP_DECK_LIB_DIR="+libDir, "COMPACT_VIEW_INTERVAL=0.25")
+
+	_, code := runBashSnippet(t, script, env)
+
+	assertExitCode(t, code, 0)
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"ARG=" + repo, "ARG=--relaunch-file", "ARG=" + relaunch,
+		"ARG=--lib-dir", "ARG=" + libDir,
+		"ARG=--refresh-interval", "ARG=0.25s", "PLAN=Team Max",
+	} {
+		if !strings.Contains(string(log), want+"\n") {
+			t.Errorf("forwarded invocation missing %q:\n%s", want, log)
+		}
+	}
+}
+
 // format_file now shows the file BASENAME only (no parent path), truncating
 // with an ellipsis when it exceeds the available width.
 
@@ -1307,7 +1424,7 @@ func TestCompactView_header_shows_changed_file_count(t *testing.T) {
 	writeTempFile(t, dir, "b.txt", "one\n")
 	git("add", "a.txt", "b.txt")
 	git("commit", "-q", "-m", "init")
-	writeTempFile(t, dir, "a.txt", "one\ntwo\n")  // modified
+	writeTempFile(t, dir, "a.txt", "one\ntwo\n")   // modified
 	writeTempFile(t, dir, "b.txt", "one\nthree\n") // modified -> 2 changed files
 
 	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
@@ -1454,7 +1571,7 @@ func TestCompactView_shows_untracked_in_new_section(t *testing.T) {
 	writeTempFile(t, dir, "app.txt", "one\n")
 	git("add", "app.txt")
 	git("commit", "-q", "-m", "init")
-	writeTempFile(t, dir, "app.txt", "one\ntwo\n") // modified (tracked)
+	writeTempFile(t, dir, "app.txt", "one\ntwo\n")    // modified (tracked)
 	writeTempFile(t, dir, "untrackedonly.txt", "x\n") // untracked
 
 	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
@@ -1889,7 +2006,6 @@ func TestUntrackedNumstat_lists_untracked_with_added_count(t *testing.T) {
 	}
 }
 
-
 // untracked_numstat runs in the ledger's per-tick build path, so its cost must
 // not scale with the number of untracked files: one git spawn total (ls-files),
 // not one `git diff --no-index` per file (~8ms each, every refresh tick).
@@ -1937,8 +2053,8 @@ func TestUntrackedNumstat_numstat_semantics_newline_and_binary(t *testing.T) {
 	writeTempFile(t, dir, "seed.txt", "x\n")
 	git("add", "seed.txt")
 	git("commit", "-q", "-m", "init")
-	writeTempFile(t, dir, "noeol.txt", "a\nb")          // 2 lines, no trailing newline
-	writeTempFile(t, dir, "empty.txt", "")               // 0 lines
+	writeTempFile(t, dir, "noeol.txt", "a\nb")        // 2 lines, no trailing newline
+	writeTempFile(t, dir, "empty.txt", "")            // 0 lines
 	writeTempFile(t, dir, "bin.dat", "a\x00b\x00c\n") // binary (NUL bytes)
 
 	out, code := cvFuncArgv(t, "untracked_numstat", dir)
@@ -2063,7 +2179,7 @@ func TestCompactView_hover_hotpath_stays_fork_free(t *testing.T) {
 	// that almost certainly forks again.
 	hover := extractBashFunc(src, "set_hover_from_row")
 	if !strings.Contains(hover, "BODY_LINE") || !strings.Contains(hover, ">/dev/null") {
-		t.Errorf("set_hover_from_row no longer maps the row via $BODY_LINE + a >/dev/null "+
+		t.Errorf("set_hover_from_row no longer maps the row via $BODY_LINE + a >/dev/null " +
 			"redirect; that fork-free pattern is what keeps the per-event hover cheap.")
 	}
 }
@@ -2556,7 +2672,7 @@ func TestFormatImageRow_staged_shows_delta_vs_head(t *testing.T) {
 	git("add", "pic.png")
 	git("commit", "-q", "-m", "init")
 	writeTempFile(t, dir, "pic.png", strings.Repeat("a", 4096)) // grew by 3072 bytes
-	git("add", "pic.png")                                        // stage the growth
+	git("add", "pic.png")                                       // stage the growth
 
 	out, code := cvFuncArgv(t, "format_image_row", dir, "staged", "pic.png", "pic.png")
 	assertExitCode(t, code, 0)

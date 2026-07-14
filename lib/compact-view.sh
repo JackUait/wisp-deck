@@ -966,6 +966,42 @@ compact_view() {
     return
   fi
 
+  # Interactive panes use the native, viewport-bounded renderer when the
+  # installed binary advertises it. Keep the shell implementation as a skew and
+  # recovery fallback; piped unit fixtures remain on that deterministic path.
+  local native_eligible=0
+  if [ -t 0 ] || [ "${WISP_DECK_LEDGER_NATIVE_TEST:-}" = 1 ]; then
+    native_eligible=1
+  fi
+  if [ "$native_eligible" = 1 ] \
+     && [ "${WISP_DECK_LEDGER_SHELL_FALLBACK:-}" != 1 ] \
+     && command -v wisp-deck-tui >/dev/null 2>&1 \
+     && wisp-deck-tui ledger --help >/dev/null 2>&1; then
+    local refresh_interval="${COMPACT_VIEW_INTERVAL:-2}"
+    # The shell interval is historically a bare second count; Go durations
+    # require a unit. Preserve explicitly-unitized values for diagnostics.
+    case "$refresh_interval" in
+      *[!0-9.]*) ;;
+      *) refresh_interval="${refresh_interval}s" ;;
+    esac
+    local -a ledger_args
+    ledger_args=(--ai-tool "${WISP_DECK_TOOL:-claude}" ledger "$project_dir")
+    [ -n "${WISP_DECK_RELAUNCH_FILE:-}" ] \
+      && ledger_args+=(--relaunch-file "$WISP_DECK_RELAUNCH_FILE")
+    [ -n "${WISP_DECK_LIB_DIR:-}" ] \
+      && ledger_args+=(--lib-dir "$WISP_DECK_LIB_DIR")
+    ledger_args+=(--refresh-interval "$refresh_interval")
+    exec wisp-deck-tui "${ledger_args[@]}"
+  fi
+
+  compact_view_shell "$project_dir"
+}
+
+# compact_view_shell is the compatibility renderer retained for older binaries,
+# noninteractive fixtures, and WISP_DECK_LEDGER_SHELL_FALLBACK=1 recovery.
+compact_view_shell() {
+  local project_dir="${1:-.}"
+
   # Interactive only when stdin is a real terminal (the live tmux pane). The Go
   # test harness pipes stdin, so it falls through to the timed-refresh path.
   local interactive=0
