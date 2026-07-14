@@ -44,6 +44,7 @@ func TestRootCmd_SubcommandRegistered(t *testing.T) {
 		"multi-select-ai-tool",
 		"select-branch",
 		"claude-config-menu",
+		"ledger",
 	}
 
 	for _, name := range subcommands {
