@@ -2174,6 +2174,9 @@ func (m *MainMenuModel) sleepTickCmd() tea.Cmd {
 // Init implements tea.Model. Starts animation ticks when in animated mode.
 func (m *MainMenuModel) Init() tea.Cmd {
 	var cmds []tea.Cmd
+	if cmd := m.ensureStatsLoad(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	if m.ghostDisplay == "animated" {
 		cmds = append(cmds, m.bobTickCmd())
 		cmds = append(cmds, m.sleepTickCmd())

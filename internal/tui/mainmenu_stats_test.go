@@ -30,3 +30,15 @@ func TestMainMenu_hasStatsActionLabel(t *testing.T) {
 		t.Errorf("actionLabels missing {T, Stats}: %+v", actionLabels)
 	}
 }
+
+func TestMainMenuInit_startsUsageIngestion(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "static")
+	cmd := m.Init()
+
+	if cmd == nil {
+		t.Fatal("Init returned nil, want background usage ingestion command")
+	}
+	if !m.statsLoading {
+		t.Fatal("Init should mark stats as loading before the Stats tab is opened")
+	}
+}
