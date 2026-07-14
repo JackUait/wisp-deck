@@ -363,6 +363,10 @@ func (m *LedgerModel) finishAccountSwitch() {
 }
 
 func (m *LedgerModel) handleLedgerKey(msg tea.KeyMsg) tea.Cmd {
+	if msg.Type == tea.KeyCtrlC {
+		m.cancelLedgerWork()
+		return tea.Quit
+	}
 	if msg.Type == tea.KeyEsc && m.discardArmed && !m.discarding {
 		m.cancelDiscard()
 		return nil
@@ -427,6 +431,21 @@ func (m *LedgerModel) handleLedgerKey(msg tea.KeyMsg) tea.Cmd {
 		m.state.ScrollTo(m.state.MaxScroll())
 	}
 	return nil
+}
+
+func (m *LedgerModel) cancelLedgerWork() {
+	if m.loadCancel != nil {
+		m.loadCancel()
+		m.loadCancel = nil
+	}
+	if m.openCancel != nil {
+		m.openCancel()
+		m.openCancel = nil
+	}
+	if m.accountCancel != nil {
+		m.accountCancel()
+		m.accountCancel = nil
+	}
 }
 
 func (m *LedgerModel) hoveredRow() (ledger.Row, bool) {
