@@ -897,9 +897,14 @@ select_project_interactive %q || true
 	}
 }
 
-func TestMenu_passes_sound_name_flag_when_sound_has_name(t *testing.T) {
+// The sound preference lives in a JSON document whose strict bash reader
+// spawns python3 — too expensive for the launch critical path. The menu
+// therefore only forwards --sound-file and the Go binary reads the document
+// itself; bash must never pre-read the preference before the picker.
+func TestMenu_forwards_sound_file_without_prereading_preference(t *testing.T) {
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "captured_args")
+	calledFile := filepath.Join(dir, "get_sound_name_called")
 	binDir := mockCommand(t, dir, "wisp-deck-tui", fmt.Sprintf(`
 echo "$*" > %q
 echo '{"action":"quit"}'
@@ -917,11 +922,12 @@ error() { echo "ERROR: $*" >&2; }
 AI_TOOLS_AVAILABLE=("claude")
 SELECTED_AI_TOOL="claude"
 _update_version=""
-# Mock get_sound_name to return a sound name
-get_sound_name() { echo "Bottle"; }
+# If the menu pre-reads the sound preference it re-enters the critical path.
+get_sound_name() { touch %q; echo "Bottle"; }
 select_project_interactive %q || true
 `, filepath.Join(root, "lib/tui.sh"),
 		filepath.Join(root, "lib/menu-tui.sh"),
+		calledFile,
 		projectsFile)
 
 	_, _ = runBashSnippet(t, script, env)
@@ -930,45 +936,12 @@ select_project_interactive %q || true
 	if err != nil {
 		t.Fatalf("args file not found: %v", err)
 	}
-	assertContains(t, string(data), "--sound-name Bottle")
-	assertNotContains(t, string(data), "--sound-enabled")
-}
-
-func TestMenu_omits_sound_name_flag_when_sound_disabled(t *testing.T) {
-	dir := t.TempDir()
-	argsFile := filepath.Join(dir, "captured_args")
-	binDir := mockCommand(t, dir, "wisp-deck-tui", fmt.Sprintf(`
-echo "$*" > %q
-echo '{"action":"quit"}'
-`, argsFile))
-	projectsFile := writeTempFile(t, dir, "projects", "test:/tmp/test\n")
-	root := projectRoot(t)
-	env := buildEnv(t, []string{binDir},
-		"XDG_CONFIG_HOME="+filepath.Join(dir, "config"),
-	)
-
-	script := fmt.Sprintf(`
-source %q 2>/dev/null || true
-source %q
-error() { echo "ERROR: $*" >&2; }
-AI_TOOLS_AVAILABLE=("claude")
-SELECTED_AI_TOOL="claude"
-_update_version=""
-# Mock get_sound_name to return empty (disabled)
-get_sound_name() { echo ""; }
-select_project_interactive %q || true
-`, filepath.Join(root, "lib/tui.sh"),
-		filepath.Join(root, "lib/menu-tui.sh"),
-		projectsFile)
-
-	_, _ = runBashSnippet(t, script, env)
-
-	data, err := os.ReadFile(argsFile)
-	if err != nil {
-		t.Fatalf("args file not found: %v", err)
-	}
+	assertContains(t, string(data), "--sound-file")
 	assertNotContains(t, string(data), "--sound-name")
 	assertNotContains(t, string(data), "--sound-enabled")
+	if _, err := os.Stat(calledFile); err == nil {
+		t.Error("select_project_interactive called get_sound_name; the sound preference must be read by the Go binary, not on the bash launch path")
+	}
 }
 
 func TestMenu_passes_settings_file_flag(t *testing.T) {

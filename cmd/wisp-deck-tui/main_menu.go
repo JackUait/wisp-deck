@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jackuait/wisp-deck/internal/models"
+	"github.com/jackuait/wisp-deck/internal/soundpref"
 	"github.com/jackuait/wisp-deck/internal/tui"
 	"github.com/jackuait/wisp-deck/internal/util"
 	"github.com/spf13/cobra"
@@ -73,6 +74,20 @@ func init() {
 	mainMenuCmd.Flags().StringVar(&mainMenuClaudeDefaultLabelFile, "claude-default-label-file", "", "Path to the Default login's custom label file")
 	mainMenuCmd.Flags().StringVar(&mainMenuAutoSwitchFile, "auto-switch-file", "", "Path to the automatic account-switching on/off flag file")
 	rootCmd.AddCommand(mainMenuCmd)
+}
+
+// resolveMainMenuSoundName returns the notification sound for the menu. An
+// explicit --sound-name wins; otherwise the --sound-file document is read
+// here. Bash must not pre-read it: the strict reader costs a python3 spawn,
+// which is forbidden on the launch critical path.
+func resolveMainMenuSoundName(flagValue, soundFile string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	if soundFile == "" {
+		return ""
+	}
+	return soundpref.Read(soundFile)
 }
 
 func runMainMenu(cmd *cobra.Command, args []string) error {
@@ -141,7 +156,7 @@ func buildMainMenuModel() (*tui.MainMenuModel, error) {
 	model.SetStatsMode(readStatsModePref())
 	model.SetTabTitle(mainMenuTabTitle)
 	model.SetKeepAwake(mainMenuKeepAwake)
-	model.SetSoundName(mainMenuSoundName)
+	model.SetSoundName(resolveMainMenuSoundName(mainMenuSoundName, mainMenuSoundFile))
 	model.SetProjectsFile(mainMenuProjectsFile)
 	if mainMenuProjectsRootFile != "" {
 		model.SetProjectsRootFile(mainMenuProjectsRootFile)

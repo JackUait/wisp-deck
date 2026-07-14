@@ -42,12 +42,7 @@ select_project_interactive() {
     fi
   fi
 
-  # Read sound notification state
-  local sound_name=""
   local gt_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
-  if type get_sound_name &>/dev/null; then
-    sound_name="$(get_sound_name "${SELECTED_AI_TOOL:-claude}" "$gt_config_dir")"
-  fi
 
   # Build AI tools comma-separated list
   local ai_tools_csv
@@ -72,11 +67,11 @@ select_project_interactive() {
   local _lib_dir="${WISP_DECK_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
   cmd_args+=("--lib-dir" "$_lib_dir")
   cmd_args+=("--disabled-tools-file" "$gt_config_dir/disabled-tools")
+  # Only the file path is forwarded; the Go binary reads the preference
+  # itself. The bash reader spawns python3, which must never run before the
+  # picker (launch critical path).
   local sound_file="$gt_config_dir/${SELECTED_AI_TOOL:-claude}-features.json"
   cmd_args+=("--sound-file" "$sound_file")
-  if [[ -n "$sound_name" ]]; then
-    cmd_args+=("--sound-name" "$sound_name")
-  fi
   cmd_args+=("--claude-config-file" "$gt_config_dir/claude-config")
   cmd_args+=("--claude-configs-list" "$gt_config_dir/claude-configs.list")
   cmd_args+=("--claude-configs-dir" "$gt_config_dir/claude-configs")
