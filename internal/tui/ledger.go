@@ -31,6 +31,9 @@ type LedgerOptions struct {
 	RefreshError    error
 	RefreshInterval time.Duration
 	Mutator         ledger.Mutator
+	Popup           ledger.Popup
+	BackdropCache   ledger.BackdropCache
+	Tool            string
 }
 
 // LedgerModel renders the changes ledger from a viewport-bounded state slice.
@@ -46,6 +49,13 @@ type LedgerModel struct {
 	requestedGeneration uint64
 	loadCancel          context.CancelFunc
 	mutator             ledger.Mutator
+	popup               ledger.Popup
+	backdropCache       ledger.BackdropCache
+	tool                string
+	backdropRefreshing  bool
+	opening             bool
+	openedPath          string
+	openCancel          context.CancelFunc
 	discardArmed        bool
 	discardPaths        []string
 	discarding          bool
@@ -69,6 +79,16 @@ type ledgerDiscardDoneMsg struct {
 	err error
 }
 
+type ledgerPopupDoneMsg struct {
+	path   string
+	result ledger.OpenResult
+	err    error
+}
+
+type ledgerBackdropReadyMsg struct {
+	err error
+}
+
 // NewLedgerModel creates a native ledger model around an immutable snapshot.
 func NewLedgerModel(source LedgerSource, snapshot ledger.Snapshot, options LedgerOptions) *LedgerModel {
 	state := ledger.NewState(snapshot)
@@ -88,6 +108,9 @@ func NewLedgerModel(source LedgerSource, snapshot ledger.Snapshot, options Ledge
 		refreshInterval:     interval,
 		requestedGeneration: snapshot.Generation,
 		mutator:             options.Mutator,
+		popup:               options.Popup,
+		backdropCache:       options.BackdropCache,
+		tool:                options.Tool,
 		renderRow:           renderLedgerRow,
 	}
 }
@@ -118,7 +141,7 @@ func (m *LedgerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.state.ReplaceSnapshot(msg.snapshot)
 		m.loading = false
 		m.refreshError = nil
-		return m, m.scheduleRefresh()
+		return m, tea.Batch(m.scheduleRefresh(), m.refreshBackdrop())
 	case ledgerLoadErrMsg:
 		if msg.generation != m.requestedGeneration {
 			return m, nil
@@ -138,6 +161,20 @@ func (m *LedgerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.actionError = nil
 		m.state.Selected = make(map[string]struct{})
 		return m, m.startLoad()
+	case ledgerPopupDoneMsg:
+		if msg.path != m.openedPath {
+			return m, nil
+		}
+		m.finishOpen()
+		if msg.err != nil {
+			m.actionError = msg.err
+		} else {
+			m.actionError = nil
+		}
+		return m, tea.Batch(m.startLoad(), m.refreshBackdrop())
+	case ledgerBackdropReadyMsg:
+		m.backdropRefreshing = false
+		return m, nil
 	default:
 		return m, nil
 	}
@@ -178,6 +215,16 @@ func (m *LedgerModel) scheduleRefresh() tea.Cmd {
 	})
 }
 
+func (m *LedgerModel) refreshBackdrop() tea.Cmd {
+	if m.backdropCache == nil || m.backdropRefreshing {
+		return nil
+	}
+	m.backdropRefreshing = true
+	return func() tea.Msg {
+		return ledgerBackdropReadyMsg{err: m.backdropCache.Refresh(context.Background())}
+	}
+}
+
 func (m *LedgerModel) handleLedgerMouse(msg tea.MouseMsg) tea.Cmd {
 	switch msg.Button {
 	case tea.MouseButtonWheelDown:
@@ -202,8 +249,9 @@ func (m *LedgerModel) handleLedgerMouse(msg tea.MouseMsg) tea.Cmd {
 	m.hoverLedgerMouse(msg)
 	if msg.X >= 0 && msg.X < 3 {
 		m.toggleHoveredSelection()
+		return nil
 	}
-	return nil
+	return m.openHovered()
 }
 
 func (m *LedgerModel) hoverLedgerMouse(msg tea.MouseMsg) {
@@ -220,6 +268,9 @@ func (m *LedgerModel) handleLedgerKey(msg tea.KeyMsg) tea.Cmd {
 	if msg.Type == tea.KeyEsc && m.discardArmed && !m.discarding {
 		m.cancelDiscard()
 		return nil
+	}
+	if msg.Type == tea.KeyEnter && !m.discardArmed && !m.discarding {
+		return m.openHovered()
 	}
 	switch msg.Type {
 	case tea.KeyDown:
@@ -280,19 +331,72 @@ func (m *LedgerModel) handleLedgerKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-func (m *LedgerModel) hoveredPath() (string, bool) {
+func (m *LedgerModel) hoveredRow() (ledger.Row, bool) {
 	if m.state.Hovered == (ledger.RowID{}) {
-		return "", false
+		return ledger.Row{}, false
 	}
 	index, ok := m.state.Snapshot.Index(m.state.Hovered)
 	if !ok || index < 0 || index >= len(m.state.Snapshot.Rows) {
-		return "", false
+		return ledger.Row{}, false
 	}
 	row := m.state.Snapshot.Rows[index]
 	if row.Kind != ledger.RowFile || row.ID != m.state.Hovered || row.Path == "" {
+		return ledger.Row{}, false
+	}
+	return row, true
+}
+
+func (m *LedgerModel) hoveredPath() (string, bool) {
+	row, ok := m.hoveredRow()
+	if !ok {
 		return "", false
 	}
 	return row.Path, true
+}
+
+func (m *LedgerModel) openHovered() tea.Cmd {
+	row, ok := m.hoveredRow()
+	if !ok || m.popup == nil || m.opening {
+		return nil
+	}
+	backdrop := ""
+	if m.backdropCache != nil {
+		if latest, ready := m.backdropCache.Latest(); ready {
+			backdrop = latest
+		}
+	}
+	extension := strings.ToLower(path.Ext(row.Path))
+	image := row.Binary && row.NewBytes > 0 && (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".gif")
+	status := "modified"
+	if row.ID.Group == ledger.GroupNew {
+		status = "added"
+	}
+	request := ledger.OpenRequest{
+		ProjectDir: m.projectDir, Path: row.Path, Tool: m.tool,
+		BackdropFile: backdrop, Tracked: row.ID.Group != ledger.GroupNew,
+		Image: image, Status: status,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.openCancel = cancel
+	m.opening = true
+	m.openedPath = row.Path
+	m.actionError = nil
+	return func() tea.Msg {
+		result, err := m.popup.Open(ctx, request)
+		if err == nil && result.Discard && m.mutator != nil {
+			err = m.mutator.Discard(ctx, m.projectDir, []string{row.Path})
+		}
+		return ledgerPopupDoneMsg{path: row.Path, result: result, err: err}
+	}
+}
+
+func (m *LedgerModel) finishOpen() {
+	if m.openCancel != nil {
+		m.openCancel()
+		m.openCancel = nil
+	}
+	m.opening = false
+	m.openedPath = ""
 }
 
 func (m *LedgerModel) toggleHoveredSelection() {

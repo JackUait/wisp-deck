@@ -602,3 +602,196 @@ func TestLedgerSelectionStaleHoverDoesNotArmOrMutate(t *testing.T) {
 		t.Fatalf("stale hover caused %d mutations", calls)
 	}
 }
+
+type fakeLedgerPopup struct {
+	mu      sync.Mutex
+	calls   int
+	request ledger.OpenRequest
+	started chan struct{}
+	release chan struct{}
+	result  ledger.OpenResult
+	err     error
+}
+
+func (p *fakeLedgerPopup) Open(ctx context.Context, request ledger.OpenRequest) (ledger.OpenResult, error) {
+	p.mu.Lock()
+	p.calls++
+	p.request = request
+	p.mu.Unlock()
+	if p.started != nil {
+		select {
+		case p.started <- struct{}{}:
+		default:
+		}
+	}
+	if p.release != nil {
+		select {
+		case <-p.release:
+		case <-ctx.Done():
+			return ledger.OpenResult{}, ctx.Err()
+		}
+	}
+	return p.result, p.err
+}
+
+func (p *fakeLedgerPopup) recorded() (int, ledger.OpenRequest) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls, p.request
+}
+
+type fakeBackdropCache struct {
+	mu           sync.Mutex
+	path         string
+	ready        bool
+	refreshCalls int
+	refreshErr   error
+	closed       bool
+}
+
+func (c *fakeBackdropCache) Latest() (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.path, c.ready
+}
+
+func (c *fakeBackdropCache) Refresh(context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.refreshCalls++
+	return c.refreshErr
+}
+
+func (c *fakeBackdropCache) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+	return nil
+}
+
+func (c *fakeBackdropCache) refreshCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.refreshCalls
+}
+
+func TestLedgerOpenClickStartsPopupOffInputLoopOnCacheMiss(t *testing.T) {
+	snapshot := ledgerTestSnapshot(3)
+	popup := &fakeLedgerPopup{started: make(chan struct{}, 1), release: make(chan struct{})}
+	cache := &fakeBackdropCache{}
+	m := NewLedgerModel(nil, snapshot, LedgerOptions{
+		ProjectDir: "/repo", Popup: popup, BackdropCache: cache, Tool: "opencode",
+	})
+	sizeLedger(m, 80, 14)
+
+	_, cmd := m.Update(tea.MouseMsg{X: 12, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+
+	if cmd == nil || !m.opening {
+		t.Fatalf("click cmd=%v opening=%v", cmd, m.opening)
+	}
+	if calls, _ := popup.recorded(); calls != 0 {
+		t.Fatal("popup blocked the Tea update loop")
+	}
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+	select {
+	case <-popup.started:
+	case <-time.After(time.Second):
+		t.Fatal("popup did not start immediately on a cache miss")
+	}
+	if cache.refreshCount() != 0 {
+		t.Fatal("click waited on or started backdrop refresh")
+	}
+	_, request := popup.recorded()
+	if request.Path != snapshot.Rows[1].Path || request.ProjectDir != "/repo" || request.Tool != "opencode" || request.BackdropFile != "" {
+		t.Fatalf("popup request = %#v", request)
+	}
+	close(popup.release)
+	msg := <-done
+	m.Update(msg)
+	if m.opening {
+		t.Fatal("popup completion did not clear opening state")
+	}
+}
+
+func TestLedgerOpenUsesCachedBackdropAndImageMetadata(t *testing.T) {
+	row := ledger.Row{
+		Kind: ledger.RowFile, ID: ledger.RowID{Group: ledger.GroupNew, Path: "art/shot.png"},
+		Path: "art/shot.png", Binary: true, NewBytes: 2048,
+	}
+	snapshot := ledger.NewSnapshot(1, []ledger.Row{
+		{Kind: ledger.RowGroup, Label: "new", Count: 1}, row,
+	}, ledger.Metadata{TotalFiles: 1})
+	popup := &fakeLedgerPopup{}
+	cache := &fakeBackdropCache{path: "/tmp/cached-backdrop", ready: true}
+	m := NewLedgerModel(nil, snapshot, LedgerOptions{ProjectDir: "/repo", Popup: popup, BackdropCache: cache})
+	sizeLedger(m, 80, 14)
+
+	_, cmd := m.Update(tea.MouseMsg{X: 12, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if cmd == nil {
+		t.Fatal("image click returned no popup command")
+	}
+	_ = cmd()
+	_, request := popup.recorded()
+
+	if request.BackdropFile != "/tmp/cached-backdrop" || !request.Image || request.Tracked || request.Status != "added" {
+		t.Fatalf("image popup request = %#v", request)
+	}
+}
+
+func TestLedgerOpenCompletionDiscardsDecisionAndRefreshesState(t *testing.T) {
+	snapshot := ledgerTestSnapshot(3)
+	popup := &fakeLedgerPopup{result: ledger.OpenResult{Discard: true}}
+	mutator := &fakeLedgerMutator{}
+	cache := &fakeBackdropCache{}
+	source := &recordingLedgerSource{snapshot: snapshot}
+	m := NewLedgerModel(source, snapshot, LedgerOptions{
+		ProjectDir: "/repo", Popup: popup, BackdropCache: cache, Mutator: mutator,
+	})
+	sizeLedger(m, 80, 14)
+
+	_, openCmd := m.Update(tea.MouseMsg{X: 12, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	popupDone := openCmd()
+	if calls, dir, paths := mutator.result(); calls != 1 || dir != "/repo" || strings.Join(paths, ",") != snapshot.Rows[1].Path {
+		t.Fatalf("popup discard calls=%d dir=%q paths=%v", calls, dir, paths)
+	}
+	_, refreshCmd := m.Update(popupDone)
+	if refreshCmd == nil {
+		t.Fatal("popup completion scheduled no refresh work")
+	}
+	batch, ok := refreshCmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("popup refresh message = %T, want tea.BatchMsg", refreshCmd())
+	}
+	for _, command := range batch {
+		if command != nil {
+			_ = command()
+		}
+	}
+	if source.CallCount() != 1 || cache.refreshCount() != 1 {
+		t.Fatalf("completion refreshes: source=%d backdrop=%d", source.CallCount(), cache.refreshCount())
+	}
+}
+
+func TestLedgerOpenEnterActivatesHoveredAndStaleRowsDoNothing(t *testing.T) {
+	snapshot := ledgerTestSnapshot(3)
+	popup := &fakeLedgerPopup{}
+	m := NewLedgerModel(nil, snapshot, LedgerOptions{Popup: popup})
+	m.state.Hovered = snapshot.Rows[2].ID
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("Enter returned no popup command for hovered row")
+	}
+	_ = cmd()
+	if calls, request := popup.recorded(); calls != 1 || request.Path != snapshot.Rows[2].Path {
+		t.Fatalf("Enter popup calls=%d request=%#v", calls, request)
+	}
+
+	m.opening = false
+	m.state.Hovered = ledger.RowID{Group: ledger.GroupModified, Path: "missing.go"}
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("stale hovered row opened a popup")
+	}
+}
