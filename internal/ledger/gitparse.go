@@ -8,12 +8,14 @@ import (
 
 // Change is one path record from Git's NUL-delimited numstat output.
 type Change struct {
-	Group   Group
-	Path    string
-	OldPath string
-	Added   int
-	Deleted int
-	Binary  bool
+	Group    Group
+	Path     string
+	OldPath  string
+	Added    int
+	Deleted  int
+	Binary   bool
+	OldBytes int64
+	NewBytes int64
 }
 
 // parseNumstatZ parses `git diff --numstat -z` output. Ordinary records are
