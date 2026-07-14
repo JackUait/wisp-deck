@@ -7,9 +7,30 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )
+
+type gatedDiffInput struct {
+	started chan struct{}
+	release chan struct{}
+	done    bool
+}
+
+func (r *gatedDiffInput) Read(buffer []byte) (int, error) {
+	select {
+	case r.started <- struct{}{}:
+	default:
+	}
+	<-r.release
+	if r.done {
+		return 0, io.EOF
+	}
+	r.done = true
+	return copy(buffer, "+ready\n"), nil
+}
 
 func TestRootCmd_HasVersion(t *testing.T) {
 	if rootCmd.Version == "" {
@@ -397,6 +418,65 @@ func TestDiffViewCmd_HasBackdropFileFlag(t *testing.T) {
 	cmd, _, _ := rootCmd.Find([]string{"diff-view"})
 	if cmd.Flags().Lookup("backdrop-file") == nil {
 		t.Fatal("expected --backdrop-file flag on diff-view")
+	}
+}
+
+func TestRunDiffViewStartsBeforeEOF(t *testing.T) {
+	reader := &gatedDiffInput{started: make(chan struct{}, 1), release: make(chan struct{})}
+	originalImage := diffViewImage
+	originalTitle := diffViewTitle
+	t.Cleanup(func() {
+		diffViewImage = originalImage
+		diffViewTitle = originalTitle
+	})
+	diffViewImage = false
+	diffViewTitle = "slow.go"
+
+	returned := make(chan struct {
+		model tea.Model
+		err   error
+	}, 1)
+	go func() {
+		model, err := newDiffViewModel(reader)
+		returned <- struct {
+			model tea.Model
+			err   error
+		}{model: model, err: err}
+	}()
+
+	var result struct {
+		model tea.Model
+		err   error
+	}
+	select {
+	case result = <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("text model construction blocked waiting for EOF")
+	}
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	select {
+	case <-reader.started:
+		t.Fatal("text input was read before the Tea command started")
+	default:
+	}
+	cmd := result.model.Init()
+	if cmd == nil {
+		t.Fatal("text model has no asynchronous load command")
+	}
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+	select {
+	case <-reader.started:
+	case <-time.After(time.Second):
+		t.Fatal("Tea command did not start reading text input")
+	}
+	close(reader.release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Tea command did not finish after EOF")
 	}
 }
 

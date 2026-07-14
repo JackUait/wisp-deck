@@ -1,13 +1,40 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+type blockingDiffReader struct {
+	started chan struct{}
+	release chan struct{}
+	data    string
+}
+
+func (r *blockingDiffReader) Read(buffer []byte) (int, error) {
+	select {
+	case r.started <- struct{}{}:
+	default:
+	}
+	<-r.release
+	if r.data == "" {
+		return 0, io.EOF
+	}
+	n := copy(buffer, r.data)
+	r.data = r.data[n:]
+	return n, nil
+}
+
+type failingDiffReader struct{ err error }
+
+func (r failingDiffReader) Read([]byte) (int, error) { return 0, r.err }
 
 // cellOf finds the screen cell (x = display column, y = row) where needle starts
 // in the ANSI-stripped render, so click tests don't hardcode columns that shift
@@ -83,6 +110,91 @@ func TestNewDiffView_stores_title_and_content(t *testing.T) {
 	}
 	if m.content != "+hello\n" {
 		t.Errorf("content = %q, want +hello", m.content)
+	}
+}
+
+func TestDiffViewAsyncInitialFrameAndInputStayResponsive(t *testing.T) {
+	reader := &blockingDiffReader{started: make(chan struct{}, 1), release: make(chan struct{}), data: "+loaded\n"}
+	m := NewLoadingDiffView("src/slow.go").WithDiffReader(reader)
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatal("loading model returned no read command")
+	}
+	m = sizeDiff(m, 80, 24)
+	plain := stripA(m.View())
+	if !strings.Contains(plain, "slow.go") || !strings.Contains(strings.ToLower(plain), "loading diff") {
+		t.Fatalf("initial frame lacks title/loading chrome:\n%s", plain)
+	}
+
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+	select {
+	case <-reader.started:
+	case <-time.After(time.Second):
+		t.Fatal("diff read command did not start")
+	}
+	m2, quit := keyDiff(m, tea.KeyEscape)
+	if !m2.quitting || !quits(quit) {
+		t.Fatal("Escape was not responsive while diff input was blocked")
+	}
+
+	m = sizeDiff(NewLoadingDiffView("src/slow.go"), 80, 24)
+	mh, mv, _, _ := m.layout()
+	updated, outsideQuit := m.Update(tea.MouseMsg{
+		X: mh - 1, Y: mv, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+	})
+	if !updated.(DiffViewModel).quitting || !quits(outsideQuit) {
+		t.Fatal("outside click was not responsive while diff was loading")
+	}
+	close(reader.release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("diff read command did not finish after EOF")
+	}
+}
+
+func TestDiffViewAsyncLoadedMessageMatchesEagerModel(t *testing.T) {
+	content := " context\n-old\n+new\n"
+	m := sizeDiff(NewLoadingDiffView("src/file.go"), 90, 26)
+	msg := m.LoadDiff(strings.NewReader(content))()
+
+	updated, cmd := m.Update(msg)
+	got := updated.(DiffViewModel)
+	want := NewDiffView("src/file.go", content)
+
+	if cmd != nil {
+		t.Fatalf("loaded message command = %v, want nil", cmd)
+	}
+	if got.loading || got.loadErr != nil {
+		t.Fatalf("loaded state loading=%v err=%v", got.loading, got.loadErr)
+	}
+	if got.content != want.content || got.highlighted != want.highlighted || got.status != want.status || got.added != want.added || got.deleted != want.deleted || got.singleView != want.singleView {
+		t.Fatalf("async content diverged:\n got=%#v\nwant=%#v", got, want)
+	}
+	if view := stripA(got.View()); !strings.Contains(view, "old") || !strings.Contains(view, "new") {
+		t.Fatalf("loaded frame lacks diff content:\n%s", view)
+	}
+}
+
+func TestDiffViewAsyncReadErrorRendersRecoverableState(t *testing.T) {
+	wantErr := errors.New("pipe interrupted")
+	m := sizeDiff(NewLoadingDiffView("src/file.go"), 80, 24)
+	msg := m.LoadDiff(failingDiffReader{err: wantErr})()
+
+	updated, _ := m.Update(msg)
+	got := updated.(DiffViewModel)
+	plain := stripA(got.View())
+
+	if got.loading || !errors.Is(got.loadErr, wantErr) {
+		t.Fatalf("error state loading=%v err=%v", got.loading, got.loadErr)
+	}
+	if !strings.Contains(plain, "pipe interrupted") {
+		t.Fatalf("read error not rendered:\n%s", plain)
+	}
+	closed, quit := keyDiff(got, tea.KeyEscape)
+	if !closed.quitting || !quits(quit) {
+		t.Fatal("error state could not be closed")
 	}
 }
 

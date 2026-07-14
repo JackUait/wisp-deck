@@ -67,7 +67,7 @@ func writeDiscardDecision(path string, requested bool) error {
 func runDiffView(cmd *cobra.Command, args []string) error {
 	// The diff body arrives on stdin (a pipe); keyboard input comes from the TTY
 	// via TUITeaOptions, so the two never collide.
-	data, err := io.ReadAll(os.Stdin)
+	model, err := newDiffViewModel(os.Stdin)
 	if err != nil {
 		return fmt.Errorf("failed to read diff: %w", err)
 	}
@@ -78,12 +78,7 @@ func runDiffView(cmd *cobra.Command, args []string) error {
 	// with kitty graphics (Ghostty), the real pixels are overlaid on top of the
 	// half-block cells via a second TTY handle; if anything in that chain fails,
 	// the half-block preview is what the user sees.
-	var model tui.DiffViewModel
 	if diffViewImage {
-		model = tui.NewImageView(diffViewTitle, data, diffViewStatus)
-		if diffViewPath != "" {
-			model = model.WithImagePath(diffViewPath)
-		}
 		if tui.SupportsKittyGraphics(os.Getenv) {
 			// Preferred channel: the tmux client tty, written raw — tmux popups
 			// swallow DCS passthrough, so the popup's own pty can't carry the
@@ -96,8 +91,6 @@ func runDiffView(cmd *cobra.Command, args []string) error {
 				model = model.WithKittyHires(gfxTTY, os.Getenv("TMUX") != "")
 			}
 		}
-	} else {
-		model = tui.NewDiffView(diffViewTitle, string(data))
 	}
 	// Show the screen behind the (full-screen) popup dimmed in the margin. Best
 	// effort: an unreadable/missing backdrop file just leaves the margin blank.
@@ -130,4 +123,21 @@ func runDiffView(cmd *cobra.Command, args []string) error {
 		}
 	}
 	return nil
+}
+
+// newDiffViewModel keeps text input lazy so Bubble Tea can paint before stdin
+// reaches EOF. Image decoding still requires the complete binary payload.
+func newDiffViewModel(reader io.Reader) (tui.DiffViewModel, error) {
+	if !diffViewImage {
+		return tui.NewLoadingDiffView(diffViewTitle).WithDiffReader(reader), nil
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return tui.DiffViewModel{}, err
+	}
+	model := tui.NewImageView(diffViewTitle, data, diffViewStatus)
+	if diffViewPath != "" {
+		model = model.WithImagePath(diffViewPath)
+	}
+	return model, nil
 }

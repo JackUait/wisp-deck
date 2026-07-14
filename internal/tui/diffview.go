@@ -25,8 +25,11 @@ type DiffViewModel struct {
 	content     string
 	highlighted string // syntax-highlighted body; m.content stays raw
 	status      string // "added" | "deleted" | "modified", derived from the diff
-	added    int
-	deleted  int
+	added       int
+	deleted     int
+	loading     bool
+	loadErr     error
+	diffReader  io.Reader
 	width       int // full popup (window) size; the box floats centered within it
 	height      int
 	backdrop    []string // dimmed screen snapshot shown behind the box (may be nil)
@@ -62,6 +65,11 @@ type DiffViewModel struct {
 	kittySent   bool
 	kittyArming bool         // transmit command in flight
 	kittyShared *kittyShared // state shared with the transmit goroutine
+}
+
+type diffLoadedMsg struct {
+	content string
+	err     error
 }
 
 // DiscardRequested reports whether the user confirmed discarding the file's
@@ -1019,29 +1027,69 @@ func diffStatus(content string) string {
 // derived from the raw content. A whole-file add/delete is shown in a single
 // (inline) view with no view switcher.
 func NewDiffView(title, content string) DiffViewModel {
+	m := NewLoadingDiffView(title)
+	m.installDiff(content)
+	return m
+}
+
+// NewLoadingDiffView creates a text-diff popup that can paint its chrome before
+// the piped diff has reached EOF.
+func NewLoadingDiffView(title string) DiffViewModel {
+	return DiffViewModel{
+		title:      title,
+		status:     "modified",
+		singleView: true,
+		compact:    true,
+		hoverMode:  -1,
+		hoverCtx:   -1,
+		loading:    true,
+	}
+}
+
+// WithDiffReader attaches the text stream that Init will load asynchronously.
+func (m DiffViewModel) WithDiffReader(reader io.Reader) DiffViewModel {
+	m.diffReader = reader
+	return m
+}
+
+// LoadDiff returns a Tea command that owns the blocking stream read.
+func (m DiffViewModel) LoadDiff(reader io.Reader) tea.Cmd {
+	return func() tea.Msg {
+		content, err := io.ReadAll(reader)
+		return diffLoadedMsg{content: string(content), err: err}
+	}
+}
+
+func (m *DiffViewModel) installDiff(content string) {
 	added, deleted := countDiffLines(content)
 	single := isSingleSided(content)
 	// Expand tabs before highlighting so no tab reaches the column layout; the
 	// raw content is kept for the line counts/status (tabs don't affect those).
 	expanded := expandTabs(content, diffTabWidth)
-	return DiffViewModel{
-		title:       title,
-		content:     content,
-		highlighted: highlightDiff(expanded, title),
-		added:       added,
-		deleted:     deleted,
-		status:      diffStatus(content),
-		singleView:  single,
-		compact:     true,
-		collapsible: !single && hasCollapsibleContext(content, diffContextLines),
-		hoverMode:   -1,
-		hoverCtx:    -1,
-	}
+	m.content = content
+	m.highlighted = highlightDiff(expanded, m.title)
+	m.added = added
+	m.deleted = deleted
+	m.status = diffStatus(content)
+	m.singleView = single
+	m.compact = true
+	m.collapsible = !single && hasCollapsibleContext(content, diffContextLines)
+	m.hoverMode = -1
+	m.hoverCtx = -1
+	m.loading = false
+	m.loadErr = nil
+	m.diffReader = nil
 }
 
 // bodyContent is the diff body to render: collapsed (changes-only) when the view
 // is compact and there's context worth hiding, otherwise the full file.
 func (m DiffViewModel) bodyContent() string {
+	if m.loading {
+		return diffGutterStyle.Render(" loading diff…")
+	}
+	if m.loadErr != nil {
+		return diffDelStyle.Render(" could not load diff · " + m.loadErr.Error())
+	}
 	if m.compact && m.collapsible {
 		return collapseContext(m.highlighted, diffContextLines)
 	}
@@ -1056,6 +1104,9 @@ func (m DiffViewModel) WithBackdrop(rows []string) DiffViewModel {
 }
 
 func (m DiffViewModel) Init() tea.Cmd {
+	if m.loading && m.diffReader != nil {
+		return m.LoadDiff(m.diffReader)
+	}
 	return nil
 }
 
@@ -1104,6 +1155,31 @@ func (m DiffViewModel) layout() (mh, mv, contentW, contentH int) {
 
 func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case diffLoadedMsg:
+		if msg.err != nil {
+			m.loading = false
+			m.loadErr = msg.err
+			m.diffReader = nil
+		} else {
+			m.installDiff(msg.content)
+		}
+		if m.ready {
+			_, _, cw, ch := m.layout()
+			h := ch - m.headerHeight() - diffFooterHeight
+			if h < 1 {
+				h = 1
+			}
+			m.viewport.Width = cw
+			m.viewport.Height = h
+			if m.singleView {
+				m.mode = diffModeInline
+			} else if !m.modeForced {
+				m.mode = pickByWidth(cw)
+			}
+			m.viewport.SetContent(renderBodyMode(m.bodyContent(), cw, m.mode))
+		}
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
