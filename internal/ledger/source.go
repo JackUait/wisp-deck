@@ -434,7 +434,7 @@ func snapshotFromChanges(generation uint64, staged, modified, untracked []Change
 		if len(changes) == 0 {
 			return
 		}
-		rows = append(rows, Row{Kind: RowGroup, Label: label})
+		rows = append(rows, Row{Kind: RowGroup, Label: label, Count: len(changes)})
 		for _, change := range changes {
 			rows = append(rows, Row{
 				Kind:     RowFile,

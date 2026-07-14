@@ -32,11 +32,18 @@ type Row struct {
 	ID       RowID
 	Path     string
 	Label    string
+	Count    int
 	Added    int
 	Deleted  int
 	Binary   bool
 	OldBytes int64
 	NewBytes int64
+}
+
+// RowVisualState contains transient presentation state for one visible row.
+type RowVisualState struct {
+	Hovered  bool
+	Selected bool
 }
 
 // Metadata holds snapshot-wide values rendered outside the scrolling viewport.
