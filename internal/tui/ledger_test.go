@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jackuait/wisp-deck/internal/ledger"
 	"github.com/muesli/termenv"
@@ -161,4 +164,271 @@ func TestLedgerViewShowsLoadingErrorAndEmptyStates(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLedgerMouseMotionMapsVisibleRowAndSameRowIsNoOp(t *testing.T) {
+	snapshot := ledgerTestSnapshot(100)
+	m := NewLedgerModel(fakeLedgerSource{}, snapshot, LedgerOptions{})
+	sizeLedger(m, 80, 14)
+	m.state.ScrollTo(50)
+	want := snapshot.Rows[51].ID // Y=3 is the second viewport row (zero-based screen coordinates).
+
+	updated, cmd := m.Update(tea.MouseMsg{X: 10, Y: 3, Action: tea.MouseActionMotion})
+
+	if updated != m || cmd != nil {
+		t.Fatalf("motion returned model=%T cmd=%v; want same model and nil command", updated, cmd)
+	}
+	if m.state.Hovered != want {
+		t.Fatalf("hover = %v, want %v", m.state.Hovered, want)
+	}
+	updated, cmd = m.Update(tea.MouseMsg{X: 11, Y: 3, Action: tea.MouseActionMotion})
+	if updated != m || cmd != nil || m.state.Hovered != want {
+		t.Fatalf("same-row motion changed state: model=%T cmd=%v hover=%v", updated, cmd, m.state.Hovered)
+	}
+}
+
+func TestLedgerMouseOutsidePaneClearsHover(t *testing.T) {
+	m := NewLedgerModel(fakeLedgerSource{}, ledgerTestSnapshot(10), LedgerOptions{})
+	sizeLedger(m, 40, 12)
+	m.Update(tea.MouseMsg{X: 10, Y: 3, Action: tea.MouseActionMotion})
+	if m.state.Hovered == (ledger.RowID{}) {
+		t.Fatal("precondition: file row should be hovered")
+	}
+
+	m.Update(tea.MouseMsg{X: 41, Y: 3, Action: tea.MouseActionMotion})
+
+	if m.state.Hovered != (ledger.RowID{}) {
+		t.Fatalf("hover = %v, want clear", m.state.Hovered)
+	}
+}
+
+func TestLedgerScrollMouseWheelKeepsHoverUnderPointer(t *testing.T) {
+	snapshot := ledgerTestSnapshot(100)
+	m := NewLedgerModel(fakeLedgerSource{}, snapshot, LedgerOptions{})
+	sizeLedger(m, 80, 14)
+	m.state.ScrollTo(10)
+
+	m.Update(tea.MouseMsg{X: 10, Y: 5, Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+
+	if m.state.Scroll != 13 {
+		t.Fatalf("scroll = %d, want 13", m.state.Scroll)
+	}
+	want := snapshot.Rows[16].ID
+	if m.state.Hovered != want {
+		t.Fatalf("hover after wheel = %v, want %v", m.state.Hovered, want)
+	}
+}
+
+func TestLedgerScrollKeyboardBindings(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   tea.KeyMsg
+		start int
+		want  int
+	}{
+		{name: "j", key: ledgerRuneKey('j'), start: 10, want: 11},
+		{name: "down", key: tea.KeyMsg{Type: tea.KeyDown}, start: 10, want: 11},
+		{name: "k", key: ledgerRuneKey('k'), start: 10, want: 9},
+		{name: "up", key: tea.KeyMsg{Type: tea.KeyUp}, start: 10, want: 9},
+		{name: "space", key: ledgerRuneKey(' '), start: 10, want: 21},
+		{name: "page down", key: tea.KeyMsg{Type: tea.KeyPgDown}, start: 10, want: 21},
+		{name: "b", key: ledgerRuneKey('b'), start: 20, want: 9},
+		{name: "page up", key: tea.KeyMsg{Type: tea.KeyPgUp}, start: 20, want: 9},
+		{name: "g", key: ledgerRuneKey('g'), start: 20, want: 0},
+		{name: "home", key: tea.KeyMsg{Type: tea.KeyHome}, start: 20, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewLedgerModel(fakeLedgerSource{}, ledgerTestSnapshot(100), LedgerOptions{})
+			sizeLedger(m, 80, 14)
+			m.state.ScrollTo(tt.start)
+
+			m.Update(tt.key)
+
+			if m.state.Scroll != tt.want {
+				t.Fatalf("scroll = %d, want %d", m.state.Scroll, tt.want)
+			}
+		})
+	}
+
+	m := NewLedgerModel(fakeLedgerSource{}, ledgerTestSnapshot(100), LedgerOptions{})
+	sizeLedger(m, 80, 14)
+	m.Update(ledgerRuneKey('G'))
+	if m.state.Scroll != m.state.MaxScroll() {
+		t.Fatalf("G scroll = %d, want %d", m.state.Scroll, m.state.MaxScroll())
+	}
+}
+
+func TestLedgerUpdateResizeDoesNotLoadGit(t *testing.T) {
+	source := &recordingLedgerSource{snapshot: ledgerTestSnapshot(10)}
+	m := NewLedgerModel(source, source.snapshot, LedgerOptions{})
+
+	_, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 42})
+
+	if cmd != nil {
+		t.Fatalf("resize command = %v, want nil", cmd)
+	}
+	if m.width != 120 || m.height != 42 || m.state.ViewportHeight() != 39 {
+		t.Fatalf("geometry = %dx%d viewport=%d", m.width, m.height, m.state.ViewportHeight())
+	}
+	if source.CallCount() != 0 {
+		t.Fatalf("resize triggered %d Git loads", source.CallCount())
+	}
+}
+
+type recordingLedgerSource struct {
+	mu         sync.Mutex
+	snapshot   ledger.Snapshot
+	err        error
+	calls      int
+	generation uint64
+}
+
+func (s *recordingLedgerSource) Load(_ context.Context, _ string, generation uint64) (ledger.Snapshot, error) {
+	s.mu.Lock()
+	s.calls++
+	s.generation = generation
+	snapshot, err := s.snapshot, s.err
+	s.mu.Unlock()
+	snapshot.Generation = generation
+	return snapshot, err
+}
+
+func (s *recordingLedgerSource) CallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+func TestLedgerRefreshInitLoadsSnapshotAsynchronously(t *testing.T) {
+	source := &recordingLedgerSource{snapshot: ledgerTestSnapshot(20)}
+	empty := ledger.NewSnapshot(0, nil, ledger.Metadata{})
+	m := NewLedgerModel(source, empty, LedgerOptions{ProjectDir: "/repo", RefreshInterval: time.Hour})
+
+	cmd := m.Init()
+
+	if cmd == nil {
+		t.Fatal("Init returned no load command")
+	}
+	if source.CallCount() != 0 {
+		t.Fatal("Init blocked on the source instead of returning a command")
+	}
+	msg := cmd()
+	loaded, ok := msg.(ledgerSnapshotMsg)
+	if !ok {
+		t.Fatalf("load message = %T, want ledgerSnapshotMsg", msg)
+	}
+	if loaded.generation != 1 || source.CallCount() != 1 {
+		t.Fatalf("generation=%d calls=%d, want 1 and 1", loaded.generation, source.CallCount())
+	}
+}
+
+func TestLedgerRefreshIgnoresStaleGeneration(t *testing.T) {
+	current := ledgerTestSnapshot(10)
+	current.Generation = 10
+	m := NewLedgerModel(fakeLedgerSource{}, current, LedgerOptions{RefreshInterval: time.Hour})
+	m.requestedGeneration = 10
+	stale := ledgerTestSnapshot(999)
+	stale.Generation = 9
+
+	_, cmd := m.Update(ledgerSnapshotMsg{generation: 9, snapshot: stale})
+
+	if cmd != nil {
+		t.Fatalf("stale snapshot scheduled command %v", cmd)
+	}
+	if m.state.Snapshot.Generation != 10 || m.state.Snapshot.Metadata.TotalFiles != 10 {
+		t.Fatalf("stale snapshot replaced current: %#v", m.state.Snapshot.Metadata)
+	}
+}
+
+func TestLedgerRefreshAcceptsLatestAndSchedulesNextTick(t *testing.T) {
+	m := NewLedgerModel(fakeLedgerSource{}, ledger.NewSnapshot(0, nil, ledger.Metadata{}), LedgerOptions{RefreshInterval: time.Hour})
+	m.requestedGeneration = 4
+	next := ledgerTestSnapshot(25)
+	next.Generation = 4
+
+	_, cmd := m.Update(ledgerSnapshotMsg{generation: 4, snapshot: next})
+
+	if cmd == nil {
+		t.Fatal("accepted snapshot did not schedule the next refresh")
+	}
+	if m.state.Snapshot.Generation != 4 || m.state.Snapshot.Metadata.TotalFiles != 25 || m.loading {
+		t.Fatalf("accepted state = generation %d files %d loading=%v", m.state.Snapshot.Generation, m.state.Snapshot.Metadata.TotalFiles, m.loading)
+	}
+}
+
+func TestLedgerRefreshErrorRetainsSnapshotAndSchedulesRetry(t *testing.T) {
+	current := ledgerTestSnapshot(10)
+	current.Generation = 10
+	m := NewLedgerModel(fakeLedgerSource{}, current, LedgerOptions{RefreshInterval: time.Hour})
+	m.requestedGeneration = 11
+	wantErr := errors.New("git busy")
+
+	_, cmd := m.Update(ledgerLoadErrMsg{generation: 11, err: wantErr})
+
+	if cmd == nil {
+		t.Fatal("load error did not schedule a retry")
+	}
+	if m.state.Snapshot.Generation != 10 || !errors.Is(m.refreshError, wantErr) || m.loading {
+		t.Fatalf("error state = generation %d err=%v loading=%v", m.state.Snapshot.Generation, m.refreshError, m.loading)
+	}
+}
+
+func TestLedgerRefreshTickStartsNewGeneration(t *testing.T) {
+	source := &recordingLedgerSource{snapshot: ledgerTestSnapshot(10)}
+	m := NewLedgerModel(source, source.snapshot, LedgerOptions{ProjectDir: "/repo", RefreshInterval: time.Hour})
+	m.requestedGeneration = 7
+
+	_, cmd := m.Update(ledgerRefreshTickMsg{})
+
+	if cmd == nil || m.requestedGeneration != 8 || !m.loading {
+		t.Fatalf("refresh tick: cmd=%v generation=%d loading=%v", cmd, m.requestedGeneration, m.loading)
+	}
+	msg := cmd()
+	if loaded, ok := msg.(ledgerSnapshotMsg); !ok || loaded.generation != 8 {
+		t.Fatalf("refresh result = %#v", msg)
+	}
+}
+
+type blockingLedgerSource struct {
+	started chan context.Context
+}
+
+func (s blockingLedgerSource) Load(ctx context.Context, _ string, _ uint64) (ledger.Snapshot, error) {
+	s.started <- ctx
+	<-ctx.Done()
+	return ledger.Snapshot{}, ctx.Err()
+}
+
+func TestLedgerRefreshSupersedesAndCancelsPriorLoad(t *testing.T) {
+	source := blockingLedgerSource{started: make(chan context.Context, 2)}
+	m := NewLedgerModel(source, ledger.NewSnapshot(0, nil, ledger.Metadata{}), LedgerOptions{RefreshInterval: time.Hour})
+	_, firstCmd := m.Update(ledgerRefreshTickMsg{})
+	firstDone := make(chan tea.Msg, 1)
+	go func() { firstDone <- firstCmd() }()
+	firstContext := <-source.started
+
+	_, secondCmd := m.Update(ledgerRefreshTickMsg{})
+
+	if secondCmd == nil {
+		t.Fatal("superseding refresh returned no command")
+	}
+	select {
+	case <-firstContext.Done():
+	case <-time.After(time.Second):
+		t.Fatal("superseded load context was not cancelled")
+	}
+	select {
+	case msg := <-firstDone:
+		failed, ok := msg.(ledgerLoadErrMsg)
+		if !ok || !errors.Is(failed.err, context.Canceled) {
+			t.Fatalf("superseded load result = %#v", msg)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("superseded load command did not return")
+	}
+}
+
+func ledgerRuneKey(r rune) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
 }
