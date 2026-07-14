@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,9 +31,10 @@ var ledgerCmd = &cobra.Command{
 }
 
 var (
-	ledgerTUIOptions = util.TUITeaOptions
-	ledgerApplyTheme = func() { tui.ApplyTheme(effectiveTheme(aiToolFlag)) }
-	ledgerProgramRun = func(model tea.Model, options ...tea.ProgramOption) (tea.Model, error) {
+	ledgerTUIOptions                         = util.TUITeaOptions
+	ledgerApplyTheme                         = func() { tui.ApplyTheme(effectiveTheme(aiToolFlag)) }
+	ledgerProcessRunner ledger.ProcessRunner = ledger.ExecProcessRunner{}
+	ledgerProgramRun                         = func(model tea.Model, options ...tea.ProgramOption) (tea.Model, error) {
 		return tea.NewProgram(model, options...).Run()
 	}
 )
@@ -62,6 +64,20 @@ func runLedger(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("ledger project is not a Git repository")
 	}
 
+	processRunner := ledgerProcessRunner
+	backdropCache := ledger.NewFileBackdropCache(processRunner,
+		filepath.Join(os.TempDir(), fmt.Sprintf("wisp-ledger-backdrop-%d", os.Getpid())))
+	defer backdropCache.Close()
+	popup := ledger.NewExecPopup(processRunner, os.TempDir())
+	var sessionSource LedgerSessionSource
+	var accountSwitcher ledger.AccountSwitcher
+	if ledgerRelaunchFile != "" {
+		sessionSource = ledger.NewSessionSource(processRunner)
+		if ledgerLibDir != "" {
+			accountSwitcher = ledger.NewExecAccountSwitcher(processRunner, ledgerLibDir)
+		}
+	}
+
 	var source LedgerSnapshotSource = ledger.NewSource(runner, ledger.WithPlan(os.Getenv("WISP_DECK_PLAN")))
 	snapshot := ledger.NewSnapshot(0, nil, ledger.Metadata{})
 	loading := true
@@ -80,6 +96,12 @@ func runLedger(_ *cobra.Command, args []string) error {
 		Loading:         loading,
 		RefreshInterval: ledgerRefreshInterval,
 		Mutator:         ledger.NewGitMutator(runner),
+		Popup:           popup,
+		BackdropCache:   backdropCache,
+		Tool:            aiToolFlag,
+		SessionSource:   sessionSource,
+		SessionPath:     ledgerRelaunchFile,
+		AccountSwitcher: accountSwitcher,
 	})
 	ttyOptions, cleanup, err := ledgerTUIOptions()
 	if err != nil {
@@ -97,6 +119,11 @@ func runLedger(_ *cobra.Command, args []string) error {
 // loading contract while allowing deterministic PTY fixtures.
 type LedgerSnapshotSource interface {
 	Load(context.Context, string, uint64) (ledger.Snapshot, error)
+}
+
+// LedgerSessionSource is the command's session-context loading seam.
+type LedgerSessionSource interface {
+	Load(context.Context, string) (ledger.SessionContext, error)
 }
 
 type staticLedgerSource struct {

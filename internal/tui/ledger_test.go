@@ -795,3 +795,157 @@ func TestLedgerOpenEnterActivatesHoveredAndStaleRowsDoNothing(t *testing.T) {
 		t.Fatal("stale hovered row opened a popup")
 	}
 }
+
+type fakeLedgerSessionSource struct {
+	mu      sync.Mutex
+	session ledger.SessionContext
+	err     error
+	calls   int
+}
+
+func (s *fakeLedgerSessionSource) Load(context.Context, string) (ledger.SessionContext, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	return s.session, s.err
+}
+
+func (s *fakeLedgerSessionSource) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+type fakeAccountSwitcher struct {
+	mu      sync.Mutex
+	calls   int
+	session ledger.SessionContext
+	started chan struct{}
+	release chan struct{}
+	err     error
+}
+
+func (s *fakeAccountSwitcher) Switch(ctx context.Context, session ledger.SessionContext) error {
+	s.mu.Lock()
+	s.calls++
+	s.session = session
+	s.mu.Unlock()
+	if s.started != nil {
+		select {
+		case s.started <- struct{}{}:
+		default:
+		}
+	}
+	if s.release != nil {
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return s.err
+}
+
+func (s *fakeAccountSwitcher) recorded() (int, ledger.SessionContext) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls, s.session
+}
+
+func TestLedgerAccountPillHidesWhenIneligible(t *testing.T) {
+	m := NewLedgerModel(nil, ledgerTestSnapshot(3), LedgerOptions{})
+	sizeLedger(m, 80, 14)
+	m.Update(ledgerSessionMsg{session: ledger.SessionContext{Tool: "claude"}})
+
+	if view := stripANSI(m.View()); strings.Contains(view, "󰀄") {
+		t.Fatalf("ineligible session rendered account pill:\n%s", view)
+	}
+}
+
+func TestLedgerAccountPillRendersColorAndExactHoverSpan(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+	m := NewLedgerModel(nil, ledgerTestSnapshot(3), LedgerOptions{})
+	sizeLedger(m, 80, 14)
+	m.Update(ledgerSessionMsg{session: ledger.SessionContext{
+		Tool: "claude", Pill: &ledger.SessionPill{Label: "Personal", Color: 170},
+	}})
+
+	raw := m.View()
+	if plain := stripANSI(raw); !strings.Contains(plain, "󰀄 Personal") {
+		t.Fatalf("account pill missing:\n%s", plain)
+	}
+	if !strings.Contains(raw, "38;5;170") {
+		t.Fatalf("account color missing: %q", raw)
+	}
+	width := ledgerAccountPillWidth(m.session.Pill)
+	m.Update(tea.MouseMsg{X: width - 1, Y: m.height - 1, Action: tea.MouseActionMotion})
+	if !m.accountHover || !strings.Contains(m.View(), "48;5;238") {
+		t.Fatal("last pill cell did not render hover highlight")
+	}
+	m.Update(tea.MouseMsg{X: width, Y: m.height - 1, Action: tea.MouseActionMotion})
+	if m.accountHover {
+		t.Fatal("cell after pill remained in hover hit span")
+	}
+}
+
+func TestLedgerAccountClickSwitchesAsyncThenReloadsContextAndSnapshot(t *testing.T) {
+	snapshot := ledgerTestSnapshot(3)
+	source := &recordingLedgerSource{snapshot: snapshot}
+	sessionSource := &fakeLedgerSessionSource{session: ledger.SessionContext{
+		Tool: "claude", Pill: &ledger.SessionPill{Label: "Personal", Color: 39},
+	}}
+	switcher := &fakeAccountSwitcher{started: make(chan struct{}, 1), release: make(chan struct{})}
+	m := NewLedgerModel(source, snapshot, LedgerOptions{
+		SessionSource: sessionSource, SessionPath: "/tmp/relaunch", AccountSwitcher: switcher,
+	})
+	sizeLedger(m, 80, 14)
+	m.session = ledger.SessionContext{
+		RelaunchFile: "/tmp/relaunch", Tool: "claude",
+		Pill: &ledger.SessionPill{Label: "Work", Color: 170},
+	}
+
+	_, cmd := m.Update(tea.MouseMsg{X: 1, Y: m.height - 1, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+
+	if cmd == nil || !m.switchingAccount {
+		t.Fatalf("account click cmd=%v switching=%v", cmd, m.switchingAccount)
+	}
+	if calls, _ := switcher.recorded(); calls != 0 {
+		t.Fatal("account switch ran synchronously")
+	}
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+	select {
+	case <-switcher.started:
+	case <-time.After(time.Second):
+		t.Fatal("account switch command did not start")
+	}
+	close(switcher.release)
+	message := <-done
+	_, refresh := m.Update(message)
+	if refresh == nil || m.switchingAccount {
+		t.Fatalf("switch completion refresh=%v switching=%v", refresh, m.switchingAccount)
+	}
+	batch, ok := refresh().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("switch completion = %T, want Tea batch", refresh())
+	}
+	for _, command := range batch {
+		if command == nil {
+			continue
+		}
+		if loaded := command(); loaded != nil {
+			m.Update(loaded)
+		}
+	}
+	if sessionSource.callCount() != 1 || source.CallCount() != 1 {
+		t.Fatalf("reload calls: session=%d snapshot=%d", sessionSource.callCount(), source.CallCount())
+	}
+	if m.session.Pill == nil || m.session.Pill.Label != "Personal" {
+		t.Fatalf("reloaded session = %#v", m.session)
+	}
+	if calls, session := switcher.recorded(); calls != 1 || session.Pill == nil || session.Pill.Label != "Work" {
+		t.Fatalf("switcher calls=%d session=%#v", calls, session)
+	}
+}

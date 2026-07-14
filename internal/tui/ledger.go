@@ -24,6 +24,11 @@ type LedgerSource interface {
 	Load(context.Context, string, uint64) (ledger.Snapshot, error)
 }
 
+// LedgerSessionSource loads the relaunch context and current account identity.
+type LedgerSessionSource interface {
+	Load(context.Context, string) (ledger.SessionContext, error)
+}
+
 // LedgerOptions configures initial native-ledger state.
 type LedgerOptions struct {
 	ProjectDir      string
@@ -34,6 +39,9 @@ type LedgerOptions struct {
 	Popup           ledger.Popup
 	BackdropCache   ledger.BackdropCache
 	Tool            string
+	SessionSource   LedgerSessionSource
+	SessionPath     string
+	AccountSwitcher ledger.AccountSwitcher
 }
 
 // LedgerModel renders the changes ledger from a viewport-bounded state slice.
@@ -56,6 +64,14 @@ type LedgerModel struct {
 	opening             bool
 	openedPath          string
 	openCancel          context.CancelFunc
+	sessionSource       LedgerSessionSource
+	sessionPath         string
+	session             ledger.SessionContext
+	sessionLoading      bool
+	accountSwitcher     ledger.AccountSwitcher
+	accountHover        bool
+	switchingAccount    bool
+	accountCancel       context.CancelFunc
 	discardArmed        bool
 	discardPaths        []string
 	discarding          bool
@@ -89,6 +105,15 @@ type ledgerBackdropReadyMsg struct {
 	err error
 }
 
+type ledgerSessionMsg struct {
+	session ledger.SessionContext
+	err     error
+}
+
+type ledgerAccountSwitchDoneMsg struct {
+	err error
+}
+
 // NewLedgerModel creates a native ledger model around an immutable snapshot.
 func NewLedgerModel(source LedgerSource, snapshot ledger.Snapshot, options LedgerOptions) *LedgerModel {
 	state := ledger.NewState(snapshot)
@@ -111,12 +136,20 @@ func NewLedgerModel(source LedgerSource, snapshot ledger.Snapshot, options Ledge
 		popup:               options.Popup,
 		backdropCache:       options.BackdropCache,
 		tool:                options.Tool,
+		sessionSource:       options.SessionSource,
+		sessionPath:         options.SessionPath,
+		accountSwitcher:     options.AccountSwitcher,
 		renderRow:           renderLedgerRow,
 	}
 }
 
 // Init schedules the initial snapshot without running Git on the Tea loop.
-func (m *LedgerModel) Init() tea.Cmd { return m.startLoad() }
+func (m *LedgerModel) Init() tea.Cmd {
+	if m.sessionSource != nil && m.sessionPath != "" {
+		return tea.Batch(m.startLoad(), m.loadSession())
+	}
+	return m.startLoad()
+}
 
 // Update applies constant-time interaction changes and generation-checked load
 // results. All blocking work is returned as a Tea command.
@@ -175,6 +208,18 @@ func (m *LedgerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case ledgerBackdropReadyMsg:
 		m.backdropRefreshing = false
 		return m, nil
+	case ledgerSessionMsg:
+		m.sessionLoading = false
+		if msg.err != nil {
+			m.session = ledger.SessionContext{}
+			return m, nil
+		}
+		m.session = msg.session
+		return m, nil
+	case ledgerAccountSwitchDoneMsg:
+		m.finishAccountSwitch()
+		m.actionError = msg.err
+		return m, tea.Batch(m.startLoad(), m.loadSession(), m.refreshBackdrop())
 	default:
 		return m, nil
 	}
@@ -225,6 +270,17 @@ func (m *LedgerModel) refreshBackdrop() tea.Cmd {
 	}
 }
 
+func (m *LedgerModel) loadSession() tea.Cmd {
+	if m.sessionSource == nil || m.sessionPath == "" || m.sessionLoading {
+		return nil
+	}
+	m.sessionLoading = true
+	return func() tea.Msg {
+		session, err := m.sessionSource.Load(context.Background(), m.sessionPath)
+		return ledgerSessionMsg{session: session, err: err}
+	}
+}
+
 func (m *LedgerModel) handleLedgerMouse(msg tea.MouseMsg) tea.Cmd {
 	switch msg.Button {
 	case tea.MouseButtonWheelDown:
@@ -243,6 +299,9 @@ func (m *LedgerModel) handleLedgerMouse(msg tea.MouseMsg) tea.Cmd {
 	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
 		return nil
 	}
+	if m.ledgerAccountHit(msg.X, msg.Y) {
+		return m.startAccountSwitch()
+	}
 	if cmd, handled := m.handleLedgerDiscardClick(msg); handled {
 		return cmd
 	}
@@ -255,6 +314,7 @@ func (m *LedgerModel) handleLedgerMouse(msg tea.MouseMsg) tea.Cmd {
 }
 
 func (m *LedgerModel) hoverLedgerMouse(msg tea.MouseMsg) {
+	m.accountHover = m.ledgerAccountHit(msg.X, msg.Y)
 	if msg.X < 0 || msg.X >= m.width {
 		m.state.HoverScreenRow(0)
 		return
@@ -262,6 +322,44 @@ func (m *LedgerModel) hoverLedgerMouse(msg tea.MouseMsg) {
 	// Bubble Tea mouse coordinates are zero-based; ledger.State accepts the
 	// terminal's one-based screen row.
 	m.state.HoverScreenRow(msg.Y + 1)
+}
+
+func ledgerAccountPillWidth(pill *ledger.SessionPill) int {
+	if pill == nil {
+		return 0
+	}
+	return visibleRuneWidth(" 󰀄 " + pill.Label + " ")
+}
+
+func (m *LedgerModel) ledgerAccountHit(x, y int) bool {
+	width := ledgerAccountPillWidth(m.session.Pill)
+	if width > m.width {
+		width = m.width
+	}
+	return width > 0 && y == m.height-1 && x >= 0 && x < width
+}
+
+func (m *LedgerModel) startAccountSwitch() tea.Cmd {
+	if m.accountSwitcher == nil || m.session.Pill == nil || m.switchingAccount {
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.accountCancel = cancel
+	m.switchingAccount = true
+	m.actionError = nil
+	session := m.session
+	return func() tea.Msg {
+		return ledgerAccountSwitchDoneMsg{err: m.accountSwitcher.Switch(ctx, session)}
+	}
+}
+
+func (m *LedgerModel) finishAccountSwitch() {
+	if m.accountCancel != nil {
+		m.accountCancel()
+		m.accountCancel = nil
+	}
+	m.switchingAccount = false
+	m.accountHover = false
 }
 
 func (m *LedgerModel) handleLedgerKey(msg tea.KeyMsg) tea.Cmd {
@@ -485,7 +583,7 @@ func (m *LedgerModel) View() string {
 		lines = append(lines, "")
 		bodyLines++
 	}
-	lines = append(lines, renderLedgerFooter(m.state, width, m.actionError))
+	lines = append(lines, renderLedgerFooter(m.state, width, m.actionError, m.session.Pill, m.accountHover))
 	return strings.Join(lines, "\n")
 }
 
@@ -640,7 +738,7 @@ func renderLedgerFileRow(row ledger.Row, width int, visual ledger.RowVisualState
 	return line
 }
 
-func renderLedgerFooter(state *ledger.State, width int, actionError error) string {
+func renderLedgerFooter(state *ledger.State, width int, actionError error, pill *ledger.SessionPill, pillHover bool) string {
 	if actionError != nil {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(
 			ledgerFitPlain(" discard failed · "+actionError.Error(), width),
@@ -666,9 +764,22 @@ func renderLedgerFooter(state *ledger.State, width int, actionError error) strin
 		}
 		parts = append(parts, fmt.Sprintf("%d-%d/%d", first, last, len(state.Snapshot.Rows)))
 	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(
-		ledgerFitPlain(strings.Join(parts, " · "), width),
-	)
+	status := strings.Join(parts, " · ")
+	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	if pill == nil {
+		return dim.Render(ledgerFitPlain(status, width))
+	}
+	pillText := " 󰀄 " + pill.Label + " "
+	pillStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(fmt.Sprintf("%d", pill.Color)))
+	if pillHover {
+		pillStyle = pillStyle.Background(lipgloss.Color("238"))
+	}
+	pillRendered := pillStyle.Render(pillText)
+	remaining := width - lipgloss.Width(pillRendered) - 3
+	if remaining < 0 {
+		return pillStyle.Render(ledgerFitPlain(pillText, width))
+	}
+	return pillRendered + dim.Render(" · "+ledgerFitPlain(status, remaining))
 }
 
 func ledgerHumanBytes(bytes int64) string {

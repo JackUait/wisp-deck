@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +13,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jackuait/wisp-deck/internal/tui"
 )
+
+type unavailableLedgerProcessRunner struct{}
+
+func (unavailableLedgerProcessRunner) Run(context.Context, string, ...string) ([]byte, error) {
+	return nil, errors.New("unavailable in test")
+}
 
 func TestLedgerCommandRegisteredWithExactProjectArgument(t *testing.T) {
 	cmd, _, err := rootCmd.Find([]string{"ledger"})
@@ -73,12 +81,14 @@ func TestLedgerCommandAppliesThemeAndLaunchOptions(t *testing.T) {
 	originalTUIOptions := ledgerTUIOptions
 	originalProgramRun := ledgerProgramRun
 	originalApplyTheme := ledgerApplyTheme
+	originalProcessRunner := ledgerProcessRunner
 	originalSnapshotFile := ledgerSnapshotFile
 	originalRefresh := ledgerRefreshInterval
 	t.Cleanup(func() {
 		ledgerTUIOptions = originalTUIOptions
 		ledgerProgramRun = originalProgramRun
 		ledgerApplyTheme = originalApplyTheme
+		ledgerProcessRunner = originalProcessRunner
 		ledgerSnapshotFile = originalSnapshotFile
 		ledgerRefreshInterval = originalRefresh
 	})
@@ -125,14 +135,17 @@ func TestLedgerCommandLoadsDeterministicSnapshotSeam(t *testing.T) {
 	originalTUIOptions := ledgerTUIOptions
 	originalProgramRun := ledgerProgramRun
 	originalApplyTheme := ledgerApplyTheme
+	originalProcessRunner := ledgerProcessRunner
 	originalSnapshotFile := ledgerSnapshotFile
 	t.Cleanup(func() {
 		ledgerTUIOptions = originalTUIOptions
 		ledgerProgramRun = originalProgramRun
 		ledgerApplyTheme = originalApplyTheme
+		ledgerProcessRunner = originalProcessRunner
 		ledgerSnapshotFile = originalSnapshotFile
 	})
 	ledgerApplyTheme = func() {}
+	ledgerProcessRunner = unavailableLedgerProcessRunner{}
 	ledgerTUIOptions = func() ([]tea.ProgramOption, func(), error) { return nil, func() {}, nil }
 	ledgerProgramRun = func(model tea.Model, _ ...tea.ProgramOption) (tea.Model, error) {
 		if view := model.View(); !strings.Contains(view, "fixture.txt") {
@@ -141,6 +154,87 @@ func TestLedgerCommandLoadsDeterministicSnapshotSeam(t *testing.T) {
 		return model, nil
 	}
 	ledgerSnapshotFile = snapshotPath
+
+	if err := runLedger(ledgerCmd, []string{repo}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLedgerAccountCommandWiresSessionAndPopupAdapters(t *testing.T) {
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	fixtureDir := t.TempDir()
+	snapshotPath := filepath.Join(fixtureDir, "snapshot.json")
+	snapshot := `{"generation":1,"rows":[{"kind":0,"label":"modified","count":1},{"kind":1,"id":{"group":2,"path":"fixture.go"},"path":"fixture.go","added":1}],"metadata":{"branch":"main","total_files":1,"added":1}}`
+	if err := os.WriteFile(snapshotPath, []byte(snapshot), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	list := filepath.Join(fixtureDir, "claude-accounts.list")
+	pointer := filepath.Join(fixtureDir, "claude-account")
+	colors := filepath.Join(fixtureDir, "claude-account-colors")
+	for path, content := range map[string]string{list: "Work:work\n", pointer: "work\n", colors: "work:170\n"} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	relaunch := filepath.Join(fixtureDir, "relaunch")
+	context := strings.Join([]string{
+		"tool=claude", "tools=claude opencode", "list=" + list,
+		"pointer=" + pointer, "colors=" + colors,
+	}, "\n")
+	if err := os.WriteFile(relaunch, []byte(context), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	originalTUIOptions := ledgerTUIOptions
+	originalProgramRun := ledgerProgramRun
+	originalApplyTheme := ledgerApplyTheme
+	originalProcessRunner := ledgerProcessRunner
+	originalSnapshotFile := ledgerSnapshotFile
+	originalRelaunchFile := ledgerRelaunchFile
+	originalLibDir := ledgerLibDir
+	t.Cleanup(func() {
+		ledgerTUIOptions = originalTUIOptions
+		ledgerProgramRun = originalProgramRun
+		ledgerApplyTheme = originalApplyTheme
+		ledgerProcessRunner = originalProcessRunner
+		ledgerSnapshotFile = originalSnapshotFile
+		ledgerRelaunchFile = originalRelaunchFile
+		ledgerLibDir = originalLibDir
+	})
+	ledgerApplyTheme = func() {}
+	ledgerProcessRunner = unavailableLedgerProcessRunner{}
+	ledgerTUIOptions = func() ([]tea.ProgramOption, func(), error) { return nil, func() {}, nil }
+	ledgerSnapshotFile = snapshotPath
+	ledgerRelaunchFile = relaunch
+	ledgerLibDir = filepath.Join(repo, "lib")
+	ledgerProgramRun = func(model tea.Model, _ ...tea.ProgramOption) (tea.Model, error) {
+		ledgerModel := model.(*tui.LedgerModel)
+		initCommand := ledgerModel.Init()
+		batch, ok := initCommand().(tea.BatchMsg)
+		if !ok {
+			t.Fatalf("ledger Init = %T, want snapshot/session batch", initCommand())
+		}
+		for _, command := range batch {
+			if command != nil {
+				ledgerModel.Update(command())
+			}
+		}
+		ledgerModel.Update(tea.WindowSizeMsg{Width: 80, Height: 14})
+		if view := ledgerModel.View(); !strings.Contains(view, "Work") {
+			t.Fatalf("session pill not wired:\n%s", view)
+		}
+		_, switchCommand := ledgerModel.Update(tea.MouseMsg{
+			X: 1, Y: 13, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+		})
+		if switchCommand == nil {
+			t.Fatal("account pill has no switch command")
+		}
+		ledgerModel.Update(tea.MouseMsg{X: 12, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+		return model, nil
+	}
 
 	if err := runLedger(ledgerCmd, []string{repo}); err != nil {
 		t.Fatal(err)
