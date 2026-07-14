@@ -200,6 +200,26 @@ exit 0
 	}
 }
 
+func TestWrapperPlainTerminal_repairs_plugin_before_manual_launch(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(projectRoot(t), "wrapper.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	start := strings.Index(content, "plain-terminal)")
+	end := strings.Index(content[start:], "add-worktree)")
+	if start < 0 || end < 0 {
+		t.Fatal("cannot locate plain-terminal action")
+	}
+	block := content[start : start+end]
+	if !strings.Contains(block, "install_opencode_plugin") {
+		t.Fatalf("plain terminal can manually launch OpenCode without repairing its plugin:\n%s", block)
+	}
+	if strings.Index(block, "install_opencode_plugin") > strings.Index(block, `exec "$SHELL"`) {
+		t.Fatal("OpenCode plugin repair must precede plain-shell exec")
+	}
+}
+
 func TestWrapperOpenCode_syncs_plugin_before_attention_generation(t *testing.T) {
 	home := t.TempDir()
 	binDir := filepath.Join(home, ".local", "bin")

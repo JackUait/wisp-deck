@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,12 +20,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jackuait/wisp-deck/internal/attention"
+	"github.com/jackuait/wisp-deck/internal/soundpref"
 )
 
 const (
-	claudeBackgroundMaxOutputBytes  = int64(1024 * 1024)
-	claudeBackgroundOwnerMaxBytes   = 1024
-	claudeBackgroundFeatureMaxBytes = 64 * 1024
+	claudeBackgroundMaxOutputBytes = int64(1024 * 1024)
+	claudeBackgroundOwnerMaxBytes  = 1024
 
 	defaultClaudeBackgroundPollInterval   = 5 * time.Second
 	defaultClaudeBackgroundRetryMax       = time.Minute
@@ -870,14 +869,18 @@ func (n claudeBackgroundNotifier) Notify(ctx context.Context, event attention.Cl
 	}, environment)
 	cancelNotify()
 
-	sound := claudeBackgroundSoundPreference(filepath.Join(n.WispConfigDir, "claude-features.json"))
-	if sound != "" {
+	features := filepath.Join(n.WispConfigDir, "claude-features.json")
+	_ = soundpref.WithExclusiveLock(features, func() error {
+		sound := claudeBackgroundSoundPreference(features)
+		if sound == "" {
+			return nil
+		}
 		soundContext, cancelSound := context.WithTimeout(ctx, timeout)
-		_ = run(soundContext, "/usr/bin/afplay", []string{
+		defer cancelSound()
+		return run(soundContext, "/usr/bin/afplay", []string{
 			filepath.Join("/System/Library/Sounds", sound+".aiff"),
 		}, os.Environ())
-		cancelSound()
-	}
+	})
 }
 
 func claudeBackgroundNotificationBody(status attention.ClaudeBackgroundStatus) string {
@@ -896,33 +899,7 @@ func claudeBackgroundNotificationBody(status attention.ClaudeBackgroundStatus) s
 }
 
 func claudeBackgroundSoundPreference(path string) string {
-	data, err := readClaudeBackgroundSmallFile(path, claudeBackgroundFeatureMaxBytes)
-	if err != nil {
-		return "Bottle"
-	}
-	var preference struct {
-		Sound     *bool  `json:"sound"`
-		SoundName string `json:"sound_name"`
-	}
-	if err := json.Unmarshal(data, &preference); err != nil {
-		return "Bottle"
-	}
-	if preference.Sound != nil && !*preference.Sound {
-		return ""
-	}
-	if preference.SoundName == "" {
-		return "Bottle"
-	}
-	if _, allowed := claudeBackgroundAllowedSounds[preference.SoundName]; !allowed {
-		return "Bottle"
-	}
-	return preference.SoundName
-}
-
-var claudeBackgroundAllowedSounds = map[string]struct{}{
-	"Basso": {}, "Blow": {}, "Bottle": {}, "Frog": {}, "Funk": {},
-	"Glass": {}, "Hero": {}, "Morse": {}, "Ping": {}, "Pop": {},
-	"Purr": {}, "Sosumi": {}, "Submarine": {}, "Tink": {},
+	return soundpref.Read(path)
 }
 
 func readClaudeBackgroundSmallFile(path string, maximum int64) ([]byte, error) {

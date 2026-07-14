@@ -249,6 +249,12 @@ else
             sync_claude_shared_state "$HOME/.claude" "$CLAUDE_CONFIG_DIR"
             sync_claude_shared_settings "$HOME/.claude" "$CLAUDE_CONFIG_DIR"
           fi
+          # A plain shell can manually launch OpenCode, so it is also a plugin
+          # load boundary. Never expose it while an old adapter may be loadable.
+          if ! install_opencode_plugin; then
+            printf '\033[31mError:\033[0m Failed to install OpenCode plugin. Run wisp-deck to repair the installation.\n' >&2
+            continue
+          fi
           exec "$SHELL"
           ;;
         add-worktree)

@@ -18,6 +18,7 @@ import (
 	"github.com/jackuait/wisp-deck/internal/claudeconfig"
 	"github.com/jackuait/wisp-deck/internal/models"
 	"github.com/jackuait/wisp-deck/internal/opencodeconfig"
+	"github.com/jackuait/wisp-deck/internal/soundpref"
 	"github.com/jackuait/wisp-deck/internal/usage"
 	"github.com/jackuait/wisp-deck/internal/util"
 )
@@ -315,7 +316,8 @@ type MainMenuModel struct {
 	settingsFile string
 
 	// File path for sound features persistence ({tool}-features.json)
-	soundFile string
+	soundFile      string
+	soundConfigDir string
 
 	// Claude config selection state
 	claudeConfigs     []ClaudeConfig // Standard is implicit index 0, not stored here
@@ -650,6 +652,13 @@ func (m *MainMenuModel) CurrentAITool() string {
 	return m.aiTools[m.selectedAI]
 }
 
+// setSelectedAI is the only production mutation point for the active tool.
+// Tool selection and its per-tool sound preference must change together.
+func (m *MainMenuModel) setSelectedAI(index int) {
+	m.selectedAI = index
+	m.loadCurrentToolSound()
+}
+
 // CycleAITool cycles the AI tool selection forward ("next") or backward ("prev").
 // If aiToolFile is set, the new tool is persisted to disk immediately.
 func (m *MainMenuModel) CycleAITool(direction string) {
@@ -658,9 +667,9 @@ func (m *MainMenuModel) CycleAITool(direction string) {
 		return
 	}
 	if direction == "next" {
-		m.selectedAI = (m.selectedAI + 1) % n
+		m.setSelectedAI((m.selectedAI + 1) % n)
 	} else {
-		m.selectedAI = (m.selectedAI - 1 + n) % n
+		m.setSelectedAI((m.selectedAI - 1 + n) % n)
 	}
 	m.theme = ResolveTheme(m.aiTools[m.selectedAI], m.themePref)
 	// The PLAN row only renders for Claude, so cycling to another agent can pull
@@ -949,8 +958,20 @@ func (m *MainMenuModel) SoundName() string {
 	return m.soundName
 }
 
+func (m *MainMenuModel) loadCurrentToolSound() {
+	tool := m.CurrentAITool()
+	if m.soundConfigDir == "" || tool == "" {
+		return
+	}
+	m.soundFile = filepath.Join(m.soundConfigDir, tool+"-features.json")
+	m.soundName = soundpref.Read(m.soundFile)
+	m.initialSoundName = m.soundName
+	m.soundNameChanged = false
+}
+
 // CycleSoundName cycles forward through system sounds + Off.
 func (m *MainMenuModel) CycleSoundName() {
+	previous := m.soundName
 	if m.soundName == "" {
 		m.soundName = SystemSounds[0]
 	} else {
@@ -968,12 +989,19 @@ func (m *MainMenuModel) CycleSoundName() {
 		}
 	}
 	m.soundNameChanged = m.soundName != m.initialSoundName
+	if !m.persistSound() {
+		m.soundName = previous
+		m.soundNameChanged = m.soundName != m.initialSoundName
+		m.feedbackMsg = "Failed to save Idle Sound"
+		return
+	}
+	m.feedbackMsg = ""
 	m.previewSound()
-	m.persistSound()
 }
 
 // CycleSoundNameReverse cycles backward through Off + system sounds.
 func (m *MainMenuModel) CycleSoundNameReverse() {
+	previous := m.soundName
 	if m.soundName == "" {
 		m.soundName = SystemSounds[len(SystemSounds)-1]
 	} else {
@@ -991,8 +1019,14 @@ func (m *MainMenuModel) CycleSoundNameReverse() {
 		}
 	}
 	m.soundNameChanged = m.soundName != m.initialSoundName
+	if !m.persistSound() {
+		m.soundName = previous
+		m.soundNameChanged = m.soundName != m.initialSoundName
+		m.feedbackMsg = "Failed to save Idle Sound"
+		return
+	}
+	m.feedbackMsg = ""
 	m.previewSound()
-	m.persistSound()
 }
 
 // previewSound plays the current sound in the background using afplay.
@@ -1008,28 +1042,37 @@ func (m *MainMenuModel) previewSound() {
 }
 
 // persistSound writes the current sound state to the features JSON file.
-func (m *MainMenuModel) persistSound() {
+func (m *MainMenuModel) persistSound() bool {
 	if m.soundFile == "" {
-		return
+		return true
 	}
-	_ = os.MkdirAll(filepath.Dir(m.soundFile), 0755)
-
-	// Read existing data to preserve other keys
-	existing := map[string]interface{}{}
-	if data, err := os.ReadFile(m.soundFile); err == nil {
-		_ = json.Unmarshal(data, &existing)
+	if err := os.MkdirAll(filepath.Dir(m.soundFile), 0755); err != nil {
+		return false
 	}
 
-	if m.soundName == "" {
-		existing["sound"] = false
-		delete(existing, "sound_name")
-	} else {
-		existing["sound"] = true
-		existing["sound_name"] = m.soundName
-	}
+	return soundpref.WithExclusiveLock(m.soundFile, func() error {
+		// Preserve other keys only from a bounded, unambiguous regular file.
+		// Invalid or special-file input becomes a fresh document so a writer
+		// cannot hang or normalize a stale opt-in into enabled audio.
+		existing, err := soundpref.LoadDocument(m.soundFile)
+		if err != nil {
+			existing = map[string]any{}
+		}
 
-	data, _ := json.Marshal(existing)
-	_ = os.WriteFile(m.soundFile, append(data, '\n'), 0644)
+		if m.soundName == "" {
+			existing["sound"] = false
+			delete(existing, "sound_name")
+		} else {
+			existing["sound"] = true
+			existing["sound_name"] = m.soundName
+		}
+
+		data, err := json.Marshal(existing)
+		if err != nil {
+			return err
+		}
+		return writeFileAtomic(m.soundFile, append(data, '\n'), 0644)
+	}) == nil
 }
 
 // SetClaudeConfigFile sets the pointer file path used to persist the active config.
@@ -1656,30 +1699,32 @@ func (m *MainMenuModel) persistSetting(key, value string) {
 
 // writeFileAtomic writes data to path via a temp file in the same directory then
 // renames it into place, so a concurrent reader never observes a partial write.
-// Falls back to a direct write if the temp file can't be created.
-func writeFileAtomic(path string, data []byte, perm os.FileMode) {
+// Failures preserve the previous complete file; a truncate fallback would
+// recreate the torn-read window this helper exists to prevent.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
 	if err != nil {
-		_ = os.WriteFile(path, data, perm)
-		return
+		return err
 	}
 	tmpName := tmp.Name()
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpName)
-		_ = os.WriteFile(path, data, perm)
-		return
+		return err
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpName)
-		_ = os.WriteFile(path, data, perm)
-		return
+		return err
 	}
-	_ = os.Chmod(tmpName, perm)
+	if err := os.Chmod(tmpName, perm); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
 	if err := os.Rename(tmpName, path); err != nil {
 		_ = os.Remove(tmpName)
-		_ = os.WriteFile(path, data, perm)
+		return err
 	}
+	return nil
 }
 
 // SetSleepTimer sets the sleep inactivity timer to the given number of seconds.
@@ -1792,7 +1837,17 @@ func (m *MainMenuModel) SetSettingsFile(path string) { m.settingsFile = path }
 func (m *MainMenuModel) SettingsFile() string { return m.settingsFile }
 
 // SetSoundFile sets the file path for sound features persistence.
-func (m *MainMenuModel) SetSoundFile(path string) { m.soundFile = path }
+func (m *MainMenuModel) SetSoundFile(path string) {
+	m.soundFile = path
+	if path == "" {
+		m.soundConfigDir = ""
+		return
+	}
+	m.soundConfigDir = filepath.Dir(path)
+	m.soundName = soundpref.Read(path)
+	m.initialSoundName = m.soundName
+	m.soundNameChanged = false
+}
 
 // SetWorktreeProject sets the pending worktree project index (for testing).
 func (m *MainMenuModel) SetWorktreeProject(projectIdx int, _ string) {

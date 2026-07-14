@@ -648,7 +648,7 @@ func TestTabTitleWatcher_play_notification_sound_skips_when_sound_disabled(t *te
 	}
 }
 
-func TestTabTitleWatcher_play_notification_sound_uses_default_when_features_missing(t *testing.T) {
+func TestTabTitleWatcher_play_notification_sound_skips_when_features_missing(t *testing.T) {
 	dir := t.TempDir()
 	config := filepath.Join(dir, "missing")
 	logFile := filepath.Join(dir, "afplay.log")
@@ -656,7 +656,10 @@ func TestTabTitleWatcher_play_notification_sound_uses_default_when_features_miss
 	_, code := runBashSnippet(t, soundWatcherSnippet(t,
 		fmt.Sprintf(`play_notification_sound claude %q`, config)), buildEnv(t, []string{binDir}))
 	assertExitCode(t, code, 0)
-	assertContains(t, waitForFile(t, logFile, "expected default sound"), "Bottle.aiff")
+	time.Sleep(500 * time.Millisecond)
+	if _, err := os.Stat(logFile); !os.IsNotExist(err) {
+		t.Error("afplay was called without an explicit sound opt-in")
+	}
 }
 
 func TestTabTitleWatcher_apply_tab_title_modes(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -34,7 +35,7 @@ func updateSnippet(t *testing.T, body string) string {
 
 // --- is_sound_enabled ---
 
-func TestNotification_is_sound_enabled_returns_true_when_features_file_missing(t *testing.T) {
+func TestNotification_is_sound_enabled_returns_false_when_features_file_missing(t *testing.T) {
 	tmpDir := t.TempDir()
 	nonexistentDir := filepath.Join(tmpDir, "nonexistent")
 
@@ -43,12 +44,12 @@ func TestNotification_is_sound_enabled_returns_true_when_features_file_missing(t
 
 	out, code := runBashSnippet(t, snippet, nil)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "true" {
-		t.Errorf("expected 'true', got %q", strings.TrimSpace(out))
+	if strings.TrimSpace(out) != "false" {
+		t.Errorf("expected 'false', got %q", strings.TrimSpace(out))
 	}
 }
 
-func TestNotification_is_sound_enabled_returns_true_when_sound_key_missing(t *testing.T) {
+func TestNotification_is_sound_enabled_returns_false_when_sound_key_missing(t *testing.T) {
 	tmpDir := t.TempDir()
 	writeTempFile(t, tmpDir, "claude-features.json", `{}`)
 
@@ -57,8 +58,20 @@ func TestNotification_is_sound_enabled_returns_true_when_sound_key_missing(t *te
 
 	out, code := runBashSnippet(t, snippet, nil)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "true" {
-		t.Errorf("expected 'true', got %q", strings.TrimSpace(out))
+	if strings.TrimSpace(out) != "false" {
+		t.Errorf("expected 'false', got %q", strings.TrimSpace(out))
+	}
+}
+
+func TestNotification_is_sound_enabled_returns_false_when_features_file_invalid(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeTempFile(t, tmpDir, "claude-features.json", `{"sound": true`)
+
+	out, code := runBashSnippet(t, notificationSnippet(t,
+		fmt.Sprintf(`is_sound_enabled "claude" %q`, tmpDir)), nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "false" {
+		t.Errorf("invalid config must fail closed, got %q", strings.TrimSpace(out))
 	}
 }
 
@@ -156,9 +169,59 @@ func TestNotification_set_sound_feature_flag_preserves_other_keys(t *testing.T) 
 	}
 }
 
+func TestNotification_turning_sound_off_linearizes_with_inflight_playback(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeTempFile(t, tmpDir, "claude-features.json", `{"sound": true, "sound_name": "Glass"}`)
+	started := filepath.Join(tmpDir, "started")
+	release := filepath.Join(tmpDir, "release")
+	done := filepath.Join(tmpDir, "off-done")
+	binDir := mockCommand(t, t.TempDir(), "afplay", fmt.Sprintf(`
+touch %q
+while [ ! -e %q ]; do sleep 0.01; done
+`, started, release))
+
+	body := fmt.Sprintf(`
+play_notification_sound "claude" %q
+for _i in $(seq 1 200); do [ -e %q ] && break; sleep 0.01; done
+[ -e %q ] || exit 40
+(set_sound_feature_flag "claude" %q false && touch %q) &
+_setter=$!
+sleep 0.2
+if [ -e %q ]; then
+  touch %q
+  wait "$_setter"
+  exit 41
+fi
+touch %q
+wait "$_setter"
+[ -e %q ]
+`, tmpDir, started, started, tmpDir, done, done, release, release, done)
+
+	_, code := runBashSnippet(t, notificationSnippet(t, body), buildEnv(t, []string{binDir}))
+	if code == 41 {
+		t.Fatal("Off completed while a notification authorized under the old preference was still playing")
+	}
+	assertExitCode(t, code, 0)
+}
+
+func TestNotification_playback_fails_closed_for_invalid_config(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeTempFile(t, tmpDir, "claude-features.json", `{"sound": true`)
+	logFile := filepath.Join(tmpDir, "afplay.log")
+	binDir := mockCommand(t, t.TempDir(), "afplay", fmt.Sprintf(`echo called > %q`, logFile))
+
+	_, code := runBashSnippet(t, notificationSnippet(t,
+		fmt.Sprintf(`play_notification_sound "claude" %q`, tmpDir)), buildEnv(t, []string{binDir}))
+	assertExitCode(t, code, 0)
+	time.Sleep(300 * time.Millisecond)
+	if _, err := os.Stat(logFile); !os.IsNotExist(err) {
+		t.Fatal("invalid preference reached afplay")
+	}
+}
+
 // --- get_sound_name ---
 
-func TestNotification_get_sound_name_returns_Bottle_when_features_file_missing(t *testing.T) {
+func TestNotification_get_sound_name_returns_empty_when_features_file_missing(t *testing.T) {
 	tmpDir := t.TempDir()
 	nonexistentDir := filepath.Join(tmpDir, "nonexistent")
 
@@ -167,8 +230,84 @@ func TestNotification_get_sound_name_returns_Bottle_when_features_file_missing(t
 
 	out, code := runBashSnippet(t, snippet, nil)
 	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "Bottle" {
-		t.Errorf("expected 'Bottle', got %q", strings.TrimSpace(out))
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("expected empty string, got %q", strings.TrimSpace(out))
+	}
+}
+
+func TestNotification_get_sound_name_returns_empty_when_sound_key_missing(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeTempFile(t, tmpDir, "claude-features.json", `{}`)
+
+	out, code := runBashSnippet(t, notificationSnippet(t,
+		fmt.Sprintf(`get_sound_name "claude" %q`, tmpDir)), nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("missing opt-in must be silent, got %q", strings.TrimSpace(out))
+	}
+}
+
+func TestNotification_get_sound_name_returns_empty_when_features_file_invalid(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeTempFile(t, tmpDir, "claude-features.json", `{"sound": true`)
+
+	out, code := runBashSnippet(t, notificationSnippet(t,
+		fmt.Sprintf(`get_sound_name "claude" %q`, tmpDir)), nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("invalid config must fail closed, got %q", strings.TrimSpace(out))
+	}
+}
+
+func TestNotification_get_sound_name_rejects_ambiguous_or_oversized_json(t *testing.T) {
+	tests := []struct {
+		name, content string
+	}{
+		{name: "duplicate", content: `{"sound": false, "sound": true, "sound_name": "Glass"}`},
+		{name: "mixed case variant", content: `{"sound": true, "Sound": false, "sound_name": "Glass"}`},
+		{name: "nonstandard NaN", content: `{"sound": true, "sound_name": "Glass", "other": NaN}`},
+		{name: "oversized", content: `{"sound": true, "sound_name": "Glass", "padding": "` + strings.Repeat("x", 64*1024) + `"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			writeTempFile(t, tmpDir, "claude-features.json", tt.content)
+			out, code := runBashSnippet(t, notificationSnippet(t,
+				fmt.Sprintf(`get_sound_name "claude" %q`, tmpDir)), nil)
+			assertExitCode(t, code, 0)
+			if strings.TrimSpace(out) != "" {
+				t.Fatalf("ambiguous config played %q, want silence", strings.TrimSpace(out))
+			}
+		})
+	}
+}
+
+func TestNotification_get_sound_name_does_not_block_on_fifo(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "claude-features.json")
+	if err := syscall.Mkfifo(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	writerConnected := make(chan bool, 1)
+	go func() {
+		time.Sleep(1500 * time.Millisecond)
+		fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			writerConnected <- false
+			return
+		}
+		_, _ = syscall.Write(fd, []byte(`{"sound":false}`))
+		_ = syscall.Close(fd)
+		writerConnected <- true
+	}()
+	out, code := runBashSnippet(t, notificationSnippet(t,
+		fmt.Sprintf(`get_sound_name "claude" %q`, tmpDir)), nil)
+	assertExitCode(t, code, 0)
+	if <-writerConnected {
+		t.Fatal("preference reader blocked until a FIFO writer connected")
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("FIFO preference played %q, want silence", strings.TrimSpace(out))
 	}
 }
 
@@ -197,6 +336,30 @@ func TestNotification_get_sound_name_returns_stored_name(t *testing.T) {
 	assertExitCode(t, code, 0)
 	if strings.TrimSpace(out) != "Glass" {
 		t.Errorf("expected 'Glass', got %q", strings.TrimSpace(out))
+	}
+}
+
+func TestNotification_get_sound_name_rejects_unsafe_name(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeTempFile(t, tmpDir, "claude-features.json", `{"sound": true, "sound_name": "../../private"}`)
+
+	out, code := runBashSnippet(t, notificationSnippet(t,
+		fmt.Sprintf(`get_sound_name "claude" %q`, tmpDir)), nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "Bottle" {
+		t.Errorf("unsafe name must not escape the system sound directory, got %q", strings.TrimSpace(out))
+	}
+}
+
+func TestNotification_get_sound_name_rejects_non_string_name(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeTempFile(t, tmpDir, "claude-features.json", `{"sound": true, "sound_name": 123}`)
+
+	out, code := runBashSnippet(t, notificationSnippet(t,
+		fmt.Sprintf(`get_sound_name "claude" %q`, tmpDir)), nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("non-string name must be silent, got %q", strings.TrimSpace(out))
 	}
 }
 
@@ -272,6 +435,56 @@ func TestNotification_set_sound_name_preserves_other_keys(t *testing.T) {
 	assertExitCode(t, code, 0)
 	if strings.TrimSpace(out) != "Hero 42" {
 		t.Errorf("expected 'Hero 42', got %q", strings.TrimSpace(out))
+	}
+}
+
+func TestNotification_set_sound_name_does_not_preserve_ambiguous_opt_in(t *testing.T) {
+	for _, content := range []string{
+		`{"sound":false,"sound":true,"padding":1}`,
+		`{"sound":true,"padding":"` + strings.Repeat("x", 64*1024) + `"}`,
+	} {
+		tmpDir := t.TempDir()
+		writeTempFile(t, tmpDir, "claude-features.json", content)
+		_, code := runBashSnippet(t, notificationSnippet(t,
+			fmt.Sprintf(`set_sound_name "claude" %q "Glass"`, tmpDir)), nil)
+		assertExitCode(t, code, 0)
+		out, code := runBashSnippet(t, notificationSnippet(t,
+			fmt.Sprintf(`is_sound_enabled "claude" %q`, tmpDir)), nil)
+		assertExitCode(t, code, 0)
+		if strings.TrimSpace(out) != "false" {
+			t.Fatalf("writer normalized ambiguous JSON into enabled audio: %s", content)
+		}
+	}
+}
+
+func TestNotification_set_sound_name_does_not_block_reading_fifo(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "claude-features.json")
+	if err := syscall.Mkfifo(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		out  string
+		code int
+	}
+	done := make(chan result, 1)
+	snippet := notificationSnippet(t, fmt.Sprintf(`set_sound_name "claude" %q "Glass"`, tmpDir))
+	go func() {
+		out, code := runBashSnippet(t, snippet, nil)
+		done <- result{out: out, code: code}
+	}()
+	select {
+	case got := <-done:
+		if got.code != 0 {
+			t.Fatalf("setter failed: code=%d output=%s", got.code, got.out)
+		}
+	case <-time.After(500 * time.Millisecond):
+		writer, err := os.OpenFile(path, os.O_WRONLY, 0600)
+		if err == nil {
+			_ = writer.Close()
+		}
+		<-done
+		t.Fatal("shell writer blocked reading a FIFO while holding the preference lock")
 	}
 }
 

@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -384,6 +385,74 @@ func TestCycleSoundNameReverse(t *testing.T) {
 	m.CycleSoundNameReverse()
 	if m.SoundName() != "Tink" {
 		t.Errorf("expected 'Tink' after reverse cycling from Off, got %q", m.SoundName())
+	}
+}
+
+func TestCycleAIToolLoadsSelectedToolsSoundPreference(t *testing.T) {
+	configDir := t.TempDir()
+	claudeFile := filepath.Join(configDir, "claude-features.json")
+	opencodeFile := filepath.Join(configDir, "opencode-features.json")
+	if err := os.WriteFile(claudeFile, []byte(`{"sound": false}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(opencodeFile, []byte(`{"sound": true, "sound_name": "Glass"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := newTestMenu()
+	m.SetSoundName("")
+	m.SetSoundFile(claudeFile)
+	m.CycleAITool("next")
+
+	if m.CurrentAITool() != "opencode" {
+		t.Fatalf("current tool = %q, want opencode", m.CurrentAITool())
+	}
+	if m.SoundFile() != opencodeFile {
+		t.Fatalf("sound file = %q, want %q", m.SoundFile(), opencodeFile)
+	}
+	if m.SoundName() != "Glass" {
+		t.Fatalf("OpenCode sound = %q, want Glass", m.SoundName())
+	}
+	m.SetSoundName("")
+	m.persistSound()
+	opencodeData, err := os.ReadFile(opencodeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(opencodeData), `"sound":false`) {
+		t.Fatalf("OpenCode preference was not disabled: %s", opencodeData)
+	}
+
+	m.CycleAITool("prev")
+	if m.SoundFile() != claudeFile {
+		t.Fatalf("sound file after switch back = %q, want %q", m.SoundFile(), claudeFile)
+	}
+	if m.SoundName() != "" {
+		t.Fatalf("Claude sound = %q, want Off", m.SoundName())
+	}
+}
+
+func TestCycleSoundName_rolls_back_when_off_cannot_be_persisted(t *testing.T) {
+	configDir := t.TempDir()
+	soundFile := filepath.Join(configDir, "claude-features.json")
+	if err := os.WriteFile(soundFile, []byte(`{"sound":true,"sound_name":"Basso"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(configDir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(configDir, 0700) })
+
+	m := newTestMenu()
+	m.SetSoundName("Basso")
+	m.SetSoundFile(soundFile)
+	m.CycleSoundNameReverse() // Basso -> Off
+
+	if m.SoundName() != "Basso" {
+		t.Fatalf("menu displayed %q after failed Off write, want persisted Basso", m.SoundName())
+	}
+	if !strings.Contains(m.FeedbackMsg(), "Failed to save") {
+		t.Fatalf("feedback = %q, want a save failure", m.FeedbackMsg())
 	}
 }
 

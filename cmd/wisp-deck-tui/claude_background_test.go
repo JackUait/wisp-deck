@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -919,6 +920,107 @@ func TestClaudeBackgroundNotifierUsesGenericBodyAndLiveAllowedSound(t *testing.T
 	notifier.Notify(context.Background(), attention.ClaudeBackgroundEvent{Status: attention.ClaudeBackgroundFailed})
 	if len(calls) != 2 || !reflect.DeepEqual(calls[1].args, []string{"/System/Library/Sounds/Bottle.aiff"}) {
 		t.Fatalf("unsafe sound preference calls = %#v", calls)
+	}
+}
+
+func TestClaudeBackgroundSoundPreferenceFailsClosedWithoutExplicitOptIn(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude-features.json")
+	tests := []struct {
+		name, content string
+		write         bool
+	}{
+		{name: "missing"},
+		{name: "invalid", content: `{"sound":true`, write: true},
+		{name: "missing flag", content: `{"sound_name":"Glass"}`, write: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_ = os.Remove(path)
+			if tt.write {
+				if err := os.WriteFile(path, []byte(tt.content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := claudeBackgroundSoundPreference(path); got != "" {
+				t.Fatalf("ambiguous preference played %q, want silence", got)
+			}
+		})
+	}
+}
+
+func TestClaudeBackgroundNotifierHoldsPreferenceLockThroughPlayback(t *testing.T) {
+	if _, err := os.Stat("/usr/bin/lockf"); err != nil {
+		t.Skip("macOS lockf is required for the cross-process sound lock")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(dir, "claude-features.json"),
+		[]byte(`{"sound":true,"sound_name":"Glass"}`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	playbackStarted := make(chan struct{})
+	releasePlayback := make(chan struct{})
+	notifyDone := make(chan struct{})
+	notifier := claudeBackgroundNotifier{
+		WispConfigDir: dir,
+		GOOS:          "darwin",
+		Run: func(_ context.Context, name string, _ []string, _ []string) error {
+			if name == "/usr/bin/afplay" {
+				close(playbackStarted)
+				<-releasePlayback
+			}
+			return nil
+		},
+	}
+	go func() {
+		notifier.Notify(context.Background(), attention.ClaudeBackgroundEvent{Status: attention.ClaudeBackgroundCompleted})
+		close(notifyDone)
+	}()
+	select {
+	case <-playbackStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background sound did not start")
+	}
+
+	setter := exec.Command(
+		"/usr/bin/lockf", "-k", filepath.Join(dir, ".claude-features.json.lock"),
+		"/bin/sh", "-c", ":",
+	)
+	setterDone := make(chan error, 1)
+	if err := setter.Start(); err != nil {
+		t.Fatal(err)
+	}
+	go func() { setterDone <- setter.Wait() }()
+	completedEarly := false
+	select {
+	case err := <-setterDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+		completedEarly = true
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(releasePlayback)
+	if !completedEarly {
+		select {
+		case err := <-setterDone:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("preference lock did not release after playback")
+		}
+	}
+	select {
+	case <-notifyDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background notifier did not finish")
+	}
+	if completedEarly {
+		t.Fatal("preference writer crossed an in-flight background sound")
 	}
 }
 

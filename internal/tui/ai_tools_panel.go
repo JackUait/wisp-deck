@@ -237,7 +237,7 @@ func (m *MainMenuModel) toggleFocusedToolDisabled() {
 		disabled := models.LoadDisabledTools(m.disabledToolsFile)
 		for i, name := range m.aiTools {
 			if !disabled[name] {
-				m.selectedAI = i
+				m.setSelectedAI(i)
 				m.theme = ResolveTheme(name, m.themePref)
 				m.persistAITool()
 				break
@@ -314,11 +314,11 @@ func (m *MainMenuModel) applyAIToolRemoveDone(msg aiToolRemoveDoneMsg) {
 		}
 		m.aiTools = kept
 		if wasDefault && len(m.aiTools) > 0 {
-			m.selectedAI = 0
+			m.setSelectedAI(0)
 			m.theme = ResolveTheme(m.aiTools[0], m.themePref)
 			m.persistAITool()
 		} else if m.selectedAI >= len(m.aiTools) && len(m.aiTools) > 0 {
-			m.selectedAI = len(m.aiTools) - 1
+			m.setSelectedAI(len(m.aiTools) - 1)
 		}
 	}
 	m.feedbackMsg = "Removed " + display
@@ -368,7 +368,7 @@ func (m *MainMenuModel) setFocusedToolDefault() {
 	}
 	for i, name := range m.aiTools {
 		if name == tool.Name {
-			m.selectedAI = i
+			m.setSelectedAI(i)
 			m.theme = ResolveTheme(name, m.themePref)
 			m.persistAITool()
 			return
