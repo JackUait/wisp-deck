@@ -1,6 +1,7 @@
 package bash_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,11 @@ func TestIdleSoundRuntimeSitesUseSharedLiveGate(t *testing.T) {
 			data, err := os.ReadFile(candidate)
 			if err != nil {
 				return err
+			}
+			// Local builds can leave ignored executables under bin/. Only text
+			// source can introduce a new playback owner for this source guard.
+			if bytes.IndexByte(data, 0) >= 0 {
+				return nil
 			}
 			for _, marker := range markers {
 				if strings.Contains(string(data), marker) {
