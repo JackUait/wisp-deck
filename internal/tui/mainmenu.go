@@ -2100,6 +2100,32 @@ func (m *MainMenuModel) selectCurrent() tea.Cmd {
 	return nil
 }
 
+// createRandomWorktreeAtCursor creates a worktree with a random four-word
+// name (new branch off HEAD) for the project under the cursor. On a worktree
+// or add-worktree row the parent project is used. The git call runs inside a
+// tea.Cmd — `git worktree add` checks out a full tree, which can take seconds
+// on a real project and must never block the Update loop.
+func (m *MainMenuModel) createRandomWorktreeAtCursor() tea.Cmd {
+	if m.activeTab != TabProjects {
+		return nil
+	}
+	itemType, projectIdx, _ := m.ResolveItem(m.selectedItem)
+	switch itemType {
+	case "project", "worktree", "add-worktree":
+	default:
+		return nil
+	}
+	name := models.RandomWorktreeName()
+	projectPath := m.projects[projectIdx].Path
+	worktreePath := computeWorktreePath(projectPath, m.projects[projectIdx].Name, name, m.settingsFile)
+	return func() tea.Msg {
+		if err := models.AddWorktree(projectPath, worktreePath, name); err != nil {
+			return worktreeDoneMsg{err: err, path: worktreePath}
+		}
+		return worktreeDoneMsg{path: worktreePath}
+	}
+}
+
 // setActionResult produces a result for the given action name.
 func (m *MainMenuModel) setActionResult(action string) {
 	m.result = &MainMenuResult{
@@ -2669,6 +2695,8 @@ func (m *MainMenuModel) handleRune(r rune) (tea.Model, tea.Cmd) {
 	case 'w', 'W':
 		m.ToggleWorktreesAtCursor()
 		return m, nil
+	case 'n', 'N':
+		return m, m.createRandomWorktreeAtCursor()
 	case 'u', 'U':
 		// Run the pending update (the header notice's button). Inert until an
 		// update is actually available.

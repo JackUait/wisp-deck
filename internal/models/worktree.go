@@ -200,6 +200,18 @@ func ParseMainBranch(output string) string {
 	return ""
 }
 
+// AddWorktree runs `git -C projectPath worktree add -b branch wtPath`,
+// creating a new branch off HEAD together with its worktree. Failures return
+// an error carrying git's stderr.
+func AddWorktree(projectPath, wtPath, branch string) error {
+	cmd := exec.Command("git", "-C", projectPath, "worktree", "add", "-b", branch, wtPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git worktree add: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // WorktreeDirtyError is returned by RemoveWorktree when the worktree has
 // uncommitted changes and force=false.
 type WorktreeDirtyError struct {
