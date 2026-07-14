@@ -1,10 +1,12 @@
 package usage
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -221,5 +223,205 @@ func TestHistoryReplay_unknownSchemaReturnsError(t *testing.T) {
 
 	if _, _, err := readHistoryCopies(paths); err == nil {
 		t.Fatal("unknown history schema should fail")
+	}
+}
+
+func TestHistoryCommit_writesIdenticalPrivateMirrors(t *testing.T) {
+	paths := testHistoryPaths(t)
+	state, err := commitHistory(paths, historyUpdate{
+		Sources: map[string]historySource{"/a": testHistorySource(10)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.LastSequence != 1 {
+		t.Fatalf("last sequence = %d, want 1", state.LastSequence)
+	}
+	primary, err := os.ReadFile(paths.Primary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup, err := os.ReadFile(paths.Backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(primary, backup) {
+		t.Fatalf("journal mirrors differ:\nprimary: %s\nbackup: %s", primary, backup)
+	}
+	for _, path := range []string{paths.Primary, paths.Backup, paths.Lock} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("%s mode = %04o, want 0600", filepath.Base(path), got)
+		}
+	}
+}
+
+func TestHistoryRepair_restoresDeletedPrimaryFromBackup(t *testing.T) {
+	paths := testHistoryPaths(t)
+	if _, err := commitHistory(paths, historyUpdate{
+		Sources: map[string]historySource{"/a": testHistorySource(10)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(paths.Primary); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := commitHistory(paths, historyUpdate{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := state.Sources["/a"].Months["2026-07"].Input; got != 10 {
+		t.Fatalf("input = %d, want 10", got)
+	}
+	primary, _ := os.ReadFile(paths.Primary)
+	backup, _ := os.ReadFile(paths.Backup)
+	if !bytes.Equal(primary, backup) {
+		t.Fatal("primary was not repaired from backup")
+	}
+}
+
+func TestHistoryRepair_restoresDeletedBackupFromPrimary(t *testing.T) {
+	paths := testHistoryPaths(t)
+	if _, err := commitHistory(paths, historyUpdate{
+		Sources: map[string]historySource{"/a": testHistorySource(10)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(paths.Backup); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := commitHistory(paths, historyUpdate{}); err != nil {
+		t.Fatal(err)
+	}
+	primary, _ := os.ReadFile(paths.Primary)
+	backup, _ := os.ReadFile(paths.Backup)
+	if !bytes.Equal(primary, backup) {
+		t.Fatal("backup was not repaired from primary")
+	}
+}
+
+func TestHistoryRepair_truncatedTailDoesNotBlockLaterCommit(t *testing.T) {
+	paths := testHistoryPaths(t)
+	if _, err := commitHistory(paths, historyUpdate{
+		Sources: map[string]historySource{"/a": testHistorySource(10)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(paths.Primary, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"schema":1`); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := commitHistory(paths, historyUpdate{
+		Sources: map[string]historySource{"/b": testHistorySource(20)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Sources) != 2 {
+		t.Fatalf("sources = %+v, want /a and /b", state.Sources)
+	}
+	state, _, err = readHistoryCopies(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Sources) != 2 {
+		t.Fatalf("replayed sources = %+v, want /a and /b", state.Sources)
+	}
+}
+
+func TestHistoryCommit_staleSnapshotCannotReplaceNewer(t *testing.T) {
+	paths := testHistoryPaths(t)
+	if _, err := commitHistory(paths, historyUpdate{
+		Sources: map[string]historySource{"/a": testHistorySource(20)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := commitHistory(paths, historyUpdate{
+		Sources: map[string]historySource{"/a": testHistorySource(10)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := state.Sources["/a"].Months["2026-07"].Input; got != 20 {
+		t.Fatalf("stale commit replaced newer source: input = %d, want 20", got)
+	}
+	if state.LastSequence != 1 {
+		t.Fatalf("stale no-op allocated sequence %d, want 1", state.LastSequence)
+	}
+}
+
+func TestHistoryConcurrent_disjointCommitsPreserveUnion(t *testing.T) {
+	paths := testHistoryPaths(t)
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for path, input := range map[string]int64{"/a": 10, "/b": 20} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := commitHistory(paths, historyUpdate{
+				Sources: map[string]historySource{path: testHistorySource(input)},
+			})
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	state, _, err := readHistoryCopies(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Sources) != 2 {
+		t.Fatalf("sources = %+v, want both concurrent updates", state.Sources)
+	}
+}
+
+func TestHistoryCommit_oneSidedFailureIsReturnedAndRepaired(t *testing.T) {
+	paths := testHistoryPaths(t)
+	validBackup := paths.Backup
+	// The backup's parent is the primary path. It does not exist during replay,
+	// then becomes a regular file after the primary append, making the backup
+	// append fail with ENOTDIR after one durable copy has been written.
+	paths.Backup = filepath.Join(paths.Primary, "backup.jsonl")
+	if _, err := commitHistory(paths, historyUpdate{
+		Sources: map[string]historySource{"/a": testHistorySource(10)},
+	}); err == nil {
+		t.Fatal("backup append failure should be returned")
+	}
+	if _, err := os.Stat(paths.Primary); err != nil {
+		t.Fatalf("primary should retain the one-sided durable record: %v", err)
+	}
+	paths.Backup = validBackup
+
+	state, err := commitHistory(paths, historyUpdate{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := state.Sources["/a"].Months["2026-07"].Input; got != 10 {
+		t.Fatalf("repaired input = %d, want 10", got)
+	}
+	if _, err := os.Stat(paths.Backup); err != nil {
+		t.Fatalf("backup was not repaired: %v", err)
 	}
 }
