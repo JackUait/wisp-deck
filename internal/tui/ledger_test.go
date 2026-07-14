@@ -381,12 +381,32 @@ func TestLedgerRefreshTickStartsNewGeneration(t *testing.T) {
 
 	_, cmd := m.Update(ledgerRefreshTickMsg{})
 
-	if cmd == nil || m.requestedGeneration != 8 || !m.loading {
+	if cmd == nil || m.requestedGeneration != 8 || m.loading {
 		t.Fatalf("refresh tick: cmd=%v generation=%d loading=%v", cmd, m.requestedGeneration, m.loading)
 	}
 	msg := cmd()
 	if loaded, ok := msg.(ledgerSnapshotMsg); !ok || loaded.generation != 8 {
 		t.Fatalf("refresh result = %#v", msg)
+	}
+}
+
+func TestLedgerRefreshTickKeepsLoadedEmptyStateVisible(t *testing.T) {
+	empty := ledger.NewSnapshot(7, nil, ledger.Metadata{})
+	source := &recordingLedgerSource{snapshot: empty}
+	m := NewLedgerModel(source, empty, LedgerOptions{ProjectDir: "/repo", RefreshInterval: time.Hour})
+	sizeLedger(m, 60, 10)
+
+	_, cmd := m.Update(ledgerRefreshTickMsg{})
+
+	if cmd == nil {
+		t.Fatal("refresh tick returned no load command")
+	}
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "no changes") {
+		t.Fatalf("background refresh hid the accepted empty state:\n%s", view)
+	}
+	if strings.Contains(view, "loading changes") {
+		t.Fatalf("background refresh exposed a transient loading state:\n%s", view)
 	}
 }
 

@@ -236,7 +236,6 @@ func (m *LedgerModel) startLoad() tea.Cmd {
 	m.loadCancel = cancel
 	m.requestedGeneration++
 	generation := m.requestedGeneration
-	m.loading = true
 	return func() tea.Msg {
 		snapshot, err := m.source.Load(ctx, m.projectDir, generation)
 		if err != nil {
