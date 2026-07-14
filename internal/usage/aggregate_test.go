@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -180,16 +181,48 @@ func TestAggregate_mergesArchiveWithLiveMonth(t *testing.T) {
 func TestAddModelRows_accumulatesByModel(t *testing.T) {
 	dst := map[string]*ModelUsage{}
 	addModelRows(dst, []ModelUsage{
-		{Model: "claude-opus-4-7", Input: 10, Output: 1},
-		{Model: "claude-opus-4-7", Input: 5, CacheRead: 2},
+		{Model: "claude-opus-4-7", Input: 10, Output: 1, CacheWrite: 10, CacheWrite1h: 4},
+		{Model: "claude-opus-4-7", Input: 5, CacheRead: 2, CacheWrite: 5, CacheWrite1h: 2},
 		{Model: "claude-fable-5", Input: 3},
 	})
 	if dst["claude-opus-4-7"].Input != 15 || dst["claude-opus-4-7"].Output != 1 ||
-		dst["claude-opus-4-7"].CacheRead != 2 {
-		t.Errorf("opus row = %+v, want input 15 output 1 cacheRead 2", dst["claude-opus-4-7"])
+		dst["claude-opus-4-7"].CacheRead != 2 || dst["claude-opus-4-7"].CacheWrite != 15 ||
+		dst["claude-opus-4-7"].CacheWrite1h != 6 {
+		t.Errorf("opus row = %+v, want input 15 output 1 cacheRead 2 cacheWrite 15 cacheWrite1h 6", dst["claude-opus-4-7"])
 	}
 	if dst["claude-fable-5"].Input != 3 {
 		t.Errorf("fable row = %+v, want input 3", dst["claude-fable-5"])
+	}
+}
+
+func TestAggregate_preservesCacheWrite1hOnCacheHit(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	writeFixture(t, dir, "a.jsonl",
+		`{"type":"assistant","timestamp":"2026-07-01T10:00:00Z","message":{"id":"a","model":"claude-opus-4-7","usage":{"cache_creation_input_tokens":10,"cache_creation":{"ephemeral_5m_input_tokens":4,"ephemeral_1h_input_tokens":6}}}}`+"\n")
+
+	if _, err := Aggregate(dir, "", cachePath); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Aggregate(dir, "", cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || len(out[0].Models) != 1 {
+		t.Fatalf("out = %+v, want one month with one model", out)
+	}
+	model := out[0].Models[0]
+	if model.CacheWrite != 10 || model.CacheWrite1h != 6 {
+		t.Fatalf("cache writes = total %d, 1h %d; want total 10, 1h 6", model.CacheWrite, model.CacheWrite1h)
+	}
+	cost, priced := ModelCostUSD(model)
+	if !priced {
+		t.Fatal("opus model should be priced")
+	}
+	// Opus input is $5/MTok: 4 five-minute writes at 1.25x plus 6
+	// one-hour writes at 2x cost $0.000085.
+	if math.Abs(cost-0.000085) > 1e-12 {
+		t.Fatalf("cost = %.12f, want 0.000085", cost)
 	}
 }
 

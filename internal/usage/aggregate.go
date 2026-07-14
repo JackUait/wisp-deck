@@ -18,6 +18,7 @@ func addRow(dst map[string]*ModelUsage, m ModelUsage) {
 	a.Input += m.Input
 	a.Output += m.Output
 	a.CacheWrite += m.CacheWrite
+	a.CacheWrite1h += m.CacheWrite1h
 	a.CacheRead += m.CacheRead
 }
 
