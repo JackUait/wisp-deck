@@ -29,16 +29,21 @@ done
 unset _cv_dep
 
 # format_file shows the file BASENAME only (the path is dropped), truncating
-# with an ellipsis when it exceeds max width.
-# Usage: format_file <path> <max_width>
+# with an ellipsis when it exceeds max width. The result is BOTH printed and
+# published in the global FORMAT_FILE: render_group calls this once PER FILE on
+# every build tick, and a command-substitution capture there forked a subshell
+# per file (~4ms each — over a second per tick at 300 files), so hot-path callers
+# read the global instead (guarded by TestLedger_no_per_file_command_substitution).
+# Usage: format_file <path> <max_width>   -> result also in $FORMAT_FILE
 format_file() {
   local p="$1" max="$2"
   local fname="${p##*/}"
   if [ "${#fname}" -le "$max" ]; then
-    printf '%s' "$fname"
+    FORMAT_FILE="$fname"
   else
-    printf '%.*s…' "$((max - 1))" "$fname"
+    FORMAT_FILE="${fname:0:$((max - 1))}…"
   fi
+  printf '%s' "$FORMAT_FILE"
 }
 
 # sum_numstat totals the added/deleted columns of `git --numstat` output read
@@ -163,7 +168,8 @@ worktree_size() {
 format_image_row() {
   local dir="$1" ref="$2" file="$3" display="$4"
   local relpath old=0 new=0
-  relpath=$(numstat_path "$file")
+  numstat_path "$file" >/dev/null
+  relpath="$NUMSTAT_PATH"
   case "$ref" in
     staged)
       old=$(git_blob_size "$dir" HEAD "$relpath")
@@ -226,8 +232,12 @@ scroll_status() {
 # For renames git encodes it as "old => new" (or, when a common prefix/suffix is
 # shared, the brace form "pre{old => new}suf"); a clicked rename must open the
 # diff for its CURRENT path, so we resolve to the post-rename path. Plain paths
-# pass through unchanged.
-# Usage: numstat_path <numstat-path-field>
+# pass through unchanged. The result is BOTH printed and published in the global
+# NUMSTAT_PATH: body_path_map calls this once PER FILE on every build tick, and
+# a command-substitution capture there forked a subshell per file, so hot-path
+# callers use the direct call / the global instead (guarded by
+# TestLedger_no_per_file_command_substitution).
+# Usage: numstat_path <numstat-path-field>   -> result also in $NUMSTAT_PATH
 numstat_path() {
   local p="$1"
   case "$p" in
@@ -244,6 +254,7 @@ numstat_path() {
       p="${p#* => }"
       ;;
   esac
+  NUMSTAT_PATH="$p"
   printf '%s' "$p"
 }
 
@@ -304,7 +315,10 @@ body_path_map() {
     local a d f
     while IFS=$'\t' read -r a d f; do
       [ -z "$a" ] && continue
-      printf '%s\n' "$(numstat_path "$f")"
+      # Direct call (stdout is already this function's output) — a $() capture
+      # here forked a subshell PER FILE, seconds per tick at a few hundred files.
+      numstat_path "$f"
+      printf '\n'
     done <<< "$data"
     printf '\n'                       # trailing blank row -> no path
   }
@@ -577,13 +591,17 @@ toggle_selection() {
 }
 
 # selection_contains exits 0 when <path> is a whole-line member of <selected>,
-# non-zero otherwise. Whole-line so "a.txt" never matches "src/a.txt".
+# non-zero otherwise. Whole-line so "a.txt" never matches "src/a.txt": the set
+# is newline-fenced on both sides and the path is matched between two newlines.
+# A single quoted `case` glob (the path expansion is LITERAL when quoted, so
+# glob characters in filenames can't misfire) — not a while-read loop, whose
+# herestring wrote a temp file per call; apply_checkboxes calls this once per
+# file row on the hover repaint path.
 # Usage: selection_contains <selected> <path>
 selection_contains() {
-  local selected="$1" filepath="$2" line
-  while IFS= read -r line; do
-    [ "$line" = "$filepath" ] && return 0
-  done <<< "$selected"
+  case $'\n'"$1"$'\n' in
+    *$'\n'"$2"$'\n'*) return 0 ;;
+  esac
   return 1
 }
 
@@ -635,21 +653,26 @@ discard_prompt() {
 # so column alignment and the hover-highlight padding math stay intact. Non-file
 # rows (empty map line) and rows that are neither selected nor hovered pass
 # through untouched. With nothing selected AND nothing hovered the body returns
-# verbatim (the redraw fast path). Fork-free (nth_line + selection_contains, no
-# $()) so it stays cheap on the hover redraw path.
+# verbatim (the redraw fast path). Fork-free AND single-pass: body and map are
+# read in LOCKSTEP (the map on fd 3), never via nth_line — whose front-to-back
+# rescan per body line made this O(N²) with a herestring temp file per call
+# (~10s per hover repaint at 300 files; the pane froze). Guarded by
+# TestApplyCheckboxes_hover_stays_fast_with_many_files.
 # Usage: apply_checkboxes <body> <body_map> <selected> [hover]
 apply_checkboxes() {
   local body="$1" map="$2" selected="$3" hover="${4:-0}"
   [ -z "$selected" ] && [ "$hover" -lt 1 ] 2>/dev/null && { printf '%s' "$body"; return; }
   local checked=$'\033[1;32m ☑ \033[0m'
   local empty=$'\033[2m ☐ \033[0m'
-  local out="" bline i=0 marker
+  local out="" bline mline i=0 marker
   while IFS= read -r bline; do
     i=$((i + 1))
-    nth_line "$map" "$i"
+    # The map mirrors the body line-for-line; past its end the row is a
+    # non-file row (an empty mapping, matching an out-of-range lookup).
+    IFS= read -r mline <&3 || mline=""
     marker=""
-    if [ -n "$NTH_LINE" ]; then
-      if selection_contains "$selected" "$NTH_LINE"; then
+    if [ -n "$mline" ]; then
+      if selection_contains "$selected" "$mline"; then
         marker="$checked"
       elif [ "$i" -eq "$hover" ] 2>/dev/null; then
         marker="$empty"
@@ -657,7 +680,7 @@ apply_checkboxes() {
     fi
     [ -n "$marker" ] && bline="${marker}${bline#   }"   # swap indent for the box
     out="${out}${bline}"$'\n'
-  done <<< "$body"
+  done <<< "$body" 3<<< "$map"
   printf '%s' "${out%$'\n'}"
 }
 
@@ -1111,7 +1134,10 @@ compact_view() {
     local added deleted file display
     while IFS=$'\t' read -r added deleted file; do
       [ -z "$added" ] && continue
-      display=$(format_file "$file" "$name_width")
+      # Read the FORMAT_FILE global — a $() capture here forked a subshell PER
+      # FILE on every build tick (over a second at a few hundred files).
+      format_file "$file" "$name_width" >/dev/null
+      display="$FORMAT_FILE"
       if is_image_file "$file"; then
         format_image_row "$project_dir" "$sizeref" "$file" "$display"
       else
