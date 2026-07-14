@@ -4,6 +4,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -44,7 +45,7 @@ func TestAggregate_mergesFilesAndSortsDescending(t *testing.T) {
 	}
 }
 
-func TestAggregate_reusesCacheForUnchangedFiles(t *testing.T) {
+func TestAggregate_reusesCacheWithoutOverridingHistory(t *testing.T) {
 	dir := t.TempDir()
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	p := writeFixture(t, dir, "a.jsonl",
@@ -74,8 +75,14 @@ func TestAggregate_reusesCacheForUnchangedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out) != 1 || out[0].Input != 999 {
-		t.Errorf("Input = %+v, want 999 (cache reused for unchanged file)", out)
+	// The unchanged cache entry is still reused and saved, but history is the
+	// authority: cache corruption must not rewrite already-durable usage.
+	if len(out) != 1 || out[0].Input != 10 {
+		t.Errorf("Input = %+v, want durable history value 10", out)
+	}
+	gotCache := LoadCache(cachePath)
+	if got := gotCache.Files[p].Months["2026-05"].Models[0].Input; got != 999 {
+		t.Errorf("cached model input = %d, want tampered 999 to prove unchanged entry was reused", got)
 	}
 }
 
@@ -510,5 +517,240 @@ func TestAggregateAll_emptyCodexDirSkipped(t *testing.T) {
 	}
 	if len(out) != 1 || out[0].Input != 10 {
 		t.Fatalf("out = %+v, want 2026-07 input 10", out)
+	}
+}
+
+func TestAggregateHistory_survivesDeletedSourceAndCache(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	p := writeFixture(t, dir, "a.jsonl",
+		`{"type":"assistant","timestamp":"2026-07-01T10:00:00Z","message":{"id":"a","model":"claude-opus-4-7","usage":{"input_tokens":10,"cache_creation_input_tokens":10,"cache_creation":{"ephemeral_5m_input_tokens":4,"ephemeral_1h_input_tokens":6}}}}`+"\n")
+
+	if _, err := Aggregate(dir, "", cachePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(cachePath); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := Aggregate(dir, "", cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || len(out[0].Models) != 1 {
+		t.Fatalf("out = %+v, want retained journal usage", out)
+	}
+	model := out[0].Models[0]
+	if model.Input != 10 || model.CacheWrite != 10 || model.CacheWrite1h != 6 {
+		t.Fatalf("journal model = %+v, want input 10, cache write 10, 1h 6", model)
+	}
+}
+
+func TestAggregateHistory_survivesIncompatibleCacheVersion(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	p := writeFixture(t, dir, "a.jsonl",
+		`{"type":"assistant","timestamp":"2026-07-01T10:00:00Z","message":{"id":"a","model":"claude-opus-4-7","usage":{"input_tokens":17}}}`+"\n")
+	if _, err := Aggregate(dir, "", cachePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, []byte(`{"version":1,"files":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := Aggregate(dir, "", cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].Input != 17 {
+		t.Fatalf("out = %+v, want input 17 from history after cache rejection", out)
+	}
+}
+
+func TestAggregateLegacy_importsV6CacheExactlyOnce(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	missingPath := filepath.Join(dir, "already-gone.jsonl")
+	cache := &Cache{
+		Version: cacheVersion,
+		Files: map[string]fileCacheEntry{
+			missingPath: {
+				Meta: FileMeta{ModTime: time.Unix(10, 0).UTC(), Size: 10},
+				Months: map[string]*MonthlyUsage{
+					"2026-06": {
+						Month:      "2026-06",
+						CacheWrite: 10,
+						Models: []ModelUsage{{
+							Model:        "claude-opus-4-7",
+							CacheWrite:   10,
+							CacheWrite1h: 6,
+						}},
+					},
+				},
+			},
+		},
+		Archive: map[string]map[string]*ModelUsage{
+			"2026-06": {
+				"claude-opus-4-7": {
+					Model:        "claude-opus-4-7",
+					CacheWrite:   5,
+					CacheWrite1h: 2,
+				},
+			},
+		},
+		Sealed: map[string]bool{"/legacy-sealed": true},
+	}
+	if err := cache.Save(cachePath); err != nil {
+		t.Fatal(err)
+	}
+
+	for pass := 0; pass < 2; pass++ {
+		out, err := Aggregate(dir, "", cachePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(out) != 1 || len(out[0].Models) != 1 {
+			t.Fatalf("pass %d: out = %+v, want one migrated model", pass, out)
+		}
+		model := out[0].Models[0]
+		if model.CacheWrite != 15 || model.CacheWrite1h != 8 {
+			t.Fatalf("pass %d: model = %+v, want cache write 15 and 1h 8", pass, model)
+		}
+	}
+
+	state, _, err := readHistoryCopies(historyPathsForCache(cachePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.ImportedLegacy || !state.Sealed["/legacy-sealed"] {
+		t.Fatalf("legacy marker missing: imported=%v sealed=%v", state.ImportedLegacy, state.Sealed)
+	}
+	if state.LastSequence != 1 {
+		t.Fatalf("legacy cache imported %d times, want one journal record", state.LastSequence)
+	}
+	if err := os.Remove(cachePath); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Aggregate(dir, "", cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].Models[0].CacheWrite1h != 8 {
+		t.Fatalf("history after cache removal = %+v, want migrated 1h writes", out)
+	}
+}
+
+func TestAggregateJournal_growingSourceReplacesSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	p := writeFixture(t, dir, "a.jsonl",
+		`{"type":"assistant","timestamp":"2026-07-01T10:00:00Z","message":{"id":"a","model":"claude-opus-4-7","usage":{"input_tokens":10}}}`+"\n")
+	if _, err := Aggregate(dir, "", cachePath); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"type":"assistant","timestamp":"2026-07-02T10:00:00Z","message":{"id":"b","model":"claude-opus-4-7","usage":{"input_tokens":5}}}` + "\n"); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(p, future, future); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := Aggregate(dir, "", cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].Input != 15 {
+		t.Fatalf("out = %+v, want replacement total 15, not cumulative snapshots", out)
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(cachePath); err != nil {
+		t.Fatal(err)
+	}
+	out, err = Aggregate(dir, "", cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].Input != 15 {
+		t.Fatalf("retained output = %+v, want latest source snapshot total 15", out)
+	}
+}
+
+func TestAggregateJournal_concurrentAggregatesPreserveUnion(t *testing.T) {
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	writeFixture(t, dirA, "a.jsonl",
+		`{"type":"assistant","timestamp":"2026-07-01T10:00:00Z","message":{"id":"a","model":"claude-opus-4-7","usage":{"input_tokens":10}}}`+"\n")
+	writeFixture(t, dirB, "b.jsonl",
+		`{"type":"assistant","timestamp":"2026-07-01T10:00:00Z","message":{"id":"b","model":"claude-opus-4-7","usage":{"input_tokens":5}}}`+"\n")
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, dir := range []string{dirA, dirB} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := Aggregate(dir, "", cachePath)
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.RemoveAll(dirA); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(dirB); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(cachePath); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+
+	out, err := Aggregate(t.TempDir(), "", cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].Input != 15 {
+		t.Fatalf("out = %+v, want concurrent journal union input 15", out)
+	}
+}
+
+func TestAggregateJournal_persistenceFailureIsReturned(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	writeFixture(t, dir, "a.jsonl",
+		`{"type":"assistant","timestamp":"2026-07-01T10:00:00Z","message":{"id":"a","model":"claude-opus-4-7","usage":{"input_tokens":10}}}`+"\n")
+	paths := historyPathsForCache(cachePath)
+	if err := os.MkdirAll(paths.Backup, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Aggregate(dir, "", cachePath); err == nil {
+		t.Fatal("journal persistence failure should be returned")
 	}
 }

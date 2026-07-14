@@ -71,6 +71,28 @@ func cloneArchive(src map[string]map[string]*ModelUsage) map[string]map[string]*
 	return dst
 }
 
+func historySourceFromCacheEntry(entry fileCacheEntry) historySource {
+	return historySource{
+		ParserVersion: cacheVersion,
+		Meta:          entry.Meta,
+		Months:        entry.Months,
+	}
+}
+
+func historySourcesFromCacheEntries(entries map[string]fileCacheEntry) map[string]historySource {
+	sources := make(map[string]historySource, len(entries))
+	for path, entry := range entries {
+		sources[path] = historySourceFromCacheEntry(entry)
+	}
+	return sources
+}
+
+func foldHistorySources(acc map[string]map[string]*ModelUsage, sources map[string]historySource) {
+	for _, source := range sources {
+		foldMonths(acc, source.Months)
+	}
+}
+
 // parseFunc reads one source file into per-month usage; ParseFile (Claude) and
 // ParseOpenCodeMessage (OpenCode) both satisfy it so the cache treats them alike.
 type parseFunc func(path string) (map[string]*MonthlyUsage, FileMeta, error)
@@ -89,15 +111,22 @@ func Aggregate(claudeDir, opencodeDir, cachePath string) ([]MonthlyUsage, error)
 // account's config dir); transcript paths are absolute and disjoint across roots,
 // so they share one cache without colliding. Same-named models from any source
 // fold into a single row. It reuses cachePath entries for files whose size and
-// mtime are unchanged and re-parses changed files. When a previously-cached file
-// vanishes from ALL walked roots, its totals are sealed into a durable per-month
-// Archive so the history survives the tool's transcript pruning; sealed paths are
-// never re-counted. A missing/empty opencodeDir (e.g. OpenCode not installed) is
-// simply skipped. codexDir is walked for *.jsonl Codex rollout files (recursing its
-// YYYY/MM/DD layout) parsed by ParseCodexRollout; an empty codexDir is likewise
-// skipped. Best-effort saves the updated cache.
+// mtime are unchanged and re-parses changed files. Complete per-source snapshots
+// are committed to mirrored append-only journals before output is returned, so
+// observed history survives source pruning and cache loss/version changes. The
+// cache's Archive/Sealed state remains as redundant backward-compatible data and
+// is imported into the journal exactly once. A missing/empty opencodeDir (e.g.
+// OpenCode not installed) is simply skipped. codexDir is walked for *.jsonl Codex
+// rollout files (recursing its YYYY/MM/DD layout) parsed by ParseCodexRollout; an
+// empty codexDir is likewise skipped. Best-effort saves the updated cache only
+// after the journal commit succeeds.
 func AggregateAll(claudeDirs []string, opencodeDir, codexDir, cachePath string) ([]MonthlyUsage, error) {
 	cache := LoadCache(cachePath)
+	historyPaths := historyPathsForCache(cachePath)
+	history, err := commitHistory(historyPaths, historyUpdate{})
+	if err != nil {
+		return nil, err
+	}
 	next := &Cache{
 		Version: cacheVersion,
 		Files:   map[string]fileCacheEntry{},
@@ -105,6 +134,9 @@ func AggregateAll(claudeDirs []string, opencodeDir, codexDir, cachePath string) 
 		Sealed:  map[string]bool{},
 	}
 	for p := range cache.Sealed {
+		next.Sealed[p] = true
+	}
+	for p := range history.Sealed {
 		next.Sealed[p] = true
 	}
 
@@ -168,16 +200,36 @@ func AggregateAll(claudeDirs []string, opencodeDir, codexDir, cachePath string) 
 		next.Sealed[path] = true
 	}
 
+	// On the first journal commit, preserve every old per-file cache entry,
+	// including entries whose source vanished before this run. The pre-run archive
+	// is imported alongside them; newly sealed cache entries are the same per-file
+	// snapshots and must not also be imported as aggregate totals.
+	sources := historySourcesFromCacheEntries(next.Files)
+	if !history.ImportedLegacy {
+		for path, entry := range cache.Files {
+			if _, current := sources[path]; !current {
+				sources[path] = historySourceFromCacheEntry(entry)
+			}
+		}
+	}
+	history, err = commitHistory(historyPaths, historyUpdate{
+		Sources:       sources,
+		LegacyArchive: cache.Archive,
+		LegacySealed:  cache.Sealed,
+		ImportLegacy:  true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	// Dedup is per-file only (ParseFile dedups by message.id within a file). We do
 	// NOT dedup across files: a global dedup would require parsing every file
 	// together, which defeats the incremental cache. Cross-file duplicate ids are
 	// rare (~0.02% in practice) and intentionally tolerated. Do not "fix" this.
-	// Accumulate live files plus the sealed archive into month -> model totals.
+	// The journal, rather than the disposable cache, is authoritative for output.
 	acc := map[string]map[string]*ModelUsage{}
-	for _, entry := range next.Files {
-		foldMonths(acc, entry.Months)
-	}
-	foldArchive(acc, next.Archive)
+	foldHistorySources(acc, history.Sources)
+	foldArchive(acc, history.Archive)
 
 	_ = next.Save(cachePath) // best-effort; a save failure must not break the view
 
