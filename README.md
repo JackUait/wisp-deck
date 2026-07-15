@@ -103,6 +103,8 @@ The **Subscription** row lets you keep several Claude configurations and switch 
 
 Press **T** in the selector for a usage dashboard covering **Claude Code, OpenCode and Codex** together. It breaks your usage down by month — tokens used, a per-model breakdown, and estimated cost in USD — with a running total across everything, and a Full/Compact view toggle. Handy for keeping an eye on what you're spending.
 
+Observed usage is kept locally in mirrored append-only journals at `~/.config/wisp-deck/usage-history.jsonl` and `usage-history.backup.jsonl`; `usage-cache.json` is only a rebuildable speed-up. Journal history survives transcript pruning, cache resets, upgrades, interrupted writes, and loss or corruption of either journal copy. Like any local-only data, it cannot survive loss of the disk or deliberate deletion of both journals.
+
 ---
 
 ## Dropping Screenshots & Videos into the AI
