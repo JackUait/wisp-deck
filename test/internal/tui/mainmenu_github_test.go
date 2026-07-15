@@ -232,3 +232,11 @@ func TestMainMenu_AddProject_GitHubURL_ViewShowsCloningState(t *testing.T) {
 		t.Error("View should show a cloning indicator while the clone is in flight")
 	}
 }
+
+func TestMainMenu_AddProject_ViewMentionsGitHubURL(t *testing.T) {
+	m, _, _ := newGitHubAddMenu(t, "")
+
+	if !strings.Contains(m.View(), "GitHub") {
+		t.Error("Add-project form should tell the user a GitHub URL can be pasted")
+	}
+}

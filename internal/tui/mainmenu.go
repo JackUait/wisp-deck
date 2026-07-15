@@ -2933,7 +2933,7 @@ func (m *MainMenuModel) enterInputMode(mode string) (tea.Model, tea.Cmd) {
 	m.inputFocusPath = true
 
 	ti := textinput.New()
-	ti.Placeholder = "Project path (e.g., ~/code/project)"
+	ti.Placeholder = "Project path or GitHub URL"
 	ti.Focus()
 	// Bubbletea textinput Width is inconsistent: placeholder mode uses it as
 	// total width, but text mode renders prompt + Width + 1 (cursor). Account
@@ -3853,6 +3853,18 @@ func (m *MainMenuModel) renderInputBox() string {
 			errPadding = 0
 		}
 		lines = append(lines, leftBorder+errContent+strings.Repeat(" ", errPadding)+rightBorder)
+	}
+
+	// Discoverability hint: the path field also accepts a GitHub repo URL.
+	// Hidden once suggestions, an error, or the clone state need the space.
+	if m.inputMode == "add-project" && m.inputFocusPath && m.inputErr == nil &&
+		!m.cloning && !m.autocomplete.ShowSuggestions() {
+		hint := "  " + dimStyle.Render("Tip: paste a GitHub repo URL to clone it")
+		hintPadding := menuContentWidth - lipgloss.Width(hint)
+		if hintPadding < 0 {
+			hintPadding = 0
+		}
+		lines = append(lines, leftBorder+hint+strings.Repeat(" ", hintPadding)+rightBorder)
 	}
 
 	// Autocomplete suggestions rendered inside the box (path field only)
