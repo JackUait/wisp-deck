@@ -2225,6 +2225,12 @@ func (m *MainMenuModel) sleepTickCmd() tea.Cmd {
 
 // Init implements tea.Model. Starts animation ticks when in animated mode.
 func (m *MainMenuModel) Init() tea.Cmd {
+	return tea.Batch(m.initCmds()...)
+}
+
+// initCmds collects the startup commands: the usage-stats ingest always, plus
+// the animation tickers in animated mode.
+func (m *MainMenuModel) initCmds() []tea.Cmd {
 	var cmds []tea.Cmd
 	if cmd := m.ensureStatsLoad(); cmd != nil {
 		cmds = append(cmds, cmd)
@@ -2233,8 +2239,12 @@ func (m *MainMenuModel) Init() tea.Cmd {
 		cmds = append(cmds, m.bobTickCmd())
 		cmds = append(cmds, m.sleepTickCmd())
 	}
-	return tea.Batch(cmds...)
+	return cmds
 }
+
+// InitCmdCountForTest returns how many startup commands Init batches —
+// intended for tests distinguishing static (stats only) from animated.
+func (m *MainMenuModel) InitCmdCountForTest() int { return len(m.initCmds()) }
 
 // Update implements tea.Model. Handles key bindings, window resize, and animation ticks.
 func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

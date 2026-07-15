@@ -638,11 +638,10 @@ func TestMainMenu_SetSize(t *testing.T) {
 }
 
 func TestMainMenu_Init(t *testing.T) {
-	// Static mode: Init returns nil (no ticks)
+	// Static mode: Init carries only the startup stats ingest, no ticks.
 	m := tui.NewMainMenu(testProjects(), testAITools(), "claude", "static")
-	cmd := m.Init()
-	if cmd != nil {
-		t.Error("Init() should return nil for static mode")
+	if got := m.InitCmdCountForTest(); got != 1 {
+		t.Errorf("static Init should batch exactly the stats ingest, got %d cmds", got)
 	}
 }
 
@@ -983,9 +982,11 @@ func TestMainMenu_GhostHiddenWhenNone(t *testing.T) {
 
 func TestMainMenu_NoAnimationWhenStatic(t *testing.T) {
 	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "static")
-	cmd := m.Init()
-	if cmd != nil {
-		t.Error("static mode should not start animation ticks")
+	static := m.InitCmdCountForTest()
+	a := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
+	animated := a.InitCmdCountForTest()
+	if static >= animated {
+		t.Errorf("static mode should not start animation ticks: static=%d animated=%d cmds", static, animated)
 	}
 }
 
