@@ -32,6 +32,7 @@ func TestCodexArgvIsExactAndAppliesAllNotificationOverrides(t *testing.T) {
 	socket := "/tmp/wdc.test/a.sock"
 	uri := "unix://" + socket
 	configs := []string{
+		`notify=[]`,
 		`tui.notifications=["agent-turn-complete"]`,
 		`tui.notification_method="osc9"`,
 		`tui.notification_condition="always"`,

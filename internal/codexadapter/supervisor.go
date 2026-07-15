@@ -29,6 +29,7 @@ const (
 )
 
 var codexNotificationConfigs = []string{
+	`notify=[]`,
 	`tui.notifications=["agent-turn-complete"]`,
 	`tui.notification_method="osc9"`,
 	`tui.notification_condition="always"`,
