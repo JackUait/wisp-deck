@@ -141,13 +141,18 @@ func aboutDimStyle() lipgloss.Style {
 var aboutAnsiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 // overlayAbout composites the About card over the already-placed full-screen
-// view: every backdrop line is stripped of its colors and repainted faint
-// gray, with the card lines laid centered on top.
+// view via the shared overlayCard compositor.
 func (m *MainMenuModel) overlayAbout(placed string) string {
+	left, top, w, _ := m.aboutCardLayout()
+	return m.overlayCard(placed, strings.Split(m.renderAboutCard(), "\n"), left, top, w)
+}
+
+// overlayCard composites a floating card over the already-placed full-screen
+// view: every backdrop line is stripped of its colors and repainted faint
+// gray, with the card lines laid on top at (cardLeft, cardTop).
+func (m *MainMenuModel) overlayCard(placed string, cardLines []string, cardLeft, cardTop, cardWidth int) string {
 	bg := strings.Split(placed, "\n")
 	aboutDim := aboutDimStyle()
-	cardLeft, cardTop, cardWidth, _ := m.aboutCardLayout()
-	cardLines := strings.Split(m.renderAboutCard(), "\n")
 
 	bgRow := func(y int) []rune {
 		row := make([]rune, m.width)
