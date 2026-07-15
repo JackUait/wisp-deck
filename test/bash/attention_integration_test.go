@@ -184,7 +184,7 @@ func TestAttentionIntegrationInitialWrapperLaunchPublishesFreshRuntime(t *testin
 	}{
 		{tool: "claude", commandNeedle: "wisp-deck-tui claude-attention"},
 		{tool: "codex", commandNeedle: "wisp-deck-tui codex-adapter"},
-		{tool: "opencode", commandNeedle: `opencode "`},
+		{tool: "opencode", commandNeedle: "wisp-deck-tui opencode-adapter"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {
@@ -215,11 +215,9 @@ func TestAttentionIntegrationInitialWrapperLaunchPublishesFreshRuntime(t *testin
 			if launchCommand == "" {
 				t.Fatalf("%s launch command missing %q:\n%s", tt.tool, tt.commandNeedle, launchArgs)
 			}
-			if tt.tool != "opencode" {
-				for _, adapterField := range []string{got.generation, got.state} {
-					if !strings.Contains(launchCommand, adapterField) {
-						t.Errorf("%s adapter command missing %q", tt.tool, adapterField)
-					}
+			for _, adapterField := range []string{got.generation, got.state} {
+				if !strings.Contains(launchCommand, adapterField) {
+					t.Errorf("%s adapter command missing %q", tt.tool, adapterField)
 				}
 			}
 		})

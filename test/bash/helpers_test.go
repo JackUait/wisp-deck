@@ -37,9 +37,10 @@ func runBashFunc(t *testing.T, module string, funcName string, args []string, en
 	script := fmt.Sprintf("source %q && %s %s", modulePath, funcName, strings.Join(quotedArgs, " "))
 
 	cmd := exec.Command("bash", "-c", script)
-	if env != nil {
-		cmd.Env = env
+	if env == nil {
+		env = buildEnv(t, nil)
 	}
+	cmd.Env = env
 
 	out, err := cmd.CombinedOutput()
 	code := 0
@@ -66,9 +67,10 @@ func runBashFuncWithStdin(t *testing.T, module string, funcName string, args []s
 	script := fmt.Sprintf("source %q && %s %s", modulePath, funcName, strings.Join(quotedArgs, " "))
 
 	cmd := exec.Command("bash", "-c", script)
-	if env != nil {
-		cmd.Env = env
+	if env == nil {
+		env = buildEnv(t, nil)
 	}
+	cmd.Env = env
 	cmd.Stdin = strings.NewReader(stdin)
 
 	out, err := cmd.CombinedOutput()
@@ -91,9 +93,10 @@ func runBashScript(t *testing.T, scriptPath string, args []string, env []string)
 	fullPath := filepath.Join(root, scriptPath)
 
 	cmd := exec.Command("bash", append([]string{fullPath}, args...)...)
-	if env != nil {
-		cmd.Env = env
+	if env == nil {
+		env = buildEnv(t, nil)
 	}
+	cmd.Env = env
 
 	out, err := cmd.CombinedOutput()
 	code := 0
@@ -112,9 +115,10 @@ func runBashScript(t *testing.T, scriptPath string, args []string, env []string)
 func runBashSnippet(t *testing.T, script string, env []string) (string, int) {
 	t.Helper()
 	cmd := exec.Command("bash", "-c", script)
-	if env != nil {
-		cmd.Env = env
+	if env == nil {
+		env = buildEnv(t, nil)
 	}
+	cmd.Env = env
 
 	out, err := cmd.CombinedOutput()
 	code := 0
