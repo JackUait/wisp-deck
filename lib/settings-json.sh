@@ -56,10 +56,10 @@ CSEOF
 #
 # Build the additional settings overlay passed to Claude for one attention
 # generation. The selected Wisp config is copied when present, then only
-# preferredNotifChannel is forced so Claude's native sound stays silent while
-# Wisp Deck owns notification playback. The source is never modified. A sibling
-# temporary file is renamed over the target so readers cannot observe partial
-# JSON. Prints the generated path on success.
+# preferredNotifChannel is disabled so Claude cannot emit an audible terminal
+# notification while Wisp Deck owns notification playback. The source is never
+# modified. A sibling temporary file is renamed over the target so readers
+# cannot observe partial JSON. Prints the generated path on success.
 write_claude_launch_settings() {
   local generation_dir="${1:-}" source_settings="${2:-}"
   local generation suffix target tmp
@@ -90,7 +90,7 @@ if source_path:
     if not isinstance(settings, dict):
         raise ValueError("Claude settings overlay must be a JSON object")
 
-settings["preferredNotifChannel"] = "terminal_bell"
+settings["preferredNotifChannel"] = "notifications_disabled"
 with open(output_path, "w", encoding="utf-8") as output:
     json.dump(settings, output, indent=2)
     output.write("\n")

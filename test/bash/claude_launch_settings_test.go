@@ -24,7 +24,7 @@ func readJSONMap(t *testing.T, path string) map[string]any {
 	return got
 }
 
-func TestSettingsJsonClaudeLaunchSettingsMergesActiveConfigAndForcesBell(t *testing.T) {
+func TestSettingsJsonClaudeLaunchSettingsMergesActiveConfigAndDisablesNativeNotifications(t *testing.T) {
 	dir := t.TempDir()
 	generationDir := filepath.Join(dir, "runtime", "generation.Abc123")
 	if err := os.MkdirAll(generationDir, 0o700); err != nil {
@@ -51,8 +51,8 @@ func TestSettingsJsonClaudeLaunchSettingsMergesActiveConfigAndForcesBell(t *test
 		t.Fatalf("output path = %q, want %q", strings.TrimSpace(out), target)
 	}
 	got := readJSONMap(t, target)
-	if got["preferredNotifChannel"] != "terminal_bell" {
-		t.Fatalf("preferredNotifChannel = %#v, want terminal_bell", got["preferredNotifChannel"])
+	if got["preferredNotifChannel"] != "notifications_disabled" {
+		t.Fatalf("preferredNotifChannel = %#v, want notifications_disabled", got["preferredNotifChannel"])
 	}
 	if got["model"] != "opus" {
 		t.Fatalf("model = %#v, want opus", got["model"])
@@ -77,7 +77,7 @@ func TestSettingsJsonClaudeLaunchSettingsMergesActiveConfigAndForcesBell(t *test
 	}
 }
 
-func TestSettingsJsonClaudeLaunchSettingsWithoutActiveConfigContainsOnlyBell(t *testing.T) {
+func TestSettingsJsonClaudeLaunchSettingsWithoutActiveConfigOnlyDisablesNativeNotifications(t *testing.T) {
 	generationDir := filepath.Join(t.TempDir(), "generation.Empty1")
 	if err := os.Mkdir(generationDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -89,8 +89,8 @@ func TestSettingsJsonClaudeLaunchSettingsWithoutActiveConfigContainsOnlyBell(t *
 	assertExitCode(t, code, 0)
 
 	got := readJSONMap(t, filepath.Join(generationDir, "claude-settings.json"))
-	if len(got) != 1 || got["preferredNotifChannel"] != "terminal_bell" {
-		t.Fatalf("launch settings = %#v, want only terminal_bell override", got)
+	if len(got) != 1 || got["preferredNotifChannel"] != "notifications_disabled" {
+		t.Fatalf("launch settings = %#v, want only notifications_disabled override", got)
 	}
 }
 
