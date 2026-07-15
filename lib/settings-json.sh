@@ -91,6 +91,7 @@ if source_path:
         raise ValueError("Claude settings overlay must be a JSON object")
 
 settings["preferredNotifChannel"] = "notifications_disabled"
+settings["disableAllHooks"] = True
 with open(output_path, "w", encoding="utf-8") as output:
     json.dump(settings, output, indent=2)
     output.write("\n")

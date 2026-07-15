@@ -33,7 +33,10 @@ func TestSettingsJsonClaudeLaunchSettingsMergesActiveConfigAndDisablesNativeNoti
 	active := writeTempFile(t, dir, "active.json", `{
   "model": "opus",
   "preferredNotifChannel": "iterm2",
-  "permissions": {"allow": ["Read"]}
+  "disableAllHooks": false,
+  "permissions": {"allow": ["Read"]},
+  "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo user-stop"}]}]},
+  "enabledPlugins": {"user-plugin@example": true}
 }
 `)
 	before, err := os.ReadFile(active)
@@ -54,12 +57,23 @@ func TestSettingsJsonClaudeLaunchSettingsMergesActiveConfigAndDisablesNativeNoti
 	if got["preferredNotifChannel"] != "notifications_disabled" {
 		t.Fatalf("preferredNotifChannel = %#v, want notifications_disabled", got["preferredNotifChannel"])
 	}
+	if got["disableAllHooks"] != true {
+		t.Fatalf("disableAllHooks = %#v, want true", got["disableAllHooks"])
+	}
 	if got["model"] != "opus" {
 		t.Fatalf("model = %#v, want opus", got["model"])
 	}
 	permissions, ok := got["permissions"].(map[string]any)
 	if !ok || len(permissions) != 1 {
 		t.Fatalf("permissions not preserved: %#v", got["permissions"])
+	}
+	hooks, ok := got["hooks"].(map[string]any)
+	if !ok || len(hooks) != 1 {
+		t.Fatalf("hooks not preserved under disableAllHooks: %#v", got["hooks"])
+	}
+	plugins, ok := got["enabledPlugins"].(map[string]any)
+	if !ok || plugins["user-plugin@example"] != true {
+		t.Fatalf("enabledPlugins not preserved under disableAllHooks: %#v", got["enabledPlugins"])
 	}
 	after, err := os.ReadFile(active)
 	if err != nil {
@@ -89,8 +103,8 @@ func TestSettingsJsonClaudeLaunchSettingsWithoutActiveConfigOnlyDisablesNativeNo
 	assertExitCode(t, code, 0)
 
 	got := readJSONMap(t, filepath.Join(generationDir, "claude-settings.json"))
-	if len(got) != 1 || got["preferredNotifChannel"] != "notifications_disabled" {
-		t.Fatalf("launch settings = %#v, want only notifications_disabled override", got)
+	if len(got) != 2 || got["preferredNotifChannel"] != "notifications_disabled" || got["disableAllHooks"] != true {
+		t.Fatalf("launch settings = %#v, want only strict notification and hook overrides", got)
 	}
 }
 
