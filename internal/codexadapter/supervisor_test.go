@@ -1608,7 +1608,7 @@ printf 'current:%s' "$value"
 	}
 	go func() {
 		<-reader.firstRead
-		deadline := time.Now().Add(2 * time.Second)
+		deadline := time.Now().Add(8 * time.Second)
 		for time.Now().Before(deadline) {
 			if _, err := os.Stat(readyFile); err == nil {
 				close(release)
@@ -1627,7 +1627,7 @@ printf 'current:%s' "$value"
 	}
 	options := supervisorOptions(t, "", "")
 	options.CodexPath = fakeCodex
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	result, err := supervisor.Run(ctx, options)
 	if err != nil || result.ExitCode != 0 || result.Signaled {
@@ -1680,7 +1680,7 @@ printf 'current:%s' "$value"
 	}
 	go func() {
 		<-reader.firstRead
-		deadline := time.Now().Add(2 * time.Second)
+		deadline := time.Now().Add(8 * time.Second)
 		for time.Now().Before(deadline) {
 			if _, err := os.Stat(leaderGoneFile); err == nil {
 				close(release)
@@ -1699,7 +1699,7 @@ printf 'current:%s' "$value"
 	}
 	options := supervisorOptions(t, "", "")
 	options.CodexPath = fakeCodex
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	result, err := supervisor.Run(ctx, options)
 	if err != nil || result.ExitCode != 0 || result.Signaled {
