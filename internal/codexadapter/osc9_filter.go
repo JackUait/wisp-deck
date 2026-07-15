@@ -27,6 +27,12 @@ const (
 	filterTmuxSeparator
 	filterTmuxPayload
 	filterTmuxPayloadEscape
+	filterPassOSC
+	filterPassOSCEscape
+	filterPassDCS
+	filterPassDCSEscape
+	filterPassTmux
+	filterPassTmuxEscape
 )
 
 // Feed returns ordinary terminal bytes and complete OSC 9 events in wire
@@ -88,8 +94,7 @@ func (f *OSC9Filter) filterByte(b byte, output *[]byte) {
 			f.mode = filterOSCSeparator
 			return
 		}
-		f.flushCandidate(output)
-		f.resetFilter()
+		f.rejectOSCCandidate(b, output)
 
 	case filterOSCSeparator:
 		f.candidate = append(f.candidate, b)
@@ -98,8 +103,7 @@ func (f *OSC9Filter) filterByte(b byte, output *[]byte) {
 			f.mode = filterPlainPayload
 			return
 		}
-		f.flushCandidate(output)
-		f.resetFilter()
+		f.rejectOSCCandidate(b, output)
 
 	case filterPlainPayload:
 		switch b {
@@ -122,8 +126,7 @@ func (f *OSC9Filter) filterByte(b byte, output *[]byte) {
 	case filterDCSHeader:
 		f.candidate = append(f.candidate, b)
 		if b != tmuxHeader[f.headerByte] {
-			f.flushCandidate(output)
-			f.resetFilter()
+			f.rejectDCSCandidate(b, false, output)
 			return
 		}
 		f.headerByte++
@@ -135,7 +138,18 @@ func (f *OSC9Filter) filterByte(b byte, output *[]byte) {
 		f.matchTmuxPrefixByte(b, escape, filterTmuxSecondEscape, output)
 
 	case filterTmuxSecondEscape:
-		f.matchTmuxPrefixByte(b, escape, filterTmuxBracket, output)
+		f.candidate = append(f.candidate, b)
+		switch b {
+		case escape:
+			f.mode = filterTmuxBracket
+		case '\\':
+			// The first ESC was an outer ST introducer, not a doubled
+			// inner ESC. The rejected wrapper ends here.
+			f.flushCandidate(output)
+			f.resetFilter()
+		default:
+			f.rejectDCSCandidate(b, true, output)
+		}
 
 	case filterTmuxBracket:
 		f.matchTmuxPrefixByte(b, ']', filterTmuxCommand, output)
@@ -150,8 +164,7 @@ func (f *OSC9Filter) filterByte(b byte, output *[]byte) {
 			f.mode = filterTmuxPayload
 			return
 		}
-		f.flushCandidate(output)
-		f.resetFilter()
+		f.rejectDCSCandidate(b, true, output)
 
 	case filterTmuxPayload:
 		if b == escape {
@@ -169,6 +182,77 @@ func (f *OSC9Filter) filterByte(b byte, output *[]byte) {
 		default:
 			f.mode = filterTmuxPayload
 		}
+
+	case filterPassOSC:
+		*output = append(*output, b)
+		switch b {
+		case bel:
+			f.resetFilter()
+		case escape:
+			f.mode = filterPassOSCEscape
+		}
+
+	case filterPassOSCEscape:
+		*output = append(*output, b)
+		switch b {
+		case '\\', bel:
+			f.resetFilter()
+		case escape:
+			f.mode = filterPassOSCEscape
+		default:
+			f.mode = filterPassOSC
+		}
+
+	case filterPassDCS:
+		*output = append(*output, b)
+		if b == escape {
+			f.mode = filterPassDCSEscape
+		}
+
+	case filterPassDCSEscape:
+		*output = append(*output, b)
+		switch b {
+		case '\\':
+			f.resetFilter()
+		case escape:
+			f.mode = filterPassDCSEscape
+		default:
+			f.mode = filterPassDCS
+		}
+
+	case filterPassTmux:
+		*output = append(*output, b)
+		if b == escape {
+			f.mode = filterPassTmuxEscape
+		}
+
+	case filterPassTmuxEscape:
+		*output = append(*output, b)
+		switch b {
+		case '\\':
+			f.resetFilter()
+		case escape:
+			// A doubled ESC is inner payload, so its following byte
+			// cannot complete the outer wrapper.
+			f.mode = filterPassTmux
+		default:
+			f.mode = filterPassTmux
+		}
+	}
+}
+
+func (f *OSC9Filter) rejectOSCCandidate(b byte, output *[]byte) {
+	f.flushCandidate(output)
+	f.headerByte = 0
+	f.candidate = f.candidate[:0]
+	f.confirmed = false
+	switch b {
+	case bel:
+		f.mode = filterGround
+	case escape:
+		f.mode = filterPassOSCEscape
+	default:
+		f.mode = filterPassOSC
 	}
 }
 
@@ -183,8 +267,27 @@ func (f *OSC9Filter) matchTmuxPrefixByte(
 		f.mode = next
 		return
 	}
+	f.rejectDCSCandidate(b, true, output)
+}
+
+func (f *OSC9Filter) rejectDCSCandidate(b byte, tmux bool, output *[]byte) {
 	f.flushCandidate(output)
-	f.resetFilter()
+	f.headerByte = 0
+	f.candidate = f.candidate[:0]
+	f.confirmed = false
+	if tmux {
+		if b == escape {
+			f.mode = filterPassTmuxEscape
+		} else {
+			f.mode = filterPassTmux
+		}
+		return
+	}
+	if b == escape {
+		f.mode = filterPassDCSEscape
+	} else {
+		f.mode = filterPassDCS
+	}
 }
 
 func (f *OSC9Filter) confirm() {

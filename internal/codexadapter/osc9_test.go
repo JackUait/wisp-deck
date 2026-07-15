@@ -407,6 +407,9 @@ func TestOSC9FilterPreservesEveryNonNotificationByte(t *testing.T) {
 		"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\",
 		"\x1bPnot-tmux;opaque\x1b\\",
 		"\x1bPtmux;\x1b\x1b]0;inner title\x07\x1b\\",
+		"\x1b]0;title contains \x1b]9;opaque text\x07",
+		"\x1bPnot-tmux;opaque \x1b]9;not a terminal notification\x07 payload\x1b\\",
+		"\x1bPtmux;junk\x1b\x1b]9;invalid passthrough\x07\x1b\\",
 	}, "|"))
 
 	for split := 0; split <= len(input); split++ {
@@ -441,6 +444,26 @@ func TestOSC9FilterFlushesOnlyUnconfirmedPrefixesAtEOF(t *testing.T) {
 		output = append(output, filter.Flush()...)
 		if len(output) != 0 || len(events) != 0 {
 			t.Fatalf("confirmed incomplete %q = output %q, events %#v", input, output, events)
+		}
+	}
+}
+
+func TestOSC9FilterRecoversAfterRejectedTmuxWrapperEndsAtPrefixMismatch(t *testing.T) {
+	t.Parallel()
+
+	prefix := "\x1bPtmux;\x1b\\"
+	input := []byte(prefix + "before\x1b]9;done\x07after")
+	for split := 0; split <= len(input); split++ {
+		var filter OSC9Filter
+		first, firstEvents := filter.Feed(input[:split])
+		second, secondEvents := filter.Feed(input[split:])
+		output := append(append(first, second...), filter.Flush()...)
+		events := append(firstEvents, secondEvents...)
+		if string(output) != prefix+"beforeafter" {
+			t.Fatalf("split %d: output = %q, want %q", split, output, prefix+"beforeafter")
+		}
+		if !reflect.DeepEqual(events, []OSC9Event{{Message: "done"}}) {
+			t.Fatalf("split %d: events = %#v", split, events)
 		}
 	}
 }
