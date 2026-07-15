@@ -3179,14 +3179,9 @@ func (m *MainMenuModel) maybeAutoDeriveName() {
 func (m *MainMenuModel) updateInputModeName(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc, tea.KeyShiftTab:
-		// Go back and clear soft-warn: add-project reopens the folder
-		// browser; open-once returns focus to its path field.
+		// Go back and clear soft-warn: focus returns to the path field.
 		m.nameWarnShown = false
 		m.nameErr = nil
-		if m.inputMode == "add-project" {
-			m.reopenBrowserFromName()
-			return m, nil
-		}
 		m.inputFocusPath = true
 		m.nameInput.Blur()
 		m.pathInput.Focus()
@@ -3381,17 +3376,27 @@ func defaultGitClone(url, dest string) error {
 	return nil
 }
 
+// setAddProjectErr shows an add-project error where the user is looking: the
+// browser's status slot when it is open, otherwise the form's name row.
+func (m *MainMenuModel) setAddProjectErr(err error) {
+	if m.browser != nil {
+		m.browser.errMsg = err.Error()
+		return
+	}
+	m.nameErr = err
+}
+
 // applyGitHubCloneDone finishes the GitHub-URL add-project flow.
 func (m *MainMenuModel) applyGitHubCloneDone(msg githubCloneDoneMsg) (tea.Model, tea.Cmd) {
 	m.cloning = false
 	m.cloneSlug = ""
 	m.cloneDest = ""
 	if msg.err != nil {
-		m.nameErr = fmt.Errorf("clone failed: %v", msg.err)
+		m.setAddProjectErr(fmt.Errorf("clone failed: %v", msg.err))
 		return m, nil
 	}
 	if err := AppendProject(msg.name, msg.dest, m.projectsFile); err != nil {
-		m.nameErr = fmt.Errorf("failed to save: %v", err)
+		m.setAddProjectErr(fmt.Errorf("failed to save: %v", err))
 		return m, nil
 	}
 	projects, _ := models.LoadProjects(m.projectsFile)

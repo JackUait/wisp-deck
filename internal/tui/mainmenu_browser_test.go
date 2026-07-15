@@ -1,13 +1,26 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/jackuait/wisp-deck/internal/models"
 )
+
+// reloadProjects re-reads the projects file into the model, mirroring what
+// enterInputMode sees after external writes in a test.
+func reloadProjects(t *testing.T, m *MainMenuModel) {
+	t.Helper()
+	projects, err := models.LoadProjects(m.projectsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.projects = projects
+}
 
 // newBrowserAddMenu builds a menu that just entered add-project mode with a
 // projects root containing the given subdirs. Returns the model and the root.
@@ -116,67 +129,37 @@ func TestBrowser_ArrowsNavigateUpAndDown(t *testing.T) {
 	}
 }
 
-func TestBrowser_ChooseCwdAdvancesToNameStage(t *testing.T) {
+func TestBrowser_ChooseCwdAddsProjectImmediately(t *testing.T) {
 	m, dir := newBrowserAddMenu(t, "alpha")
 	m = send(t, m, bkey(tea.KeyEnter)) // row 0 = choose this folder
 	if m.browser != nil {
 		t.Fatal("choosing a folder should close the browser")
 	}
-	if m.inputMode != "add-project" {
-		t.Fatalf("should remain in add-project mode, got %q", m.inputMode)
+	if m.inputMode != "" {
+		t.Fatalf("choosing should add the project and leave input mode, got %q", m.inputMode)
 	}
-	if m.inputFocusPath {
-		t.Error("focus should advance to the name field")
+	data, err := os.ReadFile(m.projectsFile)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := m.pathInput.Value(); got != dir {
-		t.Errorf("path = %q, want %q", got, dir)
+	want := filepath.Base(dir) + ":" + dir
+	if !strings.Contains(string(data), want) {
+		t.Errorf("projects file should contain %q, got %q", want, string(data))
 	}
-	if got := m.nameInput.Value(); got != filepath.Base(dir) {
-		t.Errorf("name should auto-derive %q, got %q", filepath.Base(dir), got)
+	if !strings.Contains(m.feedbackMsg, "Added "+filepath.Base(dir)) {
+		t.Errorf("feedback should announce the add, got %q", m.feedbackMsg)
 	}
 }
 
-func TestBrowser_TabChoosesHighlightedSubdir(t *testing.T) {
+func TestBrowser_TabAddsHighlightedSubdirImmediately(t *testing.T) {
 	m, dir := newBrowserAddMenu(t, "alpha")
 	m = send(t, m, bkey(tea.KeyDown), bkey(tea.KeyTab))
 	if m.browser != nil {
 		t.Fatal("Tab should choose the highlighted folder and close the browser")
 	}
-	want := filepath.Join(dir, "alpha")
-	if got := m.pathInput.Value(); got != want {
-		t.Errorf("path = %q, want %q", got, want)
+	if m.inputMode != "" {
+		t.Fatalf("Tab choose should add the project and leave input mode, got %q", m.inputMode)
 	}
-	if got := m.nameInput.Value(); got != "alpha" {
-		t.Errorf("name = %q, want alpha", got)
-	}
-}
-
-func TestBrowser_NameStagePathRowIsStatic(t *testing.T) {
-	m, _ := newBrowserAddMenu(t, "alpha")
-	m = send(t, m, bkey(tea.KeyDown), bkey(tea.KeyTab))
-	raw := stripAnsi(m.renderInputBox())
-	pathLine := ""
-	for _, l := range strings.Split(raw, "\n") {
-		if strings.Contains(l, "Path:") {
-			pathLine = l
-			break
-		}
-	}
-	if pathLine == "" {
-		t.Fatalf("no Path row rendered:\n%s", raw)
-	}
-	if strings.Contains(pathLine, ">") {
-		t.Errorf("path row should be static text without an input prompt, got %q", pathLine)
-	}
-	// Long paths are middle-truncated, so assert on the basename.
-	if !strings.Contains(pathLine, "alpha") {
-		t.Errorf("path row should show the chosen folder, got %q", pathLine)
-	}
-}
-
-func TestBrowser_SubmitFromNameStageAppendsProject(t *testing.T) {
-	m, dir := newBrowserAddMenu(t, "alpha")
-	m = send(t, m, bkey(tea.KeyDown), bkey(tea.KeyTab), bkey(tea.KeyEnter))
 	data, err := os.ReadFile(m.projectsFile)
 	if err != nil {
 		t.Fatal(err)
@@ -185,62 +168,129 @@ func TestBrowser_SubmitFromNameStageAppendsProject(t *testing.T) {
 	if !strings.Contains(string(data), want) {
 		t.Errorf("projects file should contain %q, got %q", want, string(data))
 	}
-	if m.inputMode != "" {
-		t.Error("input mode should close after submit")
-	}
 }
 
-func TestBrowser_EscFromNameStageReopensBrowser(t *testing.T) {
+func TestBrowser_DuplicatePathShowsErrorInBrowser(t *testing.T) {
 	m, dir := newBrowserAddMenu(t, "alpha")
-	m = send(t, m, bkey(tea.KeyDown), bkey(tea.KeyTab)) // name stage, path = dir/alpha
-	m = send(t, m, bkey(tea.KeyEsc))
+	if err := os.WriteFile(m.projectsFile, []byte("alpha:"+filepath.Join(dir, "alpha")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reloadProjects(t, m)
+	m = send(t, m, bkey(tea.KeyDown), bkey(tea.KeyTab))
 	if m.browser == nil {
-		t.Fatal("Esc from the name stage should reopen the browser")
+		t.Fatal("duplicate path should keep the browser open")
 	}
-	if m.browser.Cwd() != dir {
-		t.Errorf("browser should reopen at the chosen folder's parent %q, got %q", dir, m.browser.Cwd())
-	}
-	if m.inputMode != "add-project" {
-		t.Errorf("still in add-project mode, got %q", m.inputMode)
+	if !strings.Contains(m.browser.Err(), "already exists") {
+		t.Errorf("browser should show the duplicate error, got %q", m.browser.Err())
 	}
 }
 
-func TestBrowser_GitHubURLEnterAdvancesToNameStage(t *testing.T) {
-	m, _ := newBrowserAddMenu(t)
-	m = send(t, m, runes("https://github.com/owner/my-repo")...)
-	m = send(t, m, bkey(tea.KeyEnter))
-	if m.browser != nil {
-		t.Fatal("Enter on a GitHub URL should close the browser")
+func TestBrowser_DuplicateNameWarnsThenAddsOnSecondChoose(t *testing.T) {
+	m, dir := newBrowserAddMenu(t, "alpha")
+	if err := os.WriteFile(m.projectsFile, []byte("alpha:/somewhere/else\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if m.inputFocusPath {
-		t.Error("focus should be on the name field")
+	reloadProjects(t, m)
+	m = send(t, m, bkey(tea.KeyDown), bkey(tea.KeyTab))
+	if m.browser == nil {
+		t.Fatal("duplicate name should keep the browser open with a warning")
 	}
-	if got := m.pathInput.Value(); got != "https://github.com/owner/my-repo" {
-		t.Errorf("path should hold the URL, got %q", got)
+	if !strings.Contains(m.browser.Err(), "already exists") {
+		t.Errorf("browser should warn about the duplicate name, got %q", m.browser.Err())
 	}
-	if got := m.nameInput.Value(); got != "my-repo" {
-		t.Errorf("name should derive from the repo, got %q", got)
+	m = send(t, m, bkey(tea.KeyTab)) // confirm
+	if m.browser != nil || m.inputMode != "" {
+		t.Fatal("second choose should add anyway and close")
+	}
+	data, err := os.ReadFile(m.projectsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "alpha:"+filepath.Join(dir, "alpha")) {
+		t.Errorf("second choose should append the project, got %q", string(data))
 	}
 }
 
-func TestBrowser_GitHubURLSubmitDispatchesClone(t *testing.T) {
+func TestBrowser_GitHubURLEnterStartsCloneInBrowser(t *testing.T) {
 	m, _ := newBrowserAddMenu(t)
-	cloned := false
-	m.gitClone = func(url, dest string) error {
-		cloned = true
-		return os.MkdirAll(dest, 0o755)
-	}
+	m.gitClone = func(url, dest string) error { return os.MkdirAll(dest, 0o755) }
 	m = send(t, m, runes("https://github.com/owner/my-repo")...)
-	m = send(t, m, bkey(tea.KeyEnter)) // → name stage
 	res, cmd := m.Update(bkey(tea.KeyEnter))
 	m = res.(*MainMenuModel)
 	if cmd == nil {
-		t.Fatal("submit should dispatch the clone command")
+		t.Fatal("Enter on a GitHub URL should dispatch the clone command")
 	}
 	if !m.cloning {
 		t.Error("model should enter cloning state")
 	}
-	_ = cloned // executed asynchronously via the returned cmd
+	if m.browser == nil {
+		t.Error("browser should stay open showing the clone spinner")
+	}
+}
+
+func TestBrowser_CloneDoneAddsProjectAndCloses(t *testing.T) {
+	m, dir := newBrowserAddMenu(t)
+	m.gitClone = func(url, dest string) error { return os.MkdirAll(dest, 0o755) }
+	m = send(t, m, runes("https://github.com/owner/my-repo")...)
+	res, _ := m.Update(bkey(tea.KeyEnter))
+	m = res.(*MainMenuModel)
+	dest := filepath.Join(dir, "my-repo")
+	res, _ = m.Update(githubCloneDoneMsg{name: "my-repo", dest: dest, err: nil})
+	m = res.(*MainMenuModel)
+	if m.browser != nil || m.inputMode != "" {
+		t.Error("clone success should close the browser and input mode")
+	}
+	data, err := os.ReadFile(m.projectsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "my-repo:"+dest) {
+		t.Errorf("projects file should contain the cloned repo, got %q", string(data))
+	}
+}
+
+func TestBrowser_CloneFailureShowsErrorInBrowser(t *testing.T) {
+	m, _ := newBrowserAddMenu(t)
+	m.gitClone = func(url, dest string) error { return nil }
+	m = send(t, m, runes("https://github.com/owner/my-repo")...)
+	res, _ := m.Update(bkey(tea.KeyEnter))
+	m = res.(*MainMenuModel)
+	res, _ = m.Update(githubCloneDoneMsg{name: "my-repo", dest: "/nope", err: fmt.Errorf("boom")})
+	m = res.(*MainMenuModel)
+	if m.browser == nil {
+		t.Fatal("clone failure should keep the browser open")
+	}
+	if !strings.Contains(m.browser.Err(), "clone failed") {
+		t.Errorf("browser should show the clone error, got %q", m.browser.Err())
+	}
+}
+
+func TestBrowser_KeysFrozenWhileCloning(t *testing.T) {
+	m, _ := newBrowserAddMenu(t)
+	m.gitClone = func(url, dest string) error { return os.MkdirAll(dest, 0o755) }
+	m = send(t, m, runes("https://github.com/owner/my-repo")...)
+	res, _ := m.Update(bkey(tea.KeyEnter))
+	m = res.(*MainMenuModel)
+	m = send(t, m, bkey(tea.KeyEsc))
+	if m.browser == nil || m.inputMode != "add-project" {
+		t.Error("Esc must not close the browser while a clone is in flight")
+	}
+}
+
+func TestBrowser_CardShowsCloneSpinner(t *testing.T) {
+	m, _ := newBrowserAddMenu(t)
+	m.gitClone = func(url, dest string) error { return os.MkdirAll(dest, 0o755) }
+	m = send(t, m, runes("https://github.com/owner/my-repo")...)
+	res, _ := m.Update(bkey(tea.KeyEnter))
+	m = res.(*MainMenuModel)
+	// Long destinations middle-truncate the status line, so assert the prefix.
+	raw := stripAnsi(strings.Join(m.browserInnerLines(), "\n"))
+	if !strings.Contains(raw, "⠋ Cloning owner/my-re") {
+		t.Errorf("browser card should show the clone spinner, got:\n%s", raw)
+	}
+	if !strings.Contains(raw, "Ctrl+C quit") {
+		t.Errorf("footer while cloning should advertise only Ctrl+C, got:\n%s", raw)
+	}
 }
 
 func TestBrowser_CtrlCQuits(t *testing.T) {

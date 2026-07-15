@@ -225,13 +225,22 @@ func (m *MainMenuModel) browserInnerLines() []string {
 		lines = append(lines, m.browserListLines()...)
 	}
 
-	// Status slot: navigation error or blank, always one line.
-	if b.Err() != "" {
+	// Status slot: clone spinner, navigation error, or blank — always one line.
+	switch {
+	case m.cloning:
+		frame := cloneSpinnerFrames[m.cloneFrame%len(cloneSpinnerFrames)]
+		status := frame + " Cloning " + m.cloneSlug + " → " + abbreviateHome(m.cloneDest)
+		lines = append(lines, accentStyle.Render(TruncateMiddle(status, browserCardInnerWidth)))
+	case b.Err() != "":
 		lines = append(lines, errorStyle.Render(TruncateMiddle("✗ "+b.Err(), browserCardInnerWidth)))
-	} else {
+	default:
 		lines = append(lines, "")
 	}
-	lines = append(lines, "", dimStyle.Render("⏎ open · tab choose · ← up · esc cancel"))
+	footer := "⏎ open · tab choose · ← up · esc cancel"
+	if m.cloning {
+		footer = "Ctrl+C quit"
+	}
+	lines = append(lines, "", dimStyle.Render(footer))
 	return lines
 }
 
@@ -302,6 +311,9 @@ func (m *MainMenuModel) overlayBrowser(placed string) string {
 // a left click outside the card dismisses it (mirroring the About card);
 // everything else is swallowed so nothing falls through to the menu beneath.
 func (m *MainMenuModel) handleBrowserMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.cloning {
+		return m, nil
+	}
 	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 		left, top, w, h := m.browserCardLayout()
 		onCard := msg.X >= left && msg.X < left+w && msg.Y >= top && msg.Y < top+h
@@ -314,6 +326,14 @@ func (m *MainMenuModel) handleBrowserMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd
 
 // updateBrowser owns all key input while the folder browser is open.
 func (m *MainMenuModel) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// While a clone is in flight the browser is frozen: only Ctrl+C gets through.
+	if m.cloning {
+		if msg.Type == tea.KeyCtrlC {
+			m.setActionResult("quit")
+			return m, tea.Quit
+		}
+		return m, nil
+	}
 	b := m.browser
 	switch msg.Type {
 	case tea.KeyCtrlC:
@@ -373,36 +393,36 @@ func (m *MainMenuModel) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// chooseBrowserFolder closes the browser and hands the chosen folder to the
-// existing name stage (auto-derive, duplicate checks, persistence).
+// chooseBrowserFolder adds the chosen folder as a project immediately, named
+// after its basename. Errors (and the duplicate-name confirm) land in the
+// browser's status slot — the Path/Name form never shows.
 func (m *MainMenuModel) chooseBrowserFolder(path string) (tea.Model, tea.Cmd) {
-	m.browser = nil
-	m.pathInput.SetValue(path)
-	return m.advanceToNameField()
-}
-
-// chooseBrowserGitHubURL closes the browser with the filter's GitHub URL as
-// the path, entering the name stage that leads to the clone flow.
-func (m *MainMenuModel) chooseBrowserGitHubURL(url string) (tea.Model, tea.Cmd) {
-	m.browser = nil
-	m.pathInput.SetValue(url)
-	return m.advanceToNameField()
-}
-
-// reopenBrowserFromName returns from the name stage to the browser: at the
-// chosen folder's parent, or with a GitHub URL back in the filter.
-func (m *MainMenuModel) reopenBrowserFromName() {
-	val := strings.TrimSpace(m.pathInput.Value())
-	var b DirBrowserModel
-	if _, _, isGitHub := util.ParseGitHubRepo(val); isGitHub || val == "" {
-		b = NewDirBrowser(m.browserStartDir())
-		for _, r := range val {
-			b.TypeRune(r)
-		}
-	} else {
-		b = NewDirBrowser(filepath.Dir(filepath.Clean(util.ExpandPath(val))))
+	if strings.TrimSpace(m.pathInput.Value()) != path {
+		// Choosing a different folder invalidates a pending duplicate-name warn.
+		m.nameWarnShown = false
 	}
-	m.browser = &b
-	m.nameInput.Blur()
-	m.inputFocusPath = true
+	m.pathInput.SetValue(path)
+	m.maybeAutoDeriveName()
+	return m.submitFromBrowser()
+}
+
+// chooseBrowserGitHubURL starts the clone straight from the browser, named
+// after the repo. The browser stays open showing the clone spinner.
+func (m *MainMenuModel) chooseBrowserGitHubURL(url string) (tea.Model, tea.Cmd) {
+	m.pathInput.SetValue(url)
+	m.maybeAutoDeriveName()
+	return m.submitFromBrowser()
+}
+
+// submitFromBrowser runs the shared submit path (duplicate checks,
+// persistence, clone dispatch) and routes any error back into the browser's
+// status slot. On success submitInputMode closes the browser via
+// exitInputMode; while a clone is in flight the browser stays open.
+func (m *MainMenuModel) submitFromBrowser() (tea.Model, tea.Cmd) {
+	model, cmd := m.submitInputMode()
+	if m.nameErr != nil && m.browser != nil {
+		m.browser.errMsg = m.nameErr.Error()
+		m.nameErr = nil
+	}
+	return model, cmd
 }
