@@ -342,3 +342,143 @@ func TestOSC9ParserRejectsDiscardedTmuxInnerSTBeforeLaterOSC9(t *testing.T) {
 		}
 	})
 }
+
+func TestOSC9FilterConsumesPlainAndTmuxFramesAcrossEverySplit(t *testing.T) {
+	t.Parallel()
+
+	fixtures := []struct {
+		name  string
+		frame string
+		want  string
+	}{
+		{name: "plain BEL", frame: "\x1b]9;agent-turn-complete\x07", want: "agent-turn-complete"},
+		{name: "plain ST", frame: "\x1b]9;turn complete\x1b\\", want: "turn complete"},
+		{name: "tmux wrapped BEL", frame: "\x1bPtmux;\x1b\x1b]9;agent-turn-complete\x07\x1b\\", want: "agent-turn-complete"},
+		{name: "tmux wrapped ST", frame: "\x1bPtmux;\x1b\x1b]9;turn complete\x1b\x1b\\\x1b\\", want: "turn complete"},
+	}
+
+	for _, fixture := range fixtures {
+		fixture := fixture
+		t.Run(fixture.name, func(t *testing.T) {
+			t.Parallel()
+			input := []byte("before" + fixture.frame + "after")
+			wantEvents := []OSC9Event{{Message: fixture.want}}
+
+			for split := 0; split <= len(input); split++ {
+				var filter OSC9Filter
+				firstOutput, firstEvents := filter.Feed(input[:split])
+				secondOutput, secondEvents := filter.Feed(input[split:])
+				gotOutput := append(append(firstOutput, secondOutput...), filter.Flush()...)
+				gotEvents := append(firstEvents, secondEvents...)
+				if string(gotOutput) != "beforeafter" {
+					t.Fatalf("split %d: output = %q, want %q", split, gotOutput, "beforeafter")
+				}
+				if !reflect.DeepEqual(gotEvents, wantEvents) {
+					t.Fatalf("split %d: events = %#v, want %#v", split, gotEvents, wantEvents)
+				}
+			}
+
+			var filter OSC9Filter
+			var gotOutput []byte
+			var gotEvents []OSC9Event
+			for _, b := range input {
+				output, events := filter.Feed([]byte{b})
+				gotOutput = append(gotOutput, output...)
+				gotEvents = append(gotEvents, events...)
+			}
+			gotOutput = append(gotOutput, filter.Flush()...)
+			if string(gotOutput) != "beforeafter" {
+				t.Fatalf("one-byte feeds: output = %q, want %q", gotOutput, "beforeafter")
+			}
+			if !reflect.DeepEqual(gotEvents, wantEvents) {
+				t.Fatalf("one-byte feeds: events = %#v, want %#v", gotEvents, wantEvents)
+			}
+		})
+	}
+}
+
+func TestOSC9FilterPreservesEveryNonNotificationByte(t *testing.T) {
+	t.Parallel()
+
+	input := []byte(strings.Join([]string{
+		"ordinary",
+		"\x1b[31mred\x1b[0m",
+		"\x1b]0;window title\x07",
+		"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\",
+		"\x1bPnot-tmux;opaque\x1b\\",
+		"\x1bPtmux;\x1b\x1b]0;inner title\x07\x1b\\",
+	}, "|"))
+
+	for split := 0; split <= len(input); split++ {
+		var filter OSC9Filter
+		first, firstEvents := filter.Feed(input[:split])
+		second, secondEvents := filter.Feed(input[split:])
+		got := append(append(first, second...), filter.Flush()...)
+		if !bytes.Equal(got, input) {
+			t.Fatalf("split %d: output = %q, want byte-identical %q", split, got, input)
+		}
+		if len(firstEvents)+len(secondEvents) != 0 {
+			t.Fatalf("split %d: non-notification emitted events %#v %#v", split, firstEvents, secondEvents)
+		}
+	}
+}
+
+func TestOSC9FilterFlushesOnlyUnconfirmedPrefixesAtEOF(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range []string{"\x1b", "\x1b]", "\x1b]9", "\x1bP", "\x1bPtmux;\x1b\x1b]9"} {
+		var filter OSC9Filter
+		output, events := filter.Feed([]byte(input))
+		output = append(output, filter.Flush()...)
+		if string(output) != input || len(events) != 0 {
+			t.Fatalf("unconfirmed %q = output %q, events %#v", input, output, events)
+		}
+	}
+
+	for _, input := range []string{"\x1b]9;partial", "\x1bPtmux;\x1b\x1b]9;partial"} {
+		var filter OSC9Filter
+		output, events := filter.Feed([]byte(input))
+		output = append(output, filter.Flush()...)
+		if len(output) != 0 || len(events) != 0 {
+			t.Fatalf("confirmed incomplete %q = output %q, events %#v", input, output, events)
+		}
+	}
+}
+
+func TestOSC9FilterEnforcesPayloadBoundAndRecovers(t *testing.T) {
+	t.Parallel()
+
+	limitPayload := strings.Repeat("a", MaxOSC9RetainedBytes)
+	var atLimit OSC9Filter
+	output, events := atLimit.Feed([]byte("left\x1b]9;" + limitPayload + "\x07right"))
+	output = append(output, atLimit.Flush()...)
+	if string(output) != "leftright" {
+		t.Fatalf("limit output = %q", output)
+	}
+	if len(events) != 1 || events[0].Message != limitPayload {
+		t.Fatalf("limit events = count %d, message bytes %d", len(events), func() int {
+			if len(events) == 0 {
+				return 0
+			}
+			return len(events[0].Message)
+		}())
+	}
+	if retained := atLimit.RetainedBytes(); retained != 0 {
+		t.Fatalf("limit retained bytes = %d, want 0", retained)
+	}
+
+	oversize := "left\x1b]9;" + strings.Repeat("z", MaxOSC9RetainedBytes+1) +
+		"\x07middle\x1b]9;recovered\x07right"
+	var filter OSC9Filter
+	output, events = filter.Feed([]byte(oversize))
+	output = append(output, filter.Flush()...)
+	if string(output) != "leftmiddleright" {
+		t.Fatalf("oversize output = %q, want %q", output, "leftmiddleright")
+	}
+	if !reflect.DeepEqual(events, []OSC9Event{{Message: "recovered"}}) {
+		t.Fatalf("oversize events = %#v", events)
+	}
+	if retained := filter.RetainedBytes(); retained != 0 {
+		t.Fatalf("oversize retained bytes = %d, want 0", retained)
+	}
+}
