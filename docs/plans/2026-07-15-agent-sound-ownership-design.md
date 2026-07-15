@@ -42,10 +42,12 @@ remains untouched, and the existing migration for historical global
 
 ### Codex
 
-Codex keeps the exact `agent-turn-complete` / `osc9` launch overrides because
-the OSC event is a useful completion discriminator when app-server observation
-is incomplete. The difference is placement: OSC 9 is a private protocol between
-the Codex child PTY and Wisp Deck, not terminal output.
+Codex receives `notify=[]` on every launch so a user-level external notifier
+command cannot execute audio inside the agent. It keeps the exact
+`agent-turn-complete` / `osc9` TUI overrides because the OSC event is a useful
+completion discriminator when app-server observation is incomplete. The
+difference is placement: OSC 9 is a private protocol between the Codex child
+PTY and Wisp Deck, not terminal output.
 
 A bounded streaming filter sits in the PTY output loop. It:
 
@@ -99,6 +101,8 @@ Regression coverage proves:
   `notifications_disabled`;
 - Codex plain and tmux-wrapped OSC 9 frames are recognized but absent from PTY
   output across every split, while surrounding ordinary bytes are exact;
+- every Codex fresh/resume and embedded/remote argv disables the external
+  notifier with `notify=[]`;
 - the real Codex PTY relay consumes a fragmented notification and still emits
   its completion event;
 - OpenCode's executable plugin has no playback or terminal-notification effect;

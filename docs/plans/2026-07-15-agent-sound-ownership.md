@@ -4,7 +4,7 @@
 
 **Goal:** Make Wisp Deck the sole owner of every built-in notification sound path it configures for Claude, Codex, and OpenCode.
 
-**Architecture:** Claude's launch-local overlay disables its native notification channel. Codex keeps OSC 9 as a private completion protocol, but a bounded streaming filter consumes those frames inside Wisp Deck before PTY output reaches Ghostty. OpenCode remains an event-only state publisher, and the existing locked Wisp Deck playback gate remains the only runtime audio owner.
+**Architecture:** Claude's launch-local overlay disables its native notification channel. Codex disables external notifier commands and keeps OSC 9 only as a private completion protocol; a bounded streaming filter consumes those frames inside Wisp Deck before PTY output reaches Ghostty. OpenCode remains an event-only state publisher, and the existing locked Wisp Deck playback gate remains the only runtime audio owner.
 
 **Tech Stack:** Go 1.25, Bash, pseudo-terminals, ANSI/OSC state machines, Node executable-contract tests.
 
@@ -172,6 +172,9 @@ Extend the idle-sound ownership guard to require Claude's
 `notifications_disabled`, a `var filter OSC9Filter` declaration, and
 `filtered, events := filter.Feed(chunk)`. Reject the old raw forwarding form
 `writeFull(s.output(), chunk)`.
+
+Extend the exact Codex argv contract to require `notify=[]` before the TUI
+notification overrides for every fresh/resume and embedded/remote launch.
 
 **Step 2: Run focused tests and verify RED**
 

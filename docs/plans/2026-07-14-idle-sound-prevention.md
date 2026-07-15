@@ -45,8 +45,9 @@ architecture and closes the remaining preference and plain-shell boundaries.
    repair its plugin first. This includes the plain terminal because the user
    can run `opencode` manually there.
 10. Agent adapters publish attention state only. Claude's native notification
-    channel is disabled, Codex OSC 9 terminates inside its private PTY relay,
-    and OpenCode's plugin has no notification effect.
+    channel is disabled, Codex external notifier commands are disabled and its
+    OSC 9 terminates inside the private PTY relay, and OpenCode's plugin has no
+    notification effect.
 11. No agent-generated BEL, OSC notification, or direct audio path configured
     by Wisp Deck may reach the outer terminal. Runtime sound starts only in
     Wisp Deck after the shared live preference gate authorizes it.
@@ -64,6 +65,8 @@ architecture and closes the remaining preference and plain-shell boundaries.
   `preferredNotifChannel=notifications_disabled`.
 - `internal/codexadapter/osc9_filter.go`: bounded private-protocol filter that
   reports Codex completion events without forwarding OSC 9 to the terminal.
+- `internal/codexadapter/supervisor.go`: exact `notify=[]` launch override that
+  disables Codex's independent external notifier command.
 - `templates/opencode-plugin.ts`: event-only attention-state publisher with no
   child process, audio, system notification, or terminal-control output.
 
@@ -86,6 +89,7 @@ processes rather than mocks.
 - Codex filter and real-PTY tests cover plain and tmux-wrapped OSC 9 at every
   split, byte-identical unrelated output, bounded oversized input, and semantic
   completion without terminal notification bytes;
+- Codex exact-argv tests require `notify=[]` for every launch form;
 - the OpenCode executable contract rejects playback, system-notification, and
   terminal-control effects;
 - a source invariant permits only the sound-aware selected-tool setter;
