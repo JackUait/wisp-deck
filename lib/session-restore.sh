@@ -555,9 +555,9 @@ claude_pick_transcript() {
 
 # Replay a captured #{window_layout} onto <session>'s window 0, re-applying
 # until the window size settles. Run BACKGROUNDED by the wrapper BEFORE its
-# `tmux new-session` — that call attaches and blocks until the session ends,
-# so a replay placed after it never runs while the session is alive (the
-# original dead-code bug). Polling for a settled size matters just as much:
+# tmux launch command — its final attach blocks until the session ends, so a
+# replay placed after it never runs while the session is alive (the original
+# dead-code bug). Polling for a settled size matters just as much:
 # after a macOS crash, Ghostty respawns a restored tab's command before the
 # tab's pty reaches its final size, and when the real size lands tmux
 # distributes the width delta EQUALLY between the two columns (not

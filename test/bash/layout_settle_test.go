@@ -19,16 +19,16 @@ import (
 // EQUALLY between the two columns (layout_resize_adjust is round-robin, not
 // proportional) — corrupting the ratio (left pane drifted 25% → ~36%). The
 // select-layout replay that should have fixed it was dead code: it was placed
-// after `tmux new-session`, which attaches and blocks until the session ENDS.
+// after the attached tmux launch command, which blocks until the session ENDS.
 //
 // Two guards:
 //   - TestRestoreLayoutWatch_reapplies_after_late_resize drives the real tmux
 //     binary through the exact race and requires restore_layout_watch to
 //     converge on the captured geometry.
 //   - TestWrapperRestore_replays_layout_while_session_alive runs wrapper.sh
-//     against a tmux mock whose new-session BLOCKS (like the real one) until
-//     select-layout is observed — so the replay can never again be parked
-//     after the blocking call.
+//     against a tmux mock whose launch command BLOCKS (like the real final
+//     attach) until select-layout is observed — so the replay can never again
+//     be parked after the blocking call.
 
 // TestRestoreLayoutWatch_reapplies_after_late_resize reproduces the
 // crash-restore race against the real tmux binary: panes are built while the
@@ -245,7 +245,7 @@ exit 0
 	assertExitCode(t, code, 0)
 
 	if _, err := os.Stat(duringRec); err != nil {
-		t.Fatal("select-layout never ran while new-session was blocked — the replay is dead code again")
+		t.Fatal("select-layout never ran while the tmux launch was attached — the replay is dead code again")
 	}
 	data, err := os.ReadFile(layoutRec)
 	if err != nil {

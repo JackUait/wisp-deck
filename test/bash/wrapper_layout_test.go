@@ -87,6 +87,7 @@ func recordWrapperNewSession(t *testing.T) string {
 		"claude":        "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
+		"stty":          "#!/bin/bash\nexit 1\n",
 		"tput": `#!/bin/bash
 case "$1" in
   cols) echo 173 ;;

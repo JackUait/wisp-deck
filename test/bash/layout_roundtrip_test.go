@@ -122,7 +122,7 @@ func TestDetachedSessionLifecycle(t *testing.T) {
 	t.Cleanup(func() { _ = exec.Command(tmux, "-L", sock, "kill-server").Run() })
 
 	cmd := exec.CommandContext(ctx, tmux,
-		"-L", sock,
+		"-L", sock, "-f", "/dev/null",
 		"new-session", "-d", "-s", sess, "-x", "120", "-y", "30", "sleep 30",
 		";", "split-window", "-h", "-p", "75", "sleep 30",
 		";", "set-option", "-p", "@gt_ai", "1",
