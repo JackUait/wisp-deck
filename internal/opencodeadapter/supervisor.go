@@ -315,7 +315,14 @@ func (s *Supervisor) waitForObserver(
 			case lastErr = <-attempt:
 				cancelAttempt()
 			case <-time.After(time.Millisecond):
-				return attempt, nil
+				forwarded := make(chan error, 1)
+				go func() {
+					observerErr := <-attempt
+					cancelAttempt()
+					forwarded <- observerErr
+					close(forwarded)
+				}()
+				return forwarded, nil
 			}
 		case lastErr = <-attempt:
 			cancelAttempt()
