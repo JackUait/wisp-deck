@@ -222,23 +222,23 @@ ensure_nerd_font() {
 # Unknown or locally edited plugins are preserved; OpenCode launches use
 # `--pure`, so every remaining plugin is inert inside Wisp Deck regardless.
 retire_known_opencode_sound_plugins() {
-  local config_home plugin_dir path expected actual
+  local config_home plugin_dir plugin_path expected actual
   config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
   plugin_dir="$config_home/opencode/plugins"
   [ -d "$plugin_dir" ] || return 0
   command -v shasum >/dev/null 2>&1 || return 0
 
-  for path in "$plugin_dir/wisp-deck.ts" "$plugin_dir/ghost-tab.ts"; do
-    [ -f "$path" ] && [ ! -L "$path" ] || continue
-    case "${path##*/}" in
+  for plugin_path in "$plugin_dir/wisp-deck.ts" "$plugin_dir/ghost-tab.ts"; do
+    [ -f "$plugin_path" ] && [ ! -L "$plugin_path" ] || continue
+    case "${plugin_path##*/}" in
       wisp-deck.ts) expected="93acddeb65141aaee763c3dd891a7006a1716137a2fdeda6a05cf7fec1fe01f4" ;;
       ghost-tab.ts) expected="a7ed3712ba0bb00f77c351c236073fc2d71cf80b644c6acaca19f1bced6fb218" ;;
       *) continue ;;
     esac
-    actual="$(shasum -a 256 "$path" 2>/dev/null)" || continue
+    actual="$(shasum -a 256 "$plugin_path" 2>/dev/null)" || continue
     actual="${actual%% *}"
     [ "$actual" = "$expected" ] || continue
-    rm -f "$path" || return 1
+    rm -f "$plugin_path" || return 1
   done
   return 0
 }

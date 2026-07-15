@@ -3,6 +3,7 @@ package bash_test
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -83,6 +84,27 @@ func TestRetireKnownOpenCodeSoundPlugins_does_not_create_config_tree(t *testing.
 	assertExitCode(t, code, 0)
 	if _, err := os.Stat(configHome); !os.IsNotExist(err) {
 		t.Fatalf("retirement created a config tree: %v", err)
+	}
+}
+
+func TestRetireKnownOpenCodeSoundPlugins_works_when_sourced_from_zsh(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not installed")
+	}
+	dir := t.TempDir()
+	configHome := filepath.Join(dir, "config")
+	plugin := writeTempFile(t, filepath.Join(configHome, "opencode", "plugins"), "wisp-deck.ts", "legacy fixture\n")
+	binDir := mockCommand(t, dir, "shasum", `printf '93acddeb65141aaee763c3dd891a7006a1716137a2fdeda6a05cf7fec1fe01f4  %s\n' "$3"`)
+	command := exec.Command(zsh, "-c", `source "$INSTALL_LIB" && retire_known_opencode_sound_plugins`)
+	command.Env = buildEnv(t, []string{binDir},
+		"HOME="+filepath.Join(dir, "home"), "XDG_CONFIG_HOME="+configHome,
+		"INSTALL_LIB="+filepath.Join(projectRoot(t), "lib", "install.sh"))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("zsh retirement failed: %v: %s", err, output)
+	}
+	if _, err := os.Lstat(plugin); !os.IsNotExist(err) {
+		t.Fatalf("zsh retirement preserved exact known plugin: %v", err)
 	}
 }
 
