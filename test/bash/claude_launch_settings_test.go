@@ -57,8 +57,8 @@ func TestSettingsJsonClaudeLaunchSettingsMergesActiveConfigAndDisablesNativeNoti
 	if got["preferredNotifChannel"] != "notifications_disabled" {
 		t.Fatalf("preferredNotifChannel = %#v, want notifications_disabled", got["preferredNotifChannel"])
 	}
-	if got["disableAllHooks"] != true {
-		t.Fatalf("disableAllHooks = %#v, want true", got["disableAllHooks"])
+	if got["disableAllHooks"] != false {
+		t.Fatalf("disableAllHooks = %#v, want preserved false", got["disableAllHooks"])
 	}
 	if got["model"] != "opus" {
 		t.Fatalf("model = %#v, want opus", got["model"])
@@ -69,7 +69,7 @@ func TestSettingsJsonClaudeLaunchSettingsMergesActiveConfigAndDisablesNativeNoti
 	}
 	hooks, ok := got["hooks"].(map[string]any)
 	if !ok || len(hooks) != 1 {
-		t.Fatalf("hooks not preserved under disableAllHooks: %#v", got["hooks"])
+		t.Fatalf("hooks not preserved: %#v", got["hooks"])
 	}
 	plugins, ok := got["enabledPlugins"].(map[string]any)
 	if !ok || plugins["user-plugin@example"] != true {
@@ -91,6 +91,28 @@ func TestSettingsJsonClaudeLaunchSettingsMergesActiveConfigAndDisablesNativeNoti
 	}
 }
 
+func TestSettingsJsonClaudeLaunchSettingsPreservesExplicitHookDisable(t *testing.T) {
+	dir := t.TempDir()
+	generationDir := filepath.Join(dir, "generation.HooksOff1")
+	if err := os.Mkdir(generationDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	active := writeTempFile(t, dir, "active.json", `{"disableAllHooks":true}`+"\n")
+
+	snippet := settingsJsonSnippet(t,
+		fmt.Sprintf(`write_claude_launch_settings %q %q`, generationDir, active))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	got := readJSONMap(t, filepath.Join(generationDir, "claude-settings.json"))
+	if got["disableAllHooks"] != true {
+		t.Fatalf("disableAllHooks = %#v, want preserved true", got["disableAllHooks"])
+	}
+	if got["preferredNotifChannel"] != "notifications_disabled" {
+		t.Fatalf("preferredNotifChannel = %#v, want notifications_disabled", got["preferredNotifChannel"])
+	}
+}
+
 func TestSettingsJsonClaudeLaunchSettingsWithoutActiveConfigOnlyDisablesNativeNotifications(t *testing.T) {
 	generationDir := filepath.Join(t.TempDir(), "generation.Empty1")
 	if err := os.Mkdir(generationDir, 0o700); err != nil {
@@ -103,8 +125,8 @@ func TestSettingsJsonClaudeLaunchSettingsWithoutActiveConfigOnlyDisablesNativeNo
 	assertExitCode(t, code, 0)
 
 	got := readJSONMap(t, filepath.Join(generationDir, "claude-settings.json"))
-	if len(got) != 2 || got["preferredNotifChannel"] != "notifications_disabled" || got["disableAllHooks"] != true {
-		t.Fatalf("launch settings = %#v, want only strict notification and hook overrides", got)
+	if len(got) != 1 || got["preferredNotifChannel"] != "notifications_disabled" {
+		t.Fatalf("launch settings = %#v, want only native notification override", got)
 	}
 }
 
