@@ -44,6 +44,12 @@ architecture and closes the remaining preference and plain-shell boundaries.
 9. Any Wisp Deck surface that exposes a possible OpenCode process start must
    repair its plugin first. This includes the plain terminal because the user
    can run `opencode` manually there.
+10. Agent adapters publish attention state only. Claude's native notification
+    channel is disabled, Codex OSC 9 terminates inside its private PTY relay,
+    and OpenCode's plugin has no notification effect.
+11. No agent-generated BEL, OSC notification, or direct audio path configured
+    by Wisp Deck may reach the outer terminal. Runtime sound starts only in
+    Wisp Deck after the shared live preference gate authorizes it.
 
 ## Runtime paths
 
@@ -54,6 +60,12 @@ architecture and closes the remaining preference and plain-shell boundaries.
 - `internal/tui/mainmenu.go`: atomic Settings writer and explicit preview.
 - `internal/soundpref`: canonical Go reader, allowed system-sound names, lock
   path, and exclusive transaction helper.
+- `lib/settings-json.sh`: launch-local Claude overlay with
+  `preferredNotifChannel=notifications_disabled`.
+- `internal/codexadapter/osc9_filter.go`: bounded private-protocol filter that
+  reports Codex completion events without forwarding OSC 9 to the terminal.
+- `templates/opencode-plugin.ts`: event-only attention-state publisher with no
+  child process, audio, system notification, or terminal-control output.
 
 macOS `lockf` and Go's `flock` share the advisory lock namespace used here. The
 regression suite exercises interoperability in both directions with real
@@ -69,7 +81,13 @@ processes rather than mocks.
   an Off writer cannot cross the active sound;
 - a persistence-failure test requires UI rollback;
 - a repository guard rejects new runtime audio sites outside the three audited
-  files and requires both notification owners to use the shared live gate;
+  files, requires both notification owners to use the shared live gate, forces
+  Claude's native channel off, and rejects raw Codex OSC forwarding;
+- Codex filter and real-PTY tests cover plain and tmux-wrapped OSC 9 at every
+  split, byte-identical unrelated output, bounded oversized input, and semantic
+  completion without terminal notification bytes;
+- the OpenCode executable contract rejects playback, system-notification, and
+  terminal-control effects;
 - a source invariant permits only the sound-aware selected-tool setter;
 - wrapper tests require plugin repair before plain-shell exec, initial OpenCode
   launch, attention generation creation, and mid-session respawn.
