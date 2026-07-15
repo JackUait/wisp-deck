@@ -26,10 +26,11 @@ const (
 	defaultCodexServerGrace   = 300 * time.Millisecond
 	defaultCodexSocketPoll    = 10 * time.Millisecond
 	defaultCodexPTYGrace      = 300 * time.Millisecond
+	codexNotifyDisabled       = `notify=[]`
 )
 
 var codexNotificationConfigs = []string{
-	`notify=[]`,
+	codexNotifyDisabled,
 	`tui.notifications=["agent-turn-complete"]`,
 	`tui.notification_method="osc9"`,
 	`tui.notification_condition="always"`,
@@ -146,7 +147,10 @@ func (r *codexSignalRouter) Termination() syscall.Signal {
 }
 
 func buildCodexServerArgv(codexPath, socketPath string) []string {
-	return []string{codexPath, "app-server", "--listen", "unix://" + socketPath}
+	return []string{
+		codexPath, "app-server", "-c", codexNotifyDisabled,
+		"--listen", "unix://" + socketPath,
+	}
 }
 
 func buildCodexTUIArgv(codexPath, socketPath string, remote bool, resumeSession, prompt string) []string {

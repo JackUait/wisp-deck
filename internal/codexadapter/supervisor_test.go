@@ -46,7 +46,7 @@ func TestCodexArgvIsExactAndAppliesAllNotificationOverrides(t *testing.T) {
 	}
 
 	if got, want := buildCodexServerArgv("/opt/codex", socket), []string{
-		"/opt/codex", "app-server", "--listen", uri,
+		"/opt/codex", "app-server", "-c", `notify=[]`, "--listen", uri,
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("server argv = %#v, want %#v", got, want)
 	}
@@ -228,7 +228,8 @@ func TestCodexSupervisorRemoteResumeQuickFailureTakesNewSnapshotThenRemoteFresh(
 	supervisor := CodexSupervisor{
 		TempBase: t.TempDir(),
 		StartServer: func(_ context.Context, argv []string, _ io.Writer) (AppServerProcess, error) {
-			if len(argv) != 4 || argv[1] != "app-server" {
+			if len(argv) != 6 || argv[1] != "app-server" ||
+				argv[2] != "-c" || argv[3] != `notify=[]` || argv[4] != "--listen" {
 				t.Fatalf("server argv = %#v", argv)
 			}
 			return server, nil
