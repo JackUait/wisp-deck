@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jackuait/wisp-deck/internal/screenshotfilter"
+	"github.com/jackuait/wisp-deck/internal/terminalcontrol"
 )
 
 // screenshot-filter runs a child command in a PTY and transparently proxies the
@@ -40,18 +41,31 @@ func runScreenshotFilter(_ *cobra.Command, args []string) error {
 	}
 
 	// Non-interactive (no tty on stdin): run the child transparently — the filter
-	// only matters for a live terminal drop.
+	// input rewrite only matters for a live terminal drop, but the output policy
+	// still applies because stdout may be an outer agent terminal.
 	if !term.IsTerminal(os.Stdin.Fd()) {
 		c := exec.Command(args[0], args[1:]...)
-		c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
-		if err := c.Run(); err != nil {
+		outputReader, outputWriter, err := os.Pipe()
+		if err != nil {
+			return err
+		}
+		c.Stdin, c.Stdout, c.Stderr = os.Stdin, outputWriter, outputWriter
+		if err := c.Start(); err != nil {
+			_ = outputReader.Close()
+			_ = outputWriter.Close()
+			return err
+		}
+		_ = outputWriter.Close()
+		outputErr := pumpTerminalOutput(outputReader, os.Stdout)
+		_ = outputReader.Close()
+		if err := c.Wait(); err != nil {
 			var ee *exec.ExitError
 			if errors.As(err, &ee) {
 				os.Exit(ee.ExitCode())
 			}
 			return err
 		}
-		return nil
+		return outputErr
 	}
 
 	c := exec.Command(args[0], args[1:]...)
@@ -98,13 +112,54 @@ func runScreenshotFilter(_ *cobra.Command, args []string) error {
 		}
 	}()
 
-	// child -> stdout (returns when the child exits and the PTY closes)
-	_, _ = io.Copy(os.Stdout, ptmx)
+	// child -> notification filter -> stdout (returns when the child exits and
+	// the PTY closes)
+	outputErr := pumpTerminalOutput(ptmx, os.Stdout)
 	werr := c.Wait()
 	restore()
 	var ee *exec.ExitError
 	if errors.As(werr, &ee) {
 		os.Exit(ee.ExitCode())
 	}
+	if werr == nil && outputErr != nil {
+		return outputErr
+	}
 	return werr
+}
+
+func pumpTerminalOutput(input io.Reader, output io.Writer) error {
+	var filter terminalcontrol.Filter
+	buffer := make([]byte, 32*1024)
+	for {
+		n, readErr := input.Read(buffer)
+		if n > 0 {
+			filtered, _ := filter.Feed(buffer[:n])
+			if err := writeTerminalOutput(output, filtered); err != nil {
+				return err
+			}
+		}
+		if readErr != nil {
+			if err := writeTerminalOutput(output, filter.Flush()); err != nil {
+				return err
+			}
+			if errors.Is(readErr, io.EOF) || errors.Is(readErr, syscall.EIO) {
+				return nil
+			}
+			return readErr
+		}
+	}
+}
+
+func writeTerminalOutput(output io.Writer, data []byte) error {
+	for len(data) > 0 {
+		n, err := output.Write(data)
+		if err != nil {
+			return err
+		}
+		if n <= 0 || n > len(data) {
+			return io.ErrShortWrite
+		}
+		data = data[n:]
+	}
+	return nil
 }
