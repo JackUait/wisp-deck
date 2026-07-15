@@ -99,8 +99,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 
 	// Each settings row is rendered against its stable handler index, then emitted
 	// grouped under section headers (see settingsSections). itemLines holds the
-	// rendered line(s) for each index; a couple of rows (the projects-folder input)
-	// span more than one line, so the value is a slice.
+	// rendered line(s) for each index.
 	itemLines := map[int][]string{}
 
 	// Ghost Display item
@@ -144,42 +143,6 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	themeState := "[" + themeLabel(m.themePref) + "]"
 	itemLines[3] = []string{m.renderSettingsItem(3, "Theme", themeState, themeStyle, primaryBoldStyle, leftBorder, rightBorder)}
 
-	// Default projects dir item
-	var rootState string
-	if m.projectsRoot == "" {
-		rootState = "(not set)"
-	} else {
-		rootState = shortenHomePath(m.projectsRoot)
-	}
-	rootColor := lipgloss.Color("241") // gray when not set
-	if m.projectsRoot != "" {
-		rootColor = lipgloss.Color("114") // green when set
-	}
-	rootStyle := lipgloss.NewStyle().Foreground(rootColor)
-	if m.settingsInputMode && m.settingsSelected == 4 {
-		// Render inline text input
-		inputView := m.settingsInput.View()
-		inputWidth := lipgloss.Width(inputView)
-		inputPadding := menuContentWidth - inputWidth - 1
-		if inputPadding < 0 {
-			inputPadding = 0
-		}
-		inputRow := leftBorder + " " + inputView + strings.Repeat(" ", inputPadding) + rightBorder
-		rows := []string{inputRow}
-		if m.settingsInputErr != nil {
-			errText := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(m.settingsInputErr.Error())
-			errPadding := menuContentWidth - lipgloss.Width(errText) - 1
-			if errPadding < 0 {
-				errPadding = 0
-			}
-			errRow := leftBorder + " " + errText + strings.Repeat(" ", errPadding) + rightBorder
-			rows = append(rows, errRow)
-		}
-		itemLines[4] = rows
-	} else {
-		itemLines[4] = []string{m.renderSettingsItem(4, "Projects folder", rootState, rootStyle, primaryBoldStyle, leftBorder, rightBorder)}
-	}
-
 	// Usage bars item — which statusline usage pills show (7d / 5h / both / none).
 	// Green when a bar is shown, gray when off (none), mirroring the other rows.
 	var usageColor lipgloss.Color
@@ -190,7 +153,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	}
 	usageStyle := lipgloss.NewStyle().Foreground(usageColor)
 	usageState := "[" + usageBarsLabel(m.usageBars) + "]"
-	itemLines[5] = []string{m.renderSettingsItem(5, "Usage bars", usageState, usageStyle, primaryBoldStyle, leftBorder, rightBorder)}
+	itemLines[rowUsageBars] = []string{m.renderSettingsItem(rowUsageBars, "Usage bars", usageState, usageStyle, primaryBoldStyle, leftBorder, rightBorder)}
 
 	// AI tools item — opens the tool panel (install a tool, pick the default).
 	// The state shows the current default; gray when nothing is selectable yet.
@@ -219,7 +182,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 			dimIndicator := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(" " + indicator)
 			state = state + dimIndicator
 		}
-		itemLines[6] = []string{m.renderSettingsItem(6, "Subscription", state, cfgStyle, primaryBoldStyle, leftBorder, rightBorder)}
+		itemLines[rowSubscription] = []string{m.renderSettingsItem(rowSubscription, "Subscription", state, cfgStyle, primaryBoldStyle, leftBorder, rightBorder)}
 	}
 
 	// Login item: the active native Claude account (manage logins here — ←→
@@ -291,15 +254,13 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	// Separator before help
 	lines = append(lines, separator)
 
-	// Help row — ⏎ edit for the projects dir, ⏎ manage for the rows that open a
-	// panel (Account, AI tools), ← → cycle for everything else (Theme, Ghost,
-	// Tab, …). Keyed off the row constants: the Account arm previously matched
-	// settingsItemCount()-1, which silently retargeted when a row was appended.
+	// Help row — ⏎ manage for the rows that open a panel (Account, AI tools),
+	// ← → cycle for everything else (Theme, Ghost, Tab, …). Keyed off the row
+	// constants: the Account arm previously matched settingsItemCount()-1, which
+	// silently retargeted when a row was appended.
 	sep := dimStyle.Render(" · ")
 	var cycleOrEdit string
 	switch {
-	case m.settingsSelected == rowProjectsFolder:
-		cycleOrEdit = helpStyle.Render("⏎ edit")
 	case m.settingsSelected == rowSubscription && m.ClaudeConfigVisible():
 		if m.selectedConfig > 0 {
 			cycleOrEdit = helpStyle.Render("←→ cycle") + sep + helpStyle.Render("⏎ map models")

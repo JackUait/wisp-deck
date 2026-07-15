@@ -1507,10 +1507,10 @@ func TestMainMenu_SettingsNavigationKeys(t *testing.T) {
 
 func TestMainMenu_SettingsNavigationWraps(t *testing.T) {
 	// The settings list has 10 rows. Note the last VISUAL row is Auto-switch
-	// (handler index 8), not index 9 (AI tools) — the visual order groups rows
+	// (handler index 7), not index 9 (Keep awake) — the visual order groups rows
 	// into sections, so position and handler index are not the same thing.
-	const numItems = 11
-	const lastVisualRow = 8 // Auto-switch accounts
+	const numItems = 10
+	const lastVisualRow = 7 // Auto-switch accounts
 
 	jKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
 	kKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}}
@@ -5097,95 +5097,43 @@ func TestAddProject_AutoSuffixHiddenWhenTouched(t *testing.T) {
 	}
 }
 
-func TestAddProject_PreFillsPathWithProjectsRoot(t *testing.T) {
+func TestAddProject_BrowserOpensAtHome(t *testing.T) {
 	dir := t.TempDir()
-	rootFile := filepath.Join(dir, "projects-root")
-	if err := os.WriteFile(rootFile, []byte(dir+"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
+	t.Setenv("HOME", dir)
 	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
-	m.SetProjectsRootFile(rootFile)
 	m.EnterInputModeForTest("add-project")
 
 	if m.BrowserCwdForTest() != dir {
-		t.Errorf("expected browser to open at projects root %q, got %q", dir, m.BrowserCwdForTest())
-	}
-}
-
-func TestAddProject_NoPreFillWhenRootFileAbsent(t *testing.T) {
-	dir := t.TempDir()
-	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
-	m.SetProjectsRootFile(filepath.Join(dir, "missing-file"))
-	m.EnterInputModeForTest("add-project")
-
-	if m.PathInputValue() != "" {
-		t.Errorf("expected empty path when root file absent, got %q", m.PathInputValue())
-	}
-}
-
-func TestSettings_ProjectsRootItem_AppearsInSettingsBox(t *testing.T) {
-	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
-	m.EnterSettings()
-	view := stripAnsi(m.View())
-	if !strings.Contains(view, "Projects folder") {
-		t.Error("expected 'Default projects dir' in settings view")
-	}
-}
-
-func TestSettings_ProjectsRootItem_ShowsNotSet(t *testing.T) {
-	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
-	m.EnterSettings()
-	view := stripAnsi(m.View())
-	if !strings.Contains(view, "(not set)") {
-		t.Errorf("expected '(not set)' when no root configured, view: %q", view)
-	}
-}
-
-func TestSettings_ProjectsRootItem_ShowsCurrentValue(t *testing.T) {
-	dir := t.TempDir()
-	rootFile := filepath.Join(dir, "projects-root")
-	if err := os.WriteFile(rootFile, []byte(dir), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
-	m.SetProjectsRootFile(rootFile)
-	m.LoadProjectsRoot()
-	m.EnterSettings()
-	view := stripAnsi(m.View())
-	if !strings.Contains(view, filepath.Base(dir)) {
-		t.Errorf("expected root path in view, got: %q", view)
+		t.Errorf("expected browser to open at home %q, got %q", dir, m.BrowserCwdForTest())
 	}
 }
 
 func TestSettings_NavWrapsWithAllItems(t *testing.T) {
-	// claude tool shows 11 settings items (Mascot, Tab title, Sound, Theme,
-	// Default projects dir, Usage bars, AI tools, Plan, Login, Auto-switch,
-	// Keep awake)
+	// claude tool shows 10 settings items (Mascot, Tab title, Sound, Theme,
+	// Usage bars, AI tools, Plan, Login, Auto-switch, Keep awake)
 	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
 	m.EnterSettings()
-	// j 11 times — wraps back to 0 (vim accelerator wraps within the list)
-	for i := 0; i < 11; i++ {
+	// j 10 times — wraps back to 0 (vim accelerator wraps within the list)
+	for i := 0; i < 10; i++ {
 		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	}
 	if m.SettingsSelected() != 0 {
-		t.Errorf("expected settingsSelected=0 after wrapping past 11 items, got %d", m.SettingsSelected())
+		t.Errorf("expected settingsSelected=0 after wrapping past 10 items, got %d", m.SettingsSelected())
 	}
 }
 
 func TestSettings_NavWrapsWithAllItems_NonClaude(t *testing.T) {
-	// The Plan + Login rows are shared across agents, so opencode also shows 11
-	// settings items (Mascot, Tab title, Sound, Theme, Default projects dir,
-	// Usage bars, AI tools, Plan, Login, Auto-switch, Keep awake).
+	// The Plan + Login rows are shared across agents, so opencode also shows 10
+	// settings items (Mascot, Tab title, Sound, Theme, Usage bars, AI tools,
+	// Plan, Login, Auto-switch, Keep awake).
 	m := tui.NewMainMenu(nil, []string{"opencode"}, "opencode", "animated")
 	m.EnterSettings()
-	// j 11 times — wraps back to 0 (vim accelerator wraps within the list)
-	for i := 0; i < 11; i++ {
+	// j 10 times — wraps back to 0 (vim accelerator wraps within the list)
+	for i := 0; i < 10; i++ {
 		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	}
 	if m.SettingsSelected() != 0 {
-		t.Errorf("expected settingsSelected=0 after wrapping past 11 items, got %d", m.SettingsSelected())
+		t.Errorf("expected settingsSelected=0 after wrapping past 10 items, got %d", m.SettingsSelected())
 	}
 }
 

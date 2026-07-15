@@ -74,7 +74,7 @@ func TestRenderSettingsBox_hasSectionHeadersInOrder(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	m.SetActiveTab(TabSettings)
 	out := m.renderSettingsBox()
-	headers := []string{"APPEARANCE", "NOTIFICATIONS", "PROJECTS", "ACCOUNT"}
+	headers := []string{"APPEARANCE", "NOTIFICATIONS", "ACCOUNT"}
 	last := -1
 	for _, h := range headers {
 		idx := strings.Index(out, h)
@@ -106,8 +106,8 @@ func TestRenderSettingsBox_appearanceItemsGroupedAboveNotifications(t *testing.T
 func TestSettingsItemOrder_groupsAppearanceThenSections(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	got := m.settingsItemOrder()
-	// Appearance, Tools, Notifications, Power, Projects, Account.
-	want := []int{0, 1, 3, 5, 9, 2, 10, 4, 6, 7, 8}
+	// Appearance, Tools, Notifications, Power, Account.
+	want := []int{0, 1, 3, 4, 8, 2, 9, 5, 6, 7}
 	if len(got) != len(want) {
 		t.Fatalf("settingsItemOrder len=%d want %d: %v", len(got), len(want), got)
 	}
@@ -120,7 +120,7 @@ func TestSettingsItemOrder_groupsAppearanceThenSections(t *testing.T) {
 
 func TestSettingsStep_movesInVisualOrder(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
-	m.settingsSelected = 5 // Usage bars — last Appearance item
+	m.settingsSelected = rowUsageBars // last Appearance item
 	m.settingsStep(1, false)
 	if m.settingsSelected != rowAITools {
 		t.Fatalf("down from Usage bars → %d, want %d (AI tools)", m.settingsSelected, rowAITools)
@@ -134,22 +134,22 @@ func TestSettingsStep_movesInVisualOrder(t *testing.T) {
 		t.Fatalf("down from Idle sound → %d, want %d (Keep awake)", m.settingsSelected, rowKeepAwake)
 	}
 	m.settingsStep(1, false)
-	if m.settingsSelected != 4 {
-		t.Fatalf("down from Keep awake → %d, want 4 (Projects folder)", m.settingsSelected)
+	if m.settingsSelected != rowSubscription {
+		t.Fatalf("down from Keep awake → %d, want %d (Subscription)", m.settingsSelected, rowSubscription)
 	}
 	m.settingsStep(-1, false)
 	if m.settingsSelected != rowKeepAwake {
-		t.Fatalf("up from Projects folder → %d, want %d (Keep awake)", m.settingsSelected, rowKeepAwake)
+		t.Fatalf("up from Subscription → %d, want %d (Keep awake)", m.settingsSelected, rowKeepAwake)
 	}
 }
 
 func TestSettingsStep_clampsAndWraps(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
-	// Clamp at the last visual item (Auto-switch, index 8).
-	m.settingsSelected = 8
+	// Clamp at the last visual item (Auto-switch).
+	m.settingsSelected = rowAutoSwitch
 	m.settingsStep(1, false)
-	if m.settingsSelected != 8 {
-		t.Fatalf("down past last clamped to %d, want 8", m.settingsSelected)
+	if m.settingsSelected != rowAutoSwitch {
+		t.Fatalf("down past last clamped to %d, want %d", m.settingsSelected, rowAutoSwitch)
 	}
 	// Wrap from last back to first (Mascot, index 0).
 	m.settingsStep(1, true)
@@ -158,7 +158,7 @@ func TestSettingsStep_clampsAndWraps(t *testing.T) {
 	}
 	// Wrap from first back to last.
 	m.settingsStep(-1, true)
-	if m.settingsSelected != 8 {
-		t.Fatalf("wrap up from first → %d, want 8", m.settingsSelected)
+	if m.settingsSelected != rowAutoSwitch {
+		t.Fatalf("wrap up from first → %d, want %d", m.settingsSelected, rowAutoSwitch)
 	}
 }

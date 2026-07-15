@@ -321,16 +321,6 @@ type MainMenuModel struct {
 	// File path for project file operations
 	projectsFile string
 
-	// File path for projects root directory preference
-	projectsRootFile string
-	// projectsRoot is the current value loaded from projectsRootFile; "" = not set.
-	projectsRoot string
-
-	// Settings panel inline text input for "Default projects dir" item.
-	settingsInputMode bool
-	settingsInput     textinput.Model
-	settingsInputErr  error
-
 	// showEscHint is set by AppModel to display "Press Esc again to quit" in
 	// the help row instead of the normal key hints — no extra line is added.
 	showEscHint bool
@@ -1452,17 +1442,16 @@ func (m *MainMenuModel) CycleTab(direction string) {
 // tail rows were derived arithmetically from the row count, so appending a row
 // silently aimed ↵-on-Account at the Auto-switch toggle.
 const (
-	rowMascot         = 0
-	rowTabTitle       = 1
-	rowIdleSound      = 2
-	rowTheme          = 3
-	rowProjectsFolder = 4
-	rowUsageBars      = 5
-	rowSubscription   = 6
-	rowAccount        = 7
-	rowAutoSwitch     = 8
-	rowAITools        = 9
-	rowKeepAwake      = 10
+	rowMascot       = 0
+	rowTabTitle     = 1
+	rowIdleSound    = 2
+	rowTheme        = 3
+	rowUsageBars    = 4
+	rowSubscription = 5
+	rowAccount      = 6
+	rowAutoSwitch   = 7
+	rowAITools      = 8
+	rowKeepAwake    = 9
 )
 
 // settingsItemCount returns the number of settings rows.
@@ -1483,8 +1472,8 @@ type settingsSection struct {
 
 // settingsSections returns the settings items grouped under section headers, in
 // visual order. Item indices are the stable handler indices (see settingsEnter),
-// which do NOT match visual order: Idle sound (2) and Projects folder (4) move
-// out of the Appearance block into their own sections.
+// which do NOT match visual order: Idle sound (2) moves out of the Appearance
+// block into its own section.
 func (m *MainMenuModel) settingsSections() []settingsSection {
 	appearance := []int{rowMascot, rowTabTitle, rowTheme, rowUsageBars}
 	account := []int{}
@@ -1497,7 +1486,6 @@ func (m *MainMenuModel) settingsSections() []settingsSection {
 		{title: "Tools", indices: []int{rowAITools}},
 		{title: "Notifications", indices: []int{rowIdleSound}},
 		{title: "Power", indices: []int{rowKeepAwake}},
-		{title: "Projects", indices: []int{rowProjectsFolder}},
 		{title: "Account", indices: account},
 	}
 }
@@ -1795,7 +1783,7 @@ func (m *MainMenuModel) InDeleteMode() bool { return m.deleteMode }
 // sub-mode (settings, stats, input, or delete) where Esc should navigate back within
 // the menu rather than triggering the AppModel double-Esc quit flow.
 func (m *MainMenuModel) WantsEsc() bool {
-	return m.activeTab != TabProjects || m.inputMode != "" || m.deleteMode || m.settingsInputMode
+	return m.activeTab != TabProjects || m.inputMode != "" || m.deleteMode
 }
 
 // SetSettingsMode directly sets settings mode — intended for tests only.
@@ -1834,15 +1822,6 @@ func (m *MainMenuModel) SetProjectsFile(path string) { m.projectsFile = path }
 
 // ProjectsFile returns the file path for project file operations.
 func (m *MainMenuModel) ProjectsFile() string { return m.projectsFile }
-
-// SetProjectsRootFile sets the file path for the default projects root directory.
-func (m *MainMenuModel) SetProjectsRootFile(path string) { m.projectsRootFile = path }
-
-// LoadProjectsRoot reads the projects root value from projectsRootFile and
-// stores it in projectsRoot so the settings panel can display it.
-func (m *MainMenuModel) LoadProjectsRoot() {
-	m.projectsRoot = readProjectsRoot(m.projectsRootFile)
-}
 
 // SetAIToolFile sets the file path for AI tool preference persistence.
 // When set, CycleAITool writes the new tool to this file immediately.
@@ -2387,9 +2366,6 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.aiToolsPanelOpen {
 			return m.updateAIToolsPanel(msg)
 		}
-		if m.settingsInputMode {
-			return m.updateSettingsInput(msg)
-		}
 		if m.browser != nil {
 			return m.updateBrowser(msg)
 		}
@@ -2833,32 +2809,21 @@ func (m *MainMenuModel) runeMoveUp() {
 	}
 }
 
-// settingsEnter activates the selected settings row: cycle a value, open the
-// projects-root text input, or open the model-map panel.
+// settingsEnter activates the selected settings row: cycle a value or open the
+// model-map panel.
 func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 	switch m.settingsSelected {
-	case 0:
+	case rowMascot:
 		m.CycleGhostDisplay()
-	case 1:
+	case rowTabTitle:
 		m.CycleTabTitle()
-	case 2:
+	case rowIdleSound:
 		m.CycleSoundName()
-	case 3:
+	case rowTheme:
 		m.CycleTheme()
-	case 4:
-		// Open text input for projects root
-		m.settingsInputMode = true
-		si := textinput.New()
-		si.Placeholder = "e.g., ~/Projects"
-		si.Width = menuContentWidth - 11
-		si.SetValue(m.projectsRoot)
-		si.Focus()
-		m.settingsInput = si
-		m.settingsInputErr = nil
-		return m, textinput.Blink
-	case 5:
+	case rowUsageBars:
 		m.CycleUsageBars()
-	case 6:
+	case rowSubscription:
 		if m.selectedConfig > 0 {
 			m.openModelMap()
 		}
@@ -2880,19 +2845,19 @@ func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 // settingsValueRight increments the focused settings row's value.
 func (m *MainMenuModel) settingsValueRight() {
 	switch m.settingsSelected {
-	case 0:
+	case rowMascot:
 		m.CycleGhostDisplay()
-	case 1:
+	case rowTabTitle:
 		m.CycleTabTitle()
-	case 2:
+	case rowIdleSound:
 		m.CycleSoundName()
-	case 3:
+	case rowTheme:
 		m.CycleTheme()
-	case 5:
+	case rowUsageBars:
 		m.CycleUsageBars()
-	case 6:
+	case rowSubscription:
 		m.CycleClaudeConfig("next")
-	case 7:
+	case rowAccount:
 		m.CycleAccount("next")
 	case m.autoSwitchRowIndex():
 		m.CycleAutoSwitch()
@@ -2904,72 +2869,25 @@ func (m *MainMenuModel) settingsValueRight() {
 // settingsValueLeft decrements the focused settings row's value.
 func (m *MainMenuModel) settingsValueLeft() {
 	switch m.settingsSelected {
-	case 0:
+	case rowMascot:
 		m.CycleGhostDisplayReverse()
-	case 1:
+	case rowTabTitle:
 		m.CycleTabTitleReverse()
-	case 2:
+	case rowIdleSound:
 		m.CycleSoundNameReverse()
-	case 3:
+	case rowTheme:
 		m.CycleThemeReverse()
-	case 5:
+	case rowUsageBars:
 		m.CycleUsageBarsReverse()
-	case 6:
+	case rowSubscription:
 		m.CycleClaudeConfig("prev")
-	case 7:
+	case rowAccount:
 		m.CycleAccount("prev")
 	case m.autoSwitchRowIndex():
 		m.CycleAutoSwitch()
 	case m.keepAwakeRowIndex():
 		m.CycleKeepAwake()
 	}
-}
-
-// updateSettingsInput handles key events while in settings input mode (editing projects root).
-func (m *MainMenuModel) updateSettingsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyEsc, tea.KeyCtrlC:
-		m.settingsInputMode = false
-		m.settingsInput.Blur()
-		return m, nil
-	case tea.KeyEnter:
-		val := strings.TrimSpace(m.settingsInput.Value())
-		if val != "" {
-			expanded := util.ExpandPath(val)
-			if _, err := os.Stat(expanded); err != nil {
-				m.settingsInputErr = fmt.Errorf("directory not found")
-				return m, nil
-			}
-			if err := os.WriteFile(m.projectsRootFile, []byte(expanded+"\n"), 0644); err != nil {
-				m.settingsInputErr = fmt.Errorf("failed to save: %v", err)
-				return m, nil
-			}
-			m.projectsRoot = expanded
-		} else {
-			os.Remove(m.projectsRootFile) //nolint:errcheck
-			m.projectsRoot = ""
-		}
-		m.settingsInputMode = false
-		m.settingsInput.Blur()
-		return m, nil
-	}
-	var cmd tea.Cmd
-	m.settingsInput, cmd = m.settingsInput.Update(msg)
-	m.settingsInputErr = nil
-	return m, cmd
-}
-
-// readProjectsRoot reads the default projects root from the given file.
-// Returns empty string if the file is missing or unreadable.
-func readProjectsRoot(file string) string {
-	if file == "" {
-		return ""
-	}
-	data, err := os.ReadFile(file)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
 }
 
 func (m *MainMenuModel) enterInputMode(mode string) (tea.Model, tea.Cmd) {
@@ -2987,14 +2905,6 @@ func (m *MainMenuModel) enterInputMode(mode string) (tea.Model, tea.Cmd) {
 	// total width, but text mode renders prompt + Width + 1 (cursor). Account
 	// for both: 8 (label "  Path: ") + 2 (prompt "> ") + 1 (cursor) = 11.
 	ti.Width = menuContentWidth - 11
-	if root := readProjectsRoot(m.projectsRootFile); root != "" {
-		prefill := root
-		if !strings.HasSuffix(prefill, "/") {
-			prefill += "/"
-		}
-		ti.SetValue(prefill)
-		ti.CursorEnd()
-	}
 	m.pathInput = ti
 
 	ni := textinput.New()
@@ -3018,12 +2928,8 @@ func (m *MainMenuModel) enterInputMode(mode string) (tea.Model, tea.Cmd) {
 	return m, textinput.Blink
 }
 
-// browserStartDir is where the folder browser opens: the configured projects
-// root, else the home directory.
+// browserStartDir is where the folder browser opens: the home directory.
 func (m *MainMenuModel) browserStartDir() string {
-	if root := readProjectsRoot(m.projectsRootFile); root != "" {
-		return root
-	}
 	return "~"
 }
 
@@ -3326,17 +3232,13 @@ func cloneTickCmd() tea.Cmd {
 }
 
 // cloneDestDir computes where a GitHub clone for the given project name lands:
-// under the configured projects root, else the user's home directory.
+// under the user's home directory.
 func (m *MainMenuModel) cloneDestDir(name string) (string, error) {
-	root := readProjectsRoot(m.projectsRootFile)
-	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		root = home
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(util.ExpandPath(root), name), nil
+	return filepath.Join(home, name), nil
 }
 
 // abbreviateHome shortens a home-prefixed path to ~ form for display.

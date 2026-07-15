@@ -18,17 +18,16 @@ func rowTestMenu() *MainMenuModel {
 // settingsItemCount()-2, an equality that held only by coincidence.
 func TestSettingsRowConstants_are_distinct_and_contiguous(t *testing.T) {
 	rows := map[string]int{
-		"mascot":         rowMascot,
-		"tabTitle":       rowTabTitle,
-		"idleSound":      rowIdleSound,
-		"theme":          rowTheme,
-		"projectsFolder": rowProjectsFolder,
-		"usageBars":      rowUsageBars,
-		"subscription":   rowSubscription,
-		"account":        rowAccount,
-		"autoSwitch":     rowAutoSwitch,
-		"aiTools":        rowAITools,
-		"keepAwake":      rowKeepAwake,
+		"mascot":       rowMascot,
+		"tabTitle":     rowTabTitle,
+		"idleSound":    rowIdleSound,
+		"theme":        rowTheme,
+		"usageBars":    rowUsageBars,
+		"subscription": rowSubscription,
+		"account":      rowAccount,
+		"autoSwitch":   rowAutoSwitch,
+		"aiTools":      rowAITools,
+		"keepAwake":    rowKeepAwake,
 	}
 	seen := map[int]string{}
 	max := -1
@@ -114,7 +113,6 @@ func TestSettingsHelpRow_matches_the_focused_row(t *testing.T) {
 		row  int
 		want string
 	}{
-		{rowProjectsFolder, "⏎ edit"},
 		{rowAITools, "⏎ manage"},
 		{rowAccount, "⏎ manage"},
 		{rowMascot, "←→ cycle"},
@@ -138,5 +136,19 @@ func TestSettingsHelpRow_ai_tools_does_not_advertise_cycling(t *testing.T) {
 	m.settingsSelected = rowAITools
 	if out := m.renderSettingsBox(); strings.Contains(out, "←→ cycle") {
 		t.Errorf("AI tools row must not advertise ←→ cycle:\n%s", out)
+	}
+}
+
+// The Projects folder setting was removed entirely: no row and no PROJECTS
+// section header may render in the settings box.
+func TestSettings_projects_folder_setting_is_gone(t *testing.T) {
+	m := rowTestMenu()
+	m.SetActiveTab(TabSettings)
+	out := m.renderSettingsBox()
+	if strings.Contains(out, "Projects folder") {
+		t.Errorf("settings box must not render a Projects folder row:\n%s", out)
+	}
+	if strings.Contains(out, "PROJECTS") {
+		t.Errorf("settings box must not render a PROJECTS section header:\n%s", out)
 	}
 }

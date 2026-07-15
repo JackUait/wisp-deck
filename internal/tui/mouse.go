@@ -259,10 +259,8 @@ func (m *MainMenuModel) HitTest(boxX, boxY int) hitTarget {
 			return hitTarget{region: regionBody, index: item, wtButton: m.onZeroWorktreeButton(boxX, boxY, item)}
 		}
 	case TabSettings:
-		if !m.settingsInputMode {
-			if idx := m.mapRowToSettingsItem(boxY); idx >= 0 {
-				return hitTarget{region: regionSettings, index: idx}
-			}
+		if idx := m.mapRowToSettingsItem(boxY); idx >= 0 {
+			return hitTarget{region: regionSettings, index: idx}
 		}
 	}
 
@@ -322,7 +320,7 @@ func (m *MainMenuModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.modelMapOpen && !m.modelMapKeyMode {
 		return m.handleModelMapMouse(msg)
 	}
-	if m.modelMapOpen || m.accountMenuOpen || m.aiToolsPanelOpen || m.settingsInputMode ||
+	if m.modelMapOpen || m.accountMenuOpen || m.aiToolsPanelOpen ||
 		m.inputMode != "" || m.deleteMode || m.staleConfirmIdx >= 0 {
 		return m, nil
 	}
@@ -474,8 +472,6 @@ func (m *MainMenuModel) clickSettings(idx int) (tea.Model, tea.Cmd) {
 	m.settingsSelected = idx
 	m.focus = FocusBody
 	switch {
-	case idx == rowProjectsFolder: // Default projects dir → inline edit
-		return m.settingsEnter()
 	case idx == rowAccount: // Login → account management
 		return m.settingsEnter()
 	case idx == rowAITools: // AI tools → install / set default

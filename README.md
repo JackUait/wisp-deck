@@ -75,7 +75,7 @@ Projects can expand to show their git worktrees. From the selector you can open 
 
 ## Settings
 
-Press **S** in the selector to open Settings. Most changes apply immediately to open sessions; a few (the default AI tool, the projects folder) take effect on the next session or action.
+Press **S** in the selector to open Settings. Most changes apply immediately to open sessions; a few (like the default AI tool) take effect on the next session or action.
 
 - **Mascot** — show the animated ghost, a static one, or none.
 - **Tab title** — what the window tab shows: project and tool, project only, or let the AI tool set it.
@@ -84,7 +84,6 @@ Press **S** in the selector to open Settings. Most changes apply immediately to 
 - **AI tools** — switch between Claude Code, OpenCode and Codex.
 - **Idle sound** — play a chime when the AI finishes and is waiting on you. Off by default; choose from the built-in macOS sounds.
 - **Keep awake while working** — stop the Mac from sleeping while the AI is busy.
-- **Projects folder** — the folder Wisp Deck starts in when you add a new project.
 - **Account** rows — the active Claude login, subscription, and auto-switch (see below).
 
 ---

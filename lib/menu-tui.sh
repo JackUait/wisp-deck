@@ -50,9 +50,7 @@ select_project_interactive() {
 
   # Build command args
   local ai_tool_file="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/ai-tool"
-  local projects_root_file="$gt_config_dir/projects-root"
   local cmd_args=("main-menu" "--projects-file" "$projects_file")
-  cmd_args+=("--projects-root-file" "$projects_root_file")
   cmd_args+=("--ai-tool" "${SELECTED_AI_TOOL:-claude}")
   cmd_args+=("--ai-tools" "$ai_tools_csv")
   cmd_args+=("--ai-tool-file" "$ai_tool_file")

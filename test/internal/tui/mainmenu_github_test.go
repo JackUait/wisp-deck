@@ -36,18 +36,17 @@ func applyCmd(t *testing.T, m *tui.MainMenuModel, cmd tea.Cmd) *tui.MainMenuMode
 }
 
 // newGitHubAddMenu builds a menu in add-project mode with the path field
-// holding a GitHub URL, a projects file, and a projects root pointing at dir.
+// holding a GitHub URL and a projects file; HOME points at dir so clone
+// destinations land there.
 func newGitHubAddMenu(t *testing.T, url string) (*tui.MainMenuModel, string, string) {
 	t.Helper()
 	dir := t.TempDir()
+	t.Setenv("HOME", dir)
 	projFile := filepath.Join(dir, "projects")
 	os.WriteFile(projFile, []byte(""), 0644)
-	rootFile := filepath.Join(dir, "projects-root")
-	os.WriteFile(rootFile, []byte(dir+"\n"), 0644)
 
 	m := tui.NewMainMenu(nil, testAITools(), "claude", "animated")
 	m.SetProjectsFile(projFile)
-	m.SetProjectsRootFile(rootFile)
 	m.EnterInputModeForTest("add-project")
 	m.SetPathInputValue(url)
 	return m, projFile, dir
@@ -67,7 +66,7 @@ func TestMainMenu_AddProject_GitHubURL_AdvancesWithoutDirValidation(t *testing.T
 	}
 }
 
-func TestMainMenu_AddProject_GitHubURL_ClonesIntoRootAndAddsProject(t *testing.T) {
+func TestMainMenu_AddProject_GitHubURL_ClonesIntoHomeAndAddsProject(t *testing.T) {
 	m, projFile, dir := newGitHubAddMenu(t, "https://github.com/owner/my-repo")
 
 	var gotURL, gotDest string
@@ -195,7 +194,7 @@ func TestMainMenu_AddProject_GitHubURL_EnterWhileCloningIsNoop(t *testing.T) {
 	}
 }
 
-func TestMainMenu_AddProject_GitHubURL_NoRootClonesIntoHome(t *testing.T) {
+func TestMainMenu_AddProject_GitHubURL_SSHClonesIntoHome(t *testing.T) {
 	dir := t.TempDir()
 	home := filepath.Join(dir, "home")
 	os.MkdirAll(home, 0755)
@@ -206,7 +205,6 @@ func TestMainMenu_AddProject_GitHubURL_NoRootClonesIntoHome(t *testing.T) {
 
 	m := tui.NewMainMenu(nil, testAITools(), "claude", "animated")
 	m.SetProjectsFile(projFile)
-	m.SetProjectsRootFile(filepath.Join(dir, "missing-root-file"))
 	m.EnterInputModeForTest("add-project")
 	m.SetPathInputValue("git@github.com:owner/ssh-repo.git")
 
@@ -229,7 +227,7 @@ func TestMainMenu_AddProject_GitHubURL_NoRootClonesIntoHome(t *testing.T) {
 		t.Errorf("SSH input should keep SSH clone URL, got %q", gotURL)
 	}
 	if gotDest != filepath.Join(home, "ssh-repo") {
-		t.Errorf("Without projects root, dest should be ~/<repo>, got %q", gotDest)
+		t.Errorf("dest should be ~/<repo>, got %q", gotDest)
 	}
 }
 

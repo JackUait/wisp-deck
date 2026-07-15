@@ -9,16 +9,14 @@ import (
 )
 
 // newAddProjMenu builds a menu in add-project input mode with a temp projects
-// file and a projects root pointing at the returned dir.
+// file; HOME points at the returned dir so the browser and clone destination
+// land there.
 func newAddProjMenu(t *testing.T) (*MainMenuModel, string) {
 	t.Helper()
 	m := newTestMenu()
 	dir := t.TempDir()
+	t.Setenv("HOME", dir)
 	m.projectsFile = filepath.Join(dir, "projects")
-	m.projectsRootFile = filepath.Join(dir, "projects-root")
-	if err := os.WriteFile(m.projectsRootFile, []byte(dir+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	m.enterInputMode("add-project")
 	return m, dir
 }
@@ -53,10 +51,6 @@ func TestAddProjectBox_FocusMarkerMovesToName(t *testing.T) {
 
 func TestAddProjectBox_GitHubURLShowsDestinationPreview(t *testing.T) {
 	m, _ := newAddProjMenu(t)
-	// Short root so the destination fits without middle-truncation.
-	if err := os.WriteFile(m.projectsRootFile, []byte("/tmp/wisproot\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	m.pathInput.SetValue("https://github.com/owner/my-repo")
 	m.maybeAutoDeriveName()
 	raw := stripAnsi(m.renderInputBox())
@@ -64,8 +58,8 @@ func TestAddProjectBox_GitHubURLShowsDestinationPreview(t *testing.T) {
 	if !strings.Contains(raw, "owner/my-repo → ") {
 		t.Errorf("GitHub URL should show a repo → destination preview, got:\n%s", raw)
 	}
-	if !strings.Contains(raw, "/tmp/wisproot/my-repo") {
-		t.Errorf("preview should name the clone destination /tmp/wisproot/my-repo, got:\n%s", raw)
+	if !strings.Contains(raw, "~/my-repo") {
+		t.Errorf("preview should name the clone destination ~/my-repo, got:\n%s", raw)
 	}
 	if strings.Contains(raw, "Tip:") {
 		t.Errorf("tip should be replaced by the destination preview, got:\n%s", raw)
@@ -78,7 +72,6 @@ func TestAddProjectBox_GitHubDestAbbreviatesHome(t *testing.T) {
 	m := newTestMenu()
 	dir := t.TempDir()
 	m.projectsFile = filepath.Join(dir, "projects")
-	m.projectsRootFile = filepath.Join(dir, "missing-root")
 	m.enterInputMode("add-project")
 	m.pathInput.SetValue("https://github.com/owner/my-repo")
 	m.maybeAutoDeriveName()

@@ -309,17 +309,6 @@ func TestRunMainMenu_MalformedProjectsFile(t *testing.T) {
 	_ = err
 }
 
-func TestMainMenuCmd_HasProjectsRootFileFlag(t *testing.T) {
-	cmd, _, _ := rootCmd.Find([]string{"main-menu"})
-	flag := cmd.Flags().Lookup("projects-root-file")
-	if flag == nil {
-		t.Fatal("Expected --projects-root-file flag on main-menu")
-	}
-	if flag.DefValue != "" {
-		t.Errorf("Expected default %q, got %q", "", flag.DefValue)
-	}
-}
-
 func TestSelectBranchCmd_HasProjectPathFlag(t *testing.T) {
 	cmd, _, _ := rootCmd.Find([]string{"select-branch"})
 	flag := cmd.Flags().Lookup("project-path")
@@ -494,5 +483,12 @@ func TestClaudeConfigMenuCmd_HasConfigsListFlag(t *testing.T) {
 	cmd, _, _ := rootCmd.Find([]string{"claude-config-menu"})
 	if cmd.Flags().Lookup("configs-list") == nil {
 		t.Fatal("expected --configs-list flag")
+	}
+}
+
+func TestMainMenuCmd_ProjectsRootFileFlagRemoved(t *testing.T) {
+	cmd, _, _ := rootCmd.Find([]string{"main-menu"})
+	if flag := cmd.Flags().Lookup("projects-root-file"); flag != nil {
+		t.Fatal("--projects-root-file flag should be removed from main-menu")
 	}
 }

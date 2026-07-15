@@ -24,7 +24,6 @@ var mainMenuCmd = &cobra.Command{
 
 var (
 	mainMenuProjectsFile           string
-	mainMenuProjectsRootFile       string
 	mainMenuAITool                 string
 	mainMenuAITools                string
 	mainMenuAIToolFile             string
@@ -51,7 +50,6 @@ var (
 func init() {
 	mainMenuCmd.Flags().StringVar(&mainMenuProjectsFile, "projects-file", "", "Path to projects file")
 	mainMenuCmd.MarkFlagRequired("projects-file")
-	mainMenuCmd.Flags().StringVar(&mainMenuProjectsRootFile, "projects-root-file", "", "Path to projects root file for default directory")
 	mainMenuCmd.Flags().StringVar(&mainMenuAITool, "ai-tool", "claude", "Current AI tool name")
 	mainMenuCmd.Flags().StringVar(&mainMenuAITools, "ai-tools", "claude", "Comma-separated available tool names")
 	mainMenuCmd.Flags().StringVar(&mainMenuAIToolFile, "ai-tool-file", "", "Path to AI tool preference file for persistence")
@@ -158,10 +156,6 @@ func buildMainMenuModel() (*tui.MainMenuModel, error) {
 	model.SetKeepAwake(mainMenuKeepAwake)
 	model.SetSoundName(resolveMainMenuSoundName(mainMenuSoundName, mainMenuSoundFile))
 	model.SetProjectsFile(mainMenuProjectsFile)
-	if mainMenuProjectsRootFile != "" {
-		model.SetProjectsRootFile(mainMenuProjectsRootFile)
-		model.LoadProjectsRoot()
-	}
 	if mainMenuAIToolFile != "" {
 		model.SetAIToolFile(mainMenuAIToolFile)
 	}

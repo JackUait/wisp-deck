@@ -508,88 +508,6 @@ func TestPathExpand_handles_broken_symlink(t *testing.T) {
 }
 
 // ============================================================
-// get_projects_root tests
-// ============================================================
-
-func TestGetProjectsRoot_AbsentFile(t *testing.T) {
-	dir := t.TempDir()
-	out, code := runBashFunc(t, "lib/projects.sh", "get_projects_root",
-		[]string{filepath.Join(dir, "projects-root")}, nil)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "" {
-		t.Errorf("expected empty output when file absent, got %q", out)
-	}
-}
-
-func TestGetProjectsRoot_ReturnsStoredPath(t *testing.T) {
-	dir := t.TempDir()
-	file := filepath.Join(dir, "projects-root")
-	os.WriteFile(file, []byte("/Users/jack/Projects\n"), 0644)
-	out, code := runBashFunc(t, "lib/projects.sh", "get_projects_root",
-		[]string{file}, nil)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "/Users/jack/Projects" {
-		t.Errorf("got %q", strings.TrimSpace(out))
-	}
-}
-
-func TestGetProjectsRoot_ReadsOnlyFirstLine(t *testing.T) {
-	dir := t.TempDir()
-	file := filepath.Join(dir, "projects-root")
-	// File with multiple lines - should only read the first
-	os.WriteFile(file, []byte("/Users/jack/Projects\n/Users/jack/Other\n"), 0644)
-	out, code := runBashFunc(t, "lib/projects.sh", "get_projects_root",
-		[]string{file}, nil)
-	assertExitCode(t, code, 0)
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 1 {
-		t.Errorf("expected 1 line, got %d: %v", len(lines), lines)
-	}
-	if lines[0] != "/Users/jack/Projects" {
-		t.Errorf("got %q, want %q", lines[0], "/Users/jack/Projects")
-	}
-}
-
-func TestGetProjectsRoot_HandlesEmptyFile(t *testing.T) {
-	dir := t.TempDir()
-	file := filepath.Join(dir, "projects-root")
-	os.WriteFile(file, []byte(""), 0644)
-	out, code := runBashFunc(t, "lib/projects.sh", "get_projects_root",
-		[]string{file}, nil)
-	assertExitCode(t, code, 0)
-	if strings.TrimSpace(out) != "" {
-		t.Errorf("expected empty output, got %q", strings.TrimSpace(out))
-	}
-}
-
-func TestSetProjectsRoot_WritesExpandedPath(t *testing.T) {
-	dir := t.TempDir()
-	file := filepath.Join(dir, "projects-root")
-	home := os.Getenv("HOME")
-	_, code := runBashFunc(t, "lib/projects.sh", "set_projects_root",
-		[]string{file, "~/Projects"}, nil)
-	assertExitCode(t, code, 0)
-	data, _ := os.ReadFile(file)
-	got := strings.TrimSpace(string(data))
-	want := home + "/Projects"
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-func TestSetProjectsRoot_EmptyArgRemovesFile(t *testing.T) {
-	dir := t.TempDir()
-	file := filepath.Join(dir, "projects-root")
-	os.WriteFile(file, []byte("/Users/jack/Projects\n"), 0644)
-	_, code := runBashFunc(t, "lib/projects.sh", "set_projects_root",
-		[]string{file, ""}, nil)
-	assertExitCode(t, code, 0)
-	if _, err := os.Stat(file); !os.IsNotExist(err) {
-		t.Error("expected file to be removed, but it still exists")
-	}
-}
-
-// ============================================================
 // Helpers local to this file
 // ============================================================
 
@@ -603,4 +521,31 @@ func nonEmptyLines(s string) []string {
 		}
 	}
 	return result
+}
+
+// ============================================================
+// projects-root removal guards
+// ============================================================
+
+// The projects-root setting was removed; its bash helpers must be gone too.
+func TestProjectsSh_ProjectsRootHelpersRemoved(t *testing.T) {
+	root := projectRoot(t)
+	script := fmt.Sprintf(
+		"source %q; ! declare -F get_projects_root >/dev/null && ! declare -F set_projects_root >/dev/null",
+		filepath.Join(root, "lib/projects.sh"))
+	out, code := runBashSnippet(t, script, nil)
+	if code != 0 {
+		t.Errorf("lib/projects.sh still defines projects-root helpers: %s", out)
+	}
+}
+
+func TestMenuTui_DoesNotReferenceProjectsRoot(t *testing.T) {
+	root := projectRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "lib/menu-tui.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "projects-root") {
+		t.Error("lib/menu-tui.sh must not reference projects-root")
+	}
 }

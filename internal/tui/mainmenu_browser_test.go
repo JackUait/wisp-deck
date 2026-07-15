@@ -35,10 +35,7 @@ func newBrowserAddMenu(t *testing.T, subdirs ...string) (*MainMenuModel, string)
 		}
 	}
 	m.projectsFile = filepath.Join(dir, "projects")
-	m.projectsRootFile = filepath.Join(dir, "projects-root")
-	if err := os.WriteFile(m.projectsRootFile, []byte(dir+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("HOME", dir)
 	m.enterInputMode("add-project")
 	return m, dir
 }
