@@ -1895,8 +1895,24 @@ func (m *MainMenuModel) NameInputValue() string { return m.nameInput.Value() }
 // PathInputValue returns the current path field value.
 func (m *MainMenuModel) PathInputValue() string { return m.pathInput.Value() }
 
-// SetPathInputValue sets the path field value — intended for tests only.
-func (m *MainMenuModel) SetPathInputValue(v string) { m.pathInput.SetValue(v) }
+// SetPathInputValue sets the path field value — intended for tests only. In
+// add-project mode it also closes the folder browser, simulating the browser
+// having chosen this path, so keys reach the classic path/name flow.
+func (m *MainMenuModel) SetPathInputValue(v string) {
+	m.browser = nil
+	m.pathInput.SetValue(v)
+}
+
+// BrowserOpenForTest reports whether the folder browser overlay is open.
+func (m *MainMenuModel) BrowserOpenForTest() bool { return m.browser != nil }
+
+// BrowserCwdForTest returns the open browser's current directory.
+func (m *MainMenuModel) BrowserCwdForTest() string {
+	if m.browser == nil {
+		return ""
+	}
+	return m.browser.Cwd()
+}
 
 // SetNameInputValue sets the name field value — intended for tests only.
 func (m *MainMenuModel) SetNameInputValue(v string) { m.nameInput.SetValue(v) }

@@ -2553,10 +2553,9 @@ func TestMainMenu_AddProject_DuplicateShowsError(t *testing.T) {
 
 	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	mm := newModel.(*tui.MainMenuModel)
-	for _, r := range targetDir {
-		mm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
-	}
-	// First Enter accepts autocomplete suggestion, second Enter submits
+	// Simulate the folder browser choosing the already-registered path.
+	mm.SetPathInputValue(targetDir)
+	// First Enter advances to the name field, second Enter submits.
 	mm.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	newModel2, _ := mm.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	mm2 := newModel2.(*tui.MainMenuModel)
@@ -2997,8 +2996,8 @@ func TestMainMenu_View_InputMode(t *testing.T) {
 	mm := newModel.(*tui.MainMenuModel)
 
 	view := mm.View()
-	if !strings.Contains(view, "Path") {
-		t.Error("Input mode view should contain 'Path'")
+	if !strings.Contains(view, "choose folder") {
+		t.Error("Input mode view should show the folder browser")
 	}
 	if !strings.Contains(view, "Add Project") {
 		t.Error("Input mode view should show 'Add Project' label")
@@ -5108,8 +5107,8 @@ func TestAddProject_PreFillsPathWithProjectsRoot(t *testing.T) {
 	m.SetProjectsRootFile(rootFile)
 	m.EnterInputModeForTest("add-project")
 
-	if !strings.HasPrefix(m.PathInputValue(), dir) {
-		t.Errorf("expected path pre-filled with %q, got %q", dir, m.PathInputValue())
+	if m.BrowserCwdForTest() != dir {
+		t.Errorf("expected browser to open at projects root %q, got %q", dir, m.BrowserCwdForTest())
 	}
 }
 
