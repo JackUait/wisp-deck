@@ -173,8 +173,9 @@ Extend the idle-sound ownership guard to require Claude's
 `filtered, events := filter.Feed(chunk)`. Reject the old raw forwarding form
 `writeFull(s.output(), chunk)`.
 
-Extend the exact Codex argv contract to require `notify=[]` before the TUI
-notification overrides for every fresh/resume and embedded/remote launch.
+Extend the exact Codex argv contract to require `notify=[]` on app-server and
+before the TUI notification overrides for every fresh/resume and
+embedded/remote launch.
 
 **Step 2: Run focused tests and verify RED**
 

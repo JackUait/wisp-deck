@@ -65,8 +65,9 @@ architecture and closes the remaining preference and plain-shell boundaries.
   `preferredNotifChannel=notifications_disabled`.
 - `internal/codexadapter/osc9_filter.go`: bounded private-protocol filter that
   reports Codex completion events without forwarding OSC 9 to the terminal.
-- `internal/codexadapter/supervisor.go`: exact `notify=[]` launch override that
-  disables Codex's independent external notifier command.
+- `internal/codexadapter/supervisor.go`: exact `notify=[]` overrides on both
+  app-server and TUI processes that disable Codex's independent external
+  notifier command.
 - `templates/opencode-plugin.ts`: event-only attention-state publisher with no
   child process, audio, system notification, or terminal-control output.
 
@@ -89,7 +90,8 @@ processes rather than mocks.
 - Codex filter and real-PTY tests cover plain and tmux-wrapped OSC 9 at every
   split, byte-identical unrelated output, bounded oversized input, and semantic
   completion without terminal notification bytes;
-- Codex exact-argv tests require `notify=[]` for every launch form;
+- Codex exact-argv tests require `notify=[]` on app-server and every TUI launch
+  form;
 - the OpenCode executable contract rejects playback, system-notification, and
   terminal-control effects;
 - a source invariant permits only the sound-aware selected-tool setter;
