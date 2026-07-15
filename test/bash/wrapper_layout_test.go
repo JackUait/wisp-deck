@@ -43,6 +43,13 @@ func TestWrapper_terminal_pane_is_45_percent(t *testing.T) {
 		"claude":        "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
+		"tput": `#!/bin/bash
+case "$1" in
+  cols) echo 173 ;;
+  lines) echo 47 ;;
+  colors) echo 256 ;;
+esac
+`,
 	}
 	for name, body := range mocks {
 		p := filepath.Join(binDir, name)
@@ -229,6 +236,32 @@ func TestWrapper_selects_ai_pane_geometrically(t *testing.T) {
 	}
 	if strings.Contains(got, "select-pane -t 0") || strings.Contains(got, "select-pane -t 2") {
 		t.Errorf("fixed-index select-pane breaks under non-zero pane-base-index; use directional selection. got:\n%s", got)
+	}
+}
+
+// TestWrapperBuildsDetachedSessionBeforeAttach locks down the startup frame:
+// tmux must finish the complete workspace off-screen, focus the AI pane, and
+// only then attach the client. exit-unattached is deliberately enabled after
+// attachment because setting it on a clientless detached session kills it.
+func TestWrapperBuildsDetachedSessionBeforeAttach(t *testing.T) {
+	got := recordWrapperNewSession(t)
+
+	for _, want := range []string{"new-session -d", "-x 173", "-y 47"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("detached launch is missing %q:\n%s", want, got)
+		}
+	}
+
+	horizontal := strings.Index(got, "split-window -h -p 75")
+	vertical := strings.Index(got, "split-window -v -p 45")
+	focusAI := strings.LastIndex(got, "select-pane -R")
+	attach := strings.Index(got, "attach-session")
+	exitUnattached := strings.Index(got, "set-option exit-unattached on")
+	if horizontal < 0 || vertical < 0 || focusAI < 0 || attach < 0 || exitUnattached < 0 {
+		t.Fatalf("launch queue is missing a required lifecycle command:\n%s", got)
+	}
+	if !(horizontal < vertical && vertical < focusAI && focusAI < attach && attach < exitUnattached) {
+		t.Fatalf("workspace must be built and focused before attach, then arm teardown:\n%s", got)
 	}
 }
 
