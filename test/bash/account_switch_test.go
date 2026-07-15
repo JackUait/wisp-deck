@@ -1068,7 +1068,7 @@ func TestRelaunchAIPaneRegeneratesClaudeSettingsInRotatedGeneration(t *testing.T
 	dir := t.TempDir()
 	attention := createAttentionFixture(t, dir, "claude")
 	oldGenerationDir := filepath.Dir(attention["state"])
-	source := writeTempFile(t, dir, "active.json", `{"model":"opus","preferredNotifChannel":"iterm2"}`)
+	source := writeTempFile(t, dir, "active.json", `{"model":"opus","preferredNotifChannel":"iterm2","disableAllHooks":false}`)
 	ctx := writeTempFile(t, dir, "relaunch-settings", strings.Join([]string{
 		"tool=claude",
 		"tool_cmd=/opt/claude",
@@ -1093,7 +1093,7 @@ build_switch_launch_cmd() {
   if [ "$settings" = "${WISP_DECK_ATTENTION_FILE%%/state}/claude-settings.json" ] \
      && grep -q '"model": "opus"' "$settings" \
      && grep -q '"preferredNotifChannel": "notifications_disabled"' "$settings" \
-     && grep -q '"disableAllHooks": true' "$settings"; then
+     && grep -q '"disableAllHooks": false' "$settings"; then
     printf 'settings-ok:%%s\n' "$settings" >> %q
   else
     printf 'settings-stale:%%s\n' "$settings" >> %q

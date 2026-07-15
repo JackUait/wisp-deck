@@ -73,7 +73,7 @@ func TestSettingsJsonClaudeLaunchSettingsMergesActiveConfigAndDisablesNativeNoti
 	}
 	plugins, ok := got["enabledPlugins"].(map[string]any)
 	if !ok || plugins["user-plugin@example"] != true {
-		t.Fatalf("enabledPlugins not preserved under disableAllHooks: %#v", got["enabledPlugins"])
+		t.Fatalf("enabledPlugins not preserved: %#v", got["enabledPlugins"])
 	}
 	after, err := os.ReadFile(active)
 	if err != nil {
