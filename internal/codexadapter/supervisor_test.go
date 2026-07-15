@@ -33,6 +33,7 @@ func TestCodexArgvIsExactAndAppliesAllNotificationOverrides(t *testing.T) {
 	uri := "unix://" + socket
 	configs := []string{
 		`notify=[]`,
+		`features.hooks=false`,
 		`tui.notifications=["agent-turn-complete"]`,
 		`tui.notification_method="osc9"`,
 		`tui.notification_condition="always"`,
@@ -46,7 +47,7 @@ func TestCodexArgvIsExactAndAppliesAllNotificationOverrides(t *testing.T) {
 	}
 
 	if got, want := buildCodexServerArgv("/opt/codex", socket), []string{
-		"/opt/codex", "app-server", "-c", `notify=[]`, "--listen", uri,
+		"/opt/codex", "app-server", "-c", `notify=[]`, "-c", `features.hooks=false`, "--listen", uri,
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("server argv = %#v, want %#v", got, want)
 	}
@@ -228,8 +229,9 @@ func TestCodexSupervisorRemoteResumeQuickFailureTakesNewSnapshotThenRemoteFresh(
 	supervisor := CodexSupervisor{
 		TempBase: t.TempDir(),
 		StartServer: func(_ context.Context, argv []string, _ io.Writer) (AppServerProcess, error) {
-			if len(argv) != 6 || argv[1] != "app-server" ||
-				argv[2] != "-c" || argv[3] != `notify=[]` || argv[4] != "--listen" {
+			if len(argv) != 8 || argv[1] != "app-server" ||
+				argv[2] != "-c" || argv[3] != `notify=[]` ||
+				argv[4] != "-c" || argv[5] != `features.hooks=false` || argv[6] != "--listen" {
 				t.Fatalf("server argv = %#v", argv)
 			}
 			return server, nil
