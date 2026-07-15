@@ -35,6 +35,16 @@ type worktreeDoneMsg struct {
 	err  error
 }
 
+// githubCloneDoneMsg is sent after a background `git clone` of a GitHub URL
+// pasted into the add-project path field completes. The clone is dispatched
+// as a tea.Cmd (never run inline in Update) because cloning can take many
+// seconds and must not freeze the UI event loop.
+type githubCloneDoneMsg struct {
+	name string
+	dest string
+	err  error
+}
+
 // worktreeRemoveDoneMsg is sent after a background `git worktree remove` attempt
 // completes. Removal is dispatched as a tea.Cmd (never run inline in Update) because
 // git must rm -rf the entire worktree tree, which can take many seconds on a real
@@ -276,6 +286,13 @@ type MainMenuModel struct {
 	nameErr        error
 	nameWarnShown  bool // true after first Enter on duplicate name; second Enter confirms
 	inputFocusPath bool // true = path field focused, false = name field focused
+
+	// GitHub-URL add-project state: a clone is in flight. Keys are ignored
+	// (except Ctrl+C) until githubCloneDoneMsg arrives.
+	cloning bool
+	// gitClone runs the actual clone; nil means real `git clone`. Injectable
+	// so tests never touch the network.
+	gitClone func(url, dest string) error
 
 	// Delete mode
 	deleteMode           bool
@@ -1889,6 +1906,13 @@ func (m *MainMenuModel) SetNameWarnShown(v bool) { m.nameWarnShown = v }
 // NameErr returns the current name field error.
 func (m *MainMenuModel) NameErr() error { return m.nameErr }
 
+// Cloning returns true while a GitHub clone dispatched from the add-project
+// form is in flight.
+func (m *MainMenuModel) Cloning() bool { return m.cloning }
+
+// SetGitCloneForTest injects the clone function so tests never hit the network.
+func (m *MainMenuModel) SetGitCloneForTest(fn func(url, dest string) error) { m.gitClone = fn }
+
 // NameWarnShown returns true when the duplicate-name soft-warn is active.
 func (m *MainMenuModel) NameWarnShown() bool { return m.nameWarnShown }
 
@@ -2277,6 +2301,9 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Reload worktrees so the new entry appears.
 		models.PopulateWorktrees(m.projects)
 		return m, nil
+
+	case githubCloneDoneMsg:
+		return m.applyGitHubCloneDone(msg)
 
 	case worktreeRemoveDoneMsg:
 		return m.applyWorktreeRemoveDone(msg)
@@ -2958,6 +2985,14 @@ func (m *MainMenuModel) setMoveFlash(projectIdx int) {
 }
 
 func (m *MainMenuModel) updateInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// While a clone is in flight, the form is frozen: only Ctrl+C gets through.
+	if m.cloning {
+		if msg.Type == tea.KeyCtrlC {
+			m.setActionResult("quit")
+			return m, tea.Quit
+		}
+		return m, nil
+	}
 	// For open-once mode, always use path-only flow.
 	if m.inputMode == "open-once" || m.inputFocusPath {
 		return m.updateInputModePath(msg)
@@ -3037,9 +3072,14 @@ func (m *MainMenuModel) advanceToNameField() (tea.Model, tea.Cmd) {
 		m.inputErr = fmt.Errorf("project path cannot be empty")
 		return m, nil
 	}
-	if err := util.ValidatePath(path); err != nil {
-		m.inputErr = err
-		return m, nil
+	// A GitHub URL is cloned on submit, so it is not validated as a directory.
+	if _, _, isGitHub := util.ParseGitHubRepo(path); !isGitHub {
+		if err := util.ValidatePath(path); err != nil {
+			m.inputErr = err
+			return m, nil
+		}
+	} else {
+		m.autocomplete.Dismiss()
 	}
 	m.inputErr = nil
 	m.inputFocusPath = false
@@ -3056,6 +3096,10 @@ func (m *MainMenuModel) maybeAutoDeriveName() {
 	}
 	path := strings.TrimSpace(m.pathInput.Value())
 	if path == "" {
+		return
+	}
+	if _, repo, isGitHub := util.ParseGitHubRepo(path); isGitHub {
+		m.nameInput.SetValue(repo)
 		return
 	}
 	expanded := filepath.Clean(util.ExpandPath(path))
@@ -3134,6 +3178,9 @@ func (m *MainMenuModel) submitInputMode() (tea.Model, tea.Cmd) {
 	}
 
 	path := strings.TrimSpace(m.pathInput.Value())
+	if cloneURL, _, isGitHub := util.ParseGitHubRepo(path); isGitHub {
+		return m.startGitHubClone(cloneURL, name)
+	}
 	expanded := filepath.Clean(util.ExpandPath(path))
 
 	if IsDuplicateProject(expanded, m.projects) {
@@ -3163,6 +3210,74 @@ func (m *MainMenuModel) submitInputMode() (tea.Model, tea.Cmd) {
 
 	m.exitInputMode()
 	m.setFeedback("Added "+name, "success")
+	return m, nil
+}
+
+// startGitHubClone validates the clone destination and dispatches the clone
+// as a tea.Cmd — cloning can take many seconds and must never block Update.
+func (m *MainMenuModel) startGitHubClone(cloneURL, name string) (tea.Model, tea.Cmd) {
+	root := readProjectsRoot(m.projectsRootFile)
+	if root == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			m.nameErr = fmt.Errorf("cannot determine clone destination: %v", err)
+			return m, nil
+		}
+		root = home
+	}
+	dest := filepath.Join(util.ExpandPath(root), name)
+
+	if _, err := os.Stat(dest); err == nil {
+		m.nameErr = fmt.Errorf("directory already exists: %s", dest)
+		return m, nil
+	}
+	if IsDuplicateProject(dest, m.projects) {
+		m.nameErr = fmt.Errorf("project already exists")
+		return m, nil
+	}
+
+	clone := m.gitClone
+	if clone == nil {
+		clone = defaultGitClone
+	}
+	m.nameErr = nil
+	m.cloning = true
+	return m, func() tea.Msg {
+		return githubCloneDoneMsg{name: name, dest: dest, err: clone(cloneURL, dest)}
+	}
+}
+
+// defaultGitClone runs a real `git clone url dest`.
+func defaultGitClone(url, dest string) error {
+	out, err := exec.Command("git", "clone", "--", url, dest).CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return err
+		}
+		return fmt.Errorf("%s", msg)
+	}
+	return nil
+}
+
+// applyGitHubCloneDone finishes the GitHub-URL add-project flow.
+func (m *MainMenuModel) applyGitHubCloneDone(msg githubCloneDoneMsg) (tea.Model, tea.Cmd) {
+	m.cloning = false
+	if msg.err != nil {
+		m.nameErr = fmt.Errorf("clone failed: %v", msg.err)
+		return m, nil
+	}
+	if err := AppendProject(msg.name, msg.dest, m.projectsFile); err != nil {
+		m.nameErr = fmt.Errorf("failed to save: %v", err)
+		return m, nil
+	}
+	projects, _ := models.LoadProjects(m.projectsFile)
+	models.PopulateWorktrees(projects)
+	m.projects = projects
+	m.expandedWorktrees = make(map[int]bool)
+
+	m.exitInputMode()
+	m.setFeedback("Added "+msg.name, "success")
 	return m, nil
 }
 
@@ -3795,6 +3910,15 @@ func (m *MainMenuModel) renderInputBox() string {
 				nameErrPadding = 0
 			}
 			lines = append(lines, leftBorder+nameErrContent+strings.Repeat(" ", nameErrPadding)+rightBorder)
+		}
+
+		if m.cloning {
+			cloningContent := "  " + helpStyle.Render("Cloning repository…")
+			cloningPadding := menuContentWidth - lipgloss.Width(cloningContent)
+			if cloningPadding < 0 {
+				cloningPadding = 0
+			}
+			lines = append(lines, leftBorder+cloningContent+strings.Repeat(" ", cloningPadding)+rightBorder)
 		}
 	}
 
