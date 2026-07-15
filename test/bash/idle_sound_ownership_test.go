@@ -117,4 +117,23 @@ func TestIdleSoundRuntimeSitesUseSharedLiveGate(t *testing.T) {
 	if strings.Count(string(background), `"/usr/bin/afplay"`) != 1 {
 		t.Fatal("background notifier must have exactly one locked afplay site")
 	}
+
+	settings, err := os.ReadFile(filepath.Join(root, "lib", "settings-json.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(settings), `settings["preferredNotifChannel"] = "notifications_disabled"`) {
+		t.Fatal("Claude launch overlay must disable the agent's native notification channel")
+	}
+	codex, err := os.ReadFile(filepath.Join(root, "internal", "codexadapter", "supervisor.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(codex), "var filter OSC9Filter") ||
+		!strings.Contains(string(codex), "filtered, events := filter.Feed(chunk)") {
+		t.Fatal("Codex PTY must consume its private OSC 9 notification before terminal output")
+	}
+	if strings.Contains(string(codex), "writeFull(s.output(), chunk)") {
+		t.Fatal("Codex PTY still forwards the raw notification-bearing chunk")
+	}
 }

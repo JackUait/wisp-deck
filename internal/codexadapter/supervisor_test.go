@@ -1291,7 +1291,7 @@ func waitProcessGone(pid int, timeout time.Duration) bool {
 	return false
 }
 
-func TestCodexPTYForwardsBytesInputAndFragmentedOSC(t *testing.T) {
+func TestCodexPTYConsumesFragmentedOSCAndForwardsOrdinaryBytes(t *testing.T) {
 	if os.Getenv("WISP_DECK_CODEX_PTY_CHILD") == "1" {
 		state, _ := term.MakeRaw(os.Stdin.Fd())
 		defer func() {
@@ -1314,7 +1314,7 @@ func TestCodexPTYForwardsBytesInputAndFragmentedOSC(t *testing.T) {
 	output := &readyWriter{ready: ready}
 	var events []OSC9Event
 	runner := CodexSupervisor{Stdin: &gatedStringReader{ready: ready, reader: strings.NewReader(input)}, Stdout: output}
-	result, err := runner.runPTYAttempt(context.Background(), []string{os.Args[0], "-test.run=^TestCodexPTYForwardsBytesInputAndFragmentedOSC$"}, func(event OSC9Event) {
+	result, err := runner.runPTYAttempt(context.Background(), []string{os.Args[0], "-test.run=^TestCodexPTYConsumesFragmentedOSCAndForwardsOrdinaryBytes$"}, func(event OSC9Event) {
 		events = append(events, event)
 	}, []string{"WISP_DECK_CODEX_PTY_CHILD=1"})
 	if err != nil {
@@ -1323,9 +1323,9 @@ func TestCodexPTYForwardsBytesInputAndFragmentedOSC(t *testing.T) {
 	if result.ExitCode != 0 {
 		t.Fatalf("result = %+v", result)
 	}
-	wantOutput := "ordinary:\x1bPtmux;\x1b\x1b]9;dynamic preview\x07\x1b\\" + input
+	wantOutput := "ordinary:" + input
 	if output.String() != wantOutput {
-		t.Fatalf("output = %q, want byte-identical %q", output.String(), wantOutput)
+		t.Fatalf("output = %q, want notification consumed and ordinary bytes %q", output.String(), wantOutput)
 	}
 	if len(events) != 1 || events[0].Message != "dynamic preview" {
 		t.Fatalf("OSC events = %#v", events)

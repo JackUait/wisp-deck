@@ -1087,23 +1087,32 @@ func (s *CodexSupervisor) runPTYAttemptWithRouter(
 	}()
 	outputCh := make(chan error, 1)
 	go func() {
-		var parser OSC9Parser
+		var filter OSC9Filter
 		buffer := make([]byte, 32*1024)
 		for {
 			n, readErr := ptmx.Read(buffer)
 			if n > 0 {
 				chunk := buffer[:n]
-				for _, event := range parser.Feed(chunk) {
+				filtered, events := filter.Feed(chunk)
+				for _, event := range events {
 					if onOSC != nil {
 						onOSC(event)
 					}
 				}
-				if err := writeFull(s.output(), chunk); err != nil {
-					outputCh <- err
-					return
+				if len(filtered) > 0 {
+					if err := writeFull(s.output(), filtered); err != nil {
+						outputCh <- err
+						return
+					}
 				}
 			}
 			if readErr != nil {
+				if tail := filter.Flush(); len(tail) > 0 {
+					if err := writeFull(s.output(), tail); err != nil {
+						outputCh <- err
+						return
+					}
+				}
 				if errors.Is(readErr, io.EOF) || errors.Is(readErr, syscall.EIO) {
 					outputCh <- nil
 				} else {
