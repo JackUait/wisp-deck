@@ -3,11 +3,14 @@ package bash_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/creack/pty"
 )
 
 // This is the real-tmux regression guard for exact pane-position restore.
@@ -97,5 +100,87 @@ func TestLayoutRoundtrip_select_layout_reproduces_exact_geometry(t *testing.T) {
 	if got != want {
 		t.Errorf("restored geometry does not match captured geometry\n want:\n%s\n got:\n%s\nlayout: %s",
 			want, got, layout)
+	}
+}
+
+// TestDetachedSessionLifecycle verifies the tmux command-queue behavior that
+// lets wrapper.sh avoid painting its one-pane construction state. The first
+// client attaches only after all panes exist and the AI pane is active; arming
+// exit-unattached after that attachment still tears down the session normally.
+func TestDetachedSessionLifecycle(t *testing.T) {
+	tmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux not available")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	sock := fmt.Sprintf("wisp-detached-%d", os.Getpid())
+	sess := "C"
+	_ = exec.Command(tmux, "-L", sock, "kill-server").Run()
+	t.Cleanup(func() { _ = exec.Command(tmux, "-L", sock, "kill-server").Run() })
+
+	cmd := exec.CommandContext(ctx, tmux,
+		"-L", sock,
+		"new-session", "-d", "-s", sess, "-x", "120", "-y", "30", "sleep 30",
+		";", "split-window", "-h", "-p", "75", "sleep 30",
+		";", "set-option", "-p", "@gt_ai", "1",
+		";", "select-pane", "-L",
+		";", "split-window", "-v", "-p", "45", "sleep 30",
+		";", "select-pane", "-R",
+		";", "attach-session", "-t", sess,
+		";", "set-option", "exit-unattached", "on",
+	)
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 30, Cols: 120})
+	if err != nil {
+		t.Fatalf("start attached tmux queue: %v", err)
+	}
+	defer ptmx.Close()
+	go func() { _, _ = io.Copy(io.Discard, ptmx) }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		clients, listErr := exec.Command(tmux, "-L", sock, "list-clients", "-F", "#{client_session}").CombinedOutput()
+		if listErr == nil && strings.Contains(string(clients), sess) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("tmux client did not attach: %v: %s", listErr, clients)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if panes := rt(t, ctx, tmux, sock, "display-message", "-p", "-t", sess+":0", "#{window_panes}"); panes != "3" {
+		t.Fatalf("attached with %s panes, want complete three-pane layout", panes)
+	}
+	active := rt(t, ctx, tmux, sock, "list-panes", "-t", sess+":0", "-F", "#{pane_active} #{@gt_ai}")
+	if !strings.Contains(active, "1 1") {
+		t.Fatalf("AI pane was not active on attachment:\n%s", active)
+	}
+	if option := rt(t, ctx, tmux, sock, "show-options", "-qv", "-t", sess, "exit-unattached"); option != "on" {
+		t.Fatalf("exit-unattached = %q, want on after attachment", option)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	if _, err := ptmx.Write([]byte{0x02, 'd'}); err != nil {
+		t.Fatalf("detach tmux client: %v", err)
+	}
+	select {
+	case waitErr := <-done:
+		if waitErr != nil {
+			t.Fatalf("attached tmux command exited with error: %v", waitErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("attached tmux command did not exit after detach")
+	}
+
+	deadline = time.Now().Add(2 * time.Second)
+	for exec.Command(tmux, "-L", sock, "has-session", "-t", sess).Run() == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("exit-unattached left the detached session alive")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

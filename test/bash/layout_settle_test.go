@@ -178,10 +178,10 @@ func TestRestoreLayoutWatch_stops_on_user_pane_drag(t *testing.T) {
 }
 
 // TestWrapperRestore_replays_layout_while_session_alive locks in the fix for
-// the dead-code replay: `tmux new-session` blocks until the session ends, so
-// the wrapper must arrange the select-layout replay to happen WHILE
-// new-session is still running. The mock's new-session waits (like the real
-// attach would) and records whether select-layout arrived during that window.
+// the dead-code replay: the wrapper's tmux command blocks at its final attach
+// until the session ends, so select-layout must run while that command is
+// alive. The mock waits in the launch command and records whether select-layout
+// arrived during that window.
 func TestWrapperRestore_replays_layout_while_session_alive(t *testing.T) {
 	home := t.TempDir()
 	binDir := filepath.Join(home, ".local", "bin")
