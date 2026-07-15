@@ -40,9 +40,10 @@ const (
 
 // hitTarget is the element under a given box-relative coordinate.
 type hitTarget struct {
-	region mouseRegion
-	index  int  // tab index, body flat-item index, or settings row index
-	prev   bool // switcher rows: the pointer fell on the "previous"/left side
+	region   mouseRegion
+	index    int  // tab index, body flat-item index, or settings row index
+	prev     bool // switcher rows: the pointer fell on the "previous"/left side
+	wtButton bool // body project rows: the pointer fell on the inline add-worktree button
 }
 
 // menuBoxWidth is the fixed rendered width of the menu box (border + interior +
@@ -255,7 +256,7 @@ func (m *MainMenuModel) HitTest(boxX, boxY int) hitTarget {
 	switch m.activeTab {
 	case TabProjects:
 		if item := m.MapRowToItem(boxY); item >= 0 {
-			return hitTarget{region: regionBody, index: item}
+			return hitTarget{region: regionBody, index: item, wtButton: m.onZeroWorktreeButton(boxX, boxY, item)}
 		}
 	case TabSettings:
 		if !m.settingsInputMode {
@@ -266,6 +267,25 @@ func (m *MainMenuModel) HitTest(boxX, boxY int) hitTarget {
 	}
 
 	return hitTarget{region: regionNone}
+}
+
+// onZeroWorktreeButton reports whether the coordinate falls on the inline
+// "+ Add worktree" button span of a zero-worktree project's name row. This is
+// geometry only: when the button isn't rendered (row neither focused nor
+// hovered) those cells are blank, so handleMouse's glyph filter already
+// discards the hit.
+func (m *MainMenuModel) onZeroWorktreeButton(boxX, boxY, item int) bool {
+	itemType, projectIdx, _ := m.ResolveItem(item)
+	if itemType != "project" || len(m.projects[projectIdx].Worktrees) > 0 || m.expandedWorktrees[projectIdx] {
+		return false
+	}
+	if m.MapRowToItem(boxY-1) == item {
+		return false // the second (path) row of the project, not the name row
+	}
+	// The button is right-aligned in the badge slot: the content spans columns
+	// [1, 1+menuContentWidth) inside the borders, with the label at its end.
+	w := len(zeroWorktreeButtonLabel)
+	return boxX >= 1+menuContentWidth-w && boxX < 1+menuContentWidth
 }
 
 // mapRowToSettingsItem maps a box-relative row to a settings item index, or -1
@@ -410,6 +430,16 @@ func (m *MainMenuModel) clickTarget(t hitTarget) (tea.Model, tea.Cmd) {
 		return m, nil
 	case regionBody:
 		m.focus = FocusBody
+		if t.wtButton {
+			// The inline add-worktree button acts immediately (expanding is
+			// harmless and reversible, unlike launching a project): expand the
+			// project and land the cursor on its add-worktree row.
+			if _, projectIdx, _ := m.ResolveItem(t.index); projectIdx >= 0 {
+				m.selectedItem = t.index
+				m.ToggleWorktrees(projectIdx)
+			}
+			return m, nil
+		}
 		if m.selectedItem == t.index {
 			// Clicking the already-selected row activates it (double-click-like).
 			if cmd := m.selectCurrent(); cmd != nil {

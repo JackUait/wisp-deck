@@ -281,7 +281,7 @@ func TestWKey_CollapsesExpandedProjectAtCursor(t *testing.T) {
 
 // TestWKey_NoOpOnProjectWithNoWorktrees verifies that pressing 'w' when the
 // cursor is on a project without worktrees is a no-op (no expand, no crash).
-func TestWKey_NoOpOnProjectWithNoWorktrees(t *testing.T) {
+func TestWKey_ZeroWorktreeProject_ExpandsToAddRow(t *testing.T) {
 	m := newWorktreeMenu()
 
 	// Cursor on project "gamma" (flat index 2, no worktrees)
@@ -289,8 +289,12 @@ func TestWKey_NoOpOnProjectWithNoWorktrees(t *testing.T) {
 
 	m.ToggleWorktreesAtCursor()
 
-	if m.IsExpanded(2) {
-		t.Error("expected project gamma (no worktrees) to remain unexpanded")
+	if !m.IsExpanded(2) {
+		t.Error("expected project gamma (no worktrees) to expand to its add-worktree row")
+	}
+	itemType, projectIdx, _ := m.ResolveItem(m.selectedItem)
+	if itemType != "add-worktree" || projectIdx != 2 {
+		t.Errorf("expected cursor on gamma's add-worktree row, got %q project %d", itemType, projectIdx)
 	}
 }
 

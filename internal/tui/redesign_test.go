@@ -89,13 +89,13 @@ func TestRenderTabBar_bodyFocusNoFilledPill(t *testing.T) {
 // The contextual action bar should advertise the real key letters (W/D/⏎)
 // instead of decorative glyphs, so the labels double as a keymap.
 func TestActionBarFor_usesRealKeyLetters(t *testing.T) {
-	proj := actionBarFor("project", true)
+	proj := actionBarFor("project")
 	for _, k := range []string{"⏎ Open", "W Worktrees", "D Delete"} {
 		if !strings.Contains(proj, k) {
 			t.Errorf("project action bar missing %q: %q", k, proj)
 		}
 	}
-	wt := actionBarFor("worktree", false)
+	wt := actionBarFor("worktree")
 	if !strings.Contains(wt, "⏎ Open") || !strings.Contains(wt, "D Delete") {
 		t.Errorf("worktree action bar wrong: %q", wt)
 	}

@@ -102,8 +102,9 @@ func TestUpdate_motionOverRowPadding_doesNotHover(t *testing.T) {
 	if mm := upd.(*MainMenuModel); !mm.isHovered(regionBody) {
 		t.Fatalf("hovering the project text should set regionBody hover, got %v", mm.hover.region)
 	}
-	// Over the trailing padding (blank cells) → no hover.
-	overPad := tea.MouseMsg{X: m.menuOriginX + menuContentWidth - 3, Y: m.menuOriginY + nameRow, Action: tea.MouseActionMotion}
+	// Over the row's blank mid-gap (between the name and the badge slot, which
+	// on a focused zero-worktree row holds the add-worktree button) → no hover.
+	overPad := tea.MouseMsg{X: m.menuOriginX + 30, Y: m.menuOriginY + nameRow, Action: tea.MouseActionMotion}
 	upd, _ = m.Update(overPad)
 	if mm := upd.(*MainMenuModel); mm.isHovered(regionBody) {
 		t.Errorf("hovering the row's trailing padding should NOT hover the body, got region %v index %d", mm.hover.region, mm.hover.index)

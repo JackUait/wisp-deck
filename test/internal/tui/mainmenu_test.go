@@ -3800,12 +3800,19 @@ func TestMainMenu_ToggleNoWorktrees(t *testing.T) {
 	projects := testProjectsWithWorktrees()
 	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
 
-	// Project 1 has no worktrees — toggle should be a no-op
+	// Project 1 has no worktrees — toggle expands it to its add-worktree row.
 	before := m.TotalItems()
 	m.ToggleWorktrees(1)
-	after := m.TotalItems()
-	if before != after {
-		t.Errorf("toggle on no-worktree project changed total: %d -> %d", before, after)
+	if got := m.TotalItems(); got != before+1 {
+		t.Errorf("toggle on no-worktree project should add the add-worktree row: %d -> %d", before, got)
+	}
+	if !m.IsExpanded(1) {
+		t.Error("expected the no-worktree project to be expanded")
+	}
+	// Toggling again collapses it back.
+	m.ToggleWorktrees(1)
+	if got := m.TotalItems(); got != before {
+		t.Errorf("second toggle should collapse back to %d items, got %d", before, got)
 	}
 }
 

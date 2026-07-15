@@ -39,18 +39,20 @@ func (m *MainMenuModel) settingsCaption(glyph string, focused bool) string {
 	return lipgloss.NewStyle().Foreground(color).Render(glyph + "  ")
 }
 
+// zeroWorktreeButtonLabel is the inline button shown in the badge slot of a
+// focused/hovered project row that has no worktrees. Activating it (click or W)
+// expands the project straight to its add-worktree row.
+const zeroWorktreeButtonLabel = "+ Add worktree"
+
 // actionBarFor returns the contextual action label text for a selected row type.
-// hasWorktrees is consulted for project rows: the "W Worktrees" action only does
-// something when the project actually has worktrees, so it is hidden otherwise.
-func actionBarFor(itemType string, hasWorktrees bool) string {
+// W is always meaningful on a project row: it toggles existing worktrees, or
+// expands a zero-worktree project straight to its add-worktree row.
+func actionBarFor(itemType string) string {
 	// Labels double as a keymap: the leading glyph/letter is the real keybinding
 	// (Enter opens, W toggles worktrees, D deletes — see handleRune).
 	switch itemType {
 	case "project":
-		if hasWorktrees {
-			return "⏎ Open    W Worktrees    D Delete"
-		}
-		return "⏎ Open    D Delete"
+		return "⏎ Open    W Worktrees    D Delete"
 	case "worktree":
 		return "⏎ Open    D Delete"
 	case "add-project":
@@ -63,9 +65,8 @@ func actionBarFor(itemType string, hasWorktrees bool) string {
 // renderActionBar renders the contextual action line for the current selection.
 func (m *MainMenuModel) renderActionBar(leftBorder, rightBorder string) string {
 	style := lipgloss.NewStyle().Foreground(m.theme.Accent)
-	itemType, projectIdx, _ := m.ResolveItem(m.selectedItem)
-	hasWorktrees := itemType == "project" && projectIdx >= 0 && projectIdx < len(m.projects) && len(m.projects[projectIdx].Worktrees) > 0
-	text := actionBarFor(itemType, hasWorktrees)
+	itemType, _, _ := m.ResolveItem(m.selectedItem)
+	text := actionBarFor(itemType)
 	rendered := style.Render(text)
 	gap := menuContentWidth - lipgloss.Width(rendered) - 2
 	if gap < 0 {
@@ -317,6 +318,11 @@ func (m *MainMenuModel) renderProjectRows(leftBorder, rightBorder string) []stri
 			wtIndicator = fmt.Sprintf("%d %s", wtCount, wtWord)
 		}
 
+		// Zero-worktree projects surface an inline add-worktree button in the
+		// badge slot while the row is focused or hovered. Hidden once expanded —
+		// the add-worktree row below is the affordance then — and in delete mode.
+		showAddButton := len(proj.Worktrees) == 0 && !m.expandedWorktrees[i] && !m.deleteMode
+
 		if selected {
 			// Loud selection (Primary + wash) only when the body actually holds
 			// focus. When focus is on the nav/AI/subscription, the row drops to a
@@ -349,8 +355,17 @@ func (m *MainMenuModel) renderProjectRows(leftBorder, rightBorder string) []stri
 				washStyle = lipgloss.NewStyle() // no background highlight off-focus
 			}
 
+			if showAddButton && bodyFocus && !flashing {
+				wtIndicator = zeroWorktreeButtonLabel
+			}
+
 			marker := markerStyle.Render(markerChar)
-			truncName := TruncateMiddle(proj.Name, menuContentWidth-8-len(num))
+			nameBudget := menuContentWidth - 8 - len(num)
+			if wtIndicator != "" {
+				// Leave room for the right-aligned badge plus its minimum gap.
+				nameBudget -= lipgloss.Width(wtIndicator) + 1
+			}
+			truncName := TruncateMiddle(proj.Name, nameBudget)
 			nameText := selNameStyle.Render(num + "  " + truncName)
 			// " ▌1  name" -> space + marker + num + 2 spaces + name
 			// For stale projects, replace the leading space with "⚠ " marker.
@@ -411,10 +426,18 @@ func (m *MainMenuModel) renderProjectRows(leftBorder, rightBorder string) []stri
 			rowWash := lipgloss.NewStyle()
 			if !flashing && m.isHovered(regionBody) && m.hover.index == m.projectToFlatIndex(i) {
 				rowWash = selectedBgStyle
+				if showAddButton {
+					wtIndicator = zeroWorktreeButtonLabel
+				}
 			}
 
 			numText := rowDimStyle.Render(num)
-			truncName := TruncateMiddle(proj.Name, menuContentWidth-6-len(num))
+			nameBudget := menuContentWidth - 6 - len(num)
+			if wtIndicator != "" {
+				// Leave room for the right-aligned badge plus its minimum gap.
+				nameBudget -= lipgloss.Width(wtIndicator) + 1
+			}
+			truncName := TruncateMiddle(proj.Name, nameBudget)
 			nameText := rowNameStyle.Render(truncName)
 			// For stale projects, replace the leading 2 spaces with "⚠ " marker.
 			var rowPrefix string
