@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/jackuait/wisp-deck/internal/util"
 )
 
@@ -185,4 +186,113 @@ func (b *DirBrowserModel) resetHighlight() {
 func (b *DirBrowserModel) GitHubURL() (string, bool) {
 	cloneURL, _, ok := util.ParseGitHubRepo(strings.TrimSpace(b.filter))
 	return cloneURL, ok
+}
+
+// Browser card geometry. The list window is fixed-height so the card never
+// jumps while navigating or filtering.
+const (
+	browserMaxVisible     = 10
+	browserCardInnerWidth = 46
+)
+
+// browserInnerLines is the card's content block: cwd, filter line, the
+// fixed-height folder list (or the GitHub clone hint), a status slot, and a
+// dim help footer hugging the bottom border — mirroring the About card shape.
+// Styles are built per render, never in package vars (pre-tty renderer trap).
+func (m *MainMenuModel) browserInnerLines() []string {
+	b := m.browser
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	primaryStyle := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
+	accentStyle := lipgloss.NewStyle().Foreground(m.theme.Accent)
+	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+
+	lines := []string{
+		primaryStyle.Render(TruncateMiddle(abbreviateHome(b.Cwd()), browserCardInnerWidth)),
+	}
+	if b.Filter() == "" {
+		lines = append(lines, dimStyle.Render("Filter: type to filter · paste a GitHub URL"))
+	} else {
+		lines = append(lines, dimStyle.Render("Filter: ")+TruncateMiddle(b.Filter(), browserCardInnerWidth-9)+"▌")
+	}
+	lines = append(lines, "")
+
+	if cloneURL, ok := b.GitHubURL(); ok {
+		list := make([]string, browserMaxVisible)
+		list[0] = accentStyle.Render(TruncateMiddle("⬡ "+repoSlug(cloneURL)+" — press ⏎ to clone", browserCardInnerWidth))
+		lines = append(lines, list...)
+	} else {
+		lines = append(lines, m.browserListLines()...)
+	}
+
+	// Status slot: navigation error or blank, always one line.
+	if b.Err() != "" {
+		lines = append(lines, errorStyle.Render(TruncateMiddle("✗ "+b.Err(), browserCardInnerWidth)))
+	} else {
+		lines = append(lines, "")
+	}
+	lines = append(lines, "", dimStyle.Render("⏎ open · tab choose · ← up · esc cancel"))
+	return lines
+}
+
+// browserListLines renders the fixed-height scroll window over VisibleRows,
+// keeping the highlighted row inside the window.
+func (m *MainMenuModel) browserListLines() []string {
+	b := m.browser
+	rows := b.VisibleRows()
+	start := 0
+	if b.Selected() >= browserMaxVisible {
+		start = b.Selected() - browserMaxVisible + 1
+	}
+	selectedStyle := lipgloss.NewStyle().Reverse(true)
+	list := make([]string, browserMaxVisible)
+	for i := 0; i < browserMaxVisible; i++ {
+		idx := start + i
+		if idx >= len(rows) {
+			continue
+		}
+		label := rows[idx]
+		if idx > 0 {
+			label += "/"
+		}
+		label = TruncateMiddle(label, browserCardInnerWidth-2)
+		if idx == b.Selected() {
+			list[i] = selectedStyle.Render("▸ " + label)
+		} else {
+			list[i] = "  " + label
+		}
+	}
+	return list
+}
+
+// renderBrowserCard draws the floating folder-browser card with the same
+// chrome as the About / account-switch modals.
+func (m *MainMenuModel) renderBrowserCard() string {
+	card := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("245")).
+		Padding(aboutCardPadY, aboutCardPadX, 0, aboutCardPadX).
+		Width(browserCardInnerWidth + 2*aboutCardPadX).
+		Render(strings.Join(m.browserInnerLines(), "\n"))
+	return embedAboutBorderTitle(card, "Add Project — choose folder", browserCardInnerWidth+2*aboutCardPadX)
+}
+
+// browserCardLayout returns the centered card's absolute screen geometry.
+func (m *MainMenuModel) browserCardLayout() (left, top, w, h int) {
+	w = browserCardInnerWidth + 2*aboutCardPadX + 2
+	h = len(m.browserInnerLines()) + aboutCardPadY + 2
+	left = (m.width - w) / 2
+	if left < 0 {
+		left = 0
+	}
+	top = (m.height - h) / 2
+	if top < 0 {
+		top = 0
+	}
+	return left, top, w, h
+}
+
+// overlayBrowser composites the folder-browser card over the placed screen.
+func (m *MainMenuModel) overlayBrowser(placed string) string {
+	left, top, w, _ := m.browserCardLayout()
+	return m.overlayCard(placed, strings.Split(m.renderBrowserCard(), "\n"), left, top, w)
 }

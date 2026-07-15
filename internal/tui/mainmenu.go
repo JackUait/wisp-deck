@@ -280,6 +280,10 @@ type MainMenuModel struct {
 	autocomplete AutocompleteModel
 	inputErr     error
 
+	// Folder browser overlay for add-project: non-nil while the user is
+	// navigating the filesystem to pick the project folder.
+	browser *DirBrowserModel
+
 	// Two-field add-project form state
 	nameInput      textinput.Model
 	nameTouched    bool // user manually edited name; disable auto-derive
@@ -4211,8 +4215,12 @@ func (m *MainMenuModel) View() string {
 		m.menuOriginY = m.centerOffsetY + boxRelY
 		m.setModalOrigin(modalBaseLines)
 		placed := lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
-		// The About card floats as a modal over the faint-dimmed screen (like
-		// the account-switch popup) instead of appending below the box.
+		// The folder browser and the About card float as modals over the
+		// faint-dimmed screen (like the account-switch popup) instead of
+		// appending below the box.
+		if m.browser != nil {
+			return m.overlayBrowser(placed)
+		}
 		if m.aboutOpen {
 			return m.overlayAbout(placed)
 		}
@@ -4224,6 +4232,9 @@ func (m *MainMenuModel) View() string {
 	m.setModalOrigin(modalBaseLines)
 	// No terminal size yet: there is nothing to composite the overlay onto, so
 	// the card renders alone.
+	if m.browser != nil {
+		return m.renderBrowserCard()
+	}
 	if m.aboutOpen {
 		return m.renderAboutCard()
 	}
