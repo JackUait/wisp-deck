@@ -127,9 +127,16 @@ func TestLedgerCommandLoadsDeterministicSnapshotSeam(t *testing.T) {
 		t.Fatalf("git init: %v\n%s", err, out)
 	}
 	snapshotPath := filepath.Join(t.TempDir(), "snapshot.json")
-	data := `{"generation":7,"rows":[{"kind":0,"label":"modified","count":1},{"kind":1,"id":{"group":2,"path":"fixture.txt"},"path":"fixture.txt","added":4}],"metadata":{"branch":"fixture","total_files":1,"added":4}}`
+	data := `{"generation":7,"rows":[{"kind":0,"group":2,"label":"modified","count":1},{"kind":1,"id":{"group":2,"path":"fixture.txt"},"path":"fixture.txt","added":4}],"metadata":{"branch":"fixture","total_files":1,"added":4}}`
 	if err := os.WriteFile(snapshotPath, []byte(data), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	snapshot, err := readLedgerSnapshot(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := snapshot.Rows[0].Group; got != 2 {
+		t.Fatalf("snapshot seam dropped group identity: got %d, want 2", got)
 	}
 
 	originalTUIOptions := ledgerTUIOptions
@@ -167,7 +174,7 @@ func TestLedgerAccountCommandWiresSessionAndPopupAdapters(t *testing.T) {
 	}
 	fixtureDir := t.TempDir()
 	snapshotPath := filepath.Join(fixtureDir, "snapshot.json")
-	snapshot := `{"generation":1,"rows":[{"kind":0,"label":"modified","count":1},{"kind":1,"id":{"group":2,"path":"fixture.go"},"path":"fixture.go","added":1}],"metadata":{"branch":"main","total_files":1,"added":1}}`
+	snapshot := `{"generation":1,"rows":[{"kind":0,"group":2,"label":"modified","count":1},{"kind":1,"id":{"group":2,"path":"fixture.go"},"path":"fixture.go","added":1}],"metadata":{"branch":"main","total_files":1,"added":1}}`
 	if err := os.WriteFile(snapshotPath, []byte(snapshot), 0o644); err != nil {
 		t.Fatal(err)
 	}

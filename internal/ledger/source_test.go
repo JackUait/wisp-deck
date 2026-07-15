@@ -120,6 +120,15 @@ func TestSourceLoadsAllGroupsIntoOneSnapshot(t *testing.T) {
 	if len(paths) != 4 {
 		t.Fatalf("file rows = %#v", paths)
 	}
+	var groups []Group
+	for _, row := range snapshot.Rows {
+		if row.Kind == RowGroup {
+			groups = append(groups, row.Group)
+		}
+	}
+	if got, want := fmt.Sprint(groups), fmt.Sprint([]Group{GroupStaged, GroupModified, GroupNew}); got != want {
+		t.Fatalf("group row identities = %s, want %s", got, want)
+	}
 	if got := paths["new.txt"].Added; got != 2 {
 		t.Fatalf("new.txt additions = %d, want 2", got)
 	}

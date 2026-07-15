@@ -124,6 +124,122 @@ func TestLedgerViewRendersFileStatesAndMetadata(t *testing.T) {
 	}
 }
 
+func TestLedgerHeaderRendersLineTotalsInDiffColors(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+
+	raw := renderLedgerHeader(ledger.Metadata{
+		Plan: "Max", TotalFiles: 8, Added: 654, Deleted: 25,
+	}, 80)[0]
+
+	if !ledgerSGRActiveAt(raw, "+654", "32m") {
+		t.Fatalf("added total does not carry green foreground: %q", raw)
+	}
+	if !ledgerSGRActiveAt(raw, "−25", "31m") {
+		t.Fatalf("deleted total does not carry red foreground: %q", raw)
+	}
+}
+
+func TestLedgerGroupRowsRenderStatusColors(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+
+	tests := []struct {
+		name  string
+		group ledger.Group
+		color string
+	}{
+		{name: "staged", group: ledger.GroupStaged, color: "32m"},
+		{name: "modified", group: ledger.GroupModified, color: "33m"},
+		{name: "new", group: ledger.GroupNew, color: "36m"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			row := ledger.Row{Kind: ledger.RowGroup, Group: tt.group, Label: tt.name, Count: 3}
+			raw := renderLedgerRow(row, 80, ledger.RowVisualState{})
+
+			for _, target := range []string{"●", tt.name} {
+				if !ledgerSGRActiveAt(raw, target, tt.color) {
+					t.Fatalf("%q does not carry status color %q: %q", target, tt.color, raw)
+				}
+			}
+		})
+	}
+}
+
+func TestLedgerGroupStatusColorSurvivesDiscardControl(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+
+	path := "tooltip.ts"
+	rows := []ledger.Row{
+		{Kind: ledger.RowGroup, Group: ledger.GroupModified, Label: "modified", Count: 1},
+		{Kind: ledger.RowFile, ID: ledger.RowID{Group: ledger.GroupModified, Path: path}, Path: path, Added: 27, Deleted: 32},
+	}
+	m := NewLedgerModel(nil, ledger.NewSnapshot(1, rows, ledger.Metadata{TotalFiles: 1}), LedgerOptions{})
+	sizeLedger(m, 80, 10)
+	m.state.ToggleSelected(path)
+
+	raw := strings.Split(m.View(), "\n")[ledgerHeaderHeight]
+	if !strings.Contains(stripANSI(raw), "[ discard 1 ]") {
+		t.Fatalf("discard control missing from group row: %q", raw)
+	}
+	if !ledgerSGRActiveAt(raw, "modified", "33m") {
+		t.Fatalf("discard control stripped the group status color: %q", raw)
+	}
+}
+
+func TestLedgerHoverBackgroundCoversFilename(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+
+	row := ledger.Row{
+		Kind: ledger.RowFile,
+		ID:   ledger.RowID{Group: ledger.GroupModified, Path: "tooltip.ts"},
+		Path: "tooltip.ts", Added: 27, Deleted: 32,
+	}
+	raw := renderLedgerFileRow(row, 80, ledger.RowVisualState{Hovered: true})
+
+	if !ledgerSGRActiveAt(raw, "tooltip.ts", "48;5;238") {
+		t.Fatalf("filename is outside the hover background: %q", raw)
+	}
+}
+
+func TestLedgerHoveredFileRowNeverExceedsNarrowPane(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+
+	row := ledger.Row{
+		Kind: ledger.RowFile,
+		ID:   ledger.RowID{Group: ledger.GroupModified, Path: "tooltip.ts"},
+		Path: "tooltip.ts", Added: 27, Deleted: 32,
+	}
+	for width := 1; width <= 14; width++ {
+		raw := renderLedgerFileRow(row, width, ledger.RowVisualState{Hovered: true})
+		if got := lipgloss.Width(raw); got > width {
+			t.Errorf("width %d rendered %d cells: %q", width, got, raw)
+		}
+	}
+}
+
+// ledgerSGRActiveAt reports whether an SGR fragment is asserted after the last
+// reset before target. This catches style holes that a simple escape-presence
+// assertion misses: an earlier span may have enabled a background and then
+// reset it before the filename begins.
+func ledgerSGRActiveAt(value, target, fragment string) bool {
+	index := strings.Index(value, target)
+	if index < 0 {
+		return false
+	}
+	prefix := value[:index]
+	return strings.LastIndex(prefix, fragment) > strings.LastIndex(prefix, "\x1b[0m")
+}
+
 func TestLedgerViewTruncatesLongBasenameToPane(t *testing.T) {
 	path := "src/this-is-an-extremely-long-file-name-that-cannot-fit.go"
 	rows := []ledger.Row{
@@ -199,6 +315,29 @@ func TestLedgerMouseOutsidePaneClearsHover(t *testing.T) {
 
 	if m.state.Hovered != (ledger.RowID{}) {
 		t.Fatalf("hover = %v, want clear", m.state.Hovered)
+	}
+}
+
+func TestLedgerMouseAtRightmostPaneCellStillHovers(t *testing.T) {
+	m := NewLedgerModel(fakeLedgerSource{}, ledgerTestSnapshot(10), LedgerOptions{})
+	sizeLedger(m, 40, 12)
+	m.Update(tea.MouseMsg{X: 39, Y: 3, Action: tea.MouseActionMotion})
+
+	if m.state.Hovered == (ledger.RowID{}) {
+		t.Fatal("rightmost in-pane cell was treated as outside the ledger")
+	}
+}
+
+func TestLedgerMouseHoverDoesNotScheduleIdleExpiry(t *testing.T) {
+	m := NewLedgerModel(fakeLedgerSource{}, ledgerTestSnapshot(10), LedgerOptions{})
+	sizeLedger(m, 40, 12)
+
+	_, timeout := m.Update(tea.MouseMsg{X: 10, Y: 3, Action: tea.MouseActionMotion})
+	if m.state.Hovered == (ledger.RowID{}) {
+		t.Fatal("mouse motion did not establish hover")
+	}
+	if timeout != nil {
+		t.Fatal("stationary hover scheduled an idle expiry")
 	}
 }
 

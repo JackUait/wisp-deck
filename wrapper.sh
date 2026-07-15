@@ -70,7 +70,7 @@ if [ ! -d "$_WRAPPER_DIR/lib" ]; then
   exit 1
 fi
 
-_gt_libs=(theme ai-tools projects process input tui install menu-tui project-actions tmux-session settings-json notification-setup keep-awake tab-title-watcher terminals/ghostty session-restore claude-configs claude-accounts claude-shared-settings auto-switch attention account-switch compact-view screenshot spare-tabs)
+_gt_libs=(theme ai-tools projects process input tui install menu-tui project-actions ledger-hover tmux-session settings-json notification-setup keep-awake tab-title-watcher terminals/ghostty session-restore claude-configs claude-accounts claude-shared-settings auto-switch attention account-switch compact-view screenshot spare-tabs)
 for _gt_lib in "${_gt_libs[@]}"; do
   if [ ! -f "$_WRAPPER_DIR/lib/${_gt_lib}.sh" ]; then
     printf '\033[31mError:\033[0m Missing library %s/lib/%s.sh\n' "$_WRAPPER_DIR" "$_gt_lib" >&2
@@ -557,10 +557,17 @@ _pane0_pct=75
 #      regardless of which pane is active. See lib/screenshot.sh.
 _screenshot_bind="bash -c 'source \"$_WRAPPER_DIR/lib/screenshot.sh\" && gt_paste_latest_screenshot'"
 
+# tmux normally delivers pointer motion only to the pane underneath it, so the
+# ledger cannot observe the event that enters its neighbour. Install a private
+# session key table while pane 0 is still targeted; it forwards the real event
+# normally and injects one out-of-bounds motion into this ledger on pane leave.
+_ledger_hover_setup="bash -c 'source \"$_WRAPPER_DIR/lib/ledger-hover.sh\" && ledger_hover_install \"\$1\" \"\$2\" \"\$3\" || true' ledger-hover \"$TMUX_CMD\" \"$SESSION_NAME\" '#{pane_id}'"
+
 # Spare pane: a nested tmux whose top status bar is a tab bar (project name on
 # the first tab, numbered extras, a [ + ] add button and per-tab × close). The
 # config is written ahead of time; the pane execs the inner server. See
-# lib/spare-tabs.sh. Outer mouse stays off so clicks reach the inner tmux.
+# lib/spare-tabs.sh. Ledger routing enables outer mouse mode but preserves the
+# normal send-keys -M path, so clicks still reach the inner tmux.
 _spare_label="$(spare_tabs_socket "$SESSION_NAME")"
 mkdir -p "$SHARE_DIR"
 _spare_conf="$SHARE_DIR/spare-${SESSION_NAME}.conf"
@@ -605,6 +612,7 @@ fi
   bind-key w run-shell "$_spare_close_bind" \; \
   bind-key Tab run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label next-window" \; \
   bind-key BTab run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label previous-window" \; \
+  run-shell "$_ledger_hover_setup" \; \
   split-window -h -p "$_pane0_pct" -c "$PROJECT_DIR" \
   "$AI_LAUNCH_CMD; exec bash" \; \
   set-option -p @gt_ai 1 \; \

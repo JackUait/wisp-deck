@@ -29,6 +29,7 @@ type nativeLedgerSnapshot struct {
 
 type nativeLedgerSnapshotRow struct {
 	Kind    int               `json:"kind"`
+	Group   int               `json:"group,omitempty"`
 	ID      nativeLedgerRowID `json:"id"`
 	Path    string            `json:"path,omitempty"`
 	Label   string            `json:"label,omitempty"`
@@ -117,7 +118,7 @@ func nativeLedgerBinary(t *testing.T) string {
 func writeNativeLedgerSnapshot(t *testing.T, total int, branch string) string {
 	t.Helper()
 	rows := make([]nativeLedgerSnapshotRow, 0, total+1)
-	rows = append(rows, nativeLedgerSnapshotRow{Kind: 0, Label: "modified", Count: total})
+	rows = append(rows, nativeLedgerSnapshotRow{Kind: 0, Group: 2, Label: "modified", Count: total})
 	for i := 0; i < total; i++ {
 		path := fmt.Sprintf("src/file_%05d.go", i)
 		rows = append(rows, nativeLedgerSnapshotRow{
@@ -321,6 +322,12 @@ func TestNativeLedgerPTYInteractionParity10k(t *testing.T) {
 	time.Sleep(60 * time.Millisecond)
 	if delta := session.capture.after(offset); delta != "" {
 		t.Fatalf("same-row motion emitted an extra terminal frame (%d bytes): %q", len(delta), delta)
+	}
+
+	offset = session.capture.length()
+	time.Sleep(400 * time.Millisecond)
+	if delta := session.capture.after(offset); delta != "" {
+		t.Fatalf("stationary hover emitted an idle redraw (%d bytes): %q", len(delta), delta)
 	}
 
 	offset = session.write(t, "\x1b[<65;20;4M")

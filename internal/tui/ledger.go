@@ -589,7 +589,7 @@ func (m *LedgerModel) View() string {
 			line := m.renderRow(row, width, visual)
 			if m.state.Scroll+index == 0 && row.Kind == ledger.RowGroup {
 				if control, _ := m.ledgerDiscardControl(); control != "" {
-					line = ledgerFitPlain(ledgerGroupLabel(row)+"  "+control, width)
+					line = renderLedgerGroupRow(row, width, control)
 				}
 			}
 			lines = append(lines, line)
@@ -622,24 +622,74 @@ func renderLedgerHeader(metadata ledger.Metadata, width int) []string {
 	line := " " + plan + strings.Repeat(" ", available) + stamp
 	line = ledgerFitPlain(line, width)
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	lineRendered := dim.Render(line)
+	if stamp != "" {
+		added := fmt.Sprintf("+%d", metadata.Added)
+		deleted := fmt.Sprintf("−%d", metadata.Deleted)
+		addedAt := strings.LastIndex(line, added)
+		deletedAt := strings.LastIndex(line, deleted)
+		if addedAt >= 0 && deletedAt >= addedAt+len(added) {
+			green := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+			red := lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+			lineRendered = dim.Render(line[:addedAt]) +
+				green.Render(added) +
+				dim.Render(line[addedAt+len(added):deletedAt]) +
+				red.Render(deleted) +
+				dim.Render(line[deletedAt+len(deleted):])
+		}
+	}
 	ruleWidth := width - 2
 	if ruleWidth < 0 {
 		ruleWidth = 0
 	}
 	rule := " " + strings.Repeat("─", ruleWidth)
-	return []string{dim.Render(line), dim.Faint(true).Render(rule)}
+	return []string{lineRendered, dim.Faint(true).Render(rule)}
 }
 
 func renderLedgerRow(row ledger.Row, width int, visual ledger.RowVisualState) string {
 	switch row.Kind {
 	case ledger.RowGroup:
-		return ledgerFitPlain(ledgerGroupLabel(row), width)
+		return renderLedgerGroupRow(row, width, "")
 	case ledger.RowSpacer:
 		return ""
 	case ledger.RowFile:
 		return renderLedgerFileRow(row, width, visual)
 	default:
 		return ""
+	}
+}
+
+func renderLedgerGroupRow(row ledger.Row, width int, control string) string {
+	color, ok := ledgerGroupColor(row.Group)
+	if !ok {
+		line := ledgerGroupLabel(row)
+		if control != "" {
+			line += "  " + control
+		}
+		return ledgerFitPlain(line, width)
+	}
+
+	title := lipgloss.NewStyle().Foreground(color)
+	dot := title.Bold(true).Render("●")
+	label := title.Render(row.Label)
+	count := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(fmt.Sprintf("(%d)", row.Count))
+	line := " " + dot + " " + label + "  " + count
+	if control != "" {
+		line += "  " + control
+	}
+	return lipgloss.NewStyle().MaxWidth(width).Render(line)
+}
+
+func ledgerGroupColor(group ledger.Group) (lipgloss.Color, bool) {
+	switch group {
+	case ledger.GroupStaged:
+		return lipgloss.Color("2"), true
+	case ledger.GroupModified:
+		return lipgloss.Color("3"), true
+	case ledger.GroupNew:
+		return lipgloss.Color("6"), true
+	default:
+		return lipgloss.Color(""), false
 	}
 }
 
@@ -717,11 +767,18 @@ func (m *LedgerModel) handleLedgerDiscardClick(msg tea.MouseMsg) (tea.Cmd, bool)
 }
 
 func renderLedgerFileRow(row ledger.Row, width int, visual ledger.RowVisualState) string {
+	rowStyle := lipgloss.NewStyle()
+	if visual.Hovered {
+		rowStyle = rowStyle.Background(lipgloss.Color("238"))
+	}
+
 	indent := "   "
 	if visual.Selected {
-		indent = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2")).Render(" ☑ ")
+		indent = rowStyle.Bold(true).Foreground(lipgloss.Color("2")).Render(" ☑ ")
 	} else if visual.Hovered {
-		indent = lipgloss.NewStyle().Faint(true).Render(" ☐ ")
+		indent = rowStyle.Faint(true).Render(" ☐ ")
+	} else {
+		indent = rowStyle.Render(indent)
 	}
 
 	var prefix string
@@ -733,11 +790,11 @@ func renderLedgerFileRow(row ledger.Row, width int, visual ledger.RowVisualState
 		} else if delta < 0 {
 			figure = "−" + ledgerHumanBytes(-delta)
 		}
-		prefix = indent + fmt.Sprintf("%-9s  ", figure)
+		prefix = indent + rowStyle.Render(fmt.Sprintf("%-9s  ", figure))
 	} else {
-		add := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render(fmt.Sprintf("+%-3d", row.Added))
-		del := lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(fmt.Sprintf("−%-3d", row.Deleted))
-		prefix = indent + add + " " + del + "  "
+		add := rowStyle.Foreground(lipgloss.Color("2")).Render(fmt.Sprintf("+%-3d", row.Added))
+		del := rowStyle.Foreground(lipgloss.Color("1")).Render(fmt.Sprintf("−%-3d", row.Deleted))
+		prefix = indent + add + rowStyle.Render(" ") + del + rowStyle.Render("  ")
 	}
 
 	nameWidth := width - lipgloss.Width(prefix)
@@ -745,15 +802,13 @@ func renderLedgerFileRow(row ledger.Row, width int, visual ledger.RowVisualState
 		nameWidth = 1
 	}
 	name := runewidth.Truncate(path.Base(row.Path), nameWidth, "…")
-	line := prefix + lipgloss.NewStyle().Foreground(currentTheme.Text).Render(name)
+	line := prefix + rowStyle.Foreground(currentTheme.Text).Render(name)
 	if visual.Hovered {
-		line = lipgloss.NewStyle().
-			Background(lipgloss.Color("238")).
-			Width(width).
-			MaxWidth(width).
-			Render(line)
+		if padding := width - lipgloss.Width(line); padding > 0 {
+			line += rowStyle.Render(strings.Repeat(" ", padding))
+		}
 	}
-	return line
+	return lipgloss.NewStyle().MaxWidth(width).Render(line)
 }
 
 func renderLedgerFooter(state *ledger.State, width int, actionError error, pill *ledger.SessionPill, pillHover bool) string {

@@ -151,8 +151,9 @@ type ledgerSnapshotDocument struct {
 }
 
 type ledgerSnapshotRow struct {
-	Kind ledger.RowKind `json:"kind"`
-	ID   struct {
+	Kind  ledger.RowKind `json:"kind"`
+	Group ledger.Group   `json:"group"`
+	ID    struct {
 		Group ledger.Group `json:"group"`
 		Path  string       `json:"path"`
 	} `json:"id"`
@@ -178,7 +179,7 @@ func readLedgerSnapshot(path string) (ledger.Snapshot, error) {
 	rows := make([]ledger.Row, len(document.Rows))
 	for index, row := range document.Rows {
 		rows[index] = ledger.Row{
-			Kind: row.Kind, ID: ledger.RowID{Group: row.ID.Group, Path: row.ID.Path},
+			Kind: row.Kind, Group: row.Group, ID: ledger.RowID{Group: row.ID.Group, Path: row.ID.Path},
 			Path: row.Path, Label: row.Label, Count: row.Count,
 			Added: row.Added, Deleted: row.Deleted, Binary: row.Binary,
 			OldBytes: row.OldBytes, NewBytes: row.NewBytes,

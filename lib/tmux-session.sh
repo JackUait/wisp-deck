@@ -210,6 +210,12 @@ cleanup_tmux_session() {
 
   kill "$watcher_pid" 2>/dev/null || true
 
+  # Private key tables live at tmux-server scope, so remove this one before a
+  # final pane exit can implicitly destroy the session and its table metadata.
+  if command -v ledger_hover_uninstall >/dev/null 2>&1; then
+    ledger_hover_uninstall "$tmux_cmd" "$session_name"
+  fi
+
   local pane_pid
   for pane_pid in $("$tmux_cmd" list-panes -s -t "$session_name" -F '#{pane_pid}' 2>/dev/null); do
     kill_tree "$pane_pid" TERM

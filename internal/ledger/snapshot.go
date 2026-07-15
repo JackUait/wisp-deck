@@ -29,6 +29,7 @@ type RowID struct {
 // Row is one structural or file row in the ledger.
 type Row struct {
 	Kind     RowKind
+	Group    Group
 	ID       RowID
 	Path     string
 	Label    string
