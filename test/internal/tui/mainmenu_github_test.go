@@ -11,6 +11,30 @@ import (
 	"github.com/jackuait/wisp-deck/internal/tui"
 )
 
+// applyCmd executes a tea.Cmd and feeds its message(s) back into the model,
+// unwrapping one level of tea.Batch (submit now batches the clone cmd with
+// its spinner ticker).
+func applyCmd(t *testing.T, m *tui.MainMenuModel, cmd tea.Cmd) *tui.MainMenuModel {
+	t.Helper()
+	if cmd == nil {
+		return m
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		res, _ := m.Update(msg)
+		return res.(*tui.MainMenuModel)
+	}
+	for _, c := range batch {
+		if c == nil {
+			continue
+		}
+		res, _ := m.Update(c())
+		m = res.(*tui.MainMenuModel)
+	}
+	return m
+}
+
 // newGitHubAddMenu builds a menu in add-project mode with the path field
 // holding a GitHub URL, a projects file, and a projects root pointing at dir.
 func newGitHubAddMenu(t *testing.T, url string) (*tui.MainMenuModel, string, string) {
@@ -67,9 +91,7 @@ func TestMainMenu_AddProject_GitHubURL_ClonesIntoRootAndAddsProject(t *testing.T
 		t.Error("Form should stay open while cloning")
 	}
 
-	msg := cmd() // run the clone
-	result3, _ := mm2.Update(msg)
-	mm3 := result3.(*tui.MainMenuModel)
+	mm3 := applyCmd(t, mm2, cmd) // run the clone (and its spinner ticker)
 
 	wantDest := filepath.Join(dir, "my-repo")
 	if gotURL != "https://github.com/owner/my-repo.git" {
@@ -107,8 +129,7 @@ func TestMainMenu_AddProject_GitHubURL_CloneFailureShowsError(t *testing.T) {
 		t.Fatal("Submit with GitHub URL should dispatch a clone tea.Cmd")
 	}
 
-	result3, _ := mm2.Update(cmd())
-	mm3 := result3.(*tui.MainMenuModel)
+	mm3 := applyCmd(t, mm2, cmd)
 
 	if !mm3.InInputMode() {
 		t.Error("Should stay in input mode after clone failure")
@@ -140,12 +161,7 @@ func TestMainMenu_AddProject_GitHubURL_ExistingDestBlocksClone(t *testing.T) {
 	result2, cmd := mm1.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	mm2 := result2.(*tui.MainMenuModel)
 
-	if cmd != nil {
-		if msg := cmd(); msg != nil {
-			mm3, _ := mm2.Update(msg)
-			mm2 = mm3.(*tui.MainMenuModel)
-		}
-	}
+	mm2 = applyCmd(t, mm2, cmd)
 	if cloneCalled {
 		t.Error("Clone must not run when destination directory already exists")
 	}
@@ -202,11 +218,12 @@ func TestMainMenu_AddProject_GitHubURL_NoRootClonesIntoHome(t *testing.T) {
 
 	result1, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	mm1 := result1.(*tui.MainMenuModel)
-	_, cmd := mm1.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	result2, cmd := mm1.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm2 := result2.(*tui.MainMenuModel)
 	if cmd == nil {
 		t.Fatal("Submit with SSH GitHub URL should dispatch a clone tea.Cmd")
 	}
-	cmd()
+	applyCmd(t, mm2, cmd)
 
 	if gotURL != "git@github.com:owner/ssh-repo.git" {
 		t.Errorf("SSH input should keep SSH clone URL, got %q", gotURL)

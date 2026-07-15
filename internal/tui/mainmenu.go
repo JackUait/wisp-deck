@@ -290,6 +290,11 @@ type MainMenuModel struct {
 	// GitHub-URL add-project state: a clone is in flight. Keys are ignored
 	// (except Ctrl+C) until githubCloneDoneMsg arrives.
 	cloning bool
+	// cloneSlug/cloneDest label the in-flight clone in the status slot;
+	// cloneFrame drives its spinner (advanced by cloneTickMsg).
+	cloneSlug  string
+	cloneDest  string
+	cloneFrame int
 	// gitClone runs the actual clone; nil means real `git clone`. Injectable
 	// so tests never touch the network.
 	gitClone func(url, dest string) error
@@ -492,13 +497,12 @@ func (m *MainMenuModel) TotalItems() int {
 }
 
 // ToggleWorktrees toggles expand/collapse for the given project index.
-// No-op if the project has no worktrees.
 // The cursor is anchored to the same logical item before and after the toggle.
+// A project with no worktrees expands straight to its only child — the
+// add-worktree row — and the cursor lands there, so Enter immediately opens
+// the branch picker.
 func (m *MainMenuModel) ToggleWorktrees(projectIdx int) {
 	if projectIdx < 0 || projectIdx >= len(m.projects) {
-		return
-	}
-	if len(m.projects[projectIdx].Worktrees) == 0 {
 		return
 	}
 
@@ -509,6 +513,10 @@ func (m *MainMenuModel) ToggleWorktrees(projectIdx int) {
 		delete(m.expandedWorktrees, projectIdx)
 	} else {
 		m.expandedWorktrees[projectIdx] = true
+		if len(m.projects[projectIdx].Worktrees) == 0 {
+			m.selectedItem = m.projectToFlatIndex(projectIdx) + 1
+			return
+		}
 	}
 
 	// Restore cursor to the same logical item.
@@ -2305,6 +2313,13 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case githubCloneDoneMsg:
 		return m.applyGitHubCloneDone(msg)
 
+	case cloneTickMsg:
+		if m.cloning {
+			m.cloneFrame++
+			return m, cloneTickCmd()
+		}
+		return m, nil
+
 	case worktreeRemoveDoneMsg:
 		return m.applyWorktreeRemoveDone(msg)
 
@@ -3216,16 +3231,11 @@ func (m *MainMenuModel) submitInputMode() (tea.Model, tea.Cmd) {
 // startGitHubClone validates the clone destination and dispatches the clone
 // as a tea.Cmd — cloning can take many seconds and must never block Update.
 func (m *MainMenuModel) startGitHubClone(cloneURL, name string) (tea.Model, tea.Cmd) {
-	root := readProjectsRoot(m.projectsRootFile)
-	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			m.nameErr = fmt.Errorf("cannot determine clone destination: %v", err)
-			return m, nil
-		}
-		root = home
+	dest, err := m.cloneDestDir(name)
+	if err != nil {
+		m.nameErr = fmt.Errorf("cannot determine clone destination: %v", err)
+		return m, nil
 	}
-	dest := filepath.Join(util.ExpandPath(root), name)
 
 	if _, err := os.Stat(dest); err == nil {
 		m.nameErr = fmt.Errorf("directory already exists: %s", dest)
@@ -3242,9 +3252,63 @@ func (m *MainMenuModel) startGitHubClone(cloneURL, name string) (tea.Model, tea.
 	}
 	m.nameErr = nil
 	m.cloning = true
-	return m, func() tea.Msg {
+	m.cloneSlug = repoSlug(cloneURL)
+	m.cloneDest = dest
+	m.cloneFrame = 0
+	return m, tea.Batch(func() tea.Msg {
 		return githubCloneDoneMsg{name: name, dest: dest, err: clone(cloneURL, dest)}
+	}, cloneTickCmd())
+}
+
+// cloneTickMsg animates the clone spinner. It needs its own ticker: bobTickCmd
+// runs only when the mascot is animated, so a spinner hung off it would sit
+// frozen for anyone running Mascot [None].
+type cloneTickMsg struct{}
+
+// cloneSpinnerFrames are the braille spinner frames, indexed by cloneFrame.
+var cloneSpinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// cloneTickCmd schedules the next spinner frame.
+func cloneTickCmd() tea.Cmd {
+	return tea.Tick(80*time.Millisecond, func(time.Time) tea.Msg { return cloneTickMsg{} })
+}
+
+// cloneDestDir computes where a GitHub clone for the given project name lands:
+// under the configured projects root, else the user's home directory.
+func (m *MainMenuModel) cloneDestDir(name string) (string, error) {
+	root := readProjectsRoot(m.projectsRootFile)
+	if root == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		root = home
 	}
+	return filepath.Join(util.ExpandPath(root), name), nil
+}
+
+// abbreviateHome shortens a home-prefixed path to ~ form for display.
+func abbreviateHome(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if path == home {
+		return "~"
+	}
+	if strings.HasPrefix(path, home+string(filepath.Separator)) {
+		return "~" + path[len(home):]
+	}
+	return path
+}
+
+// repoSlug reduces a GitHub clone URL to its owner/repo form for display.
+func repoSlug(cloneURL string) string {
+	s := strings.TrimSuffix(cloneURL, ".git")
+	if i := strings.Index(s, "github.com"); i >= 0 {
+		s = strings.TrimLeft(s[i+len("github.com"):], ":/")
+	}
+	return strings.TrimSuffix(s, "/")
 }
 
 // defaultGitClone runs a real `git clone url dest`.
@@ -3263,6 +3327,8 @@ func defaultGitClone(url, dest string) error {
 // applyGitHubCloneDone finishes the GitHub-URL add-project flow.
 func (m *MainMenuModel) applyGitHubCloneDone(msg githubCloneDoneMsg) (tea.Model, tea.Cmd) {
 	m.cloning = false
+	m.cloneSlug = ""
+	m.cloneDest = ""
 	if msg.err != nil {
 		m.nameErr = fmt.Errorf("clone failed: %v", msg.err)
 		return m, nil
@@ -3801,6 +3867,39 @@ func (m *MainMenuModel) cursorBodyRow() int {
 	return 0
 }
 
+// addProjectStatusLine picks the one styled message for the status slot under
+// the path field: an error, a GitHub clone-destination preview (with a live
+// collision check), the discoverability tip, or nothing.
+func (m *MainMenuModel) addProjectStatusLine(dimStyle, errorStyle lipgloss.Style) string {
+	if m.cloning {
+		frame := cloneSpinnerFrames[m.cloneFrame%len(cloneSpinnerFrames)]
+		accentStyle := lipgloss.NewStyle().Foreground(m.theme.Accent)
+		return accentStyle.Render(TruncateMiddle(frame+" Cloning "+m.cloneSlug+" → "+abbreviateHome(m.cloneDest), menuContentWidth-2))
+	}
+	if m.inputErr != nil {
+		return errorStyle.Render(TruncateMiddle("✗ "+m.inputErr.Error(), menuContentWidth-2))
+	}
+	if cloneURL, repo, ok := util.ParseGitHubRepo(strings.TrimSpace(m.pathInput.Value())); ok {
+		name := strings.TrimSpace(m.nameInput.Value())
+		if name == "" {
+			name = repo
+		}
+		dest, err := m.cloneDestDir(name)
+		if err != nil {
+			return ""
+		}
+		if _, statErr := os.Stat(dest); statErr == nil || IsDuplicateProject(dest, m.projects) {
+			return errorStyle.Render(TruncateMiddle("✗ already exists: "+abbreviateHome(dest), menuContentWidth-2))
+		}
+		accentStyle := lipgloss.NewStyle().Foreground(m.theme.Accent)
+		return accentStyle.Render(TruncateMiddle("⬡ "+repoSlug(cloneURL)+" → "+abbreviateHome(dest), menuContentWidth-2))
+	}
+	if m.inputFocusPath && !m.autocomplete.ShowSuggestions() && !m.cloning {
+		return dimStyle.Render("Tip: paste a GitHub repo URL to clone it")
+	}
+	return ""
+}
+
 // renderInputBox builds the input mode box string (add-project or open-once).
 func (m *MainMenuModel) renderInputBox() string {
 	dimStyle := lipgloss.NewStyle().Foreground(m.theme.Dim)
@@ -3836,7 +3935,13 @@ func (m *MainMenuModel) renderInputBox() string {
 	lines = append(lines, separator)
 	lines = append(lines, emptyRow)
 
-	pathLabel := "  Path: "
+	// Field labels carry a ▸ marker on the focused field; both forms are 8 cells
+	// so focus changes never shift the layout.
+	pathFocused := m.inputFocusPath || m.inputMode == "open-once"
+	pathLabel := dimStyle.Render("  Path: ")
+	if pathFocused {
+		pathLabel = primaryBoldStyle.Render("▸ Path: ")
+	}
 	inputView := m.pathInput.View()
 	inputContent := pathLabel + inputView
 	inputPadding := menuContentWidth - lipgloss.Width(inputContent)
@@ -3845,26 +3950,25 @@ func (m *MainMenuModel) renderInputBox() string {
 	}
 	lines = append(lines, leftBorder+inputContent+strings.Repeat(" ", inputPadding)+rightBorder)
 
-	if m.inputErr != nil {
-		errMsg := errorStyle.Render(m.inputErr.Error())
+	if m.inputMode == "add-project" {
+		// A single always-rendered status slot under the path row: error,
+		// GitHub destination preview, tip, or blank — so the box height never
+		// jumps while typing.
+		status := m.addProjectStatusLine(dimStyle, errorStyle)
+		statusContent := "  " + status
+		statusPadding := menuContentWidth - lipgloss.Width(statusContent)
+		if statusPadding < 0 {
+			statusPadding = 0
+		}
+		lines = append(lines, leftBorder+statusContent+strings.Repeat(" ", statusPadding)+rightBorder)
+	} else if m.inputErr != nil {
+		errMsg := errorStyle.Render("✗ " + m.inputErr.Error())
 		errContent := "  " + errMsg
 		errPadding := menuContentWidth - lipgloss.Width(errContent)
 		if errPadding < 0 {
 			errPadding = 0
 		}
 		lines = append(lines, leftBorder+errContent+strings.Repeat(" ", errPadding)+rightBorder)
-	}
-
-	// Discoverability hint: the path field also accepts a GitHub repo URL.
-	// Hidden once suggestions, an error, or the clone state need the space.
-	if m.inputMode == "add-project" && m.inputFocusPath && m.inputErr == nil &&
-		!m.cloning && !m.autocomplete.ShowSuggestions() {
-		hint := "  " + dimStyle.Render("Tip: paste a GitHub repo URL to clone it")
-		hintPadding := menuContentWidth - lipgloss.Width(hint)
-		if hintPadding < 0 {
-			hintPadding = 0
-		}
-		lines = append(lines, leftBorder+hint+strings.Repeat(" ", hintPadding)+rightBorder)
 	}
 
 	// Autocomplete suggestions rendered inside the box (path field only)
@@ -3891,7 +3995,10 @@ func (m *MainMenuModel) renderInputBox() string {
 
 	// Name field (add-project mode only)
 	if m.inputMode == "add-project" {
-		nameLabel := "  Name: "
+		nameLabel := dimStyle.Render("  Name: ")
+		if !m.inputFocusPath {
+			nameLabel = primaryBoldStyle.Render("▸ Name: ")
+		}
 		nameView := m.nameInput.View()
 		nameBase := nameLabel + nameView
 		namePadding := menuContentWidth - lipgloss.Width(nameBase)
@@ -3915,7 +4022,7 @@ func (m *MainMenuModel) renderInputBox() string {
 		lines = append(lines, nameRow)
 
 		if m.nameErr != nil {
-			errMsg := errorStyle.Render(m.nameErr.Error())
+			errMsg := errorStyle.Render("✗ " + m.nameErr.Error())
 			nameErrContent := "  " + errMsg
 			nameErrPadding := menuContentWidth - lipgloss.Width(nameErrContent)
 			if nameErrPadding < 0 {
@@ -3924,14 +4031,6 @@ func (m *MainMenuModel) renderInputBox() string {
 			lines = append(lines, leftBorder+nameErrContent+strings.Repeat(" ", nameErrPadding)+rightBorder)
 		}
 
-		if m.cloning {
-			cloningContent := "  " + helpStyle.Render("Cloning repository…")
-			cloningPadding := menuContentWidth - lipgloss.Width(cloningContent)
-			if cloningPadding < 0 {
-				cloningPadding = 0
-			}
-			lines = append(lines, leftBorder+cloningContent+strings.Repeat(" ", cloningPadding)+rightBorder)
-		}
 	}
 
 	lines = append(lines, emptyRow)
@@ -3939,7 +4038,11 @@ func (m *MainMenuModel) renderInputBox() string {
 
 	sep := dimStyle.Render(" · ")
 	var helpContent string
-	if m.autocomplete.ShowSuggestions() {
+	if m.cloning {
+		// Esc and Enter are ignored while a clone is in flight; advertising
+		// them here would lie.
+		helpContent = helpStyle.Render("Ctrl+C quit")
+	} else if m.autocomplete.ShowSuggestions() {
 		helpContent = helpStyle.Render("\u2191\u2193 navigate") + sep + helpStyle.Render("\u23ce complete") + sep + helpStyle.Render("Esc cancel")
 	} else if m.inputMode == "add-project" && !m.inputFocusPath {
 		helpContent = helpStyle.Render("\u21e7Tab back") + sep + helpStyle.Render("\u23ce confirm") + sep + helpStyle.Render("Esc back")
