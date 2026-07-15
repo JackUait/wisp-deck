@@ -307,6 +307,10 @@ func (m *MainMenuModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.aboutOpen {
 		return m.handleAboutMouse(msg)
 	}
+	// The folder browser owns all mouse input: click outside the card closes it.
+	if m.browser != nil {
+		return m.handleBrowserMouse(msg)
+	}
 	// The login-management modal is clickable (its cursor doubles as the hover
 	// highlight); its text-entry and remove-confirm sub-modes own input.
 	if m.accountMenuOpen && !m.accountMenuInputMode && !m.accountMenuConfirm {

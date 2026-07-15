@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jackuait/wisp-deck/internal/util"
 )
@@ -295,4 +296,113 @@ func (m *MainMenuModel) browserCardLayout() (left, top, w, h int) {
 func (m *MainMenuModel) overlayBrowser(placed string) string {
 	left, top, w, _ := m.browserCardLayout()
 	return m.overlayCard(placed, strings.Split(m.renderBrowserCard(), "\n"), left, top, w)
+}
+
+// handleBrowserMouse owns all mouse input while the browser overlay is open:
+// a left click outside the card dismisses it (mirroring the About card);
+// everything else is swallowed so nothing falls through to the menu beneath.
+func (m *MainMenuModel) handleBrowserMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+		left, top, w, h := m.browserCardLayout()
+		onCard := msg.X >= left && msg.X < left+w && msg.Y >= top && msg.Y < top+h
+		if !onCard {
+			m.exitInputMode()
+		}
+	}
+	return m, nil
+}
+
+// updateBrowser owns all key input while the folder browser is open.
+func (m *MainMenuModel) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	b := m.browser
+	switch msg.Type {
+	case tea.KeyCtrlC:
+		m.exitInputMode()
+		m.setActionResult("quit")
+		return m, tea.Quit
+	case tea.KeyEsc:
+		if b.Filter() != "" {
+			b.ClearFilter()
+			return m, nil
+		}
+		m.exitInputMode()
+		return m, nil
+	case tea.KeyUp:
+		b.MoveUp()
+		return m, nil
+	case tea.KeyDown:
+		b.MoveDown()
+		return m, nil
+	case tea.KeyRight:
+		b.Descend()
+		return m, nil
+	case tea.KeyLeft:
+		b.GoUp()
+		return m, nil
+	case tea.KeyBackspace:
+		if !b.BackspaceFilter() {
+			b.GoUp()
+		}
+		return m, nil
+	case tea.KeyTab:
+		if path, ok := b.ChooseHighlighted(); ok {
+			return m.chooseBrowserFolder(path)
+		}
+		return m, nil
+	case tea.KeyEnter:
+		if _, ok := b.GitHubURL(); ok {
+			return m.chooseBrowserGitHubURL(strings.TrimSpace(b.Filter()))
+		}
+		if b.Selected() == 0 {
+			if path, ok := b.ChooseHighlighted(); ok {
+				return m.chooseBrowserFolder(path)
+			}
+			return m, nil
+		}
+		b.Descend()
+		return m, nil
+	case tea.KeySpace:
+		b.TypeRune(' ')
+		return m, nil
+	case tea.KeyRunes:
+		for _, r := range msg.Runes {
+			b.TypeRune(r)
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// chooseBrowserFolder closes the browser and hands the chosen folder to the
+// existing name stage (auto-derive, duplicate checks, persistence).
+func (m *MainMenuModel) chooseBrowserFolder(path string) (tea.Model, tea.Cmd) {
+	m.browser = nil
+	m.pathInput.SetValue(path)
+	return m.advanceToNameField()
+}
+
+// chooseBrowserGitHubURL closes the browser with the filter's GitHub URL as
+// the path, entering the name stage that leads to the clone flow.
+func (m *MainMenuModel) chooseBrowserGitHubURL(url string) (tea.Model, tea.Cmd) {
+	m.browser = nil
+	m.pathInput.SetValue(url)
+	return m.advanceToNameField()
+}
+
+// reopenBrowserFromName returns from the name stage to the browser: at the
+// chosen folder's parent, or with a GitHub URL back in the filter.
+func (m *MainMenuModel) reopenBrowserFromName() {
+	val := strings.TrimSpace(m.pathInput.Value())
+	var b DirBrowserModel
+	if _, _, isGitHub := util.ParseGitHubRepo(val); isGitHub || val == "" {
+		b = NewDirBrowser(m.browserStartDir())
+		for _, r := range val {
+			b.TypeRune(r)
+		}
+	} else {
+		b = NewDirBrowser(filepath.Dir(filepath.Clean(util.ExpandPath(val))))
+	}
+	m.browser = &b
+	m.nameInput.Blur()
+	m.inputFocusPath = true
 }

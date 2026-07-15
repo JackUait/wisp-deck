@@ -2364,6 +2364,9 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.settingsInputMode {
 			return m.updateSettingsInput(msg)
 		}
+		if m.browser != nil {
+			return m.updateBrowser(msg)
+		}
 		if m.inputMode != "" {
 			return m.updateInputMode(msg)
 		}
@@ -2977,11 +2980,30 @@ func (m *MainMenuModel) enterInputMode(mode string) (tea.Model, tea.Cmd) {
 	m.nameInput = ni
 
 	m.autocomplete = NewAutocomplete(PathSuggestionProvider(8), 8)
+
+	// add-project picks its folder by navigating, not typing: open the
+	// browser overlay instead of focusing the path field.
+	if mode == "add-project" {
+		b := NewDirBrowser(m.browserStartDir())
+		m.browser = &b
+		m.pathInput.SetValue("")
+		m.pathInput.Blur()
+	}
 	return m, textinput.Blink
+}
+
+// browserStartDir is where the folder browser opens: the configured projects
+// root, else the home directory.
+func (m *MainMenuModel) browserStartDir() string {
+	if root := readProjectsRoot(m.projectsRootFile); root != "" {
+		return root
+	}
+	return "~"
 }
 
 func (m *MainMenuModel) exitInputMode() {
 	m.inputMode = ""
+	m.browser = nil
 	m.inputErr = nil
 	m.nameErr = nil
 	m.nameTouched = false
@@ -3131,9 +3153,14 @@ func (m *MainMenuModel) maybeAutoDeriveName() {
 func (m *MainMenuModel) updateInputModeName(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc, tea.KeyShiftTab:
-		// Return to path field and clear soft-warn.
+		// Go back and clear soft-warn: add-project reopens the folder
+		// browser; open-once returns focus to its path field.
 		m.nameWarnShown = false
 		m.nameErr = nil
+		if m.inputMode == "add-project" {
+			m.reopenBrowserFromName()
+			return m, nil
+		}
 		m.inputFocusPath = true
 		m.nameInput.Blur()
 		m.pathInput.Focus()
@@ -3941,12 +3968,17 @@ func (m *MainMenuModel) renderInputBox() string {
 
 	// Field labels carry a ▸ marker on the focused field; both forms are 8 cells
 	// so focus changes never shift the layout.
-	pathFocused := m.inputFocusPath || m.inputMode == "open-once"
+	pathFocused := (m.inputFocusPath || m.inputMode == "open-once") && m.inputMode != "add-project"
 	pathLabel := dimStyle.Render("  Path: ")
 	if pathFocused {
 		pathLabel = primaryBoldStyle.Render("▸ Path: ")
 	}
 	inputView := m.pathInput.View()
+	if m.inputMode == "add-project" {
+		// The path is picked in the folder browser, never typed: render it as
+		// static text (no prompt, no cursor).
+		inputView = TruncateMiddle(abbreviateHome(strings.TrimSpace(m.pathInput.Value())), menuContentWidth-10)
+	}
 	inputContent := pathLabel + inputView
 	inputPadding := menuContentWidth - lipgloss.Width(inputContent)
 	if inputPadding < 0 {

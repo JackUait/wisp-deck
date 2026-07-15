@@ -23,12 +23,14 @@ func newAddProjMenu(t *testing.T) (*MainMenuModel, string) {
 	return m, dir
 }
 
-func TestAddProjectBox_FocusMarkerOnPathField(t *testing.T) {
+func TestAddProjectBox_PathFieldNeverCarriesFocusMarker(t *testing.T) {
+	// The path is picked in the folder browser, so the form's path row is
+	// static and never focused.
 	m, _ := newAddProjMenu(t)
 	raw := stripAnsi(m.renderInputBox())
 
-	if !strings.Contains(raw, "▸ Path:") {
-		t.Errorf("focused path field should carry the ▸ marker, got:\n%s", raw)
+	if strings.Contains(raw, "▸ Path:") {
+		t.Errorf("static path row must not carry the ▸ marker, got:\n%s", raw)
 	}
 	if strings.Contains(raw, "▸ Name:") {
 		t.Errorf("unfocused name field must not carry the ▸ marker, got:\n%s", raw)
@@ -36,7 +38,8 @@ func TestAddProjectBox_FocusMarkerOnPathField(t *testing.T) {
 }
 
 func TestAddProjectBox_FocusMarkerMovesToName(t *testing.T) {
-	m, _ := newAddProjMenu(t)
+	m, dir := newAddProjMenu(t)
+	m.pathInput.SetValue(dir)
 	m.advanceToNameField()
 	raw := stripAnsi(m.renderInputBox())
 
