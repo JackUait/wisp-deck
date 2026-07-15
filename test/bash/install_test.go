@@ -3,11 +3,9 @@ package bash_test
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // installSnippet builds a bash snippet that sources tui.sh and install.sh,
@@ -20,296 +18,71 @@ func installSnippet(t *testing.T, body string) string {
 	return fmt.Sprintf("source %q && source %q && %s", tuiPath, installPath, body)
 }
 
-func opencodePluginTemplate(t *testing.T) []byte {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(projectRoot(t), "templates", "opencode-plugin.ts"))
-	if err != nil {
-		t.Fatalf("read OpenCode plugin template: %v", err)
-	}
-	return data
-}
-
 func opencodePluginDestination(configHome string) string {
 	return filepath.Join(configHome, "opencode", "plugins", "wisp-deck.ts")
 }
 
-func assertOpencodePluginInstalled(t *testing.T, configHome string) {
+func assertKnownOpenCodePluginsAbsent(t *testing.T, configHome string) {
 	t.Helper()
-	dest := opencodePluginDestination(configHome)
-	got, err := os.ReadFile(dest)
-	if err != nil {
-		t.Fatalf("OpenCode plugin was not installed at %s: %v", dest, err)
-	}
-	want := opencodePluginTemplate(t)
-	if string(got) != string(want) {
-		t.Fatalf("OpenCode plugin content differs from template\ngot:  %q\nwant: %q", got, want)
-	}
-	info, err := os.Stat(dest)
-	if err != nil {
-		t.Fatalf("stat OpenCode plugin: %v", err)
-	}
-	if gotMode := info.Mode().Perm(); gotMode != 0o600 {
-		t.Fatalf("OpenCode plugin mode = %04o, want 0600", gotMode)
+	for _, name := range []string{"wisp-deck.ts", "ghost-tab.ts"} {
+		path := filepath.Join(configHome, "opencode", "plugins", name)
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("known OpenCode sound plugin %s was not retired: %v", path, err)
+		}
 	}
 }
 
-func TestInstallOpencodePlugin_uses_xdg_destination(t *testing.T) {
+func TestRetireKnownOpenCodeSoundPlugins_removes_exact_known_files(t *testing.T) {
 	dir := t.TempDir()
-	home := filepath.Join(dir, "home")
-	configHome := filepath.Join(dir, "xdg")
-	env := buildEnv(t, nil, "HOME="+home, "XDG_CONFIG_HOME="+configHome)
-
-	out, code := runBashSnippet(t, installSnippet(t, `umask 000; install_opencode_plugin`), env)
+	configHome := filepath.Join(dir, "config")
+	pluginDir := filepath.Join(configHome, "opencode", "plugins")
+	writeTempFile(t, pluginDir, "wisp-deck.ts", "legacy adapter fixture\n")
+	writeTempFile(t, pluginDir, "ghost-tab.ts", "legacy sound fixture\n")
+	binDir := mockCommand(t, dir, "shasum", `
+case "$*" in
+  *wisp-deck.ts*) printf '93acddeb65141aaee763c3dd891a7006a1716137a2fdeda6a05cf7fec1fe01f4  %s\n' "$3" ;;
+  *ghost-tab.ts*) printf 'a7ed3712ba0bb00f77c351c236073fc2d71cf80b644c6acaca19f1bced6fb218  %s\n' "$3" ;;
+  *) exit 1 ;;
+esac
+`)
+	env := buildEnv(t, []string{binDir}, "HOME="+filepath.Join(dir, "home"), "XDG_CONFIG_HOME="+configHome)
+	out, code := runBashSnippet(t, installSnippet(t, `retire_known_opencode_sound_plugins`), env)
 	assertExitCode(t, code, 0)
 	if strings.TrimSpace(out) != "" {
-		t.Fatalf("successful plugin sync must not contaminate stdout, got %q", out)
+		t.Fatalf("retirement contaminated stdout: %q", out)
 	}
-	assertOpencodePluginInstalled(t, configHome)
-	if _, err := os.Stat(opencodePluginDestination(filepath.Join(home, ".config"))); !os.IsNotExist(err) {
-		t.Fatalf("plugin must not be written below HOME when XDG_CONFIG_HOME is set: %v", err)
-	}
+	assertKnownOpenCodePluginsAbsent(t, configHome)
 }
 
-func TestInstallOpencodePlugin_replaces_stale_file_with_sibling_rename(t *testing.T) {
+func TestRetireKnownOpenCodeSoundPlugins_preserves_unknown_edits_and_symlinks(t *testing.T) {
 	dir := t.TempDir()
 	configHome := filepath.Join(dir, "config")
-	dest := writeTempFile(t, filepath.Dir(opencodePluginDestination(configHome)), "wisp-deck.ts", "stale plugin\n")
-	if err := os.Chmod(dest, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	moveLog := filepath.Join(dir, "move.log")
-	binDir := mockCommand(t, dir, "mv", `printf '%s\n' "$@" > "$MOVE_LOG"; exec /bin/mv "$@"`)
-	env := buildEnv(t, []string{binDir}, "HOME="+filepath.Join(dir, "home"),
-		"XDG_CONFIG_HOME="+configHome, "MOVE_LOG="+moveLog)
-
-	_, code := runBashSnippet(t, installSnippet(t, `install_opencode_plugin`), env)
-	assertExitCode(t, code, 0)
-	assertOpencodePluginInstalled(t, configHome)
-	moveData, err := os.ReadFile(moveLog)
-	if err != nil {
-		t.Fatalf("atomic rename was not invoked: %v", err)
-	}
-	args := strings.Fields(string(moveData))
-	if len(args) < 2 {
-		t.Fatalf("mv args malformed: %q", moveData)
-	}
-	tmp, target := args[len(args)-2], args[len(args)-1]
-	if target != dest {
-		t.Fatalf("rename target = %q, want %q", target, dest)
-	}
-	if filepath.Dir(tmp) != filepath.Dir(dest) || tmp == dest {
-		t.Fatalf("rename source %q must be a temporary sibling of %q", tmp, dest)
-	}
-	if leftovers, _ := filepath.Glob(dest + ".tmp.*"); len(leftovers) != 0 {
-		t.Fatalf("temporary plugin files leaked: %v", leftovers)
-	}
-}
-
-func TestInstallOpencodePlugin_identical_content_preserves_mtime_and_repairs_mode(t *testing.T) {
-	dir := t.TempDir()
-	configHome := filepath.Join(dir, "config")
-	dest := opencodePluginDestination(configHome)
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dest, opencodePluginTemplate(t), 0o666); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(dest, 0o666); err != nil {
-		t.Fatal(err)
-	}
-	old := time.Now().Add(-4 * time.Hour).Truncate(time.Second)
-	if err := os.Chtimes(dest, old, old); err != nil {
-		t.Fatal(err)
-	}
-	before, err := os.Stat(dest)
-	if err != nil {
+	pluginDir := filepath.Join(configHome, "opencode", "plugins")
+	unknown := writeTempFile(t, pluginDir, "wisp-deck.ts", "locally edited plugin\n")
+	target := writeTempFile(t, dir, "target.ts", "legacy sound fixture\n")
+	symlink := filepath.Join(pluginDir, "ghost-tab.ts")
+	if err := os.Symlink(target, symlink); err != nil {
 		t.Fatal(err)
 	}
 	env := buildEnv(t, nil, "HOME="+filepath.Join(dir, "home"), "XDG_CONFIG_HOME="+configHome)
-
-	_, code := runBashSnippet(t, installSnippet(t, `install_opencode_plugin`), env)
+	_, code := runBashSnippet(t, installSnippet(t, `retire_known_opencode_sound_plugins`), env)
 	assertExitCode(t, code, 0)
-	after, err := os.Stat(dest)
-	if err != nil {
-		t.Fatal(err)
+	if data, err := os.ReadFile(unknown); err != nil || string(data) != "locally edited plugin\n" {
+		t.Fatalf("unknown plugin was changed: %q, %v", data, err)
 	}
-	if !after.ModTime().Equal(before.ModTime()) {
-		t.Fatalf("identical sync changed mtime: before=%s after=%s", before.ModTime(), after.ModTime())
-	}
-	if got := after.Mode().Perm(); got != 0o600 {
-		t.Fatalf("identical plugin mode = %04o, want 0600", got)
+	if info, err := os.Lstat(symlink); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("plugin symlink was changed: %v, %v", info, err)
 	}
 }
 
-func TestInstallOpencodePlugin_resolves_physical_distribution_root_through_symlinked_lib(t *testing.T) {
+func TestRetireKnownOpenCodeSoundPlugins_does_not_create_config_tree(t *testing.T) {
 	dir := t.TempDir()
-	physical := filepath.Join(dir, "share", "wisp-deck")
-	physicalLib := filepath.Join(physical, "lib")
-	if err := os.MkdirAll(physicalLib, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"install.sh", "tui.sh"} {
-		data, err := os.ReadFile(filepath.Join(projectRoot(t), "lib", name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(physicalLib, name), data, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	const physicalTemplate = "plugin from physical distribution root\n"
-	writeTempFile(t, filepath.Join(physical, "templates"), "opencode-plugin.ts", physicalTemplate)
-	configHome := filepath.Join(dir, "config")
-	logicalLib := filepath.Join(configHome, "wisp-deck", "lib")
-	if err := os.MkdirAll(filepath.Dir(logicalLib), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(physicalLib, logicalLib); err != nil {
-		t.Fatal(err)
-	}
-	script := fmt.Sprintf(`source %q && source %q && install_opencode_plugin`,
-		filepath.Join(logicalLib, "tui.sh"), filepath.Join(logicalLib, "install.sh"))
+	configHome := filepath.Join(dir, "missing-config")
 	env := buildEnv(t, nil, "HOME="+filepath.Join(dir, "home"), "XDG_CONFIG_HOME="+configHome)
-
-	_, code := runBashSnippet(t, script, env)
+	_, code := runBashSnippet(t, installSnippet(t, `retire_known_opencode_sound_plugins`), env)
 	assertExitCode(t, code, 0)
-	got, err := os.ReadFile(opencodePluginDestination(configHome))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != physicalTemplate {
-		t.Fatalf("installed %q, want physical-root template %q", got, physicalTemplate)
-	}
-}
-
-func TestInstallOpencodePlugin_uses_exported_lib_dir_when_invoked_from_zsh(t *testing.T) {
-	zsh, err := exec.LookPath("zsh")
-	if err != nil {
-		t.Skip("zsh not installed")
-	}
-	dir := t.TempDir()
-	configHome := filepath.Join(dir, "config")
-	libDir := filepath.Join(projectRoot(t), "lib")
-	cmd := exec.Command(zsh, "-c", `
-cd "$TEST_PROJECT_CWD" || exit 70
-source "$WISP_DECK_LIB_DIR/install.sh" || exit 71
-install_opencode_plugin
-`)
-	cmd.Env = buildEnv(t, nil, "HOME="+filepath.Join(dir, "home"),
-		"XDG_CONFIG_HOME="+configHome, "WISP_DECK_LIB_DIR="+libDir,
-		"TEST_PROJECT_CWD="+filepath.Join(dir, "unrelated-project"))
-	if err := os.MkdirAll(filepath.Join(dir, "unrelated-project"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("zsh plugin sync failed: %v: %s", err, out)
-	}
-	assertOpencodePluginInstalled(t, configHome)
-}
-
-func TestInstallOpencodePlugin_failed_rename_preserves_previous_plugin(t *testing.T) {
-	dir := t.TempDir()
-	configHome := filepath.Join(dir, "config")
-	dest := writeTempFile(t, filepath.Dir(opencodePluginDestination(configHome)), "wisp-deck.ts", "known-good old plugin\n")
-	moveLog := filepath.Join(dir, "move-attempted")
-	binDir := mockCommand(t, dir, "mv", `printf attempted > "$MOVE_LOG"; exit 73`)
-	env := buildEnv(t, []string{binDir}, "HOME="+filepath.Join(dir, "home"),
-		"XDG_CONFIG_HOME="+configHome, "MOVE_LOG="+moveLog)
-
-	_, code := runBashSnippet(t, installSnippet(t, `install_opencode_plugin`), env)
-	if code == 0 {
-		t.Fatal("plugin sync succeeded despite failed atomic rename")
-	}
-	if _, err := os.Stat(moveLog); err != nil {
-		t.Fatalf("test did not reach the failing rename: %v", err)
-	}
-	got, err := os.ReadFile(dest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "known-good old plugin\n" {
-		t.Fatalf("failed sync changed previous plugin to %q", got)
-	}
-	if leftovers, _ := filepath.Glob(dest + ".tmp.*"); len(leftovers) != 0 {
-		t.Fatalf("failed sync leaked temporary files: %v", leftovers)
-	}
-}
-
-func TestInstallOpencodePlugin_rejects_destination_directory_without_nested_temp(t *testing.T) {
-	dir := t.TempDir()
-	configHome := filepath.Join(dir, "config")
-	dest := opencodePluginDestination(configHome)
-	if err := os.MkdirAll(dest, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	env := buildEnv(t, nil, "HOME="+filepath.Join(dir, "home"), "XDG_CONFIG_HOME="+configHome)
-
-	_, code := runBashSnippet(t, installSnippet(t, `install_opencode_plugin`), env)
-	if code == 0 {
-		t.Fatal("plugin sync reported success with a directory at the destination path")
-	}
-	info, err := os.Stat(dest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !info.IsDir() {
-		t.Fatalf("destination type changed to %s, want original directory", info.Mode())
-	}
-	entries, err := os.ReadDir(dest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("plugin temp was moved inside destination directory: %v", entries)
-	}
-	if leftovers, _ := filepath.Glob(dest + ".tmp.*"); len(leftovers) != 0 {
-		t.Fatalf("plugin temp leaked beside destination directory: %v", leftovers)
-	}
-}
-
-func TestInstallOpencodePlugin_rejects_symlink_to_directory_before_creating_temp(t *testing.T) {
-	dir := t.TempDir()
-	configHome := filepath.Join(dir, "config")
-	dest := opencodePluginDestination(configHome)
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	targetDir := filepath.Join(dir, "directory-target")
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(targetDir, dest); err != nil {
-		t.Fatal(err)
-	}
-	mktempLog := filepath.Join(dir, "mktemp-called")
-	binDir := mockCommand(t, dir, "mktemp", `printf called > "$MKTEMP_LOG"; exec /usr/bin/mktemp "$@"`)
-	env := buildEnv(t, []string{binDir}, "HOME="+filepath.Join(dir, "home"),
-		"XDG_CONFIG_HOME="+configHome, "MKTEMP_LOG="+mktempLog)
-
-	_, code := runBashSnippet(t, installSnippet(t, `install_opencode_plugin`), env)
-	if code == 0 {
-		t.Fatal("plugin sync reported success with a symlink-to-directory destination")
-	}
-	if _, err := os.Stat(mktempLog); !os.IsNotExist(err) {
-		t.Fatalf("plugin sync created a temp before rejecting symlink-to-directory: %v", err)
-	}
-	info, err := os.Lstat(dest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("destination symlink was replaced: mode=%s", info.Mode())
-	}
-	entries, err := os.ReadDir(targetDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("plugin temp leaked through destination symlink: %v", entries)
-	}
-	if leftovers, _ := filepath.Glob(dest + ".tmp.*"); len(leftovers) != 0 {
-		t.Fatalf("plugin temp leaked beside destination symlink: %v", leftovers)
+	if _, err := os.Stat(configHome); !os.IsNotExist(err) {
+		t.Fatalf("retirement created a config tree: %v", err)
 	}
 }
 
@@ -747,7 +520,7 @@ func TestEnsureOpencode_installs_globally_via_npm_when_absent(t *testing.T) {
 	assertContains(t, out, "OpenCode installed")
 	npmCalls, _ := os.ReadFile(npmLog)
 	assertContains(t, string(npmCalls), "install -g opencode-ai")
-	assertOpencodePluginInstalled(t, configHome)
+	assertKnownOpenCodePluginsAbsent(t, configHome)
 }
 
 func TestEnsureOpencode_skips_install_when_already_present(t *testing.T) {
@@ -767,7 +540,7 @@ func TestEnsureOpencode_skips_install_when_already_present(t *testing.T) {
 	if _, err := os.Stat(npmLog); err == nil {
 		t.Errorf("npm must not run when opencode is already installed")
 	}
-	assertOpencodePluginInstalled(t, configHome)
+	assertKnownOpenCodePluginsAbsent(t, configHome)
 }
 
 func TestEnsureOpencode_falls_back_to_npx_when_npm_install_fails(t *testing.T) {
@@ -784,7 +557,7 @@ func TestEnsureOpencode_falls_back_to_npx_when_npm_install_fails(t *testing.T) {
 	out, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "OpenCode ready")
-	assertOpencodePluginInstalled(t, configHome)
+	assertKnownOpenCodePluginsAbsent(t, configHome)
 }
 
 func TestEnsureOpencode_uses_npx_when_npm_is_unavailable(t *testing.T) {
@@ -800,7 +573,7 @@ func TestEnsureOpencode_uses_npx_when_npm_is_unavailable(t *testing.T) {
 	out, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "OpenCode ready")
-	assertOpencodePluginInstalled(t, configHome)
+	assertKnownOpenCodePluginsAbsent(t, configHome)
 }
 
 func TestEnsureOpencode_warns_when_no_node(t *testing.T) {
@@ -846,41 +619,44 @@ exit 1
 	assertContains(t, string(brewCalls), "uninstall opencode")
 	assertContains(t, out, "Removing brew-installed OpenCode")
 	assertContains(t, out, "OpenCode installed")
-	assertOpencodePluginInstalled(t, configHome)
+	assertKnownOpenCodePluginsAbsent(t, configHome)
 }
 
-func TestEnsureOpencode_fails_when_plugin_sync_fails(t *testing.T) {
+func TestEnsureOpencode_fails_when_known_plugin_retirement_fails(t *testing.T) {
 	dir := t.TempDir()
+	configHome := filepath.Join(dir, "config")
+	writeTempFile(t, filepath.Join(configHome, "opencode", "plugins"), "wisp-deck.ts", "legacy fixture\n")
 	binDir := mockCommand(t, dir, "opencode", `exit 0`)
 	mockCommand(t, dir, "brew", `exit 1`)
-	snippet := installSnippet(t, `install_opencode_plugin() { return 73; }; ensure_opencode`)
-	env := buildEnv(t, []string{binDir}, "HOME="+filepath.Join(dir, "home"),
-		"XDG_CONFIG_HOME="+filepath.Join(dir, "config"))
+	mockCommand(t, dir, "shasum", `printf '93acddeb65141aaee763c3dd891a7006a1716137a2fdeda6a05cf7fec1fe01f4  %s\n' "$3"`)
+	mockCommand(t, dir, "rm", `exit 73`)
+	snippet := installSnippet(t, `ensure_opencode`)
+	env := buildEnv(t, []string{binDir}, "HOME="+filepath.Join(dir, "home"), "XDG_CONFIG_HOME="+configHome)
 
 	out, code := runBashSnippet(t, snippet, env)
 	if code == 0 {
-		t.Fatal("ensure_opencode reported success after plugin sync failed")
+		t.Fatal("ensure_opencode reported success after known-plugin retirement failed")
 	}
-	assertContains(t, out, "OpenCode plugin")
+	assertContains(t, out, "known OpenCode sound plugin")
 }
 
-func TestWispDeckSetup_installs_opencode_plugin_regardless_of_selected_tool(t *testing.T) {
+func TestWispDeckSetup_retires_known_opencode_sound_plugins_unconditionally(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(projectRoot(t), "bin", "wisp-deck"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	content := string(data)
-	start := strings.Index(content, "# OpenCode plugin")
+	start := strings.Index(content, "# OpenCode sound-plugin retirement")
 	end := strings.Index(content, "# ---------- Summary ----------")
 	if start < 0 || end < 0 || start >= end {
-		t.Fatal("cannot locate OpenCode setup block")
+		t.Fatal("cannot locate OpenCode retirement block")
 	}
 	block := content[start:end]
-	if !strings.Contains(block, "install_opencode_plugin") {
-		t.Fatal("setup must invoke the shared OpenCode plugin installer")
+	if !strings.Contains(block, "retire_known_opencode_sound_plugins") {
+		t.Fatal("setup must invoke known OpenCode sound-plugin retirement")
 	}
 	if strings.Contains(block, `SELECTED_AI_TOOL" = "opencode`) ||
 		strings.Contains(block, `SELECTED_AI_TOOL" = 'opencode`) {
-		t.Fatalf("OpenCode plugin setup is still conditional on the selected tool:\n%s", block)
+		t.Fatalf("OpenCode sound-plugin retirement is conditional on the selected tool:\n%s", block)
 	}
 }

@@ -82,7 +82,7 @@ Press **S** in the selector to open Settings. Most changes apply immediately to 
 - **Theme** — Auto (matches your AI tool's colors) or a preset accent: Orange, Purple, Green, Blue, Rose, Cyan.
 - **Usage bars** — which Claude quota bars the status line shows: the 5-hour window, the 7-day window, both, or none.
 - **AI tools** — switch between Claude Code, OpenCode and Codex.
-- **Idle sound** — play a chime when the AI finishes and is waiting on you. Off by default; choose from the built-in macOS sounds.
+- **Idle sound** — play one Wisp Deck chime when the AI finishes and is waiting on you. Off by default; choose from the built-in macOS sounds. Wisp Deck suppresses each agent's native hooks, notifications, and terminal bells so this setting is the sole automatic sound control for Claude Code, OpenCode, and Codex sessions.
 - **Keep awake while working** — stop the Mac from sleeping while the AI is busy.
 - **Account** rows — the active Claude login, subscription, and auto-switch (see below).
 

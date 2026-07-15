@@ -249,12 +249,6 @@ else
             sync_claude_shared_state "$HOME/.claude" "$CLAUDE_CONFIG_DIR"
             sync_claude_shared_settings "$HOME/.claude" "$CLAUDE_CONFIG_DIR"
           fi
-          # A plain shell can manually launch OpenCode, so it is also a plugin
-          # load boundary. Never expose it while an old adapter may be loadable.
-          if ! install_opencode_plugin; then
-            printf '\033[31mError:\033[0m Failed to install OpenCode plugin. Run wisp-deck to repair the installation.\n' >&2
-            continue
-          fi
           exec "$SHELL"
           ;;
         add-worktree)
@@ -333,14 +327,12 @@ WISP_DECK_ATTENTION_DESCRIPTOR=""
 WISP_DECK_ATTENTION_GENERATION=""
 WISP_DECK_ATTENTION_FILE=""
 
-# OpenCode reads plugins during process startup. Refresh its semantic adapter
-# before creating any attention root/generation so a failed preflight cannot
-# publish or fence state for a launch that will never happen. Command resolution
-# stays near launch construction below because its npx probe is comparatively
-# expensive and unrelated to this filesystem preflight.
+# Retire exact legacy sound plugins before launch. Unknown local plugins remain
+# untouched and are inert because the strict adapter starts both OpenCode
+# processes with --pure.
 if [ "$SELECTED_AI_TOOL" = "opencode" ]; then
-  if ! install_opencode_plugin; then
-    printf '\033[31mError:\033[0m Failed to install OpenCode plugin. Run wisp-deck to repair the installation.\n' >&2
+  if ! retire_known_opencode_sound_plugins; then
+    printf '\033[31mError:\033[0m Failed to retire a known OpenCode sound plugin.\n' >&2
     exit 1
   fi
 fi
@@ -503,7 +495,10 @@ fi
 AI_TOOL_CMD="$(resolve_ai_tool_cmd "$SELECTED_AI_TOOL" "$CLAUDE_CMD" "$OPENCODE_CMD" "$CODEX_CMD")"
 case "$SELECTED_AI_TOOL" in
   opencode)
-    AI_LAUNCH_CMD="$(build_ai_launch_cmd "$SELECTED_AI_TOOL" "$AI_TOOL_CMD" "$PROJECT_DIR")"
+    AI_LAUNCH_CMD="$(build_ai_launch_cmd "$SELECTED_AI_TOOL" "$AI_TOOL_CMD" "$PROJECT_DIR")" || {
+      printf '\033[31mError:\033[0m Refusing unsupported OpenCode launch command.\n' >&2
+      exit 1
+    }
     ;;
   codex)
     AI_LAUNCH_CMD="$(build_ai_launch_cmd "$SELECTED_AI_TOOL" "$AI_TOOL_CMD")"

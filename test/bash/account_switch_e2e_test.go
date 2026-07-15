@@ -117,7 +117,7 @@ exit 0
 
 	// From the ledger pane: source the real libs and open the switcher.
 	script := fmt.Sprintf(
-		"export PATH=%q:$PATH; source %q; source %q; source %q; source %q; source %q; open_account_switcher tmux %q; echo E2E-RC=$?",
+		"unset WISP_DECK_ATTENTION_FILE WISP_DECK_ATTENTION_GENERATION WISP_DECK_ATTENTION_ROOT WISP_DECK_ATTENTION_DESCRIPTOR; export PATH=%q:$PATH; source %q; source %q; source %q; source %q; source %q; open_account_switcher tmux %q; echo E2E-RC=$?",
 		binDir,
 		filepath.Join(lib, "statusline.sh"), filepath.Join(lib, "claude-accounts.sh"),
 		filepath.Join(lib, "tmux-session.sh"), filepath.Join(lib, "claude-shared-settings.sh"),

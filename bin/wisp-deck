@@ -216,15 +216,14 @@ else
   info "Status line features are only available with Claude Code"
 fi
 
-# OpenCode plugin — keep every setup capable of launching OpenCode later from
-# the in-session tool switcher, regardless of the default selected above.
-header "Setting up OpenCode plugin..."
-_oc_plugin_dst="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins/wisp-deck.ts"
-if ! install_opencode_plugin; then
-  error "Failed to install OpenCode plugin"
+# OpenCode sound-plugin retirement — run for every setup because the user may
+# switch to OpenCode later regardless of the selected default tool.
+header "Retiring known OpenCode sound plugins..."
+if ! retire_known_opencode_sound_plugins; then
+  error "Failed to retire a known OpenCode sound plugin"
   exit 1
 fi
-success "OpenCode plugin installed at $_oc_plugin_dst"
+success "Known OpenCode sound plugins retired"
 
 # ---------- Summary ----------
 header "Setup complete!"
@@ -237,9 +236,6 @@ success "Projects file:   $PROJECTS_FILE"
 success "Config command:  wisp-deck (in ~/.local/bin/)"
 if [ -f ~/.claude/statusline-wrapper.sh ]; then
   success "Status line:     ~/.claude/statusline-wrapper.sh"
-fi
-if [ -f "$_oc_plugin_dst" ]; then
-  success "OpenCode plugin: $_oc_plugin_dst"
 fi
 echo ""
 info "Run 'wisp-deck' to manage configuration, or open a new Ghostty window to start coding."

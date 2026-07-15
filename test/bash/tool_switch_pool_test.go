@@ -80,6 +80,14 @@ func TestRelaunchSwitchToolSameToolRotatesAttentionBeforeBuild(t *testing.T) {
 	oldGeneration := attention["generation"]
 	oldState := attention["state"]
 	ctx := poolCtx(t, dir, "opencode")
+	contextData, err := os.ReadFile(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contextData = []byte(strings.Replace(string(contextData), "tool_cmd=opencode", "tool_cmd=/opt/opencode", 1))
+	if err := os.WriteFile(ctx, contextData, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	f, err := os.OpenFile(ctx, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -97,13 +105,6 @@ func TestRelaunchSwitchToolSameToolRotatesAttentionBeforeBuild(t *testing.T) {
 	bin := poolMockTmux(t, dir, rec)
 	envdir := filepath.Join(dir, "tmuxenv")
 	body := fmt.Sprintf(`
-install_opencode_plugin() {
-  if [ -f %q ]; then
-    printf 'plugin-before-fence\n' >> %q
-  else
-    printf 'plugin-after-fence\n' >> %q
-  fi
-}
 build_switch_launch_cmd() {
   if [ -n "${WISP_DECK_ATTENTION_GENERATION:-}" ] \
      && [ -f "${WISP_DECK_ATTENTION_FILE:-}" ] \
@@ -118,7 +119,7 @@ build_switch_launch_cmd() {
   fi
   printf 'opencode'
 }
-relaunch_switch_tool tmux %q opencode`, oldState, rec, rec,
+relaunch_switch_tool tmux %q opencode`,
 		envdir, envdir, envdir, envdir, envdir, rec, rec, ctx)
 	env := buildEnv(t, []string{bin}, "HOME="+dir, "WISP_DECK_LIB_DIR="+filepath.Join(projectRoot(t), "lib"))
 	out, code := runBashSnippet(t, poolSwitchSnippet(t, body), env)
@@ -158,14 +159,12 @@ relaunch_switch_tool tmux %q opencode`, oldState, rec, rec,
 		}
 	}
 	logData, err := os.ReadFile(rec)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
 	logText := string(logData)
-	assertNotContains(t, logText, "plugin-after-fence")
 	assertNotContains(t, logText, "build-before-attention")
 	assertSubstringsInOrder(t, logText,
-		"plugin-before-fence",
 		"set-environment WISP_DECK_TOOL opencode",
 		"set-environment WISP_DECK_ATTENTION_ROOT ",
 		"set-environment WISP_DECK_ATTENTION_DESCRIPTOR ",
@@ -174,7 +173,7 @@ relaunch_switch_tool tmux %q opencode`, oldState, rec, rec,
 		"build-ok ",
 		"respawn-pane",
 	)
-	contextData, err := os.ReadFile(ctx)
+	contextData, err = os.ReadFile(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +181,7 @@ relaunch_switch_tool tmux %q opencode`, oldState, rec, rec,
 	assertContains(t, string(contextData), "attention_descriptor="+attention["descriptor"])
 }
 
-func TestRelaunchSwitchTool_opencode_plugin_failure_preserves_running_generation(t *testing.T) {
+func TestRelaunchSwitchTool_unsafe_opencode_prefix_preserves_running_generation(t *testing.T) {
 	dir := t.TempDir()
 	attention := createAttentionFixture(t, dir, "claude")
 	ctx := poolCtx(t, dir, "claude")
@@ -204,85 +203,35 @@ func TestRelaunchSwitchTool_opencode_plugin_failure_preserves_running_generation
 	}
 	rec := filepath.Join(dir, "tmux.log")
 	bin := poolMockTmux(t, dir, rec)
-	body := fmt.Sprintf(`
-install_opencode_plugin() {
-  printf 'plugin-failed\n' >> %q
-  return 73
-}
-relaunch_switch_tool tmux %q opencode`, rec, ctx)
+	data, err := os.ReadFile(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.Replace(string(data), "opencode_cmd=/opt/opencode", "opencode_cmd=env EVIL=1 opencode", 1))
+	if err := os.WriteFile(ctx, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	env := buildEnv(t, []string{bin}, "HOME="+dir,
 		"WISP_DECK_LIB_DIR="+filepath.Join(projectRoot(t), "lib"))
 
-	_, code := runBashSnippet(t, poolSwitchSnippet(t, body), env)
+	_, code := runBashSnippet(t, poolSwitchSnippet(t,
+		fmt.Sprintf("relaunch_switch_tool tmux %q opencode", ctx)), env)
 	assertExitCode(t, code, 0)
 	afterDescriptor, err := os.ReadFile(attention["descriptor"])
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(afterDescriptor) != string(beforeDescriptor) {
-		t.Fatalf("failed plugin sync rotated descriptor\nbefore: %q\nafter:  %q", beforeDescriptor, afterDescriptor)
+		t.Fatalf("unsafe prefix rotated descriptor\nbefore: %q\nafter:  %q", beforeDescriptor, afterDescriptor)
 	}
 	if _, err := os.Stat(attention["state"]); err != nil {
-		t.Fatalf("failed plugin sync fenced the running generation: %v", err)
+		t.Fatalf("unsafe prefix fenced the running generation: %v", err)
 	}
 	logData, err := os.ReadFile(rec)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
 	logText := string(logData)
-	assertContains(t, logText, "plugin-failed")
-	assertNotContains(t, logText, "respawn-pane")
-}
-
-func TestRelaunchAIPane_opencode_plugin_failure_preserves_running_generation(t *testing.T) {
-	dir := t.TempDir()
-	attention := createAttentionFixture(t, dir, "opencode")
-	ctx := poolCtx(t, dir, "opencode")
-	f, err := os.OpenFile(ctx, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fmt.Fprintf(f, "attention_root=%s\nattention_descriptor=%s\n",
-		attention["root"], attention["descriptor"]); err != nil {
-		_ = f.Close()
-		t.Fatal(err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
-	beforeDescriptor, err := os.ReadFile(attention["descriptor"])
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := filepath.Join(dir, "tmux.log")
-	bin := poolMockTmux(t, dir, rec)
-	body := fmt.Sprintf(`
-install_opencode_plugin() {
-  printf 'plugin-failed\n' >> %q
-  return 73
-}
-relaunch_ai_pane tmux %q default`, rec, ctx)
-	env := buildEnv(t, []string{bin}, "HOME="+dir,
-		"WISP_DECK_LIB_DIR="+filepath.Join(projectRoot(t), "lib"))
-
-	_, code := runBashSnippet(t, poolSwitchSnippet(t, body), env)
-	assertExitCode(t, code, 0)
-	afterDescriptor, err := os.ReadFile(attention["descriptor"])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(afterDescriptor) != string(beforeDescriptor) {
-		t.Fatalf("failed plugin sync rotated descriptor\nbefore: %q\nafter:  %q", beforeDescriptor, afterDescriptor)
-	}
-	if _, err := os.Stat(attention["state"]); err != nil {
-		t.Fatalf("failed plugin sync fenced the running generation: %v", err)
-	}
-	logData, err := os.ReadFile(rec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	logText := string(logData)
-	assertContains(t, logText, "plugin-failed")
 	assertNotContains(t, logText, "respawn-pane")
 }
 

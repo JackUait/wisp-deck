@@ -218,68 +218,28 @@ ensure_nerd_font() {
   return 0
 }
 
-# Install the OpenCode attention plugin from this physical distribution root.
-#
-# Wisp Deck's installed lib/ is a symlink into the versioned distribution. A
-# logical `../templates` lookup would therefore land below ~/.config/wisp-deck,
-# where templates do not exist. Resolve the sourced install.sh directory with
-# `cd -P`, then copy through a private sibling and rename so a concurrent setup,
-# update, or launch never observes a partial plugin. Identical content is left
-# in place to preserve mtime; permissions are still repaired.
-install_opencode_plugin() {
-  local lib_dir share_dir source config_home plugin_dir destination tmp
-  if [ -n "${BASH_SOURCE[0]:-}" ]; then
-    lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
-  elif [ -n "${WISP_DECK_LIB_DIR:-}" ]; then
-    lib_dir="$(cd -P "$WISP_DECK_LIB_DIR" && pwd)" || return 1
-  else
-    return 1
-  fi
-  share_dir="$(cd -P "$lib_dir/.." && pwd)" || return 1
-  source="$share_dir/templates/opencode-plugin.ts"
-  [ -f "$source" ] || return 1
-
+# Remove only the exact legacy plugins whose behavior Wisp Deck supersedes.
+# Unknown or locally edited plugins are preserved; OpenCode launches use
+# `--pure`, so every remaining plugin is inert inside Wisp Deck regardless.
+retire_known_opencode_sound_plugins() {
+  local config_home plugin_dir path expected actual
   config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
   plugin_dir="$config_home/opencode/plugins"
-  destination="$plugin_dir/wisp-deck.ts"
-  mkdir -p "$plugin_dir" || return 1
+  [ -d "$plugin_dir" ] || return 0
+  command -v shasum >/dev/null 2>&1 || return 0
 
-  # `mv file existing-dir` succeeds by placing file INSIDE the directory. Reject
-  # directory destinations before creating a temp (including symlinks to a
-  # directory). Other symlinks are safe because rename replaces the link itself
-  # rather than following it.
-  if [ -d "$destination" ]; then
-    return 1
-  fi
-  if [ -e "$destination" ] && [ ! -f "$destination" ] && [ ! -L "$destination" ]; then
-    return 1
-  fi
-
-  if [ ! -L "$destination" ] && [ -f "$destination" ] \
-     && cmp -s "$source" "$destination"; then
-    chmod 600 "$destination"
-    return $?
-  fi
-
-  tmp="$(mktemp "${destination}.tmp.XXXXXX")" || return 1
-  if ! cp "$source" "$tmp" || ! chmod 600 "$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  if ! mv -f "$tmp" "$destination"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  # Close the check/rename race and distrust a false-successful mv. If a
-  # directory appeared concurrently, remove the temp that mv nested inside it.
-  if [ -e "$tmp" ] || [ -L "$destination" ] || [ ! -f "$destination" ] \
-     || ! cmp -s "$source" "$destination"; then
-    rm -f "$tmp"
-    if [ -d "$destination" ]; then
-      rm -f "$destination/${tmp##*/}"
-    fi
-    return 1
-  fi
+  for path in "$plugin_dir/wisp-deck.ts" "$plugin_dir/ghost-tab.ts"; do
+    [ -f "$path" ] && [ ! -L "$path" ] || continue
+    case "${path##*/}" in
+      wisp-deck.ts) expected="93acddeb65141aaee763c3dd891a7006a1716137a2fdeda6a05cf7fec1fe01f4" ;;
+      ghost-tab.ts) expected="a7ed3712ba0bb00f77c351c236073fc2d71cf80b644c6acaca19f1bced6fb218" ;;
+      *) continue ;;
+    esac
+    actual="$(shasum -a 256 "$path" 2>/dev/null)" || continue
+    actual="${actual%% *}"
+    [ "$actual" = "$expected" ] || continue
+    rm -f "$path" || return 1
+  done
   return 0
 }
 
@@ -292,6 +252,10 @@ install_opencode_plugin() {
 # global install is unavailable or fails. Any brew-installed copy is removed
 # first so npm is the single source of truth.
 ensure_opencode() {
+  if ! retire_known_opencode_sound_plugins; then
+    warn "Failed to retire a known OpenCode sound plugin"
+    return 1
+  fi
   # Remove brew-installed opencode if present
   if brew list opencode &>/dev/null; then
     info "Removing brew-installed OpenCode..."
@@ -299,10 +263,6 @@ ensure_opencode() {
   fi
 
   if command -v opencode &>/dev/null; then
-    if ! install_opencode_plugin; then
-      warn "Failed to install OpenCode plugin"
-      return 1
-    fi
     success "OpenCode already installed"
     return 0
   fi
@@ -310,10 +270,6 @@ ensure_opencode() {
   if command -v npm &>/dev/null; then
     info "Installing OpenCode..."
     if npm install -g opencode-ai &>/dev/null; then
-      if ! install_opencode_plugin; then
-        warn "Failed to install OpenCode plugin"
-        return 1
-      fi
       success "OpenCode installed"
       return 0
     fi
@@ -321,10 +277,6 @@ ensure_opencode() {
   fi
 
   if command -v npx &>/dev/null; then
-    if ! install_opencode_plugin; then
-      warn "Failed to install OpenCode plugin"
-      return 1
-    fi
     success "OpenCode ready (via npx)"
     return 0
   fi

@@ -60,16 +60,16 @@ func TestLauncher_skips_copy_when_install_is_complete(t *testing.T) {
 	}
 }
 
-func TestLauncher_repairs_missing_opencode_template_despite_version_marker(t *testing.T) {
+func TestLauncher_repairs_missing_wrapper_despite_version_marker(t *testing.T) {
 	sb := newLauncherSandbox(t)
 	env := append(sb.env, "WISP_DECK_SKIP_TUI_DOWNLOAD=1")
 
 	if _, stderr, code := runLauncher(t, env); code != 0 {
 		t.Fatalf("first run failed: %d %s", code, stderr)
 	}
-	template := filepath.Join(sb.installDir, "templates", "opencode-plugin.ts")
-	if err := os.Remove(template); err != nil {
-		t.Fatalf("remove installed OpenCode template: %v", err)
+	wrapper := filepath.Join(sb.installDir, "wrapper.sh")
+	if err := os.Remove(wrapper); err != nil {
+		t.Fatalf("remove installed wrapper: %v", err)
 	}
 
 	stdout, stderr, code := runLauncher(t, env)
@@ -77,10 +77,10 @@ func TestLauncher_repairs_missing_opencode_template_despite_version_marker(t *te
 		t.Fatalf("repair run failed: %d %s", code, stderr)
 	}
 	if strings.Contains(stdout, "already up to date") {
-		t.Fatalf("missing OpenCode template was treated as intact: %s", stdout)
+		t.Fatalf("missing wrapper was treated as intact: %s", stdout)
 	}
-	if _, err := os.Stat(template); err != nil {
-		t.Fatalf("repair run did not restore OpenCode template: %v", err)
+	if _, err := os.Stat(wrapper); err != nil {
+		t.Fatalf("repair run did not restore wrapper: %v", err)
 	}
 }
 

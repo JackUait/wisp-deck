@@ -42,30 +42,6 @@ if ! declare -f write_claude_launch_settings >/dev/null 2>&1; then
   unset _as_settings_lib_dir
 fi
 
-# A switch to OpenCode is also a launch boundary. Load the installer in the
-# independent ledger/auto-switch shells so they can atomically refresh the
-# plugin before rotating attention state or killing the current pane.
-if ! declare -f install_opencode_plugin >/dev/null 2>&1; then
-  _as_install_lib_dir="${WISP_DECK_LIB_DIR:-${BASH_SOURCE[0]%/*}}"
-  # shellcheck source=/dev/null
-  [ -f "$_as_install_lib_dir/install.sh" ] && source "$_as_install_lib_dir/install.sh"
-  unset _as_install_lib_dir
-fi
-
-# _prepare_opencode_plugin_launch <tool> — refresh OpenCode's event adapter at
-# every respawn boundary. Failure is a safe no-op for the switch: the caller
-# leaves the current pane and attention generation alive.
-_prepare_opencode_plugin_launch() {
-  [ "$1" = "opencode" ] || return 0
-  if declare -f install_opencode_plugin >/dev/null 2>&1 \
-     && install_opencode_plugin; then
-    return 0
-  fi
-  printf 'Failed to install OpenCode plugin; keeping the current agent running.\n' \
-    >>"${WISP_DECK_ERROR_LOG:-/dev/null}" 2>/dev/null || true
-  return 1
-}
-
 # reload_switcher_lib <lib_dir> — re-source THIS module from disk so a
 # long-running ledger picks up on-disk edits to the switcher (popup dimensions,
 # flags, backdrop) without the whole pane having to restart. Called right before
@@ -448,7 +424,8 @@ replay_ai_draft() {
 }
 
 # build_switch_launch_cmd <tool> <tool_cmd> <settings> <filter> \
-#   <project_dir> <new_account_dir> [resume_session] [claude_handoff_arg] — build
+#   <project_dir> <new_account_dir> [resume_session] [claude_handoff_arg]
+#   [opencode_handoff_prompt] — build
 # the launch command that respawns the AI pane under new_account_dir.
 #
 # resume_session is the id of THIS pane's active conversation (the statusline
@@ -466,13 +443,14 @@ replay_ai_draft() {
 build_switch_launch_cmd() {
   local tool="$1" tool_cmd="$2" settings="$3" filter="$4" \
     project_dir="$5" new_account_dir="$6" resume_session="${7:-}" \
-    claude_handoff_arg="${8:-}"
+    claude_handoff_arg="${8:-}" opencode_handoff_prompt="${9:-}"
   if [ -n "$resume_session" ]; then
     WISP_DECK_RESUME=1 \
     WISP_DECK_RESUME_SESSION="$resume_session" \
     WISP_DECK_CLAUDE_ACCOUNT_DIR="$new_account_dir" \
     WISP_DECK_CLAUDE_SETTINGS="$settings" \
     WISP_DECK_CLAUDE_FILTER="$filter" \
+    WISP_DECK_OPENCODE_HANDOFF_PROMPT="$opencode_handoff_prompt" \
       build_ai_launch_cmd "$tool" "$tool_cmd" "$project_dir"
     return 0
   fi
@@ -491,6 +469,7 @@ build_switch_launch_cmd() {
   WISP_DECK_CLAUDE_ACCOUNT_DIR="$new_account_dir" \
   WISP_DECK_CLAUDE_SETTINGS="$settings" \
   WISP_DECK_CLAUDE_FILTER="$filter" \
+  WISP_DECK_OPENCODE_HANDOFF_PROMPT="$opencode_handoff_prompt" \
     build_ai_launch_cmd "$tool" "$tool_cmd" "$extra"
 }
 
@@ -712,7 +691,9 @@ relaunch_ai_pane() {
 
   pane="$(find_ai_pane "$tmux_cmd")"
   [ -n "$pane" ] || return 0
-  _prepare_opencode_plugin_launch "$_rc_tool" || return 0
+  if [ "$_rc_tool" = "opencode" ] && [ -n "$_rc_attention_root" ]; then
+    opencode_adapter_prefix "$_rc_tool_cmd" >/dev/null || return 0
+  fi
   if [ -n "$_rc_attention_root" ]; then
     declare -f attention_relaunch_lock_acquire >/dev/null 2>&1 || return 0
     attention_relaunch_lock_acquire "$_rc_attention_root" || return 0
@@ -949,7 +930,9 @@ relaunch_switch_tool() {
   [ -n "$tool_cmd" ] || return 0
   pane="$(find_ai_pane "$tmux_cmd")"
   [ -n "$pane" ] || return 0
-  _prepare_opencode_plugin_launch "$target" || return 0
+  if [ "$target" = "opencode" ] && [ -n "$_rc_attention_root" ]; then
+    opencode_adapter_prefix "$tool_cmd" >/dev/null || return 0
+  fi
   if [ -n "$_rc_attention_root" ]; then
     declare -f attention_relaunch_lock_acquire >/dev/null 2>&1 || return 0
     attention_relaunch_lock_acquire "$_rc_attention_root" || return 0
@@ -1012,19 +995,19 @@ relaunch_switch_tool() {
 
   # Cross-agent handoff: the target has no session of its own, but the pool
   # holds another agent's exported conversation — seed the fresh launch with
-  # an initial prompt pointing at it. claude and codex take it positionally;
-  # opencode's TUI takes it through --prompt.
-  local handoff_arg=""
+  # an initial prompt pointing at it. Claude and Codex take it positionally;
+  # OpenCode's adapter appends and submits it through the authenticated TUI API.
+  local handoff_arg="" handoff_prompt_text=""
   if [ -z "$sid" ] && [ -n "$pool" ] && [ -f "$pool/handoff.md" ]; then
     local handoff_from
     handoff_from="$(pool_get "$pool/meta" last_export_tool)"
     if [ -n "$handoff_from" ] && command -v handoff_prompt >/dev/null 2>&1; then
-      handoff_arg=" $(printf '%q' "$(handoff_prompt "$pool/handoff.md" "$handoff_from")")"
-      [ "$target" = "opencode" ] && handoff_arg=" --prompt$handoff_arg"
+      handoff_prompt_text="$(handoff_prompt "$pool/handoff.md" "$handoff_from")"
+      handoff_arg=" $(printf '%q' "$handoff_prompt_text")"
     fi
   fi
 
-  local cmd launch_settings builder_handoff="" trailing_handoff="$handoff_arg"
+  local cmd launch_settings builder_handoff="" opencode_handoff="" trailing_handoff="$handoff_arg"
   if ! prepare_attention_relaunch "$tmux_cmd" "$_rc_attention_root" \
     "$_rc_attention_descriptor" "$target"; then
     discard_claude_relaunch_settings_stage "$_rc_attention_root" \
@@ -1058,9 +1041,15 @@ relaunch_switch_tool() {
     builder_handoff="$handoff_arg"
     trailing_handoff=""
   fi
+  if [ "$target" = "opencode" ] \
+     && [ -n "${WISP_DECK_ATTENTION_GENERATION:-}" ] \
+     && [ -n "${WISP_DECK_ATTENTION_FILE:-}" ]; then
+    opencode_handoff="$handoff_prompt_text"
+    trailing_handoff=""
+  fi
   cmd="$(build_switch_launch_cmd "$target" "$tool_cmd" \
     "$launch_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir" "$sid" \
-    "$builder_handoff")"
+    "$builder_handoff" "$opencode_handoff")"
   "$tmux_cmd" respawn-pane -k -t "$pane" -c "$_rc_project_dir" "$cmd$trailing_handoff; exec bash"
 
   [ -n "$pool" ] && pool_set "$pool/meta" last_tool "$target"

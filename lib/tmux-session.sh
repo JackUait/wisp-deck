@@ -13,12 +13,61 @@ get_tool_accent() {
   esac
 }
 
+# Print an argv-safe OpenCode prefix for the exact command forms emitted by
+# resolve_opencode_cmd. No caller-controlled shell prefixes are accepted.
+opencode_adapter_prefix() {
+  local tool_cmd="$1" executable=""
+  case "$tool_cmd" in
+    opencode)
+      executable="$(command -v opencode 2>/dev/null)" || return 1
+      [ -n "$executable" ] || return 1
+      printf '%q' "$executable"
+      ;;
+    /*)
+      printf '%q' "$tool_cmd"
+      ;;
+    'npx --no-install opencode-ai')
+      executable="$(command -v npx 2>/dev/null)" || return 1
+      [ -n "$executable" ] || return 1
+      printf '%q --no-install opencode-ai' "$executable"
+      ;;
+    'npx --prefer-offline opencode-ai@latest')
+      executable="$(command -v npx 2>/dev/null)" || return 1
+      [ -n "$executable" ] || return 1
+      printf '%q --prefer-offline opencode-ai@latest' "$executable"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 # Build the AI tool launch command string. Claude's complete raw fallback chain
 # is supervised once when the generation runtime is present; the screenshot
 # filter remains inside that chain as its sole PTY boundary.
 # Usage: build_ai_launch_cmd <tool> <tool_cmd> [extra_args_or_project_dir]
 build_ai_launch_cmd() {
   local tool="$1" tool_cmd="$2" raw config_root state_q generation_q config_q raw_q
+
+  # OpenCode's strict adapter owns both the authenticated server and the TUI
+  # attach. Admit only the exact command forms emitted by resolve_opencode_cmd;
+  # arbitrary shell prefixes would otherwise execute outside the adapter's
+  # environment and terminal-notification policy.
+  if [ "$tool" = "opencode" ] \
+     && [ -n "${WISP_DECK_ATTENTION_FILE:-}" ] \
+     && [ -n "${WISP_DECK_ATTENTION_GENERATION:-}" ]; then
+    local prefix_q="" resume_flag="" prompt_flag=""
+    prefix_q="$(opencode_adapter_prefix "$tool_cmd")" || return 1
+    printf -v state_q '%q' "$WISP_DECK_ATTENTION_FILE"
+    printf -v generation_q '%q' "$WISP_DECK_ATTENTION_GENERATION"
+    [ "${WISP_DECK_RESUME:-0}" = "1" ] && resume_flag=" --continue"
+    if [ -n "${WISP_DECK_OPENCODE_HANDOFF_PROMPT:-}" ]; then
+      printf -v prompt_flag ' --prompt %q' "$WISP_DECK_OPENCODE_HANDOFF_PROMPT"
+    fi
+    printf 'wisp-deck-tui opencode-adapter --state-file %s --generation %s%s%s -- %s\n' \
+      "$state_q" "$generation_q" "$resume_flag" "$prompt_flag" "$prefix_q"
+    return 0
+  fi
 
   # Codex's semantic adapter owns the entire remote/embedded resume fallback
   # matrix. Build it as argv-safe shell text before constructing the legacy
