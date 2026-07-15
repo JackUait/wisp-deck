@@ -43,13 +43,6 @@ func TestWrapper_terminal_pane_is_45_percent(t *testing.T) {
 		"claude":        "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
-		"tput": `#!/bin/bash
-case "$1" in
-  cols) echo 173 ;;
-  lines) echo 47 ;;
-  colors) echo 256 ;;
-esac
-`,
 	}
 	for name, body := range mocks {
 		p := filepath.Join(binDir, name)
@@ -94,6 +87,13 @@ func recordWrapperNewSession(t *testing.T) string {
 		"claude":        "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
+		"tput": `#!/bin/bash
+case "$1" in
+  cols) echo 173 ;;
+  lines) echo 47 ;;
+  colors) echo 256 ;;
+esac
+`,
 	}
 	for name, body := range mocks {
 		p := filepath.Join(binDir, name)
