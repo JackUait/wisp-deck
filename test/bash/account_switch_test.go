@@ -1092,7 +1092,7 @@ build_switch_launch_cmd() {
   settings=$3
   if [ "$settings" = "${WISP_DECK_ATTENTION_FILE%%/state}/claude-settings.json" ] \
      && grep -q '"model": "opus"' "$settings" \
-     && grep -q '"preferredNotifChannel": "terminal_bell"' "$settings"; then
+     && grep -q '"preferredNotifChannel": "notifications_disabled"' "$settings"; then
     printf 'settings-ok:%%s\n' "$settings" >> %q
   else
     printf 'settings-stale:%%s\n' "$settings" >> %q
