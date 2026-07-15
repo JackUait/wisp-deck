@@ -317,7 +317,10 @@ func TestCodexSupervisorDefaultServerEarlyExitStartsEmbeddedPromptly(t *testing.
 	if err != nil || result.ExitCode != 0 {
 		t.Fatalf("Run() = (%+v, %v)", result, err)
 	}
-	if elapsed := time.Since(started); elapsed > 1500*time.Millisecond {
+	// Process startup on a loaded macOS runner can be delayed by more than a
+	// second. Keep the ceiling below the 3s setup deadline this test guards,
+	// while leaving scheduler variance out of the assertion.
+	if elapsed := time.Since(started); elapsed > 2500*time.Millisecond {
 		t.Fatalf("embedded launch waited %v for a setup timeout after app-server exit", elapsed)
 	}
 	if containsArg(launch, "--remote") {
