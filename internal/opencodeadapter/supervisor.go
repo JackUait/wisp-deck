@@ -625,6 +625,10 @@ func (s *Supervisor) runDefaultPTY(ctx context.Context, spec ptySpec, onStarted 
 		waitErr = nil
 	}
 	result := exitResult(command.ProcessState, time.Since(startedAt))
+	var exitError *exec.ExitError
+	if errors.As(waitErr, &exitError) {
+		waitErr = nil
+	}
 	if terminating != 0 {
 		result.Signaled, result.Signal, result.ExitCode = true, terminating, 128+int(terminating)
 	}

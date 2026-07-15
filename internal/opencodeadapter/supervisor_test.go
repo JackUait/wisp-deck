@@ -1,9 +1,12 @@
 package opencodeadapter
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +14,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -215,6 +219,73 @@ func TestPostOpenCodePromptAuthenticatesAppendThenSubmit(t *testing.T) {
 	want := []string{"/tui/append-prompt", "/tui/submit-prompt"}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("prompt paths = %#v, want %#v", paths, want)
+	}
+}
+
+func TestRunDefaultPTYPreservesExitAndFiltersTerminalNotifications(t *testing.T) {
+	var output bytes.Buffer
+	started := false
+	supervisor := Supervisor{Stdin: bytes.NewReader(nil), Stdout: &output}
+	result, err := supervisor.runDefaultPTY(context.Background(), ptySpec{
+		Argv: []string{"/bin/sh", "-c", "printf 'left\\007middle\\033]9;native\\007right'; exit 7"},
+		Env:  os.Environ(), CWD: t.TempDir(), Stdin: bytes.NewReader(nil), Stdout: &output,
+	}, func() { started = true })
+	if err != nil {
+		t.Fatalf("PTY exit error = %v, want normal status result", err)
+	}
+	if !started || result.ExitCode != 7 || result.Signaled {
+		t.Fatalf("PTY result = %+v, started=%v", result, started)
+	}
+	if got := output.String(); !strings.Contains(got, "leftmiddleright") || strings.ContainsRune(got, '\a') || strings.Contains(got, "]9;") {
+		t.Fatalf("filtered PTY output = %q", got)
+	}
+}
+
+func TestManagedServerStopTerminatesProcessGroup(t *testing.T) {
+	dir := t.TempDir()
+	childFile := filepath.Join(dir, "child.pid")
+	process, err := startManagedProcess(processSpec{
+		Argv: []string{"/bin/sh", "-c", "sleep 300 & child=$!; printf '%s' \"$child\" > \"$CHILD_FILE\"; wait"},
+		Env:  append(os.Environ(), "CHILD_FILE="+childFile), CWD: dir, Log: io.Discard,
+	}, 100*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var childPID int
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		data, readErr := os.ReadFile(childFile)
+		if readErr == nil && len(data) > 0 {
+			if _, scanErr := fmt.Sscanf(string(data), "%d", &childPID); scanErr == nil {
+				break
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if childPID <= 0 {
+		t.Fatal("managed server did not start its child")
+	}
+	stopContext, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_ = process.Stop(stopContext)
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(childPID, 0); errors.Is(err, syscall.ESRCH) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("process-group child %d survived managed server stop", childPID)
+}
+
+func TestDefaultRuntimePrimitivesArePrivateAndLoopback(t *testing.T) {
+	port, err := selectLoopbackPort()
+	if err != nil || port < 1 || port > 65535 {
+		t.Fatalf("loopback port = %d, %v", port, err)
+	}
+	secret, err := randomSecret()
+	if err != nil || len(secret) != 64 || strings.Trim(secret, "0123456789abcdef") != "" {
+		t.Fatalf("random secret = %q, %v", secret, err)
 	}
 }
 
