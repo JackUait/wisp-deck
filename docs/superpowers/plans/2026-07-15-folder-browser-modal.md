@@ -28,11 +28,11 @@
 **Interfaces:**
 - Produces: `func (m *MainMenuModel) overlayCard(placed string, cardLines []string, left, top, width int) string` — dims the placed screen faint-gray and lays the card lines at (left, top).
 
-- [ ] Step 1: Failing test — `overlayCard` places arbitrary card lines at given origin over a dimmed backdrop; `overlayAbout` output is unchanged (byte-identical to composing via overlayCard with the About card's layout).
-- [ ] Step 2: Run, watch fail (undefined `overlayCard`).
-- [ ] Step 3: Move the compositor loop from `overlayAbout` into `overlayCard(placed, cardLines, left, top, width)`; `overlayAbout` calls it with `renderAboutCard()` lines + `aboutCardLayout()`.
-- [ ] Step 4: Tests pass; existing about tests pass.
-- [ ] Step 5: Commit `refactor(tui): extract overlayCard compositor from overlayAbout`.
+- [x] Step 1: Failing test — `overlayCard` places arbitrary card lines at given origin over a dimmed backdrop; `overlayAbout` output is unchanged (byte-identical to composing via overlayCard with the About card's layout).
+- [x] Step 2: Run, watch fail (undefined `overlayCard`).
+- [x] Step 3: Move the compositor loop from `overlayAbout` into `overlayCard(placed, cardLines, left, top, width)`; `overlayAbout` calls it with `renderAboutCard()` lines + `aboutCardLayout()`.
+- [x] Step 4: Tests pass; existing about tests pass.
+- [x] Step 5: Commit `refactor(tui): extract overlayCard compositor from overlayAbout`.
 
 ### Task 2: DirBrowserModel core
 
@@ -59,11 +59,11 @@ func (b *DirBrowserModel) Err() string
 const chooseThisFolderRow = "⏎ choose this folder"
 ```
 
-- [ ] Step 1: Failing tests: new browser lists sorted subdirs of startDir, dotdirs hidden, files excluded; filter narrows case-insensitively; `.`-prefixed filter reveals dotdirs; Descend resets filter+selection; GoUp goes to parent and stops at `/`; ChooseHighlighted on row 0 returns cwd, on row N returns subdir path; unreadable dir on Descend sets Err and stays; GitHubURL detects `https://github.com/o/r`; selection clamps when filter shrinks list.
-- [ ] Step 2: Run, watch fail (package has no DirBrowserModel).
-- [ ] Step 3: Implement minimal model (readDir on cwd change, recompute visible rows on filter change).
-- [ ] Step 4: Tests pass.
-- [ ] Step 5: Commit `feat(tui): DirBrowserModel directory navigation core`.
+- [x] Step 1: Failing tests: new browser lists sorted subdirs of startDir, dotdirs hidden, files excluded; filter narrows case-insensitively; `.`-prefixed filter reveals dotdirs; Descend resets filter+selection; GoUp goes to parent and stops at `/`; ChooseHighlighted on row 0 returns cwd, on row N returns subdir path; unreadable dir on Descend sets Err and stays; GitHubURL detects `https://github.com/o/r`; selection clamps when filter shrinks list.
+- [x] Step 2: Run, watch fail (package has no DirBrowserModel).
+- [x] Step 3: Implement minimal model (readDir on cwd change, recompute visible rows on filter change).
+- [x] Step 4: Tests pass.
+- [x] Step 5: Commit `feat(tui): DirBrowserModel directory navigation core`.
 
 ### Task 3: Browser card rendering + overlay
 
@@ -74,11 +74,11 @@ const chooseThisFolderRow = "⏎ choose this folder"
 **Interfaces:**
 - Produces: `func (m *MainMenuModel) renderBrowserCard() string`, `func (m *MainMenuModel) browserCardLayout() (left, top, w, h int)`, `m.browser *DirBrowserModel` field; View composites via `overlayCard` when `m.browser != nil`.
 
-- [ ] Step 1: Failing render tests: card shows border title "Add Project — choose folder", home-abbreviated cwd, filter line, highlighted row marker, footer hints; fixed row count (maxVisible window) so height is stable; scrolled window shows correct slice; GitHub-URL filter replaces list with clone hint; View() output contains card when browser open.
-- [ ] Step 2: Watch fail.
-- [ ] Step 3: Implement rendering (About-card chrome: rounded border 245, embedded title via `embedAboutBorderTitle`-style helper, fixed `browserMaxVisible = 10` rows) and hook into `View()` before the aboutOpen check.
-- [ ] Step 4: Pass.
-- [ ] Step 5: Commit `feat(tui): floating folder-browser card rendering`.
+- [x] Step 1: Failing render tests: card shows border title "Add Project — choose folder", home-abbreviated cwd, filter line, highlighted row marker, footer hints; fixed row count (maxVisible window) so height is stable; scrolled window shows correct slice; GitHub-URL filter replaces list with clone hint; View() output contains card when browser open.
+- [x] Step 2: Watch fail.
+- [x] Step 3: Implement rendering (About-card chrome: rounded border 245, embedded title via `embedAboutBorderTitle`-style helper, fixed `browserMaxVisible = 10` rows) and hook into `View()` before the aboutOpen check.
+- [x] Step 4: Pass.
+- [x] Step 5: Commit `feat(tui): floating folder-browser card rendering`.
 
 ### Task 4: Wire browser into add-project flow
 
@@ -89,18 +89,18 @@ const chooseThisFolderRow = "⏎ choose this folder"
 **Interfaces:**
 - Consumes: DirBrowserModel API from Task 2; `advanceToNameField`, `submitInputMode` (existing).
 
-- [ ] Step 1: Failing integration tests: triggering add-project opens the browser (browser non-nil, no focused path input); Esc closes back to menu; arrow+Enter descends; choosing folder → name stage, `pathInput` holds chosen path, name auto-derived, path row rendered static (no cursor); Enter in name stage appends project to file; Esc from name stage reopens browser; GitHub URL typed into filter + Enter → name stage → submit runs clone flow (`SetGitCloneForTest`); Ctrl+C quits.
-- [ ] Step 2: Watch fail.
-- [ ] Step 3: Implement: `enterInputMode("add-project")` builds `NewDirBrowser(root-or-home)` and sets `m.browser`; key routing branch `if m.browser != nil` ahead of inputMode handling; choose → `pathInput.SetValue`, `browser=nil`, `advanceToNameField()`; name-stage Esc/Shift+Tab reopens browser; `renderInputBox` renders static path text in add-project name stage; footer variants updated.
-- [ ] Step 4: Pass.
-- [ ] Step 5: Commit `feat(tui): add-project opens folder-browser overlay modal`.
+- [x] Step 1: Failing integration tests: triggering add-project opens the browser (browser non-nil, no focused path input); Esc closes back to menu; arrow+Enter descends; choosing folder → name stage, `pathInput` holds chosen path, name auto-derived, path row rendered static (no cursor); Enter in name stage appends project to file; Esc from name stage reopens browser; GitHub URL typed into filter + Enter → name stage → submit runs clone flow (`SetGitCloneForTest`); Ctrl+C quits.
+- [x] Step 2: Watch fail.
+- [x] Step 3: Implement: `enterInputMode("add-project")` builds `NewDirBrowser(root-or-home)` and sets `m.browser`; key routing branch `if m.browser != nil` ahead of inputMode handling; choose → `pathInput.SetValue`, `browser=nil`, `advanceToNameField()`; name-stage Esc/Shift+Tab reopens browser; `renderInputBox` renders static path text in add-project name stage; footer variants updated.
+- [x] Step 4: Pass.
+- [x] Step 5: Commit `feat(tui): add-project opens folder-browser overlay modal`.
 
 ### Task 5: Migrate existing tests + full verification
 
 **Files:**
 - Modify: `internal/tui/addproject_render_test.go`, `test/internal/tui/mainmenu_github_test.go` (+ any other add-project-path-driven tests found by the suite)
 
-- [ ] Step 1: Run full suite; list failures caused by the new flow.
-- [ ] Step 2: Update tests to drive the browser (filter for URL flow; choose-folder for path flow) while preserving each test's original assertion intent.
-- [ ] Step 3: `./run-tests.sh` green; `shellcheck` untouched scripts only if shell files changed (none expected).
-- [ ] Step 4: Commit `test(tui): migrate add-project tests to folder-browser flow`, push, verify `git status` up to date.
+- [x] Step 1: Run full suite; list failures caused by the new flow.
+- [x] Step 2: Update tests to drive the browser (filter for URL flow; choose-folder for path flow) while preserving each test's original assertion intent.
+- [x] Step 3: `./run-tests.sh` green; `shellcheck` untouched scripts only if shell files changed (none expected).
+- [x] Step 4: Commit `test(tui): migrate add-project tests to folder-browser flow`, push, verify `git status` up to date.
