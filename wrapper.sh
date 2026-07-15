@@ -581,25 +581,29 @@ _spare_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/spare-tabs.sh\" && spare_
 # Restore: replay the captured pane geometry over the just-built panes. The
 # build order below is deterministic and identical to capture time, so the
 # panes line up with the layout's cells. MUST be backgrounded before
-# new-session: that call attaches and blocks until the session ends, so any
-# replay placed after it never runs while the session is alive. The watcher
-# also re-applies after Ghostty's late pty resize (a crash-restored tab is
-# spawned before its final size lands, and tmux redistributes the delta
-# equally across columns, corrupting the split) and exits once the window
-# size settles. Skipped when no layout was captured (old snapshot) — the
-# default split stays.
+# the tmux launch: its final attach blocks until the session ends, so any replay
+# placed after it never runs while the session is alive. The watcher also
+# re-applies after Ghostty's late pty resize (a crash-restored tab is spawned
+# before its final size lands, and tmux redistributes the delta equally across
+# columns, corrupting the split) and exits once the window size settles.
+# Skipped when no layout was captured (old snapshot) — the default split stays.
+if ! declare -f _detect_term_size >/dev/null 2>&1; then
+  # shellcheck disable=SC1091  # Runtime library path
+  source "$_WRAPPER_DIR/lib/loading.sh"
+fi
+read -r _tmux_rows _tmux_cols <<< "$(_detect_term_size)"
+
 if [ "$RESTORE_MODE" -eq 1 ] && [ -n "${WISP_DECK_RESUME_LAYOUT:-}" ]; then
   restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$WISP_DECK_RESUME_LAYOUT" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
 fi
 
-"$TMUX_CMD" new-session -s "$SESSION_NAME" -e "PATH=$PATH" -e "WISP_DECK_ATTENTION_ROOT=$WISP_DECK_ATTENTION_ROOT" -e "WISP_DECK_ATTENTION_DESCRIPTOR=$WISP_DECK_ATTENTION_DESCRIPTOR" -e "WISP_DECK_ATTENTION_GENERATION=$WISP_DECK_ATTENTION_GENERATION" -e "WISP_DECK_ATTENTION_FILE=$WISP_DECK_ATTENTION_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=${WISP_DECK_RESUME_SESSION:-}" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$WISP_DECK_RELAUNCH_FILE" -e "WISP_DECK_CLAUDE_ACCOUNT=${WISP_DECK_CLAUDE_ACCOUNT_DIR##*/}" -e "WISP_DECK_SEQ=${_wd_launch_seq}" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
+"$TMUX_CMD" new-session -d -x "$_tmux_cols" -y "$_tmux_rows" -s "$SESSION_NAME" -e "PATH=$PATH" -e "WISP_DECK_ATTENTION_ROOT=$WISP_DECK_ATTENTION_ROOT" -e "WISP_DECK_ATTENTION_DESCRIPTOR=$WISP_DECK_ATTENTION_DESCRIPTOR" -e "WISP_DECK_ATTENTION_GENERATION=$WISP_DECK_ATTENTION_GENERATION" -e "WISP_DECK_ATTENTION_FILE=$WISP_DECK_ATTENTION_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=${WISP_DECK_RESUME_SESSION:-}" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$WISP_DECK_RELAUNCH_FILE" -e "WISP_DECK_CLAUDE_ACCOUNT=${WISP_DECK_CLAUDE_ACCOUNT_DIR##*/}" -e "WISP_DECK_SEQ=${_wd_launch_seq}" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
   "$_pane0_cmd" \; \
   set-option status-left " ⬡ ${PROJECT_NAME} " \; \
   set-option status-left-style "fg=white,bg=colour236,bold" \; \
   set-option status-style "bg=colour235" \; \
   set-option status-right "" \; \
   set-option set-titles off \; \
-  set-option exit-unattached on \; \
   set-option pane-border-style "fg=colour238" \; \
   set-option pane-active-border-style "fg=colour${_gt_accent}" \; \
   bind-key i run-shell "$_screenshot_bind" \; \
@@ -613,4 +617,6 @@ fi
   set-option -p @gt_ai 1 \; \
   select-pane -L \; \
   split-window -v -p 45 -c "$PROJECT_DIR" "$_spare_cmd" \; \
-  select-pane -R 2>&3
+  select-pane -R \; \
+  attach-session -t "$SESSION_NAME" \; \
+  set-option exit-unattached on 2>&3
