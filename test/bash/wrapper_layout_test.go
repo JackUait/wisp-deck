@@ -167,7 +167,7 @@ func TestWrapperOpenCode_retires_known_sound_plugins_before_attention_generation
 	}
 	content := string(data)
 	retire := strings.Index(content, "retire_known_opencode_sound_plugins")
-	generation := strings.Index(content, "attention_new_runtime")
+	generation := strings.Index(content, "attention_session_create")
 	if retire < 0 || generation < 0 || retire >= generation {
 		t.Fatalf("OpenCode retirement must precede attention generation: retire=%d generation=%d", retire, generation)
 	}

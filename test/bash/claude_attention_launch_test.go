@@ -179,7 +179,7 @@ func TestClaudeAttentionLaunch_does_not_wrap_other_tools(t *testing.T) {
 		cmd  string
 	}{
 		{"codex", "/usr/bin/codex"},
-		{"opencode", "opencode"},
+		{"opencode", "/usr/bin/opencode"},
 	} {
 		t.Run(tc.tool, func(t *testing.T) {
 			out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",

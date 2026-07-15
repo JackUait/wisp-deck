@@ -402,18 +402,32 @@ func TestRelaunchSwitchTool_opencode_round_trip_uses_continue(t *testing.T) {
 // failure).
 func TestRelaunchSwitchTool_claude_to_opencode_seeds_handoff_via_prompt_flag(t *testing.T) {
 	dir := t.TempDir()
+	attention := createAttentionFixture(t, dir, "claude")
 	rec := filepath.Join(dir, "tmux.log")
 	bin := poolMockTmux(t, dir, rec)
 	stampTmuxEnv(t, dir, "WISP_DECK_CLAUDE_SESSION", "sid-2")
 	writeTempFile(t, filepath.Join(dir, ".claude", "projects", "-proj"), "sid-2.jsonl",
 		`{"type":"user","message":{"role":"user","content":"ship the release"}}`+"\n")
 	ctx := poolCtx(t, dir, "claude")
+	f, err := os.OpenFile(ctx, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(f, "attention_root=%s\nattention_descriptor=%s\n",
+		attention["root"], attention["descriptor"]); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 	env := buildEnv(t, []string{bin}, "HOME="+dir)
 	_, code := runBashSnippet(t, poolSwitchSnippet(t,
 		fmt.Sprintf("relaunch_switch_tool tmux %q opencode", ctx)), env)
 	assertExitCode(t, code, 0)
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
 	assertContains(t, logOut, "/opt/opencode")
+	assertContains(t, logOut, "opencode-adapter")
 	assertContains(t, logOut, "--prompt")
 	assertContains(t, normalizeShellEscapedSpaces(logOut), "taking over")
 }

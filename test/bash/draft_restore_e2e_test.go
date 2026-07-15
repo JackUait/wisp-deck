@@ -39,7 +39,9 @@ func TestDraftRestore_endToEnd_realTmux_draft_survives_switch(t *testing.T) {
 	dir := t.TempDir()
 	sock := fmt.Sprintf("wddraft-e2e-%d", os.Getpid())
 	tmux := func(args ...string) ([]byte, error) {
-		return exec.Command(tmuxBin, append([]string{"-L", sock}, args...)...).CombinedOutput()
+		cmd := exec.Command(tmuxBin, append([]string{"-L", sock}, args...)...)
+		cmd.Env = buildEnv(t, nil)
+		return cmd.CombinedOutput()
 	}
 	t.Cleanup(func() { _, _ = tmux("kill-server") })
 
