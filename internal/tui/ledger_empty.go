@@ -15,25 +15,25 @@ const ledgerEmptyCaption = "working tree clean"
 // area of the full-size splash ghost (GhostForTheme), which filled half the
 // pane and shouted over the changesets the ledger exists to show.
 //
-// The splash mascot's eye whites and belly emblem are deliberately dropped: at
-// this scale they are 2-3 pixels of pure noise. The rows are laid out so each
-// feature lands on a cell boundary — the eyes fill one cell row exactly, and
-// the body/lower-body seam falls mid-cell, where a half block renders it as a
-// crisp shading step rather than a stack of identical slabs.
-// Slots: P body, D lower body, F feet, K pupils.
+// The wisp SLEEPS: eyes are single-pixel closed lids (the bottom half of their
+// cell, so they render as gentle ▄ marks), with blush cheeks beside them —
+// mirroring the splash ghost's sleeping face. Open eyes were tried first and
+// collapsed into a hollow black stare at this scale; there is no room for eye
+// whites to soften them. The belly emblem is likewise dropped as noise.
+// Slots: P body, D lower body + feet, L blush, K closed lids.
 var ledgerWispPixels = []string{
 	"....PPPPPP....",
 	"..PPPPPPPPPP..",
 	".PPPPPPPPPPPP.",
 	"PPPPPPPPPPPPPP",
+	"PPPPPPPPPPPPPP",
 	"PPKKPPPPPPKKPP",
-	"PPKKPPPPPPKKPP",
+	"PLLPPPPPPPPLLP",
 	"PPPPPPPPPPPPPP",
 	"DDDDDDDDDDDDDD",
 	"DDDDDDDDDDDDDD",
 	"DDDDDDDDDDDDDD",
-	"FFFFFFFFFFFFFF",
-	"FF.FFF..FFF.FF",
+	"DD.DDD..DDD.DD",
 }
 
 // ledgerWispWidth is the mascot's column count (one cell per pixel column).
@@ -85,16 +85,16 @@ func renderWispHalfBlocks(pixels []string, colors map[byte]lipgloss.Color) []str
 // competing with the file rows; the full-saturation palette belongs to the
 // splash, where the mascot is the point.
 //
-// Each slot is deliberately shifted one stop DARKER than the sleeping splash
-// ghost uses it — straight sleep tones still read as a bright blob against the
-// pane. The crown highlight is dropped entirely: a lighter rim on a darker body
-// is exactly the detail that catches the eye. The dome reads from its
-// silhouette instead, leaving a flat two-tone wisp near the caption's weight.
+// The body takes the sleeping splash ghost's own tones (SleepPrimary over
+// SleepDim) — the first cut went a stop darker still, and the muddied browns
+// read as grim rather than calm. The crown highlight stays dropped: a lighter
+// rim on a darker body is exactly the detail that catches the eye; the dome
+// reads from its silhouette instead.
 func ledgerWisp(theme AIToolTheme) []string {
 	return renderWispHalfBlocks(ledgerWispPixels, map[byte]lipgloss.Color{
-		'P': theme.SleepDim,
-		'D': theme.SleepDarkFeet,
-		'F': theme.SleepDarkFeet,
+		'P': theme.SleepPrimary,
+		'D': theme.SleepDim,
+		'L': theme.SleepBlush,
 		'K': theme.EyePupil,
 	})
 }

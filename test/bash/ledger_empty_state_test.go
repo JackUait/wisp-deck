@@ -111,13 +111,17 @@ func TestLedgerEmptyState_paints_the_mascot_in_the_theme(t *testing.T) {
 	purple, _ := runBashFunc(t, "lib/compact-view.sh", "ledger_empty_state",
 		[]string{"60", "30", "purple"}, nil)
 
-	// The MUTED stops (SleepDim), never the full-saturation body colors the
-	// splash mascot uses — the placeholder should recede, not draw the eye.
-	if !strings.Contains(orange, "38;5;130m") {
-		t.Errorf("orange mascot missing its muted body hue (130):\n%q", orange)
+	// The MUTED stops (SleepPrimary body, SleepBlush cheeks), never the
+	// full-saturation colors the splash mascot uses — the placeholder should
+	// recede, not draw the eye.
+	if !strings.Contains(orange, "38;5;166m") {
+		t.Errorf("orange mascot missing its muted body hue (166):\n%q", orange)
 	}
-	if !strings.Contains(purple, "38;5;60m") {
-		t.Errorf("purple mascot missing its muted body hue (60):\n%q", purple)
+	if !strings.Contains(orange, "38;5;168m") {
+		t.Errorf("orange mascot missing its blush cheeks (168):\n%q", orange)
+	}
+	if !strings.Contains(purple, "38;5;103m") {
+		t.Errorf("purple mascot missing its muted body hue (103):\n%q", purple)
 	}
 	for _, loud := range []string{"209", "220", "231"} {
 		if strings.Contains(orange, "38;5;"+loud+"m") {

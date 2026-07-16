@@ -79,16 +79,19 @@ func TestRenderLedgerEmptyState_mascot_stays_small(t *testing.T) {
 }
 
 // The mascot is painted in the theme's MUTED (sleep) palette, never the full
-// saturation the splash mascot uses — it should recede, not draw the eye.
-func TestRenderLedgerEmptyState_mascot_is_muted(t *testing.T) {
+// saturation the splash mascot uses — it should recede, not draw the eye. And
+// it sleeps: closed eyes with blush cheeks, not the hollow black stare an
+// open-eyed face collapses into at this scale.
+func TestRenderLedgerEmptyState_mascot_is_muted_and_asleep(t *testing.T) {
 	theme := ThemeForTool("claude")
 	rendered := strings.Join(renderLedgerEmptyState(theme, 60, 27), "\n")
 
-	if !strings.Contains(rendered, AnsiFromThemeColor(theme.SleepDim)) {
-		t.Errorf("mascot missing the muted body color (%s)", theme.SleepDim)
+	if !strings.Contains(rendered, AnsiFromThemeColor(theme.SleepPrimary)) {
+		t.Errorf("mascot missing the muted body color (%s)", theme.SleepPrimary)
 	}
-	// Including SleepPrimary: even the sleep body tone reads as a bright blob at
-	// this size, so the wisp sits one stop darker still.
+	if !strings.Contains(rendered, AnsiFromThemeColor(theme.SleepBlush)) {
+		t.Errorf("mascot missing its blush cheeks (%s)", theme.SleepBlush)
+	}
 	for _, loud := range []struct {
 		name  string
 		color string
@@ -96,7 +99,6 @@ func TestRenderLedgerEmptyState_mascot_is_muted(t *testing.T) {
 		{"Primary", string(theme.Primary)},
 		{"Accent", string(theme.Accent)},
 		{"EyeWhite", string(theme.EyeWhite)},
-		{"SleepPrimary", string(theme.SleepPrimary)},
 	} {
 		if strings.Contains(rendered, "38;5;"+loud.color+"m") {
 			t.Errorf("mascot uses the loud %s color (%s); expected the sleep palette",
@@ -153,11 +155,11 @@ func TestRenderLedgerEmptyState_paints_the_mascot_in_the_theme(t *testing.T) {
 	opencode := renderLedgerEmptyState(ThemeForTool("opencode"), 60, 27)
 
 	if !strings.Contains(strings.Join(claude, "\n"),
-		AnsiFromThemeColor(ThemeForTool("claude").SleepDim)) {
+		AnsiFromThemeColor(ThemeForTool("claude").SleepPrimary)) {
 		t.Error("claude mascot missing its muted hue")
 	}
 	if !strings.Contains(strings.Join(opencode, "\n"),
-		AnsiFromThemeColor(ThemeForTool("opencode").SleepDim)) {
+		AnsiFromThemeColor(ThemeForTool("opencode").SleepPrimary)) {
 		t.Error("opencode mascot missing its muted hue")
 	}
 	if strings.Join(mascotRows(claude), "\n") != strings.Join(mascotRows(opencode), "\n") {
