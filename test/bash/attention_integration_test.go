@@ -230,6 +230,7 @@ func TestAttentionIntegrationRestoredWrapperRejectsPoisonedRuntime(t *testing.T)
 	writeTempFile(t, fixture.configDir, "restore-queue",
 		"attention-test-boot|"+fixture.project+"|claude|||\n")
 	writeTempFile(t, fixture.configDir, "last-restore-boot", "attention-test-boot\n")
+	seedChainTicket(t, fixture.configDir)
 	capture := filepath.Join(fixture.home, "tmux.args")
 	stateCopy := filepath.Join(fixture.home, "state.copy")
 	descriptorCopy := filepath.Join(fixture.home, "descriptor.copy")

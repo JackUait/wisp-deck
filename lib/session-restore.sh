@@ -351,6 +351,9 @@ maybe_restore_session() {
   done
   if [ "$queued" -eq 1 ]; then
     echo "$cur_boot" > "$marker"
+    # Build stamp for restore_pop_authorized's storm grace window. The queue
+    # file's own mtime cannot serve: every pop rewrites it.
+    date +%s > "$config_dir/restore-queue-built-at" 2>/dev/null || true
     mv "$tmp" "$queue"
     # This launch created the queue — it is the user's own window (or the
     # claim winner of a crash-resume storm) and must never be closed as a
@@ -608,6 +611,65 @@ restore_layout_watch() {
   return 0
 }
 
+# The chain ticket: a bare Ghostty tab spawned by restore_advance is
+# otherwise indistinguishable from a tab the USER opens during the drain —
+# both run the wrapper with no args. Before the fix, ANY interactive launch
+# popped the next queue entry, so a user's fresh tab was hijacked into
+# restoring a queued project while their intended session landed in a
+# different tab. restore_advance now issues a one-shot ticket right before
+# spawning the next tab, and only the queue builder or the launch that claims
+# the ticket may pop. The exposure window shrinks from the queue's whole
+# 5-minute lifetime to the instant between spawn and claim.
+
+# Usage: restore_issue_chain_ticket <config_dir>
+restore_issue_chain_ticket() {
+  date +%s > "$1/restore-chain-ticket" 2>/dev/null || true
+}
+
+# Atomically claim the pending chain ticket. The mv is the claim — exactly
+# one concurrent launch can win the rename. A stale ticket (>60s, a chain
+# that broke before its tab launched) is swept and not claimable, so it can
+# never hijack a tab the user opens later.
+# Usage: restore_claim_chain_ticket <config_dir>
+restore_claim_chain_ticket() {
+  local config_dir="$1"
+  local ticket="$config_dir/restore-chain-ticket"
+  [ -f "$ticket" ] || return 1
+  local stamp now
+  { stamp="$(tr -d '[:space:]' < "$ticket")"; } 2>/dev/null || stamp=""
+  case "$stamp" in '' | *[!0-9]*) stamp=0 ;; esac
+  now="$(date +%s)"
+  if [ $((now - stamp)) -gt 60 ]; then
+    rm -f "$ticket"
+    return 1
+  fi
+  local claimed="$ticket.claimed.$$"
+  mv "$ticket" "$claimed" 2>/dev/null || return 1
+  rm -f "$claimed"
+  return 0
+}
+
+# Decide whether an interactive launch may pop the restore queue. Three ways
+# in: it built the queue (the boot's first launch, which owns the drain); it
+# holds the chain ticket its spawner issued; or it STARTED within a short
+# grace window of the queue build — that is the macOS crash-resume storm,
+# where every resumed window launches simultaneously with the builder, before
+# any ticket exists, and those windows must still drain the queue. A tab the
+# user opens later, mid-drain, matches none of these — before this gate it
+# popped an entry meant for the chain, restoring another project into the
+# user's tab while their intended session opened elsewhere.
+# Usage: restore_pop_authorized <config_dir> <builder> <launch_epoch>
+restore_pop_authorized() {
+  local config_dir="$1" builder="${2:-0}" launch_epoch="${3:-}"
+  [ "$builder" = "1" ] && return 0
+  restore_claim_chain_ticket "$config_dir" && return 0
+  local built
+  { built="$(tr -d '[:space:]' < "$config_dir/restore-queue-built-at")"; } 2>/dev/null || built=""
+  case "$built" in '' | *[!0-9]*) return 1 ;; esac
+  case "$launch_epoch" in '' | *[!0-9]*) return 1 ;; esac
+  [ "$launch_epoch" -le $((built + 15)) ]
+}
+
 # Continue the restore chain: when entries remain, open the next tab of this
 # window (the new tab runs the wrapper, pops the next entry, and calls this
 # again). When the Cmd+T keystroke fails (Accessibility permission not
@@ -621,6 +683,10 @@ restore_advance() {
   local config_dir="$1"
   local queue="$config_dir/restore-queue"
   [ -s "$queue" ] || return 0
+  # Issued BEFORE the spawn so the new tab finds it no matter how fast it
+  # launches; it is what authorizes that tab's queue pop (see
+  # restore_claim_chain_ticket).
+  restore_issue_chain_ticket "$config_dir"
   if restore_trigger_tab; then
     return 0
   fi

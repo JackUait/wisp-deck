@@ -156,13 +156,23 @@ else
   # interactive launch consumes one pending entry, so prior-boot sessions come
   # back as ordered tabs of this window instead of separate windows.
   maybe_restore_session "$SHARE_DIR" "$WISP_DECK_BOOT_ID"
-  _queue_entry="$(restore_queue_pop "$SHARE_DIR" "$WISP_DECK_BOOT_ID")"
-  # Skip entries whose project directory no longer exists, and — last line of
-  # defense against duplicate tabs — entries whose conversation is already
-  # open in an alive session (a re-queued entry from any upstream failure).
-  while [ -n "$_queue_entry" ] && ! restore_entry_wanted "$TMUX_CMD" "$_queue_entry"; do
+  # Only the queue builder, a chain-spawned tab holding the one-shot ticket,
+  # or a crash-storm window that launched together with the build may pop
+  # (see restore_pop_authorized). A tab the USER opens mid-drain matches none
+  # of these and must never consume an entry meant for the chain — that
+  # hijack restored someone else's project into the user's tab while their
+  # intended session opened elsewhere (the wrong-tab bug).
+  _queue_entry=""
+  if restore_pop_authorized "$SHARE_DIR" "${WISP_DECK_RESTORE_BUILDER:-0}" \
+    "$_wd_launch_epoch"; then
     _queue_entry="$(restore_queue_pop "$SHARE_DIR" "$WISP_DECK_BOOT_ID")"
-  done
+    # Skip entries whose project directory no longer exists, and — last line of
+    # defense against duplicate tabs — entries whose conversation is already
+    # open in an alive session (a re-queued entry from any upstream failure).
+    while [ -n "$_queue_entry" ] && ! restore_entry_wanted "$TMUX_CMD" "$_queue_entry"; do
+      _queue_entry="$(restore_queue_pop "$SHARE_DIR" "$WISP_DECK_BOOT_ID")"
+    done
+  fi
   if [ -n "$_queue_entry" ]; then
     # Open the next tab immediately so the chain completes quickly while this
     # window continues its own setup.
@@ -556,6 +566,10 @@ _screenshot_bind="bash -c 'source \"$_WRAPPER_DIR/lib/screenshot.sh\" && gt_past
 # ledger cannot observe the event that enters its neighbour. Install a private
 # session key table while pane 0 is still targeted; it forwards the real event
 # normally and injects one out-of-bounds motion into this ledger on pane leave.
+# Run with `run-shell -b`: tmux expands #{pane_id} at the command's position in
+# the chain (still pane 0), then backgrounds the script — the install grabs a
+# server-wide root-table lock (up to 15s on a busy many-session server), and a
+# foreground run-shell held the splits and attach hostage for that long.
 _ledger_hover_setup="bash -c 'source \"$_WRAPPER_DIR/lib/ledger-hover.sh\" && ledger_hover_install \"\$1\" \"\$2\" \"\$3\" || true' ledger-hover \"$TMUX_CMD\" \"$SESSION_NAME\" '#{pane_id}'"
 
 # Spare pane: a nested tmux whose top status bar is a tab bar (project name on
@@ -587,11 +601,15 @@ _spare_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/spare-tabs.sh\" && spare_
 # before its final size lands, and tmux redistributes the delta equally across
 # columns, corrupting the split) and exits once the window size settles.
 # Skipped when no layout was captured (old snapshot) — the default split stays.
-if ! declare -f _detect_term_size >/dev/null 2>&1; then
+if ! declare -f _sane_term_size >/dev/null 2>&1; then
   # shellcheck disable=SC1091  # Runtime library path
   source "$_WRAPPER_DIR/lib/loading.sh"
 fi
-read -r _tmux_rows _tmux_cols <<< "$(_detect_term_size)"
+# _sane_term_size, not _detect_term_size: a single-shot read can catch the pty
+# before Ghostty delivers the tab's real size, and a tiny -x/-y makes the
+# split-window commands below fail — the tab then sits attached to a lone
+# full-width ledger pane (the stuck-launch bug).
+read -r _tmux_rows _tmux_cols <<< "$(_sane_term_size)"
 
 if [ "$RESTORE_MODE" -eq 1 ] && [ -n "${WISP_DECK_RESUME_LAYOUT:-}" ]; then
   restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$WISP_DECK_RESUME_LAYOUT" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
@@ -611,7 +629,7 @@ fi
   bind-key w run-shell "$_spare_close_bind" \; \
   bind-key Tab run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label next-window" \; \
   bind-key BTab run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label previous-window" \; \
-  run-shell "$_ledger_hover_setup" \; \
+  run-shell -b "$_ledger_hover_setup" \; \
   split-window -h -p "$_pane0_pct" -c "$PROJECT_DIR" \
   "$AI_LAUNCH_CMD; exec bash" \; \
   set-option -p @gt_ai 1 \; \

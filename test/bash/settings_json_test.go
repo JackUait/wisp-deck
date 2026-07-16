@@ -192,3 +192,27 @@ func TestSettingsJson_remove_waiting_indicator_hooks_does_not_clobber_invalidJSO
 		t.Fatalf("invalid settings were clobbered: %q", data)
 	}
 }
+
+// remove_waiting_indicator_hooks runs on EVERY Claude launch (wrapper.sh), but
+// it is an upgrade-only migration: in the steady state the settings file holds
+// no marker hooks, and spawning a python3 interpreter just to discover that
+// costs ~40-90ms on the launch critical path (worse under load). A bash grep
+// must answer the no-markers case without any interpreter spawn.
+func TestSettingsJson_remove_waiting_indicator_hooks_skips_python_withoutMarkers(t *testing.T) {
+	dir := t.TempDir()
+	settingsFile := writeTempFile(t, dir, "settings.json", `{"model":"opus"}`)
+	rec := filepath.Join(dir, "python-was-spawned")
+	binDir := mockCommand(t, dir, "python3", `touch `+rec+`; exit 1`)
+	env := buildEnv(t, []string{binDir})
+
+	snippet := settingsJsonSnippet(t,
+		fmt.Sprintf(`remove_waiting_indicator_hooks %q`, settingsFile))
+	out, code := runBashSnippet(t, snippet, env)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "not_found" {
+		t.Fatalf("output = %q, want not_found", strings.TrimSpace(out))
+	}
+	if _, err := os.Stat(rec); err == nil {
+		t.Error("python3 must not be spawned when the settings file has no marker hooks")
+	}
+}

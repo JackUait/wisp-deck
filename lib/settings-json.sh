@@ -122,6 +122,15 @@ remove_waiting_indicator_hooks() {
     echo "not_found"
     return 0
   fi
+  # Steady-state fast path: this runs on every Claude launch, but the markers
+  # exist only on a pre-upgrade settings file. Answer the common no-markers
+  # case with a grep instead of a python3 interpreter spawn (~40-90ms on the
+  # launch critical path). The python pass below re-checks under its lock, so
+  # a false positive here (marker text outside a hook command) is harmless.
+  if ! grep -q 'WISP_DECK_MARKER_FILE\|GHOST_TAB_MARKER_FILE' "$filepath" 2>/dev/null; then
+    echo "not_found"
+    return 0
+  fi
   python3 - "$filepath" "$config_dir" << 'PYEOF'
 import fcntl
 import json

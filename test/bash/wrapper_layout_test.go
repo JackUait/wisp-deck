@@ -24,6 +24,9 @@ func seedRestoreQueue(t *testing.T, home, projDir, tool string) {
 		[]byte("12345\n"), 0644); err != nil {
 		t.Fatalf("write marker: %v", err)
 	}
+	// The modelled launch is a chain-spawned tab; without its spawner's ticket
+	// the pop gate (restore_pop_authorized) would rightly refuse the entry.
+	seedChainTicket(t, confDir)
 }
 
 // TestWrapper_terminal_pane_is_45_percent verifies the left column's vertical

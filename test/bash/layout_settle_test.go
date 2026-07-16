@@ -238,6 +238,7 @@ exit 0
 		[]byte("12345\n"), 0644); err != nil {
 		t.Fatalf("write marker: %v", err)
 	}
+	seedChainTicket(t, confDir)
 
 	env := buildEnv(t, nil, "HOME="+home,
 		"GT_LAYOUT_REC="+layoutRec, "GT_DURING_REC="+duringRec)

@@ -1094,6 +1094,37 @@ highlight_body_line() {
   printf '%s' "${out%$'\n'}"   # drop the single trailing newline the loop added
 }
 
+# gt_ledger_native_capable [cache_dir] — true iff the installed wisp-deck-tui
+# supports the native `ledger` subcommand. Probing execs the Go binary (a
+# Gatekeeper-assessed spawn) synchronously before the pane's first paint, so
+# the verdict is cached keyed by the binary's path+mtime+size (the
+# gt_claude_filter_prefix pattern): only the first launch after an
+# install/update pays the probe.
+gt_ledger_native_capable() {
+  local cache_dir="${1:-${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck}"
+  local bin meta sig cache_file cached
+  bin="$(command -v wisp-deck-tui 2>/dev/null)" || return 1
+  [ -n "$bin" ] || return 1
+  meta="$(stat -f '%m-%z' "$bin" 2>/dev/null || stat -c '%Y-%s' "$bin" 2>/dev/null)"
+  sig="${bin}@${meta}"
+  cache_file="$cache_dir/ledger-native-capable"
+  if [ -f "$cache_file" ]; then
+    # Grouped: the -f check is a TOCTOU; losing the race must stay silent.
+    { IFS= read -r cached < "$cache_file"; } 2>/dev/null || cached=""
+    case "$cached" in
+      "${sig}|1") return 0 ;;
+      "${sig}|0") return 1 ;;
+    esac
+  fi
+  mkdir -p "$cache_dir" 2>/dev/null
+  if wisp-deck-tui ledger --help >/dev/null 2>&1; then
+    printf '%s|1\n' "$sig" > "$cache_file" 2>/dev/null
+    return 0
+  fi
+  printf '%s|0\n' "$sig" > "$cache_file" 2>/dev/null
+  return 1
+}
+
 compact_view() {
   local project_dir="${1:-.}"
 
@@ -1113,8 +1144,7 @@ compact_view() {
   fi
   if [ "$native_eligible" = 1 ] \
      && [ "${WISP_DECK_LEDGER_SHELL_FALLBACK:-}" != 1 ] \
-     && command -v wisp-deck-tui >/dev/null 2>&1 \
-     && wisp-deck-tui ledger --help >/dev/null 2>&1; then
+     && gt_ledger_native_capable; then
     local refresh_interval="${COMPACT_VIEW_INTERVAL:-2}"
     # The shell interval is historically a bare second count; Go durations
     # require a unit. Preserve explicitly-unitized values for diagnostics.

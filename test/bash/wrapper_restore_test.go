@@ -3,6 +3,7 @@ package bash_test
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -51,6 +52,13 @@ func TestWrapperInteractive_pops_restore_queue_into_current_window(t *testing.T)
 	if err := os.WriteFile(filepath.Join(confDir, "restore-queue"),
 		[]byte("12345|"+projDir+"|claude|sid-42\n"), 0644); err != nil {
 		t.Fatalf("write queue: %v", err)
+	}
+	// This launch is a chain-spawned tab: it holds the chain ticket issued by
+	// the previous tab's restore_advance. Without it, popping would hijack a
+	// user-opened tab (see restore_chain_ticket_test.go).
+	if err := os.WriteFile(filepath.Join(confDir, "restore-chain-ticket"),
+		[]byte(strconv.FormatInt(time.Now().Unix(), 10)+"\n"), 0644); err != nil {
+		t.Fatalf("write ticket: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(confDir, "last-restore-boot"),
 		[]byte("12345\n"), 0644); err != nil {
@@ -123,6 +131,7 @@ func TestWrapperRestore_applies_captured_layout(t *testing.T) {
 		[]byte("12345\n"), 0644); err != nil {
 		t.Fatalf("write marker: %v", err)
 	}
+	seedChainTicket(t, confDir)
 
 	env := buildEnv(t, nil, "HOME="+home, "GT_LAYOUT_REC="+layoutRec)
 	_, code := runBashScript(t, "wrapper.sh", nil, env)
@@ -185,6 +194,7 @@ func TestWrapperRestore_skips_layout_when_empty(t *testing.T) {
 		[]byte("12345\n"), 0644); err != nil {
 		t.Fatalf("write marker: %v", err)
 	}
+	seedChainTicket(t, confDir)
 
 	env := buildEnv(t, nil, "HOME="+home, "GT_LAYOUT_REC="+layoutRec)
 	_, code := runBashScript(t, "wrapper.sh", nil, env)
@@ -251,6 +261,7 @@ exit 0
 		[]byte("12345\n"), 0644); err != nil {
 		t.Fatalf("write marker: %v", err)
 	}
+	seedChainTicket(t, confDir)
 
 	env := buildEnv(t, nil, "HOME="+home, "GT_REC="+recPath)
 	_, code := runBashScript(t, "wrapper.sh", nil, env)

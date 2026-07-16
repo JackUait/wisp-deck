@@ -120,6 +120,35 @@ _detect_term_size() {
   echo "24 80"
 }
 
+# Print "rows cols" guaranteed big enough to build the three-pane layout.
+# Ghostty can start a tab's command before the pty reaches its real size (the
+# same race restore_layout_watch re-applies layouts for); feeding that
+# transient tiny size to `tmux new-session -x/-y` makes both split-window
+# commands fail ("no space for new pane"), and the tab is left attached to a
+# single full-width ledger pane with nothing to heal it. Poll briefly for the
+# real size, then clamp to a floor as the last resort — tmux resizes to the
+# client's true size at attach, so an over-clamped detached window is harmless
+# while a too-small one is fatal.
+# Usage: _sane_term_size [floor_rows] [floor_cols] [tries] [interval]
+_sane_term_size() {
+  local floor_rows="${1:-24}" floor_cols="${2:-80}"
+  local tries="${3:-10}" interval="${4:-0.05}"
+  local _r _c i=0
+  while :; do
+    read -r _r _c <<< "$(_detect_term_size)"
+    if [ "$_r" -ge "$floor_rows" ] && [ "$_c" -ge "$floor_cols" ]; then
+      echo "$_r $_c"
+      return 0
+    fi
+    i=$((i + 1))
+    [ "$i" -ge "$tries" ] && break
+    sleep "$interval"
+  done
+  [ "$_r" -lt "$floor_rows" ] && _r="$floor_rows"
+  [ "$_c" -lt "$floor_cols" ] && _c="$floor_cols"
+  echo "$_r $_c"
+}
+
 # Show animated loading screen with tool-specific colors.
 # Args: [tool_name] [palette_override] — tool defaults to claude; palette_override
 # (a space-separated ramp) lets a user-chosen theme preset colour the splash.

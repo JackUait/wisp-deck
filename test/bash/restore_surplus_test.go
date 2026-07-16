@@ -510,6 +510,9 @@ func TestWrapperRestore_sequential_launches_preserve_queue_order(t *testing.T) {
 		[]byte("12345\n"), 0644); err != nil {
 		t.Fatalf("write marker: %v", err)
 	}
+	// Launch 1 is a chain tab holding the previous tab's ticket; its own
+	// restore_advance issues the ticket launch 2 claims.
+	seedChainTicket(t, confDir)
 
 	env := buildEnv(t, nil, "HOME="+home, "GT_TUI_REC="+tuiRec, "GT_SESS_REC="+sessRec)
 	// Two sequential launches — the chain: tab 1, then the tab its Cmd+T opened.
@@ -663,6 +666,7 @@ func TestWrapperInteractive_stamps_launch_seq_into_session(t *testing.T) {
 		[]byte("12345\n"), 0644); err != nil {
 		t.Fatalf("write marker: %v", err)
 	}
+	seedChainTicket(t, confDir)
 
 	env := buildEnv(t, nil, "HOME="+home, "GT_SESS_REC="+sessRec)
 	_, code := runBashScript(t, "wrapper.sh", nil, env)
@@ -778,6 +782,7 @@ func TestWrapper_launch_vars_do_not_leak_into_tmux_server_env(t *testing.T) {
 		[]byte("12345\n"), 0644); err != nil {
 		t.Fatalf("write marker: %v", err)
 	}
+	seedChainTicket(t, confDir)
 
 	env := buildEnv(t, nil, "HOME="+home, "GT_ENV_REC="+envRec)
 	_, code := runBashScript(t, "wrapper.sh", nil, env)
