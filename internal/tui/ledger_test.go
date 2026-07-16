@@ -269,7 +269,7 @@ func TestLedgerViewShowsLoadingErrorAndEmptyStates(t *testing.T) {
 	}{
 		{name: "loading", options: LedgerOptions{Loading: true}, want: "loading changes"},
 		{name: "error", options: LedgerOptions{RefreshError: errors.New("git unavailable")}, want: "git unavailable"},
-		{name: "empty", options: LedgerOptions{}, want: "no changes"},
+		{name: "empty", options: LedgerOptions{}, want: "working tree clean"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -541,7 +541,7 @@ func TestLedgerRefreshTickKeepsLoadedEmptyStateVisible(t *testing.T) {
 		t.Fatal("refresh tick returned no load command")
 	}
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "no changes") {
+	if !strings.Contains(view, "working tree clean") {
 		t.Fatalf("background refresh hid the accepted empty state:\n%s", view)
 	}
 	if strings.Contains(view, "loading changes") {

@@ -22,7 +22,7 @@
 # path) into the pane env for exactly this; fall back to BASH_SOURCE when sourced
 # from bash (wrapper's own load, the test harness).
 _cv_lib_dir="${WISP_DECK_LIB_DIR:-${BASH_SOURCE[0]%/*}}"
-for _cv_dep in statusline claude-accounts tmux-session claude-shared-settings session-pool account-switch; do
+for _cv_dep in theme statusline claude-accounts tmux-session claude-shared-settings session-pool account-switch; do
   # shellcheck source=/dev/null
   [ -f "$_cv_lib_dir/$_cv_dep.sh" ] && source "$_cv_lib_dir/$_cv_dep.sh"
 done
@@ -328,6 +328,113 @@ body_path_map() {
   if [ -z "$staged" ] && [ -z "$unstaged" ] && [ -z "$untracked" ]; then
     printf '\n'                       # "no changes" row -> no path
   fi
+}
+
+# ledger_ghost_colors echoes the mascot's five 256-colour slots for a theme key:
+# "<cap> <body> <lower> <feet> <accent>". The stops mirror the Go ghost palettes
+# (internal/tui/theme.go): cap is the pale crown, body the primary hue, lower a
+# deeper shade, feet the darkest, accent the belly emblem.
+# Usage: ledger_ghost_colors <theme_key>
+ledger_ghost_colors() {
+  case "${1:-}" in
+    purple) echo "183 141 99 61 147" ;;
+    green)  echo "120 78 35 22 77" ;;
+    blue)   echo "117 75 31 18 81" ;;
+    rose)   echo "218 211 168 89 205" ;;
+    cyan)   echo "123 80 37 23 116" ;;
+    teal)   echo "158 36 30 23 86" ;;
+    *)      echo "215 209 172 130 220" ;; # orange (default)
+  esac
+}
+
+# ledger_empty_state renders the clean-tree placeholder: the wisp mascot centered
+# in the body viewport with a caption beneath it. It replaces the bare " no
+# changes" label that used to sit alone in the pane's top-left corner.
+#
+# The art is a 28x15 pixel map — '.' is transparent, every letter is a colour
+# slot painted as a full block, mirroring Go's paintRows (internal/tui/ghost.go).
+# A pane too narrow or too short for the art degrades to the caption alone rather
+# than wrapping the mascot into a mangled smear.
+#
+# Runs inside the pane's ZSH: no unquoted word-splitting, no `read -a` (zsh
+# spells it -A), and substring indexing only via ${var:off:len} (both shells).
+# Usage: ledger_empty_state <pane_width> <viewport_rows> [theme_key]
+ledger_empty_state() {
+  local width="${1:-80}" rows="${2:-24}" theme="${3:-}"
+  local caption="working tree clean"
+  local art_w=28 art_h=15
+  # art + one blank spacer + caption
+  local total=$((art_h + 2))
+
+  local dim=$'\033[2m' reset=$'\033[0m'
+
+  # Caption-only fallback, itself vertically centered.
+  if [ "$width" -lt $((art_w + 2)) ] || [ "$rows" -lt "$total" ]; then
+    local cpad=$(( (width - ${#caption}) / 2 ))
+    [ "$cpad" -lt 1 ] && cpad=1
+    local cblank=$(( (rows - 1) / 2 ))
+    while [ "$cblank" -gt 0 ]; do printf '\n'; cblank=$((cblank - 1)); done
+    printf '%*s%s%s%s\n' "$cpad" '' "$dim" "$caption" "$reset"
+    return 0
+  fi
+
+  local c_cap c_body c_low c_feet c_acc
+  read -r c_cap c_body c_low c_feet c_acc <<< "$(ledger_ghost_colors "$theme")"
+
+  local pad=$(( (width - art_w) / 2 ))
+  local top=$(( (rows - total) / 2 ))
+  while [ "$top" -gt 0 ]; do printf '\n'; top=$((top - 1)); done
+
+  local -a art=(
+    '.......CCCCCCCCCCCCCC.......'
+    '.....CPPPPPPPPPPPPPPPPC.....'
+    '....CPPPPPPPPPPPPPPPPPPC....'
+    '...PPPPPPPPPPPPPPPPPPPPPP...'
+    '..PPPPPPPPPPPPPPPPPPPPPPPP..'
+    '..PPPPWWWKKPPPPPPWWWKKPPPP..'
+    '..PPPPWWWKKPPPPPPWWWKKPPPP..'
+    '..DDDDDDDDDDDDDDDDDDDDDDDD..'
+    '..DDDDDDDDDYYDDDDDDDDDDDDD..'
+    '..DDDDDDDDYYYYDDDDDDDDDDDD..'
+    '..DDDDDDDDDYYDDDDDDDDDDDDD..'
+    '..DDDDDDDDDDDDDDDDDDDDDDDD..'
+    '..FFFFFFFFFFFFFFFFFFFFFFFF..'
+    '..FF.FFFFF.FFFFFF.FFFFF.FF..'
+    '..F..FFFF...FFFF...FFFF..F..'
+  )
+
+  local row out cur ch color j
+  for row in "${art[@]}"; do
+    out=""
+    cur=""
+    j=0
+    while [ "$j" -lt "${#row}" ]; do
+      ch="${row:$j:1}"
+      j=$((j + 1))
+      if [ "$ch" = "." ]; then
+        out="${out} "
+        continue
+      fi
+      if [ "$ch" != "$cur" ]; then
+        case "$ch" in
+          C) color="$c_cap" ;;
+          P) color="$c_body" ;;
+          D) color="$c_low" ;;
+          F) color="$c_feet" ;;
+          Y) color="$c_acc" ;;
+          W) color="231" ;;
+          *) color="232" ;; # K — pupils
+        esac
+        out="${out}"$'\033[38;5;'"${color}m"
+        cur="$ch"
+      fi
+      out="${out}█"
+    done
+    printf '%*s%s%s\n' "$pad" '' "$out" "$reset"
+  done
+
+  printf '\n'
+  printf '%*s%s%s%s\n' "$(( (width - ${#caption}) / 2 ))" '' "$dim" "$caption" "$reset"
 }
 
 # header_rows_for converts the heading's visible column <width> and the pane
@@ -1002,6 +1109,18 @@ compact_view() {
 compact_view_shell() {
   local project_dir="${1:-.}"
 
+  # Theme key for the clean-tree mascot, resolved ONCE (a settings read per
+  # refresh tick would sit on the build path). Honors the Settings-menu preset,
+  # falling back to the session tool's hue — mirroring the Go ledger, which
+  # paints the same mascot from the resolved theme. Empty (→ the orange default)
+  # when theme.sh isn't beside this file.
+  local _cv_theme=""
+  if declare -f gt_resolve_theme >/dev/null 2>&1; then
+    local _cv_pref
+    _cv_pref="$(grep '^theme=' "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+    _cv_theme="$(gt_resolve_theme "$_cv_pref" "${WISP_DECK_TOOL:-}")"
+  fi
+
   # Interactive only when stdin is a real terminal (the live tmux pane). The Go
   # test harness pipes stdin, so it falls through to the timed-refresh path.
   local interactive=0
@@ -1633,9 +1752,14 @@ compact_view_shell() {
       # ── New (untracked, just-created files) ──
       render_group "$untracked" "$cyan" "●" "new" "$name_width" "$n_untracked" "untracked"
 
-      # Empty state
+      # Empty state: the mascot placeholder, centered in the body viewport. Its
+      # height must match what the renderer will reserve, so mirror that math
+      # here — the pinned header is head_rows+1 rows and the bottom bar takes
+      # one (a wrapped bar costs a row, which just nudges the art up by one).
       if [ "$has_content" -eq 0 ]; then
-        printf " ${dim}no changes${reset}\n\n"
+        local empty_rows=$((h - head_rows - 2))
+        [ "$empty_rows" -lt 1 ] && empty_rows=1
+        ledger_empty_state "$w" "$empty_rows" "$_cv_theme"
       fi
     )
     # The header is the branch heading + separator; it is PINNED — always drawn

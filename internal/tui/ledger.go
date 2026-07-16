@@ -572,14 +572,15 @@ func (m *LedgerModel) View() string {
 
 	visible := m.state.VisibleRows()
 	if len(m.state.Snapshot.Rows) == 0 {
-		message := " no changes"
 		switch {
 		case m.loading:
-			message = " loading changes…"
+			lines = append(lines, ledgerFitPlain(" loading changes…", width))
 		case m.refreshError != nil:
-			message = " refresh failed · " + m.refreshError.Error()
+			lines = append(lines, ledgerFitPlain(" refresh failed · "+m.refreshError.Error(), width))
+		default:
+			lines = append(lines,
+				renderLedgerEmptyState(m.tool, currentTheme, width, m.state.ViewportHeight())...)
 		}
-		lines = append(lines, ledgerFitPlain(message, width))
 	} else {
 		for index, row := range visible {
 			visual := ledger.RowVisualState{
