@@ -217,3 +217,48 @@ func TestWrapperInteractive_without_chain_ticket_leaves_queue_alone(t *testing.T
 		t.Errorf("the queue entry belongs to the chain's own tab and must survive: err=%v content=%q", err, string(data))
 	}
 }
+
+// Builder starvation (caught by TestWrapperStorm on CI): between the queue
+// being published and the builder's own pop, concurrently-authorized storm
+// launches could drain every entry — the builder (the user's own window) then
+// popped empty and fell through to the picker while its session opened in
+// another tab. The builder therefore pre-acquires the pop lock when it
+// publishes the queue and hands it to its own first pop, so no concurrent pop
+// can outrace it.
+func TestMaybeRestore_builder_holds_pop_lock_until_its_own_pop(t *testing.T) {
+	dir := t.TempDir()
+	proj := t.TempDir()
+	writeTempFile(t, dir, "last-session",
+		"old-boot|proj|"+proj+"|opencode|ghostty|||\n")
+	root := projectRoot(t)
+	script := `
+source ` + quote(filepath.Join(root, "lib", "session-restore.sh")) + `
+maybe_restore_session ` + quote(dir) + ` boot-new
+[ -d ` + quote(filepath.Join(dir, "restore-queue.lock")) + ` ] && echo "lock-held"
+entry="$(restore_queue_pop ` + quote(dir) + ` boot-new)"
+[ -n "$entry" ] && echo "builder-popped"
+[ -d ` + quote(filepath.Join(dir, "restore-queue.lock")) + ` ] || echo "lock-released"
+`
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	for _, want := range []string{"lock-held", "builder-popped", "lock-released"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in output:\n%s", want, out)
+		}
+	}
+}
+
+// A build that queues nothing must not leave the pop lock behind — that would
+// stall every later pop for the sweep interval.
+func TestMaybeRestore_no_lock_left_when_nothing_queued(t *testing.T) {
+	dir := t.TempDir()
+	// Snapshot only contains the current boot — nothing to restore.
+	writeTempFile(t, dir, "last-session",
+		"boot-new|proj|/does/not/matter|opencode|ghostty|||\n")
+	_, code := runBashFunc(t, "lib/session-restore.sh", "maybe_restore_session",
+		[]string{dir, "boot-new"}, nil)
+	assertExitCode(t, code, 0)
+	if _, err := os.Stat(filepath.Join(dir, "restore-queue.lock")); err == nil {
+		t.Error("no pop lock may remain when no queue was built")
+	}
+}

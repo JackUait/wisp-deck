@@ -378,10 +378,16 @@ func TestRestoreLog_records_build_and_pop(t *testing.T) {
 	dir := t.TempDir()
 	home := t.TempDir()
 	writeTempFile(t, dir, "last-session", "111|web|/p/web|claude|ghostty||\n")
-	_, code := runMaybeRestoreHome(t, dir, "222", home)
-	assertExitCode(t, code, 0)
-	out, code := runBashFunc(t, "lib/session-restore.sh", "restore_queue_pop",
-		[]string{dir, "222"}, nil)
+	// Build and first pop happen in ONE process, as in the real wrapper — the
+	// builder pre-acquires the pop lock at build time and its own pop consumes
+	// the handoff (see maybe_restore_session).
+	root := projectRoot(t)
+	script := `
+source ` + quote(filepath.Join(root, "lib", "session-restore.sh")) + `
+maybe_restore_session ` + quote(dir) + ` 222
+restore_queue_pop ` + quote(dir) + ` 222
+`
+	out, code := runBashSnippet(t, script, buildEnv(t, nil, "HOME="+home))
 	assertExitCode(t, code, 0)
 	if strings.TrimSpace(out) == "" {
 		t.Fatal("pop returned nothing")

@@ -68,7 +68,12 @@ _sweep_stale_lock() {
   [ -d "$lock" ] || return 0
   now="$(date +%s)"
   mtime="$(stat -f %m "$lock" 2>/dev/null || echo 0)"
-  [ $((now - mtime)) -gt 10 ] && rmdir "$lock" 2>/dev/null
+  if [ $((now - mtime)) -gt 10 ]; then
+    # A builder that died between its lock pre-acquire and its pop leaves an
+    # owner stamp behind; rmdir needs the dir empty.
+    rm -f "$lock/owner" 2>/dev/null
+    rmdir "$lock" 2>/dev/null
+  fi
   return 0
 }
 
@@ -354,6 +359,18 @@ maybe_restore_session() {
     # Build stamp for restore_pop_authorized's storm grace window. The queue
     # file's own mtime cannot serve: every pop rewrites it.
     date +%s > "$config_dir/restore-queue-built-at" 2>/dev/null || true
+    # Pre-acquire the pop lock BEFORE publishing the queue and stamp this
+    # process as its owner: the builder's own first pop consumes the handoff
+    # (it matches on $$, which survives the command-substitution subshell pops
+    # run in). Without this, concurrently-authorized storm launches could
+    # drain every entry between the mv below and the builder's pop — the
+    # builder (the user's own window) then popped empty and fell through to
+    # the picker while its session opened in another tab. Best effort: if the
+    # lock cannot be taken, the builder degrades to racing like before.
+    _sweep_stale_lock "$queue.lock"
+    if mkdir "$queue.lock" 2>/dev/null; then
+      echo "$$" > "$queue.lock/owner" 2>/dev/null || true
+    fi
     mv "$tmp" "$queue"
     # This launch created the queue — it is the user's own window (or the
     # claim winner of a crash-resume storm) and must never be closed as a
@@ -382,7 +399,21 @@ maybe_restore_session() {
 restore_queue_pop() {
   local config_dir="$1" cur_boot="$2"
   local queue="$config_dir/restore-queue"
-  [ -f "$queue" ] || return 0
+  local lock="$queue.lock"
+  # The queue builder pre-acquired the lock when publishing the queue (see
+  # maybe_restore_session) so its own first pop cannot be outraced; consume
+  # the handoff exactly once. $$ matches even though pops run in command
+  # substitution subshells — bash reports the parent's PID there.
+  local held=0 owner
+  { owner="$(cat "$lock/owner")"; } 2>/dev/null || owner=""
+  if [ "$owner" = "$$" ]; then
+    rm -f "$lock/owner"
+    held=1
+  fi
+  if [ ! -f "$queue" ]; then
+    [ "$held" = "1" ] && rmdir "$lock" 2>/dev/null
+    return 0
+  fi
 
   local now mtime
   now="$(date +%s)"
@@ -390,18 +421,21 @@ restore_queue_pop() {
   if [ $((now - mtime)) -gt 300 ]; then
     restore_log "$config_dir" "pop discarded stale queue (age $((now - mtime))s)"
     rm -f "$queue"
+    [ "$held" = "1" ] && rmdir "$lock" 2>/dev/null
     return 0
   fi
 
   # mkdir is the lock: the popping tab triggers the next one right away, so
   # two tabs can race on the queue; each entry must be consumed exactly once.
-  local lock="$queue.lock" i=0
-  _sweep_stale_lock "$lock"
-  until mkdir "$lock" 2>/dev/null; do
-    i=$((i + 1))
-    [ "$i" -ge 40 ] && return 0
-    sleep 0.05
-  done
+  local i=0
+  if [ "$held" != "1" ]; then
+    _sweep_stale_lock "$lock"
+    until mkdir "$lock" 2>/dev/null; do
+      i=$((i + 1))
+      [ "$i" -ge 40 ] && return 0
+      sleep 0.05
+    done
+  fi
 
   local line b
   line="$(head -n 1 "$queue" 2>/dev/null)"
