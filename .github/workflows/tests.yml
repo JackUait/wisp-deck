@@ -45,7 +45,10 @@ jobs:
         run: brew install coreutils
 
       - name: Run bash integration tests
-        run: go test -json ./test/bash/... 2>&1 | tee bash-test-output.json
+        # Explicit -timeout: the package runs close to go test's default 10m on
+        # a loaded machine, and a timeout panic reads as a hang rather than the
+        # slow-but-green suite it is. A real hang still dies, just later.
+        run: go test -json -timeout 20m ./test/bash/... 2>&1 | tee bash-test-output.json
         continue-on-error: true
 
       - name: Report bash test results

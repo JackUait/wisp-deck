@@ -35,3 +35,31 @@ func TestWrapper_ledger_hover_install_does_not_block_launch_chain(t *testing.T) 
 		t.Errorf("ledger-hover run-shell uses %q; must be -b so the splits and attach never wait on it", m[1])
 	}
 }
+
+// Class-level guard: NO foreground run-shell may sit in the launch chain.
+// tmux executes the chain's commands in order, and a foreground run-shell
+// blocks everything queued after it — splits, attach — for as long as its
+// script runs (the ledger-hover install held a server-wide lock for up to
+// 15s on a busy machine). bind-key definitions are exempt: their run-shell
+// executes at keypress, not at launch.
+func TestWrapper_launch_chain_has_no_foreground_run_shell(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(projectRoot(t), "wrapper.sh"))
+	if err != nil {
+		t.Fatalf("read wrapper.sh: %v", err)
+	}
+	src := string(data)
+	start := strings.Index(src, `new-session -d`)
+	end := strings.Index(src, `attach-session`)
+	if start < 0 || end < 0 || end < start {
+		t.Fatal("wrapper.sh launch chain (new-session ... attach-session) not found; update this guard")
+	}
+	for i, line := range strings.Split(src[start:end], "\n") {
+		if !strings.Contains(line, "run-shell") || strings.Contains(line, "bind-key") {
+			continue
+		}
+		if !regexp.MustCompile(`run-shell\s+-b\b`).MatchString(line) {
+			t.Errorf("launch-chain line %d uses a foreground run-shell — it blocks the splits "+
+				"and attach until its script exits; use `run-shell -b`:\n%s", i, strings.TrimSpace(line))
+		}
+	}
+}

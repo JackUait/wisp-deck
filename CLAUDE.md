@@ -282,6 +282,46 @@ property, not the instance, so it catches whatever the next offender turns out
 to be — and it names the command in the failure. `opencode_availability_test.go`
 adds a static guard against reintroducing that specific probe.
 
+### The post-pick path and the tmux launch chain (same discipline)
+
+The stretch from project selection to `attach-session` is critical path too:
+the splash is stopped and the panes don't exist yet, so every synchronous
+spawn here is dead screen time. Three launch invariants, each with a guard:
+
+1. **No blocking subprocess between pick and tmux.** One python3 spawn (the
+   Claude launch-settings overlay) is the allowed exception; migrations must
+   gate themselves behind a cheap bash check (see
+   `remove_waiting_indicator_hooks`'s grep fast path), and capability probes
+   must cache by binary signature (see `gt_claude_filter_prefix`,
+   `gt_ledger_native_capable`). Guarded by
+   `test/bash/launch_post_pick_path_test.go` (property test, names the
+   offender).
+2. **No foreground `run-shell` inside the launch chain.** tmux runs the
+   chain's commands in order; a foreground `run-shell` holds the splits and
+   the attach hostage for as long as its script runs (the ledger-hover
+   install once blocked on a server-wide 15s lock). Use `run-shell -b` —
+   formats like `#{pane_id}` still expand at the command's position in the
+   chain. Guarded by `test/bash/ledger_hover_nonblocking_test.go`.
+3. **A tab must never end up attached to a broken layout.** tmux executes the
+   rest of the chain even when a `split-window` fails (this shipped: a
+   pre-resize tiny pty made both splits fail and the tab sat on a lone
+   full-width ledger forever). The session size comes from `_sane_term_size`
+   (never raw `_detect_term_size` — guarded by
+   `test/bash/sane_term_size_test.go`), and `gt_ensure_panes_watch`
+   (backgrounded around the launch) rebuilds whatever panes are missing once
+   the window has real space — guarded by `test/bash/pane_heal_test.go`.
+
+### Restore-queue pops are authorized, never ambient
+
+An interactive launch may consume a restore-queue entry only through
+`restore_pop_authorized`: it built the queue, it holds the one-shot chain
+ticket its spawner issued via `restore_advance`, or it launched inside the
+crash-storm grace window of the queue build. Popping without authorization is
+the wrong-tab bug: a user's fresh Cmd+T tab silently restores another
+project while their intended session opens elsewhere. Never add a
+`restore_queue_pop` call site that skips the gate. Guarded by
+`test/bash/restore_chain_ticket_test.go`.
+
 ## Code Conventions
 
 ### Avoid Over-Engineering

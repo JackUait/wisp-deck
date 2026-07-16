@@ -615,6 +615,14 @@ if [ "$RESTORE_MODE" -eq 1 ] && [ -n "${WISP_DECK_RESUME_LAYOUT:-}" ]; then
   restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$WISP_DECK_RESUME_LAYOUT" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
 fi
 
+# Layout self-heal: tmux runs every command of the chain below even when one
+# fails, so a failed split (any future cause, not just the pty-size race
+# _sane_term_size closes) would strand this tab on a lone full-width ledger.
+# The watcher rebuilds missing panes once the window has real space and exits
+# the moment the three-pane layout exists.
+gt_ensure_panes_watch "$TMUX_CMD" "$SESSION_NAME" "$PROJECT_DIR" \
+  "$AI_LAUNCH_CMD" "$_spare_cmd" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
+
 "$TMUX_CMD" new-session -d -x "$_tmux_cols" -y "$_tmux_rows" -s "$SESSION_NAME" -e "PATH=$PATH" -e "WISP_DECK_ATTENTION_ROOT=$WISP_DECK_ATTENTION_ROOT" -e "WISP_DECK_ATTENTION_DESCRIPTOR=$WISP_DECK_ATTENTION_DESCRIPTOR" -e "WISP_DECK_ATTENTION_GENERATION=$WISP_DECK_ATTENTION_GENERATION" -e "WISP_DECK_ATTENTION_FILE=$WISP_DECK_ATTENTION_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=${WISP_DECK_RESUME_SESSION:-}" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$WISP_DECK_RELAUNCH_FILE" -e "WISP_DECK_CLAUDE_ACCOUNT=${WISP_DECK_CLAUDE_ACCOUNT_DIR##*/}" -e "WISP_DECK_SEQ=${_wd_launch_seq}" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
   "$_pane0_cmd" \; \
   set-option status-left " ⬡ ${PROJECT_NAME} " \; \

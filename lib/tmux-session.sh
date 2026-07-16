@@ -253,6 +253,91 @@ build_ai_launch_cmd_raw() {
   esac
 }
 
+# Layout self-heal. tmux executes every command of the wrapper's launch chain
+# even when one fails, so a failed split-window (observed cause: the session
+# was sized from a pre-resize tiny pty; a future cause could be any tmux error)
+# left the tab attached to a lone full-width ledger pane with nothing to fix
+# it. This watcher guards the CLASS: backgrounded by the wrapper around the
+# launch, it waits for the window to have real space, rebuilds whatever panes
+# are missing (marking the AI pane with @gt_ai exactly like the chain does),
+# and exits as soon as the three-pane layout exists. A healthy launch costs it
+# one tmux round-trip.
+# Usage: gt_ensure_panes_watch <tmux_cmd> <session> <project_dir> <ai_cmd>
+#        <spare_cmd> [interval] [max_ticks]
+gt_ensure_panes_watch() {
+  local tmux_cmd="$1" sess="$2" project_dir="$3" ai_cmd="$4" spare_cmd="$5"
+  local interval="${6:-0.25}" max_ticks="${7:-60}"
+  local i=0 out panes width height seen=0 healed=0
+  local ledger new_pane ai_pane first non_ai p mark
+  while [ "$i" -lt "$max_ticks" ]; do
+    i=$((i + 1))
+    # Empty output is treated like a failed query (a real tmux either errors
+    # or prints): not created yet → wait; gone after we saw it → session ended.
+    if ! out="$("$tmux_cmd" display-message -p -t "$sess:0" \
+      '#{window_panes} #{window_width} #{window_height}' 2>/dev/null)" \
+      || [ -z "$out" ]; then
+      [ "$seen" -eq 1 ] && return 0
+      sleep "$interval"
+      continue
+    fi
+    seen=1
+    read -r panes width height <<< "$out"
+    case "$panes" in '' | *[!0-9]*) panes=0 ;; esac
+    if [ "$panes" -ge 3 ]; then
+      [ "$healed" -eq 1 ] && echo "gt_ensure_panes_watch: rebuilt missing panes for $sess" >&2
+      return 0
+    fi
+    # A too-small window is why the splits failed in the first place —
+    # retrying now would fail again. Wait for real space.
+    if [ "${width:-0}" -lt 40 ] || [ "${height:-0}" -lt 10 ]; then
+      sleep "$interval"
+      continue
+    fi
+    if [ "$panes" -eq 1 ]; then
+      # The stuck-tab state: only the ledger exists. Rebuild both splits in
+      # the chain's order and leave the AI pane focused, as the chain does.
+      ledger="$("$tmux_cmd" display-message -p -t "$sess:0" '#{pane_id}' 2>/dev/null)"
+      if "$tmux_cmd" split-window -h -p 75 -c "$project_dir" -t "$sess:0" \
+        "$ai_cmd; exec bash" 2>/dev/null; then
+        new_pane="$("$tmux_cmd" display-message -p -t "$sess:0" '#{pane_id}' 2>/dev/null)"
+        "$tmux_cmd" set-option -p -t "$new_pane" @gt_ai 1 2>/dev/null
+        "$tmux_cmd" split-window -v -p 45 -c "$project_dir" -t "$ledger" \
+          "$spare_cmd" 2>/dev/null
+        "$tmux_cmd" select-pane -t "$new_pane" 2>/dev/null
+        healed=1
+      fi
+    elif [ "$panes" -eq 2 ]; then
+      # One split failed. The @gt_ai marker says which: no marked pane → the
+      # AI split is missing; a marked pane → the spare split is missing.
+      ai_pane=""
+      first=""
+      non_ai=""
+      while read -r p mark; do
+        [ -n "$p" ] || continue
+        [ -z "$first" ] && first="$p"
+        if [ "$mark" = "1" ]; then ai_pane="$p"; else non_ai="$p"; fi
+      done <<< "$("$tmux_cmd" list-panes -t "$sess:0" -F '#{pane_id} #{@gt_ai}' 2>/dev/null)"
+      if [ -z "$ai_pane" ]; then
+        if "$tmux_cmd" split-window -h -p 75 -c "$project_dir" -t "$first" \
+          "$ai_cmd; exec bash" 2>/dev/null; then
+          new_pane="$("$tmux_cmd" display-message -p -t "$sess:0" '#{pane_id}' 2>/dev/null)"
+          "$tmux_cmd" set-option -p -t "$new_pane" @gt_ai 1 2>/dev/null
+          "$tmux_cmd" select-pane -t "$new_pane" 2>/dev/null
+          healed=1
+        fi
+      else
+        if "$tmux_cmd" split-window -v -p 45 -c "$project_dir" -t "$non_ai" \
+          "$spare_cmd" 2>/dev/null; then
+          "$tmux_cmd" select-pane -t "$ai_pane" 2>/dev/null
+          healed=1
+        fi
+      fi
+    fi
+    sleep "$interval"
+  done
+  return 0
+}
+
 # Clean up a tmux session: kill watcher, TERM pane trees, KILL survivors, destroy session.
 cleanup_tmux_session() {
   local session_name="$1" watcher_pid="$2" tmux_cmd="$3"
