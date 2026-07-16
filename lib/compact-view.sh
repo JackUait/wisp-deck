@@ -330,22 +330,23 @@ body_path_map() {
   fi
 }
 
-# ledger_wisp_colors echoes the clean-tree mascot's four 256-colour slots for a
-# theme key: "<body> <lower> <blush> <pupil>". These are the MUTED (sleep) stops
-# of each Go palette (internal/tui/theme.go: SleepPrimary, SleepDim, SleepBlush,
-# EyePupil) — the placeholder marks an idle state, so it recedes rather than
-# competing with the file rows. The full-saturation stops belong to the splash,
-# where the mascot is the point.
+# ledger_wisp_colors echoes the clean-tree mascot's six 256-colour slots for a
+# theme key: "<cap> <body> <lower> <feet> <blush> <pupil>". These are the MUTED
+# (sleep) stops of each Go palette (internal/tui/theme.go: SleepCap,
+# SleepPrimary, SleepDim, SleepDarkFeet, SleepBlush, EyePupil) — the same stops
+# the sleeping splash ghost wears, so the wisp reads as that character at half
+# scale. The full-saturation stops belong to the splash, where the mascot is
+# the point.
 # Usage: ledger_wisp_colors <theme_key>
 ledger_wisp_colors() {
   case "${1:-}" in
-    purple) echo "103 60 139 235" ;;
-    green)  echo "65 22 174 235" ;;
-    blue)   echo "67 24 174 235" ;;
-    rose)   echo "132 95 174 235" ;;
-    cyan)   echo "66 23 174 235" ;;
-    teal)   echo "29 23 72 232" ;;
-    *)      echo "166 130 168 235" ;; # orange (default)
+    purple) echo "146 103 60 236 139 235" ;;
+    green)  echo "151 65 22 236 174 235" ;;
+    blue)   echo "153 67 24 236 174 235" ;;
+    rose)   echo "182 132 95 236 174 235" ;;
+    cyan)   echo "152 66 23 236 174 235" ;;
+    teal)   echo "108 29 23 22 72 232" ;;
+    *)      echo "180 166 130 94 168 232" ;; # orange (default)
   esac
 }
 
@@ -388,30 +389,31 @@ ledger_empty_state() {
     return 0
   fi
 
-  local c_body c_low c_blush c_pupil
-  read -r c_body c_low c_blush c_pupil <<< "$(ledger_wisp_colors "$theme")"
+  local c_cap c_body c_low c_feet c_blush c_pupil
+  read -r c_cap c_body c_low c_feet c_blush c_pupil <<< "$(ledger_wisp_colors "$theme")"
 
   local pad=$(( (width - art_w) / 2 ))
   local top=$(( (rows - total) / 2 ))
   while [ "$top" -gt 0 ]; do printf '\n'; top=$((top - 1)); done
 
-  # The wisp SLEEPS: single-pixel closed lids (bottom half of their cell, so
-  # they render as gentle ▄ marks) with blush cheeks beside them — open eyes
-  # collapse into a hollow black stare at this scale.
-  # Slots: P body, D lower body + feet, L blush, K closed lids.
+  # The wisp is the sleeping splash ghost at half scale, trait for trait: pale
+  # cap rim, primary→dim body split at eye level, single-pixel closed lids
+  # (bottom half of their cell, so they render as gentle ▄ marks) with blush
+  # beneath, and a dark feet band ending in scallops.
+  # Slots: C cap rim, P upper body, D lower body, B feet, L blush, K closed lids.
   local -a art=(
-    '....PPPPPP....'
-    '..PPPPPPPPPP..'
+    '....CCCCCC....'
+    '..CPPPPPPPPC..'
     '.PPPPPPPPPPPP.'
     'PPPPPPPPPPPPPP'
     'PPPPPPPPPPPPPP'
-    'PPKKPPPPPPKKPP'
-    'PLLPPPPPPPPLLP'
-    'PPPPPPPPPPPPPP'
+    'DDKKDDDDDDKKDD'
+    'DDLLDDDDDDLLDD'
     'DDDDDDDDDDDDDD'
     'DDDDDDDDDDDDDD'
     'DDDDDDDDDDDDDD'
-    'DD.DDD..DDD.DD'
+    'BBBBBBBBBBBBBB'
+    'BB.BBB..BBB.BB'
   )
 
   # Pair the pixel rows up front — walking them two at a time would need array
@@ -439,10 +441,10 @@ ledger_empty_state() {
       j=$((j + 1))
       # Slot -> colour. An empty result marks a transparent pixel.
       case "$ch_t" in
-        P) col_t="$c_body" ;; D) col_t="$c_low" ;; L) col_t="$c_blush" ;; K) col_t="$c_pupil" ;; *) col_t="" ;;
+        C) col_t="$c_cap" ;; P) col_t="$c_body" ;; D) col_t="$c_low" ;; B) col_t="$c_feet" ;; L) col_t="$c_blush" ;; K) col_t="$c_pupil" ;; *) col_t="" ;;
       esac
       case "$ch_b" in
-        P) col_b="$c_body" ;; D) col_b="$c_low" ;; L) col_b="$c_blush" ;; K) col_b="$c_pupil" ;; *) col_b="" ;;
+        C) col_b="$c_cap" ;; P) col_b="$c_body" ;; D) col_b="$c_low" ;; B) col_b="$c_feet" ;; L) col_b="$c_blush" ;; K) col_b="$c_pupil" ;; *) col_b="" ;;
       esac
       # Reset every cell: a background colour left set would bleed across the
       # transparent margin and draw a dark slab around the mascot.

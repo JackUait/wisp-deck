@@ -107,6 +107,24 @@ func TestRenderLedgerEmptyState_mascot_is_muted_and_asleep(t *testing.T) {
 	}
 }
 
+// The wisp is a scaled-down splash ghost, not a separate character: it wears
+// the pale cap rim across its crown and the dark feet band that the big
+// mascots (GhostForTheme) wear — in their muted sleep tones.
+func TestRenderLedgerEmptyState_mascot_echoes_the_splash_ghost(t *testing.T) {
+	theme := ThemeForTool("claude")
+	rendered := strings.Join(renderLedgerEmptyState(theme, 60, 27), "\n")
+
+	if !strings.Contains(rendered, AnsiFromThemeColor(theme.SleepCap)) {
+		t.Errorf("mascot missing the splash ghost's pale cap rim (%s)", theme.SleepCap)
+	}
+	if !strings.Contains(rendered, AnsiFromThemeColor(theme.SleepDarkFeet)) {
+		t.Errorf("mascot missing the splash ghost's dark feet band (%s)", theme.SleepDarkFeet)
+	}
+	if !strings.Contains(rendered, AnsiFromThemeColor(theme.SleepDim)) {
+		t.Errorf("mascot missing the splash ghost's darker lower body (%s)", theme.SleepDim)
+	}
+}
+
 // The placeholder sits in the middle of the viewport, not jammed against the
 // separator rule.
 func TestRenderLedgerEmptyState_centers_vertically(t *testing.T) {

@@ -120,6 +120,14 @@ func TestLedgerEmptyState_paints_the_mascot_in_the_theme(t *testing.T) {
 	if !strings.Contains(orange, "38;5;168m") {
 		t.Errorf("orange mascot missing its blush cheeks (168):\n%q", orange)
 	}
+	// The splash-ghost style traits: a pale cap rim on the crown and a dark
+	// feet band above the scallops (the claude ghost's SleepCap/SleepDarkFeet).
+	if !strings.Contains(orange, "38;5;180m") {
+		t.Errorf("orange mascot missing the splash ghost's cap rim (180):\n%q", orange)
+	}
+	if !strings.Contains(orange, "38;5;94m") {
+		t.Errorf("orange mascot missing the splash ghost's feet band (94):\n%q", orange)
+	}
 	if !strings.Contains(purple, "38;5;103m") {
 		t.Errorf("purple mascot missing its muted body hue (103):\n%q", purple)
 	}
