@@ -330,41 +330,51 @@ body_path_map() {
   fi
 }
 
-# ledger_ghost_colors echoes the mascot's five 256-colour slots for a theme key:
-# "<cap> <body> <lower> <feet> <accent>". The stops mirror the Go ghost palettes
-# (internal/tui/theme.go): cap is the pale crown, body the primary hue, lower a
-# deeper shade, feet the darkest, accent the belly emblem.
-# Usage: ledger_ghost_colors <theme_key>
-ledger_ghost_colors() {
+# ledger_wisp_colors echoes the clean-tree mascot's three 256-colour slots for a
+# theme key: "<body> <lower> <pupil>". These are the MUTED (sleep) stops of each
+# Go palette (internal/tui/theme.go: SleepDim, SleepDarkFeet, EyePupil) — the
+# placeholder marks an idle state, so it recedes rather than competing with the
+# file rows. The full-saturation stops belong to the splash, where the mascot is
+# the point.
+# Usage: ledger_wisp_colors <theme_key>
+ledger_wisp_colors() {
   case "${1:-}" in
-    purple) echo "183 141 99 61 147" ;;
-    green)  echo "120 78 35 22 77" ;;
-    blue)   echo "117 75 31 18 81" ;;
-    rose)   echo "218 211 168 89 205" ;;
-    cyan)   echo "123 80 37 23 116" ;;
-    teal)   echo "158 36 30 23 86" ;;
-    *)      echo "215 209 172 130 220" ;; # orange (default)
+    purple) echo "60 236 235" ;;
+    green)  echo "22 236 235" ;;
+    blue)   echo "24 236 235" ;;
+    rose)   echo "95 236 235" ;;
+    cyan)   echo "23 236 235" ;;
+    teal)   echo "23 22 232" ;;
+    *)      echo "130 94 232" ;; # orange (default)
   esac
 }
 
-# ledger_empty_state renders the clean-tree placeholder: the wisp mascot centered
-# in the body viewport with a caption beneath it. It replaces the bare " no
-# changes" label that used to sit alone in the pane's top-left corner.
+# ledger_empty_state renders the clean-tree placeholder: a small, muted wisp
+# centered in the body viewport with a caption beneath it. It replaces the bare
+# " no changes" label that used to sit alone in the pane's top-left corner.
 #
-# The art is a 28x15 pixel map — '.' is transparent, every letter is a colour
-# slot painted as a full block, mirroring Go's paintRows (internal/tui/ghost.go).
-# A pane too narrow or too short for the art degrades to the caption alone rather
-# than wrapping the mascot into a mangled smear.
+# This is the SHELL FALLBACK renderer (the live pane execs the Go ledger, which
+# draws the same placeholder from internal/tui/ledger_empty.go) — keep the two
+# in step.
+#
+# The art is a 14x12 pixel map — '.' is transparent, every letter is a colour
+# slot. Half-block glyphs pack two pixel rows into each cell ('▀' carries the
+# top pixel as its foreground and the bottom pixel as its background), so the
+# wisp occupies 14 columns and 6 rows. A transparent pixel falls back to the
+# terminal's default colour, letting the pane background show through instead of
+# a painted box. A pane too narrow or too short for the art degrades to the
+# caption alone rather than wrapping the mascot into a mangled smear.
 #
 # Runs inside the pane's ZSH: no unquoted word-splitting, no `read -a` (zsh
-# spells it -A), and substring indexing only via ${var:off:len} (both shells).
+# spells it -A), no array indexing (zsh is 1-based, bash 0-based), and substring
+# indexing only via ${var:off:len} (both shells).
 # Usage: ledger_empty_state <pane_width> <viewport_rows> [theme_key]
 ledger_empty_state() {
   local width="${1:-80}" rows="${2:-24}" theme="${3:-}"
   local caption="working tree clean"
-  local art_w=28 art_h=15
+  local art_w=14 art_rows=6
   # art + one blank spacer + caption
-  local total=$((art_h + 2))
+  local total=$((art_rows + 2))
 
   local dim=$'\033[2m' reset=$'\033[0m'
 
@@ -378,57 +388,73 @@ ledger_empty_state() {
     return 0
   fi
 
-  local c_cap c_body c_low c_feet c_acc
-  read -r c_cap c_body c_low c_feet c_acc <<< "$(ledger_ghost_colors "$theme")"
+  local c_body c_low c_pupil
+  read -r c_body c_low c_pupil <<< "$(ledger_wisp_colors "$theme")"
 
   local pad=$(( (width - art_w) / 2 ))
   local top=$(( (rows - total) / 2 ))
   while [ "$top" -gt 0 ]; do printf '\n'; top=$((top - 1)); done
 
+  # Slots: P body, D lower body + feet, K pupils.
   local -a art=(
-    '.......CCCCCCCCCCCCCC.......'
-    '.....CPPPPPPPPPPPPPPPPC.....'
-    '....CPPPPPPPPPPPPPPPPPPC....'
-    '...PPPPPPPPPPPPPPPPPPPPPP...'
-    '..PPPPPPPPPPPPPPPPPPPPPPPP..'
-    '..PPPPWWWKKPPPPPPWWWKKPPPP..'
-    '..PPPPWWWKKPPPPPPWWWKKPPPP..'
-    '..DDDDDDDDDDDDDDDDDDDDDDDD..'
-    '..DDDDDDDDDYYDDDDDDDDDDDDD..'
-    '..DDDDDDDDYYYYDDDDDDDDDDDD..'
-    '..DDDDDDDDDYYDDDDDDDDDDDDD..'
-    '..DDDDDDDDDDDDDDDDDDDDDDDD..'
-    '..FFFFFFFFFFFFFFFFFFFFFFFF..'
-    '..FF.FFFFF.FFFFFF.FFFFF.FF..'
-    '..F..FFFF...FFFF...FFFF..F..'
+    '....PPPPPP....'
+    '..PPPPPPPPPP..'
+    '.PPPPPPPPPPPP.'
+    'PPPPPPPPPPPPPP'
+    'PPKKPPPPPPKKPP'
+    'PPKKPPPPPPKKPP'
+    'PPPPPPPPPPPPPP'
+    'DDDDDDDDDDDDDD'
+    'DDDDDDDDDDDDDD'
+    'DDDDDDDDDDDDDD'
+    'DDDDDDDDDDDDDD'
+    'DD.DDD..DDD.DD'
   )
 
-  local row out cur ch color j
-  for row in "${art[@]}"; do
+  # Pair the pixel rows up front — walking them two at a time would need array
+  # indexing, which is 1-based in zsh and 0-based in bash.
+  local -a pairs=()
+  local rowdef pending=""
+  for rowdef in "${art[@]}"; do
+    if [ -z "$pending" ]; then
+      pending="$rowdef"
+    else
+      pairs+=("${pending}|${rowdef}")
+      pending=""
+    fi
+  done
+
+  local pair upper lower out j ch_t ch_b col_t col_b
+  for pair in "${pairs[@]}"; do
+    upper="${pair%%|*}"
+    lower="${pair##*|}"
     out=""
-    cur=""
     j=0
-    while [ "$j" -lt "${#row}" ]; do
-      ch="${row:$j:1}"
+    while [ "$j" -lt "${#upper}" ]; do
+      ch_t="${upper:$j:1}"
+      ch_b="${lower:$j:1}"
       j=$((j + 1))
-      if [ "$ch" = "." ]; then
+      # Slot -> colour. An empty result marks a transparent pixel.
+      case "$ch_t" in
+        P) col_t="$c_body" ;; D) col_t="$c_low" ;; K) col_t="$c_pupil" ;; *) col_t="" ;;
+      esac
+      case "$ch_b" in
+        P) col_b="$c_body" ;; D) col_b="$c_low" ;; K) col_b="$c_pupil" ;; *) col_b="" ;;
+      esac
+      # Reset every cell: a background colour left set would bleed across the
+      # transparent margin and draw a dark slab around the mascot.
+      out="${out}${reset}"
+      if [ -z "$col_t" ] && [ -z "$col_b" ]; then
         out="${out} "
-        continue
+      elif [ -n "$col_t" ] && [ -z "$col_b" ]; then
+        out="${out}"$'\033[38;5;'"${col_t}m▀"
+      elif [ -z "$col_t" ] && [ -n "$col_b" ]; then
+        out="${out}"$'\033[38;5;'"${col_b}m▄"
+      elif [ "$col_t" = "$col_b" ]; then
+        out="${out}"$'\033[38;5;'"${col_t}m█"
+      else
+        out="${out}"$'\033[38;5;'"${col_t}m"$'\033[48;5;'"${col_b}m▀"
       fi
-      if [ "$ch" != "$cur" ]; then
-        case "$ch" in
-          C) color="$c_cap" ;;
-          P) color="$c_body" ;;
-          D) color="$c_low" ;;
-          F) color="$c_feet" ;;
-          Y) color="$c_acc" ;;
-          W) color="231" ;;
-          *) color="232" ;; # K — pupils
-        esac
-        out="${out}"$'\033[38;5;'"${color}m"
-        cur="$ch"
-      fi
-      out="${out}█"
     done
     printf '%*s%s%s\n' "$pad" '' "$out" "$reset"
   done

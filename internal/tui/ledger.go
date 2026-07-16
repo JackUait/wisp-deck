@@ -579,7 +579,7 @@ func (m *LedgerModel) View() string {
 			lines = append(lines, ledgerFitPlain(" refresh failed · "+m.refreshError.Error(), width))
 		default:
 			lines = append(lines,
-				renderLedgerEmptyState(m.tool, currentTheme, width, m.state.ViewportHeight())...)
+				renderLedgerEmptyState(currentTheme, width, m.state.ViewportHeight())...)
 		}
 	} else {
 		for index, row := range visible {

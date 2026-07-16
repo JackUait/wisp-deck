@@ -8,15 +8,25 @@ import (
 )
 
 // A clean working tree used to render a bare " no changes" label in the pane's
-// top-left corner. It now draws the tool mascot, centered, with a caption.
+// top-left corner. It now draws a small, muted wisp with a caption. The mascot
+// is deliberately unobtrusive: it marks an idle state, so it must not out-shout
+// the changesets the ledger exists to show.
+
+// The art box: half-block pixels pack two rows per cell, so a 14x12 pixel wisp
+// occupies 14 columns and 6 rows.
+const (
+	testMascotCols = 14
+	testMascotRows = 6
+)
 
 // mascotRows returns the plain-text lines of a rendered placeholder that carry
-// mascot pixels.
+// mascot pixels (any block glyph, whole or half).
 func mascotRows(lines []string) []string {
 	var art []string
 	for _, line := range lines {
-		if strings.Contains(stripANSI(line), "█") {
-			art = append(art, stripANSI(line))
+		plain := stripANSI(line)
+		if strings.ContainsAny(plain, "█▀▄") {
+			art = append(art, plain)
 		}
 	}
 	return art
@@ -24,21 +34,21 @@ func mascotRows(lines []string) []string {
 
 func TestRenderLedgerEmptyState_draws_a_centered_mascot_and_caption(t *testing.T) {
 	const width, height = 60, 27
-	lines := renderLedgerEmptyState("claude", ThemeForTool("claude"), width, height)
+	lines := renderLedgerEmptyState(ThemeForTool("claude"), width, height)
 
 	if len(lines) > height {
 		t.Fatalf("placeholder is %d rows, viewport is %d", len(lines), height)
 	}
 	art := mascotRows(lines)
-	if len(art) < 10 {
-		t.Fatalf("expected a multi-row mascot, got %d block rows:\n%s",
-			len(art), stripANSI(strings.Join(lines, "\n")))
+	if len(art) != testMascotRows {
+		t.Fatalf("expected a %d-row mascot, got %d:\n%s",
+			testMascotRows, len(art), stripANSI(strings.Join(lines, "\n")))
 	}
 	if !strings.Contains(stripANSI(strings.Join(lines, "\n")), "working tree clean") {
 		t.Errorf("expected a caption under the mascot:\n%s", stripANSI(strings.Join(lines, "\n")))
 	}
 
-	// The mascot's widest row (its 24-block body) is centered in the pane.
+	// The mascot is centered in the pane.
 	minLead := width
 	for _, line := range art {
 		lead := len([]rune(line)) - len([]rune(strings.TrimLeft(line, " ")))
@@ -49,15 +59,56 @@ func TestRenderLedgerEmptyState_draws_a_centered_mascot_and_caption(t *testing.T
 			t.Errorf("art row overflows width %d (%d cols): %q", width, got, line)
 		}
 	}
-	if want := (width - 24) / 2; minLead != want {
+	if want := (width - testMascotCols) / 2; minLead != want {
 		t.Errorf("mascot left edge at column %d, want %d (centered)", minLead, want)
+	}
+}
+
+// The mascot stays small: a clean tree is the ledger's resting state, and the
+// first cut filled half the pane with saturated orange.
+func TestRenderLedgerEmptyState_mascot_stays_small(t *testing.T) {
+	art := mascotRows(renderLedgerEmptyState(ThemeForTool("claude"), 60, 27))
+	if len(art) > 8 {
+		t.Errorf("mascot is %d rows tall, want at most 8", len(art))
+	}
+	for _, line := range art {
+		if got := visibleRuneWidth(strings.TrimRight(line, " ")); got > (60-testMascotCols)/2+16 {
+			t.Errorf("mascot row is too wide: %q", line)
+		}
+	}
+}
+
+// The mascot is painted in the theme's MUTED (sleep) palette, never the full
+// saturation the splash mascot uses — it should recede, not draw the eye.
+func TestRenderLedgerEmptyState_mascot_is_muted(t *testing.T) {
+	theme := ThemeForTool("claude")
+	rendered := strings.Join(renderLedgerEmptyState(theme, 60, 27), "\n")
+
+	if !strings.Contains(rendered, AnsiFromThemeColor(theme.SleepDim)) {
+		t.Errorf("mascot missing the muted body color (%s)", theme.SleepDim)
+	}
+	// Including SleepPrimary: even the sleep body tone reads as a bright blob at
+	// this size, so the wisp sits one stop darker still.
+	for _, loud := range []struct {
+		name  string
+		color string
+	}{
+		{"Primary", string(theme.Primary)},
+		{"Accent", string(theme.Accent)},
+		{"EyeWhite", string(theme.EyeWhite)},
+		{"SleepPrimary", string(theme.SleepPrimary)},
+	} {
+		if strings.Contains(rendered, "38;5;"+loud.color+"m") {
+			t.Errorf("mascot uses the loud %s color (%s); expected the sleep palette",
+				loud.name, loud.color)
+		}
 	}
 }
 
 // The placeholder sits in the middle of the viewport, not jammed against the
 // separator rule.
 func TestRenderLedgerEmptyState_centers_vertically(t *testing.T) {
-	lines := renderLedgerEmptyState("claude", ThemeForTool("claude"), 60, 27)
+	lines := renderLedgerEmptyState(ThemeForTool("claude"), 60, 27)
 	blanks := 0
 	for _, line := range lines {
 		if strings.TrimSpace(stripANSI(line)) != "" {
@@ -70,18 +121,18 @@ func TestRenderLedgerEmptyState_centers_vertically(t *testing.T) {
 	}
 }
 
-// A pane too narrow or too short for the 28x15 art degrades to the caption
-// alone rather than a wrapped, mangled mascot.
+// A pane too narrow or too short for the art degrades to the caption alone
+// rather than a wrapped, mangled mascot.
 func TestRenderLedgerEmptyState_falls_back_to_the_caption_when_it_cannot_fit(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		width, height int
 	}{
-		{"narrow", 20, 27},
+		{"narrow", 12, 27},
 		{"short", 60, 6},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			lines := renderLedgerEmptyState("claude", ThemeForTool("claude"), tc.width, tc.height)
+			lines := renderLedgerEmptyState(ThemeForTool("claude"), tc.width, tc.height)
 			if art := mascotRows(lines); len(art) != 0 {
 				t.Errorf("expected no mascot in a %s pane:\n%s", tc.name, strings.Join(lines, "\n"))
 			}
@@ -95,16 +146,22 @@ func TestRenderLedgerEmptyState_falls_back_to_the_caption_when_it_cannot_fit(t *
 	}
 }
 
-// The mascot follows the session's tool, so an OpenCode pane gets Brace and not
-// the Claude ghost.
-func TestRenderLedgerEmptyState_uses_the_session_tool_mascot(t *testing.T) {
-	claude := mascotRows(renderLedgerEmptyState("claude", ThemeForTool("claude"), 60, 27))
-	opencode := mascotRows(renderLedgerEmptyState("opencode", ThemeForTool("opencode"), 60, 27))
-	if len(opencode) == 0 {
-		t.Fatal("opencode pane drew no mascot")
+// The mascot follows the session's theme, so an OpenCode pane's wisp is violet
+// rather than the claude orange — the shape itself is shared.
+func TestRenderLedgerEmptyState_paints_the_mascot_in_the_theme(t *testing.T) {
+	claude := renderLedgerEmptyState(ThemeForTool("claude"), 60, 27)
+	opencode := renderLedgerEmptyState(ThemeForTool("opencode"), 60, 27)
+
+	if !strings.Contains(strings.Join(claude, "\n"),
+		AnsiFromThemeColor(ThemeForTool("claude").SleepDim)) {
+		t.Error("claude mascot missing its muted hue")
 	}
-	if strings.Join(claude, "\n") == strings.Join(opencode, "\n") {
-		t.Error("opencode pane drew the claude mascot shape")
+	if !strings.Contains(strings.Join(opencode, "\n"),
+		AnsiFromThemeColor(ThemeForTool("opencode").SleepDim)) {
+		t.Error("opencode mascot missing its muted hue")
+	}
+	if strings.Join(mascotRows(claude), "\n") != strings.Join(mascotRows(opencode), "\n") {
+		t.Error("theme changed the mascot shape; it should only change its colors")
 	}
 }
 
@@ -116,14 +173,11 @@ func TestLedgerView_empty_snapshot_renders_the_mascot_placeholder(t *testing.T) 
 	sizeLedger(m, 60, 30)
 
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "█") {
+	if !strings.ContainsAny(view, "█▀▄") {
 		t.Errorf("empty snapshot should draw the mascot:\n%s", view)
 	}
 	if !strings.Contains(view, "working tree clean") {
 		t.Errorf("empty snapshot should caption the mascot:\n%s", view)
-	}
-	if strings.Contains(view, "no changes") {
-		t.Errorf("the bare \"no changes\" label must be gone:\n%s", view)
 	}
 	if got := len(strings.Split(view, "\n")); got != 30 {
 		t.Errorf("view is %d rows, pane is 30", got)
