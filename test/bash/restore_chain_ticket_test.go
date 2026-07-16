@@ -262,3 +262,44 @@ func TestMaybeRestore_no_lock_left_when_nothing_queued(t *testing.T) {
 		t.Error("no pop lock may remain when no queue was built")
 	}
 }
+
+// The surplus rule must also recognize storm launches by the queue-build
+// stamp: a launch that started at (or before) the build is a restore
+// participant even if it raced the builder so hard that it popped before the
+// queue file landed or after the drain — popping nothing must close it, not
+// drop it on the picker. Without this, the microsecond window between the
+// build's bookkeeping writes and the queue mv produced picker tabs on loaded
+// machines (observed on CI).
+func TestRestoreSurplusLaunch_storm_launch_at_build_time_is_surplus(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().Unix()
+	writeTempFile(t, dir, "restore-queue-built-at", strconv.FormatInt(now, 10)+"\n")
+	// No drained-at marker: the drain has not finished (or not started).
+	_, code := runBashFunc(t, "lib/session-restore.sh", "restore_surplus_launch",
+		[]string{dir, "0", "0", strconv.FormatInt(now-2, 10)}, nil)
+	assertExitCode(t, code, 0)
+}
+
+func TestRestoreSurplusLaunch_late_launch_after_build_keeps_picker(t *testing.T) {
+	// A tab the user opens minutes after the restore finished must keep its
+	// picker even though a build stamp exists.
+	dir := t.TempDir()
+	built := time.Now().Add(-3 * time.Minute).Unix()
+	writeTempFile(t, dir, "restore-queue-built-at", strconv.FormatInt(built, 10)+"\n")
+	_, code := runBashFunc(t, "lib/session-restore.sh", "restore_surplus_launch",
+		[]string{dir, "0", "0", strconv.FormatInt(time.Now().Unix(), 10)}, nil)
+	if code == 0 {
+		t.Error("a launch long after the build must not be closed as surplus")
+	}
+}
+
+func TestRestoreSurplusLaunch_builder_exempt_from_build_stamp_rule(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().Unix()
+	writeTempFile(t, dir, "restore-queue-built-at", strconv.FormatInt(now, 10)+"\n")
+	_, code := runBashFunc(t, "lib/session-restore.sh", "restore_surplus_launch",
+		[]string{dir, "0", "1", strconv.FormatInt(now, 10)}, nil)
+	if code == 0 {
+		t.Error("the builder keeps its picker fallback regardless of the build stamp")
+	}
+}

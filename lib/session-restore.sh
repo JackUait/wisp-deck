@@ -355,9 +355,9 @@ maybe_restore_session() {
     queued=1
   done
   if [ "$queued" -eq 1 ]; then
-    echo "$cur_boot" > "$marker"
-    # Build stamp for restore_pop_authorized's storm grace window. The queue
-    # file's own mtime cannot serve: every pop rewrites it.
+    # Build stamp for restore_pop_authorized's storm grace window and
+    # restore_surplus_launch's build-time participant rule. The queue file's
+    # own mtime cannot serve: every pop rewrites it.
     date +%s > "$config_dir/restore-queue-built-at" 2>/dev/null || true
     # Pre-acquire the pop lock BEFORE publishing the queue and stamp this
     # process as its owner: the builder's own first pop consumes the handoff
@@ -372,6 +372,13 @@ maybe_restore_session() {
       echo "$$" > "$queue.lock/owner" 2>/dev/null || true
     fi
     mv "$tmp" "$queue"
+    # Marker LAST, after the queue is live: it is the once-per-boot gate that
+    # tells other launches "the build already happened" — written any earlier
+    # it opens a window where a concurrent launch sees the gate closed but no
+    # queue to pop, and falls through to the picker. A crash between the mv
+    # and this write self-heals: the claim file still blocks a rebuild and
+    # the published queue is poppable.
+    echo "$cur_boot" > "$marker"
     # This launch created the queue — it is the user's own window (or the
     # claim winner of a crash-resume storm) and must never be closed as a
     # surplus launch; it keeps the picker fallback when every entry is
@@ -505,6 +512,22 @@ restore_surplus_launch() {
   local config_dir="$1" participant="${2:-0}" builder="${3:-0}" launch_epoch="${4:-}"
   [ "$builder" = "1" ] && return 1
   [ "$participant" = "1" ] && return 0
+  # Storm launches are also recognized by the queue-build stamp: one that
+  # STARTED at (or before, or within the grace of) the build is a restore
+  # participant even when it raced the builder so hard that its pop ran
+  # before the queue file landed — or timed out waiting for an in-flight
+  # build. Popping nothing must close it; the drained-at rules below cannot
+  # see it because the drain has not happened yet (observed as picker tabs on
+  # a loaded CI runner).
+  local built
+  { built="$(tr -d '[:space:]' < "$config_dir/restore-queue-built-at")"; } 2>/dev/null || built=""
+  case "$built" in '' | *[!0-9]*) built="" ;; esac
+  if [ -n "$built" ]; then
+    case "$launch_epoch" in
+      '' | *[!0-9]*) ;;
+      *) [ "$launch_epoch" -le $((built + 15)) ] && return 0 ;;
+    esac
+  fi
   local marker="$config_dir/restore-drained-at" drained now
   [ -f "$marker" ] || return 1
   { drained="$(tr -d '[:space:]' < "$marker")"; } 2>/dev/null || drained=""
