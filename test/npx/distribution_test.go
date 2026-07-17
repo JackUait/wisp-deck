@@ -70,6 +70,47 @@ func TestLauncher_copies_config_command_and_defaults(t *testing.T) {
 	}
 }
 
+func TestDefaults_include_keyless_OpenAI_GPT_subscription(t *testing.T) {
+	root := projectRoot(t)
+	list, err := os.ReadFile(filepath.Join(root, "defaults", "claude-configs.list"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(list), "OpenAI GPT:openai-gpt.json") {
+		t.Fatalf("default list is missing OpenAI GPT:\n%s", list)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "defaults", "claude-configs", "openai-gpt.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		Model string            `json:"model"`
+		Env   map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("invalid OpenAI GPT settings JSON: %v", err)
+	}
+	want := map[string]string{
+		"WISP_DECK_SUBSCRIPTION_PROVIDER": "openai-chatgpt",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":    "gpt-5.6-sol",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL":  "gpt-5.6-terra",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":   "gpt-5.6-luna",
+		"ANTHROPIC_DEFAULT_FABLE_MODEL":   "gpt-5.6-luna",
+	}
+	for key, value := range want {
+		if settings.Env[key] != value {
+			t.Errorf("%s = %q, want %q", key, settings.Env[key], value)
+		}
+	}
+	if settings.Model != "gpt-5.6-terra" {
+		t.Errorf("model = %q, want gpt-5.6-terra", settings.Model)
+	}
+	if settings.Env["ANTHROPIC_AUTH_TOKEN"] != "" || settings.Env["ANTHROPIC_BASE_URL"] != "" {
+		t.Fatal("OpenAI GPT default must not persist a key or fixed base URL")
+	}
+}
+
 // packedFiles returns the paths npm would actually publish.
 func packedFiles(t *testing.T) []string {
 	t.Helper()

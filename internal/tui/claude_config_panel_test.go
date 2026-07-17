@@ -441,3 +441,49 @@ func TestModelMap_APIKeyInput_ShowsInPanel(t *testing.T) {
 		t.Fatalf("panel should show masked key:\n%s", view)
 	}
 }
+
+func TestModelMap_ChatGPTShowsCodexAuthenticationWithoutKeyEditor(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := `{
+		"env": {
+			"WISP_DECK_SUBSCRIPTION_PROVIDER": "openai-chatgpt",
+			"ANTHROPIC_DEFAULT_OPUS_MODEL": "gpt-5.6-sol"
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(cfgDir, "gpt.json"), []byte(settings), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	list := filepath.Join(dir, "claude-configs.list")
+	if err := os.WriteFile(list, []byte("Renamed Plan:gpt.json\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewMainMenu([]models.Project{{Name: "p", Path: "/p"}}, []string{"claude"}, "claude", "none")
+	m.SetClaudeConfigPaths(list, cfgDir)
+	m.SetClaudeConfigs(LoadClaudeConfigsList(list))
+	m.SetActiveClaudeConfig("gpt.json")
+	m.openModelMap()
+
+	if len(m.modelMapModels) == 0 || m.modelMapModels[0] != "gpt-5.6-sol" {
+		t.Fatalf("model list = %v, want OpenAI models resolved from marker", m.modelMapModels)
+	}
+	view := stripAnsi(m.renderModelMapPanel())
+	if !strings.Contains(view, "Authentication") || !strings.Contains(view, "codex login") {
+		t.Fatalf("ChatGPT panel should explain Codex authentication:\n%s", view)
+	}
+	if strings.Contains(view, "API Key") || strings.Contains(view, "press 'e' to edit") {
+		t.Fatalf("ChatGPT panel must not expose an API-key editor:\n%s", view)
+	}
+
+	m = key(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if m.modelMapKeyMode {
+		t.Fatal("'e' must not open API-key input for ChatGPT authentication")
+	}
+	if kind, _ := m.modelMapTarget(5, 9); kind == mmKey {
+		t.Fatal("authentication status row must not be an API-key mouse target")
+	}
+}

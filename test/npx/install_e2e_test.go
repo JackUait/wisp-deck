@@ -175,11 +175,20 @@ func assertInstalled(t *testing.T, home, out string) {
 		".config/wisp-deck/lib",                 // libs the wrapper sources
 		".config/wisp-deck/ai-tool",             // the selected tool
 		".config/wisp-deck/claude-configs.list", // seeded from defaults/
+		".config/wisp-deck/claude-configs/openai-gpt.json",
 		".config/ghostty/config",
 	} {
 		if _, err := os.Stat(filepath.Join(home, rel)); err != nil {
 			t.Errorf("post-install ~/%s is missing or unresolvable: %v", rel, err)
 		}
+	}
+
+	configList, err := os.ReadFile(filepath.Join(home, ".config", "wisp-deck", "claude-configs.list"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(configList), "OpenAI GPT:openai-gpt.json") {
+		t.Errorf("installed subscription list is missing OpenAI GPT:\n%s", configList)
 	}
 
 	ghosttyCfg, err := os.ReadFile(filepath.Join(home, ".config", "ghostty", "config"))

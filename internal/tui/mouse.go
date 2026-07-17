@@ -603,8 +603,8 @@ func modelMapButtonRanges() (saveStart, saveEnd, cancelStart, cancelEnd int) {
 }
 
 // modelMapTarget maps a box-relative coordinate to a model-map element. Panel
-// layout: top(0) title(1) sep(2) blank(3) slots(4..7) blank(8) apikey(9)
-// buttons(10).
+// layout: top(0) title(1) sep(2) blank(3) slots(4..7) blank(8)
+// authentication(9) buttons(10).
 func (m *MainMenuModel) modelMapTarget(boxX, panelY int) (kind, index int) {
 	if boxX < 0 || boxX >= menuBoxWidth {
 		return mmNone, 0
@@ -612,7 +612,7 @@ func (m *MainMenuModel) modelMapTarget(boxX, panelY int) (kind, index int) {
 	switch {
 	case panelY >= 4 && panelY <= 7:
 		return mmModel, panelY - 4
-	case panelY == 9:
+	case panelY == 9 && m.modelMapUsesAPIKey():
 		return mmKey, 0
 	case panelY == 10:
 		saveStart, saveEnd, cancelStart, cancelEnd := modelMapButtonRanges()

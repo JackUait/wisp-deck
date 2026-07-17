@@ -26,7 +26,8 @@ func (m *MainMenuModel) openModelMap() {
 	}
 	m.modelMapOpen = true
 	m.modelMapCursor = 0
-	m.modelMapModels = claudeconfig.ModelsForConfig(m.CurrentClaudeConfigName())
+	provider := m.currentClaudeConfigProvider()
+	m.modelMapModels = claudeconfig.ProviderModels[provider.Key]
 	m.modelMap = claudeconfig.ReadModelMappings(m.claudeConfigsDir, file, m.modelMapModels)
 	m.modelMapErr = nil
 	m.modelMapKeyMode = false
@@ -89,7 +90,9 @@ func (m *MainMenuModel) updateModelMap(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.modelMapCursor = (m.modelMapCursor + 1) % 4
 				return m, nil
 			case 'e':
-				return m, m.enterModelMapKeyInput()
+				if m.modelMapUsesAPIKey() {
+					return m, m.enterModelMapKeyInput()
+				}
 			}
 		}
 	}
@@ -99,7 +102,7 @@ func (m *MainMenuModel) updateModelMap(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // enterModelMapKeyInput opens the API key text input within the model map panel.
 func (m *MainMenuModel) enterModelMapKeyInput() tea.Cmd {
 	file := m.CurrentClaudeConfigFile()
-	if file == "" {
+	if file == "" || !m.modelMapUsesAPIKey() {
 		return nil
 	}
 	ti := textinput.New()
@@ -113,6 +116,10 @@ func (m *MainMenuModel) enterModelMapKeyInput() tea.Cmd {
 	m.modelMapKeyMode = true
 	m.modelMapErr = nil
 	return textinput.Blink
+}
+
+func (m *MainMenuModel) modelMapUsesAPIKey() bool {
+	return m.currentClaudeConfigProvider().Auth == claudeconfig.AuthAPIKey
 }
 
 // updateModelMapKeyInput handles key events while entering the API key.
@@ -207,20 +214,25 @@ func (m *MainMenuModel) renderModelMapPanel() string {
 
 	lines = append(lines, emptyRow)
 
-	// API key row (the marker + brighter label appear when the pointer hovers it).
+	// Authentication row. API-key providers expose the existing editor; Codex
+	// ChatGPT profiles show their launch-time authentication source read-only.
 	file := m.CurrentClaudeConfigFile()
-	apiKey := claudeconfig.ReadAPIKey(m.claudeConfigsDir, file)
-	apiKeyStatus := dimStyle.Render("(not set)")
-	if apiKey != "" {
-		apiKeyStatus = greenStyle.Render("••••••••")
+	if m.modelMapUsesAPIKey() {
+		apiKey := claudeconfig.ReadAPIKey(m.claudeConfigsDir, file)
+		apiKeyStatus := dimStyle.Render("(not set)")
+		if apiKey != "" {
+			apiKeyStatus = greenStyle.Render("••••••••")
+		}
+		keyPrefix := "    "
+		keyLabelStyle := helpStyle
+		if m.modelMapHover == 4 {
+			keyPrefix = " " + primaryBoldStyle.Render("▌") + "  "
+			keyLabelStyle = primaryBoldStyle
+		}
+		lines = append(lines, pad(keyPrefix+keyLabelStyle.Render("API Key")+dimStyle.Render(" →  ")+apiKeyStatus+dimStyle.Render("  press 'e' to edit")))
+	} else {
+		lines = append(lines, pad("    "+helpStyle.Render("Authentication")+dimStyle.Render(" →  ")+greenStyle.Render("codex login")))
 	}
-	keyPrefix := "    "
-	keyLabelStyle := helpStyle
-	if m.modelMapHover == 4 {
-		keyPrefix = " " + primaryBoldStyle.Render("▌") + "  "
-		keyLabelStyle = primaryBoldStyle
-	}
-	lines = append(lines, pad(keyPrefix+keyLabelStyle.Render("API Key")+dimStyle.Render(" →  ")+apiKeyStatus+dimStyle.Render("  press 'e' to edit")))
 
 	// Save / Cancel buttons — the click-friendly equivalents of ⏎ and Esc, so a
 	// pointer-only user can finalize or discard their mapping changes. Kept at a
@@ -250,7 +262,11 @@ func (m *MainMenuModel) renderModelMapPanel() string {
 	lines = append(lines, separator)
 
 	sep := dimStyle.Render(" · ")
-	helpLine := helpStyle.Render("↑↓ slot") + sep + helpStyle.Render("←→ model") + sep + helpStyle.Render("e api key") + sep + helpStyle.Render("⏎ save") + sep + helpStyle.Render("Esc cancel")
+	helpLine := helpStyle.Render("↑↓ slot") + sep + helpStyle.Render("←→ model")
+	if m.modelMapUsesAPIKey() {
+		helpLine += sep + helpStyle.Render("e api key")
+	}
+	helpLine += sep + helpStyle.Render("⏎ save") + sep + helpStyle.Render("Esc cancel")
 	lines = append(lines, pad(helpLine))
 
 	lines = append(lines, bottomBorder)
@@ -258,13 +274,14 @@ func (m *MainMenuModel) renderModelMapPanel() string {
 }
 
 // configAPIKeyIndicator returns a display string showing mapping status for a config.
-// Mappings are counted against the config's own provider models (resolved from its
-// name), so a value belonging to a different provider isn't mis-counted.
+// Mappings are counted against the config's own provider models, so a value
+// belonging to a different provider isn't mis-counted.
 func configAPIKeyIndicator(configsDir, file, name string) string {
 	if file == "" {
 		return ""
 	}
-	mappings := claudeconfig.ReadModelMappings(configsDir, file, claudeconfig.ModelsForConfig(name))
+	provider := claudeconfig.ProviderForConfig(configsDir, claudeconfig.Config{Name: name, File: file})
+	mappings := claudeconfig.ReadModelMappings(configsDir, file, claudeconfig.ProviderModels[provider.Key])
 	mapped := 0
 	for _, v := range mappings {
 		if v >= 0 {

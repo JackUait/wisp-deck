@@ -1150,24 +1150,41 @@ func (m *MainMenuModel) ClaudeConfigVisible() bool { return true }
 
 // subscriptionFocusable reports whether the PLAN/subscription row is a reachable
 // focus stop: its header row must actually render, and it must offer something to
-// switch to beyond Standard — i.e. at least one custom config with an API key.
+// switch to beyond Standard — i.e. at least one authentication-ready config.
 func (m *MainMenuModel) subscriptionFocusable() bool {
 	return m.subscriptionRowCount() > 0 && len(m.mainSubscriptionRing()) > 1
 }
 
-// configHasKey reports whether the custom config file carries an API key.
-func (m *MainMenuModel) configHasKey(file string) bool {
-	return claudeconfig.ReadAPIKey(m.claudeConfigsDir, file) != ""
+func (m *MainMenuModel) claudeConfigProvider(config ClaudeConfig) claudeconfig.Provider {
+	return claudeconfig.ProviderForConfig(
+		m.claudeConfigsDir,
+		claudeconfig.Config{Name: config.Name, File: config.File},
+	)
+}
+
+func (m *MainMenuModel) currentClaudeConfigProvider() claudeconfig.Provider {
+	if m.selectedConfig <= 0 || m.selectedConfig > len(m.claudeConfigs) {
+		return claudeconfig.ProviderForName("")
+	}
+	return m.claudeConfigProvider(m.claudeConfigs[m.selectedConfig-1])
+}
+
+// configReady reports whether the custom config has the local authentication
+// metadata its provider requires.
+func (m *MainMenuModel) configReady(config ClaudeConfig) bool {
+	return claudeconfig.ConfigReady(
+		m.claudeConfigsDir,
+		claudeconfig.Config{Name: config.Name, File: config.File},
+	)
 }
 
 // mainSubscriptionRing returns the selectedConfig values the main page lets the
-// user switch between, in order: Standard (0) plus each custom config that has
-// an API key. Keyless configs are hidden from the main page — they are finished
-// in Settings first.
+// user switch between, in order: Standard (0) plus each authentication-ready
+// custom config. Unready configs are hidden until finished in Settings.
 func (m *MainMenuModel) mainSubscriptionRing() []int {
 	ring := []int{0} // Standard is always available
 	for i, c := range m.claudeConfigs {
-		if m.configHasKey(c.File) {
+		if m.configReady(c) {
 			ring = append(ring, i+1)
 		}
 	}
@@ -1175,9 +1192,8 @@ func (m *MainMenuModel) mainSubscriptionRing() []int {
 }
 
 // CycleMainSubscription moves the active subscription through the main-page ring
-// (Standard + keyed configs only) and persists the choice. Keyless configs are
-// skipped. If the active config is not on the ring (e.g. a keyless config picked
-// in Settings), cycling resumes from Standard.
+// (Standard + ready configs only) and persists the choice. Unready configs are
+// skipped. If the active config is not on the ring, cycling resumes at Standard.
 func (m *MainMenuModel) CycleMainSubscription(direction string) {
 	ring := m.mainSubscriptionRing()
 	if len(ring) <= 1 {

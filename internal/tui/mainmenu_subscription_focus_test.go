@@ -29,6 +29,16 @@ func writeKeylessConfig(t *testing.T, dir, file string) {
 	}
 }
 
+// writeChatGPTConfig writes a keyless config that delegates authentication to
+// the user's Codex ChatGPT login.
+func writeChatGPTConfig(t *testing.T, dir, file string) {
+	t.Helper()
+	content := `{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"openai-chatgpt"}}`
+	if err := os.WriteFile(filepath.Join(dir, file), []byte(content), 0600); err != nil {
+		t.Fatalf("write ChatGPT config: %v", err)
+	}
+}
+
 // subFocusMenu builds a Claude menu with one custom subscription that has an
 // API key, so the subscription focus stop is reachable.
 func subFocusMenu(t *testing.T, tool string, withConfigs bool) *MainMenuModel {
@@ -206,6 +216,25 @@ func TestMainSub_keylessConfigNotFocusable(t *testing.T) {
 	m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	if m.Focus() != FocusAI {
 		t.Errorf("Up from AI with only a keyless config = %v, want FocusAI (not focusable)", m.Focus())
+	}
+}
+
+func TestMainSub_chatGPTConfigIsFocusableWithoutAPIKey(t *testing.T) {
+	projects := []models.Project{{Name: "a", Path: "/a"}}
+	m := NewMainMenu(projects, []string{"claude", "opencode"}, "claude", "animated")
+	m.SetSize(100, 40)
+	dir := t.TempDir()
+	writeChatGPTConfig(t, dir, "openai-gpt.json")
+	m.SetClaudeConfigPaths(filepath.Join(dir, "list"), dir)
+	m.SetClaudeConfigs([]ClaudeConfig{{Name: "OpenAI GPT", File: "openai-gpt.json"}})
+
+	if !m.subscriptionFocusable() {
+		t.Fatal("ChatGPT subscription should be focusable without an API key")
+	}
+	m.SetFocus(FocusSubscription)
+	m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	if got := m.CurrentClaudeConfigName(); got != "OpenAI GPT" {
+		t.Fatalf("Right selected %q, want OpenAI GPT", got)
 	}
 }
 
