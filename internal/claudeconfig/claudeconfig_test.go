@@ -257,6 +257,119 @@ func TestReadAPIKey_empty_when_file_missing(t *testing.T) {
 	}
 }
 
+func TestProviderForConfig_marker_overrides_display_name(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	if err := os.MkdirAll(cfgDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "renamed.json"), []byte(
+		`{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"openai-chatgpt"}}`,
+	), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := ProviderForConfig(cfgDir, Config{Name: "Zhipu GLM", File: "renamed.json"})
+	if got.Key != "openai-chatgpt" {
+		t.Fatalf("provider key = %q, want openai-chatgpt", got.Key)
+	}
+	if got.Auth != AuthCodexChatGPT {
+		t.Fatalf("auth = %q, want %q", got.Auth, AuthCodexChatGPT)
+	}
+	if got.MirrorOpenCode {
+		t.Fatal("ChatGPT provider must not be mirrored into OpenCode")
+	}
+}
+
+func TestProviderForConfig_unknown_or_invalid_marker_falls_back_to_name(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	if err := os.MkdirAll(cfgDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "unknown.json"), []byte(
+		`{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"not-a-provider"}}`,
+	), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "invalid.json"), []byte(`{`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, file := range []string{"unknown.json", "invalid.json"} {
+		got := ProviderForConfig(cfgDir, Config{Name: "Xiaomi MiMo", File: file})
+		if got.Key != "mimo" {
+			t.Errorf("%s: provider key = %q, want mimo", file, got.Key)
+		}
+	}
+}
+
+func TestConfigReady_depends_on_provider_auth_kind(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "claude-configs")
+	if err := os.MkdirAll(cfgDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"gpt.json":   `{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"openai-chatgpt"}}`,
+		"empty.json": `{"env":{}}`,
+		"keyed.json": `{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-test"}}`,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(cfgDir, name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{"ChatGPT needs no API key", Config{Name: "Renamed", File: "gpt.json"}, true},
+		{"API provider needs key", Config{Name: "Zhipu GLM", File: "empty.json"}, false},
+		{"API provider accepts key", Config{Name: "Zhipu GLM", File: "keyed.json"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ConfigReady(cfgDir, tt.cfg); got != tt.want {
+				t.Fatalf("ConfigReady() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOpenAIProviderModelsAndLimits(t *testing.T) {
+	provider := ProviderForName("OpenAI GPT")
+	if provider.Key != "openai-chatgpt" {
+		t.Fatalf("provider key = %q, want openai-chatgpt", provider.Key)
+	}
+	want := []string{
+		"gpt-5.6-sol",
+		"gpt-5.6-terra",
+		"gpt-5.6-luna",
+		"gpt-5.5",
+		"gpt-5.4",
+		"gpt-5.4-mini",
+		"gpt-5.3-codex-spark",
+	}
+	got := ModelsForConfig("OpenAI GPT")
+	if len(got) != len(want) {
+		t.Fatalf("models = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("model[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	for _, id := range want {
+		context, output, ok := ModelLimit(id)
+		if !ok || context == 0 {
+			t.Errorf("ModelLimit(%q) = (%d, %d, %v), want a context limit", id, context, output, ok)
+		}
+	}
+}
+
 func TestWriteAPIKey_creates_env_section(t *testing.T) {
 	dir := t.TempDir()
 	cfgDir := filepath.Join(dir, "claude-configs")

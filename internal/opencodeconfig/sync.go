@@ -45,7 +45,11 @@ func BuildSubscriptions(in Inputs) []Subscription {
 	active := claudeconfig.GetActive(in.PointerFile)
 	var subs []Subscription
 	for _, c := range configs {
-		models := claudeconfig.ModelsForConfig(c.Name)
+		provider := claudeconfig.ProviderForConfig(in.ConfigsDir, c)
+		if !provider.MirrorOpenCode {
+			continue
+		}
+		models := claudeconfig.ProviderModels[provider.Key]
 		idx := claudeconfig.ReadModelMappings(in.ConfigsDir, c.File, models)
 		var mapped []string
 		seen := map[string]bool{}
@@ -63,7 +67,7 @@ func BuildSubscriptions(in Inputs) []Subscription {
 			Name:      c.Name,
 			File:      c.File,
 			APIKey:    claudeconfig.ReadAPIKey(in.ConfigsDir, c.File),
-			BaseURL:   claudeconfig.ProviderBaseURL(c.Name),
+			BaseURL:   provider.BaseURL,
 			OpusModel: opus,
 			Models:    mapped,
 			Active:    c.File == active,

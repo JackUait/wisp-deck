@@ -151,3 +151,30 @@ func TestBuildSubscriptions_marks_active_and_resolves(t *testing.T) {
 		t.Errorf("apiKey = %q", s.APIKey)
 	}
 }
+
+func TestBuildSubscriptions_excludes_codex_chatgpt_provider(t *testing.T) {
+	home := t.TempDir()
+	in := seed(t, home, "work-glm-zhipu.json")
+	if err := os.WriteFile(
+		in.ListFile,
+		[]byte("Work GLM zhipu:work-glm-zhipu.json\nOpenAI GPT:openai-gpt.json\n"),
+		0644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(in.ConfigsDir, "openai-gpt.json"),
+		[]byte(`{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"openai-chatgpt","ANTHROPIC_DEFAULT_OPUS_MODEL":"gpt-5.6-sol"}}`),
+		0644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	subs := BuildSubscriptions(in)
+	if len(subs) != 1 {
+		t.Fatalf("got subscriptions %+v, want only the API-key provider", subs)
+	}
+	if subs[0].File != "work-glm-zhipu.json" {
+		t.Fatalf("subscription file = %q, want work-glm-zhipu.json", subs[0].File)
+	}
+}

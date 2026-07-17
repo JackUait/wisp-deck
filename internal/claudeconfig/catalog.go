@@ -2,6 +2,16 @@ package claudeconfig
 
 import "strings"
 
+// AuthKind describes how a subscription provider authenticates. API-key
+// providers store ANTHROPIC_AUTH_TOKEN in their settings file; Codex ChatGPT
+// providers delegate authentication to `codex login`.
+type AuthKind string
+
+const (
+	AuthAPIKey       AuthKind = "api-key"
+	AuthCodexChatGPT AuthKind = "codex-chatgpt"
+)
+
 // Model is one provider model with the metadata reused across the app: its id,
 // API price (USD per 1,000,000 tokens), and OpenCode context / max-output token
 // limits. Each model is defined exactly once here, so its id, price, and limits
@@ -19,10 +29,12 @@ type Model struct {
 // are case-insensitive substrings of the config name that select this provider;
 // the first provider in Providers is the default when a name matches none.
 type Provider struct {
-	Key     string
-	Aliases []string
-	BaseURL string
-	Models  []Model
+	Key            string
+	Aliases        []string
+	BaseURL        string
+	Models         []Model
+	Auth           AuthKind
+	MirrorOpenCode bool
 }
 
 // Providers is the single source of truth for subscription providers and their
@@ -32,9 +44,11 @@ type Provider struct {
 // matching how unrecognized names already resolve to GLM models.
 var Providers = []Provider{
 	{
-		Key:     "zhipu",
-		Aliases: []string{"zhipu", "glm", "z.ai", "zai"},
-		BaseURL: "https://api.z.ai/api/anthropic",
+		Key:            "zhipu",
+		Aliases:        []string{"zhipu", "glm", "z.ai", "zai"},
+		BaseURL:        "https://api.z.ai/api/anthropic",
+		Auth:           AuthAPIKey,
+		MirrorOpenCode: true,
 		Models: []Model{
 			{"glm-5.2", 1.40, 4.40, 1000000, 128000},
 			{"glm-5.1", 1.40, 4.40, 202752, 128000},
@@ -45,12 +59,29 @@ var Providers = []Provider{
 		},
 	},
 	{
-		Key:     "mimo",
-		Aliases: []string{"mimo", "xiaomi"},
-		BaseURL: "https://api.xiaomimimo.com/anthropic",
+		Key:            "mimo",
+		Aliases:        []string{"mimo", "xiaomi"},
+		BaseURL:        "https://api.xiaomimimo.com/anthropic",
+		Auth:           AuthAPIKey,
+		MirrorOpenCode: true,
 		Models: []Model{
 			{"mimo-v2.5-pro", 0.435, 0.87, 1048576, 131072},
 			{"mimo-v2.5", 0.14, 0.28, 1048576, 131072},
+		},
+	},
+	{
+		Key:            "openai-chatgpt",
+		Aliases:        []string{"openai gpt", "chatgpt"},
+		Auth:           AuthCodexChatGPT,
+		MirrorOpenCode: false,
+		Models: []Model{
+			{"gpt-5.6-sol", 0, 0, 272000, 0},
+			{"gpt-5.6-terra", 0, 0, 272000, 0},
+			{"gpt-5.6-luna", 0, 0, 272000, 0},
+			{"gpt-5.5", 0, 0, 272000, 0},
+			{"gpt-5.4", 0, 0, 272000, 0},
+			{"gpt-5.4-mini", 0, 0, 272000, 0},
+			{"gpt-5.3-codex-spark", 0, 0, 128000, 0},
 		},
 	},
 }
@@ -69,6 +100,21 @@ func providerFor(configName string) Provider {
 		}
 	}
 	return Providers[0]
+}
+
+// ProviderForName returns the provider selected by legacy display-name
+// matching. Unknown names retain the historical Zhipu fallback.
+func ProviderForName(configName string) Provider {
+	return providerFor(configName)
+}
+
+func providerByKey(key string) (Provider, bool) {
+	for _, provider := range Providers {
+		if provider.Key == key {
+			return provider, true
+		}
+	}
+	return Provider{}, false
 }
 
 // modelByID returns the catalog Model with the given id, across all providers.

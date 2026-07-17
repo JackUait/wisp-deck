@@ -227,6 +227,46 @@ func ReadAPIKey(configsDir, file string) string {
 	return s.Env["ANTHROPIC_AUTH_TOKEN"]
 }
 
+// ReadProviderMarker returns Wisp Deck's explicit subscription-provider marker
+// from a settings file. Missing files, invalid JSON, and absent markers return
+// an empty string.
+func ReadProviderMarker(configsDir, file string) string {
+	data, err := os.ReadFile(filepath.Join(configsDir, file))
+	if err != nil {
+		return ""
+	}
+	var settings struct {
+		Env map[string]string `json:"env"`
+	}
+	if json.Unmarshal(data, &settings) != nil {
+		return ""
+	}
+	return settings.Env["WISP_DECK_SUBSCRIPTION_PROVIDER"]
+}
+
+// ProviderForConfig resolves explicit provider metadata first and retains the
+// display-name heuristic for legacy or invalid settings files.
+func ProviderForConfig(configsDir string, config Config) Provider {
+	if provider, ok := providerByKey(ReadProviderMarker(configsDir, config.File)); ok {
+		return provider
+	}
+	return providerFor(config.Name)
+}
+
+// ConfigReady reports whether a config has enough local authentication
+// metadata to be selectable. ChatGPT authentication is verified at launch by
+// Codex, while API providers require a stored key.
+func ConfigReady(configsDir string, config Config) bool {
+	switch ProviderForConfig(configsDir, config).Auth {
+	case AuthCodexChatGPT:
+		return true
+	case AuthAPIKey:
+		return ReadAPIKey(configsDir, config.File) != ""
+	default:
+		return false
+	}
+}
+
 // WriteAPIKey sets ANTHROPIC_AUTH_TOKEN in a config JSON's env section,
 // preserving all other fields. Creates the env section if absent.
 func WriteAPIKey(configsDir, file, key string) error {
