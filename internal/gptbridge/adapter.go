@@ -201,7 +201,6 @@ func RunAdapter(ctx context.Context, options AdapterOptions) (AdapterResult, err
 	}
 
 	command := exec.Command(options.ClaudeArgv[0], options.ClaudeArgv[1:]...)
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Stdin = options.Stdin
 	command.Stdout = options.Stdout
 	command.Stderr = options.Stderr
@@ -238,7 +237,7 @@ func RunAdapter(ctx context.Context, options AdapterOptions) (AdapterResult, err
 	case waitErr := <-waitDone:
 		return adapterExitResult(waitErr), nil
 	case <-ctx.Done():
-		_ = signalProcessGroup(command.Process.Pid, syscall.SIGTERM)
+		_ = command.Process.Signal(syscall.SIGTERM)
 		timer := time.NewTimer(shutdownTimeout)
 		select {
 		case waitErr := <-waitDone:
@@ -251,7 +250,7 @@ func RunAdapter(ctx context.Context, options AdapterOptions) (AdapterResult, err
 			}
 			return result, ctx.Err()
 		case <-timer.C:
-			_ = signalProcessGroup(command.Process.Pid, syscall.SIGKILL)
+			_ = command.Process.Kill()
 			waitErr := <-waitDone
 			result := adapterExitResult(waitErr)
 			if result.ExitCode == 0 {

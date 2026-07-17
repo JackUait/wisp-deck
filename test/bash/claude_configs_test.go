@@ -58,6 +58,52 @@ func TestResolveClaudeConfigPath_existing_vs_missing(t *testing.T) {
 	}
 }
 
+func TestGetClaudeConfigProviderReadsOnlyKnownStringMarkers(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "ChatGPT",
+			content: `{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"openai-chatgpt"}}`,
+			want:    "openai-chatgpt",
+		},
+		{
+			name:    "known API provider",
+			content: `{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"mimo"}}`,
+			want:    "mimo",
+		},
+		{
+			name:    "unknown marker",
+			content: `{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"$(touch /tmp/no)"}}`,
+		},
+		{
+			name:    "non-string marker",
+			content: `{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":["openai-chatgpt"]}}`,
+		},
+		{name: "malformed JSON", content: `{`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			settings := writeTempFile(t, dir, strings.ReplaceAll(test.name, " ", "-")+".json", test.content)
+			out, code := runBashFunc(t, "lib/claude-configs.sh", "get_claude_config_provider",
+				[]string{settings}, nil)
+			assertExitCode(t, code, 0)
+			if got := strings.TrimSpace(out); got != test.want {
+				t.Fatalf("provider = %q, want %q", got, test.want)
+			}
+		})
+	}
+	out, code := runBashFunc(t, "lib/claude-configs.sh", "get_claude_config_provider",
+		[]string{filepath.Join(dir, "missing.json")}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("missing settings provider = %q", out)
+	}
+}
+
 // get_active_claude_config_name maps the active pointer to its display name so
 // the compact-view ledger can show which subscription/plan is in use. Standard
 // (no pointer) reads as "Standard Claude", mirroring the menu's PLAN label.

@@ -101,6 +101,24 @@ build_ai_launch_cmd() {
   fi
 
   raw="$(build_ai_launch_cmd_raw "$@")" || return 1
+  # The OpenAI subscription uses Claude only as the interactive UI and tool
+  # executor. One adapter owns the complete raw resume/screenshot/settings
+  # chain and serves it a private Anthropic-compatible loopback API backed by
+  # the user's Codex-managed ChatGPT login.
+  if [ "$tool" = "claude" ] \
+     && [ "${WISP_DECK_CLAUDE_PROVIDER:-}" = "openai-chatgpt" ]; then
+    local codex_cmd="${WISP_DECK_CODEX_CMD:-}" codex_q
+    case "$codex_cmd" in
+      /*) ;;
+      *)
+        printf 'Error: Codex is required for OpenAI GPT. Install Codex and run codex login.\n' >&2
+        return 1
+        ;;
+    esac
+    printf -v codex_q '%q' "$codex_cmd"
+    printf -v raw_q '%q' "$raw"
+    raw="wisp-deck-tui claude-gpt-adapter --codex ${codex_q} -- bash -c ${raw_q}"
+  fi
   if [ "$tool" = "claude" ] \
      && [ -n "${WISP_DECK_ATTENTION_FILE:-}" ] \
      && [ -n "${WISP_DECK_ATTENTION_GENERATION:-}" ]; then

@@ -63,6 +63,22 @@ resolve_claude_config_path() {
   [ -f "$filepath" ] && printf '%s\n' "$filepath"
 }
 
+# get_claude_config_provider <settings_path> — print a trusted provider marker.
+# Invalid JSON, non-string values, unknown markers, and missing jq/files are
+# treated as no marker. Values are compared, never evaluated.
+get_claude_config_provider() {
+  local settings_path="${1:-}" provider=""
+  [ -f "$settings_path" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  provider="$(jq -er '
+    .env.WISP_DECK_SUBSCRIPTION_PROVIDER
+    | select(type == "string")
+  ' "$settings_path" 2>/dev/null)" || return 0
+  case "$provider" in
+    zhipu|mimo|openai-chatgpt) printf '%s\n' "$provider" ;;
+  esac
+}
+
 # Mutations (add / rename / delete) live in Go — the single source of truth —
 # exposed as `wisp-deck-tui claude-config <action>` and called by config-tui.sh.
 # See internal/claudeconfig.

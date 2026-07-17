@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -112,6 +114,7 @@ set -eu
   printf 'KEY=%s\n' "$ANTHROPIC_API_KEY"
   printf 'TOKEN=%s\n' "$ANTHROPIC_AUTH_TOKEN"
   printf 'NO_PROXY=%s\n' "$NO_PROXY"
+  printf 'PGID=%s\n' "$(ps -o pgid= -p $$ | tr -d ' ')"
 } > "$CLAUDE_ENV_LOG"
 `
 	if err := os.WriteFile(codex, []byte(codexScript), 0700); err != nil {
@@ -154,6 +157,9 @@ set -eu
 	}
 	if key == "" || key != token || key == "old" {
 		t.Fatalf("bridge keys were not private/equal: key=%q token=%q", key, token)
+	}
+	if !strings.Contains(text, "PGID="+strconv.Itoa(syscall.Getpgrp())+"\n") {
+		t.Fatalf("Claude left the interactive foreground process group: %s", text)
 	}
 }
 

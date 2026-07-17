@@ -48,3 +48,25 @@ echo "RESULT=[$WISP_DECK_CLAUDE_SETTINGS]"
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "RESULT=[]")
 }
+
+func TestWrapperPublishesClaudeProviderAndCodexPathBeforeLaunch(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(projectRoot(t), "wrapper.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper := string(data)
+	resolve := strings.Index(wrapper, `WISP_DECK_CLAUDE_PROVIDER="$(get_claude_config_provider`)
+	build := strings.Index(wrapper, `AI_LAUNCH_CMD="$(build_ai_launch_cmd`)
+	if resolve < 0 || build < 0 || resolve > build {
+		t.Fatal("wrapper must resolve the trusted provider marker before building the launch")
+	}
+	for _, want := range []string{
+		`export WISP_DECK_CLAUDE_PROVIDER WISP_DECK_CODEX_CMD`,
+		`-e "WISP_DECK_CLAUDE_PROVIDER=$WISP_DECK_CLAUDE_PROVIDER"`,
+		`-e "WISP_DECK_CODEX_CMD=$WISP_DECK_CODEX_CMD"`,
+	} {
+		if !strings.Contains(wrapper, want) {
+			t.Fatalf("wrapper missing %q", want)
+		}
+	}
+}

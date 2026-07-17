@@ -408,6 +408,10 @@ _gt_cfg_root="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
 WISP_DECK_CLAUDE_SETTINGS=""
 WISP_DECK_CLAUDE_SETTINGS_SOURCE="$(resolve_claude_config_path \
   "$_gt_cfg_root/claude-configs" "$_gt_cfg_root/claude-config")"
+WISP_DECK_CLAUDE_PROVIDER="$(get_claude_config_provider \
+  "$WISP_DECK_CLAUDE_SETTINGS_SOURCE")"
+WISP_DECK_CODEX_CMD="$CODEX_CMD"
+export WISP_DECK_CLAUDE_PROVIDER WISP_DECK_CODEX_CMD
 # Upgrade cleanup is launch-wide, not tied to the initially selected tool: a
 # Codex/OpenCode tab may switch to Claude later in the same wrapper lifetime.
 remove_waiting_indicator_hooks "$HOME/.claude/settings.json" "$_gt_cfg_root" >/dev/null 2>&1 || true
@@ -514,7 +518,14 @@ case "$SELECTED_AI_TOOL" in
     AI_LAUNCH_CMD="$(build_ai_launch_cmd "$SELECTED_AI_TOOL" "$AI_TOOL_CMD")"
     ;;
   *)
-    AI_LAUNCH_CMD="$(build_ai_launch_cmd "$SELECTED_AI_TOOL" "$AI_TOOL_CMD" "$*")"
+    AI_LAUNCH_CMD="$(build_ai_launch_cmd "$SELECTED_AI_TOOL" "$AI_TOOL_CMD" "$*")" || {
+      if [ "$WISP_DECK_CLAUDE_PROVIDER" = "openai-chatgpt" ]; then
+        printf '\033[31mError:\033[0m OpenAI GPT requires Codex. Install Codex, then run \033[1mcodex login\033[0m.\n' >&3
+      else
+        printf '\033[31mError:\033[0m Could not prepare the Claude launch command.\n' >&3
+      fi
+      exit 1
+    }
     ;;
 esac
 
@@ -623,7 +634,7 @@ fi
 gt_ensure_panes_watch "$TMUX_CMD" "$SESSION_NAME" "$PROJECT_DIR" \
   "$AI_LAUNCH_CMD" "$_spare_cmd" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
 
-"$TMUX_CMD" new-session -d -x "$_tmux_cols" -y "$_tmux_rows" -s "$SESSION_NAME" -e "PATH=$PATH" -e "WISP_DECK_ATTENTION_ROOT=$WISP_DECK_ATTENTION_ROOT" -e "WISP_DECK_ATTENTION_DESCRIPTOR=$WISP_DECK_ATTENTION_DESCRIPTOR" -e "WISP_DECK_ATTENTION_GENERATION=$WISP_DECK_ATTENTION_GENERATION" -e "WISP_DECK_ATTENTION_FILE=$WISP_DECK_ATTENTION_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=${WISP_DECK_RESUME_SESSION:-}" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$WISP_DECK_RELAUNCH_FILE" -e "WISP_DECK_CLAUDE_ACCOUNT=${WISP_DECK_CLAUDE_ACCOUNT_DIR##*/}" -e "WISP_DECK_SEQ=${_wd_launch_seq}" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
+"$TMUX_CMD" new-session -d -x "$_tmux_cols" -y "$_tmux_rows" -s "$SESSION_NAME" -e "PATH=$PATH" -e "WISP_DECK_ATTENTION_ROOT=$WISP_DECK_ATTENTION_ROOT" -e "WISP_DECK_ATTENTION_DESCRIPTOR=$WISP_DECK_ATTENTION_DESCRIPTOR" -e "WISP_DECK_ATTENTION_GENERATION=$WISP_DECK_ATTENTION_GENERATION" -e "WISP_DECK_ATTENTION_FILE=$WISP_DECK_ATTENTION_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=${WISP_DECK_RESUME_SESSION:-}" -e "WISP_DECK_CLAUDE_PROVIDER=$WISP_DECK_CLAUDE_PROVIDER" -e "WISP_DECK_CODEX_CMD=$WISP_DECK_CODEX_CMD" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$WISP_DECK_RELAUNCH_FILE" -e "WISP_DECK_CLAUDE_ACCOUNT=${WISP_DECK_CLAUDE_ACCOUNT_DIR##*/}" -e "WISP_DECK_SEQ=${_wd_launch_seq}" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
   "$_pane0_cmd" \; \
   set-option status-left " ⬡ ${PROJECT_NAME} " \; \
   set-option status-left-style "fg=white,bg=colour236,bold" \; \
