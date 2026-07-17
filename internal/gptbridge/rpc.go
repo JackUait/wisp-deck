@@ -526,7 +526,7 @@ func StartAppServer(ctx context.Context, options AppServerOptions) (*AppServer, 
 	if stderrBytes <= 0 {
 		stderrBytes = defaultStderrTailBytes
 	}
-	command := exec.CommandContext(ctx, options.CodexPath, "app-server")
+	command := exec.Command(options.CodexPath, "app-server")
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
