@@ -143,7 +143,7 @@ esac`)
 func (s *installSandbox) run(t *testing.T, pkg string, extraEnv ...string) string {
 	t.Helper()
 	cmd := exec.Command("node", filepath.Join(pkg, "bin", "npx-wisp-deck.js"))
-	cmd.Env = append(append([]string{}, s.env...), extraEnv...)
+	cmd.Env = repositoryTestEnvironment(append(append([]string{}, s.env...), extraEnv...))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("installer failed: %v\n%s", err, out)

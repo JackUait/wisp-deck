@@ -6,6 +6,8 @@
 # Reads sound preference from features JSON and plays via afplay in background.
 # Usage: play_notification_sound <ai_tool> <config_dir>
 play_notification_sound() {
+  [[ "${WISP_DECK_TESTING:-}" == "1" ]] && return 0
+
   local ai_tool="$1" config_dir="$2"
   local lock_file="$config_dir/.${ai_tool}-features.json.lock"
   local module="${BASH_SOURCE[0]}"

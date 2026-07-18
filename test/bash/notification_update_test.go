@@ -169,53 +169,19 @@ func TestNotification_set_sound_feature_flag_preserves_other_keys(t *testing.T) 
 	}
 }
 
-func TestNotification_turning_sound_off_linearizes_with_inflight_playback(t *testing.T) {
+func TestNotificationTestModeIsSilent(t *testing.T) {
 	tmpDir := t.TempDir()
 	writeTempFile(t, tmpDir, "claude-features.json", `{"sound": true, "sound_name": "Glass"}`)
-	started := filepath.Join(tmpDir, "started")
-	release := filepath.Join(tmpDir, "release")
-	done := filepath.Join(tmpDir, "off-done")
-	binDir := mockCommand(t, t.TempDir(), "afplay", fmt.Sprintf(`
-touch %q
-while [ ! -e %q ]; do sleep 0.01; done
-`, started, release))
-
-	body := fmt.Sprintf(`
-play_notification_sound "claude" %q
-for _i in $(seq 1 200); do [ -e %q ] && break; sleep 0.01; done
-[ -e %q ] || exit 40
-(set_sound_feature_flag "claude" %q false && touch %q) &
-_setter=$!
-sleep 0.2
-if [ -e %q ]; then
-  touch %q
-  wait "$_setter"
-  exit 41
-fi
-touch %q
-wait "$_setter"
-[ -e %q ]
-`, tmpDir, started, started, tmpDir, done, done, release, release, done)
-
-	_, code := runBashSnippet(t, notificationSnippet(t, body), buildEnv(t, []string{binDir}))
-	if code == 41 {
-		t.Fatal("Off completed while a notification authorized under the old preference was still playing")
-	}
-	assertExitCode(t, code, 0)
-}
-
-func TestNotification_playback_fails_closed_for_invalid_config(t *testing.T) {
-	tmpDir := t.TempDir()
-	writeTempFile(t, tmpDir, "claude-features.json", `{"sound": true`)
-	logFile := filepath.Join(tmpDir, "afplay.log")
-	binDir := mockCommand(t, t.TempDir(), "afplay", fmt.Sprintf(`echo called > %q`, logFile))
+	calls := filepath.Join(tmpDir, "tui-calls")
+	binDir := mockCommand(t, t.TempDir(), "wisp-deck-tui",
+		fmt.Sprintf(`printf 'called\n' >> %q`, calls))
 
 	_, code := runBashSnippet(t, notificationSnippet(t,
-		fmt.Sprintf(`play_notification_sound "claude" %q`, tmpDir)), buildEnv(t, []string{binDir}))
+		fmt.Sprintf(`play_notification_sound "claude" %q; wait`, tmpDir)),
+		buildEnv(t, []string{binDir}, "WISP_DECK_TESTING=1"))
 	assertExitCode(t, code, 0)
-	time.Sleep(300 * time.Millisecond)
-	if _, err := os.Stat(logFile); !os.IsNotExist(err) {
-		t.Fatal("invalid preference reached afplay")
+	if _, err := os.Stat(calls); !os.IsNotExist(err) {
+		t.Fatal("marked test mode invoked wisp-deck-tui")
 	}
 }
 

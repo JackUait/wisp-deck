@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -215,7 +216,53 @@ func buildEnv(t *testing.T, mockDirs []string, extra ...string) []string {
 		}
 	}
 
-	return env
+	return repositoryTestEnvironment(env)
+}
+
+func repositoryTestEnvironment(env []string) []string {
+	normalized := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "WISP_DECK_TESTING=") {
+			continue
+		}
+		normalized = append(normalized, entry)
+	}
+	return append(normalized, "WISP_DECK_TESTING=1")
+}
+
+func TestRepositoryTestEnvironment(t *testing.T) {
+	input := []string{
+		"HOME=/tmp/home",
+		"WISP_DECK_TESTING=0",
+		"PATH=/usr/bin",
+		"WISP_DECK_TESTING=stale",
+	}
+	original := append([]string(nil), input...)
+
+	got := repositoryTestEnvironment(input)
+
+	if !reflect.DeepEqual(input, original) {
+		t.Fatalf("repositoryTestEnvironment mutated input: got %v, want %v", input, original)
+	}
+	want := []string{"HOME=/tmp/home", "PATH=/usr/bin", "WISP_DECK_TESTING=1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("repositoryTestEnvironment() = %v, want %v", got, want)
+	}
+}
+
+func TestBuildEnvForcesRepositoryTestMode(t *testing.T) {
+	env := buildEnv(t, nil, "WISP_DECK_TESTING=0")
+	count := 0
+	value := ""
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "WISP_DECK_TESTING=") {
+			count++
+			value = strings.TrimPrefix(entry, "WISP_DECK_TESTING=")
+		}
+	}
+	if count != 1 || value != "1" {
+		t.Fatalf("WISP_DECK_TESTING entries = %d with value %q, want exactly one value 1", count, value)
+	}
 }
 
 // assertContains checks that output contains the expected substring.

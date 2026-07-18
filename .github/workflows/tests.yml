@@ -10,6 +10,8 @@ jobs:
   go-tests:
     name: Go tests (TUI + units)
     runs-on: macos-latest
+    env:
+      WISP_DECK_TESTING: "1"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,6 +34,8 @@ jobs:
   bash-tests:
     name: Bash tests (shell libs)
     runs-on: macos-latest
+    env:
+      WISP_DECK_TESTING: "1"
     steps:
       - uses: actions/checkout@v4
         with:

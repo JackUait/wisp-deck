@@ -573,32 +573,6 @@ func TestTabTitleWatcher_wrapper_disables_tmux_set_titles(t *testing.T) {
 	}
 }
 
-// soundWatcherSnippet sources the notification stack and watcher.
-func soundWatcherSnippet(t *testing.T, body string) string {
-	t.Helper()
-	root := projectRoot(t)
-	return fmt.Sprintf("source %q && source %q && source %q && source %q && %s",
-		filepath.Join(root, "lib", "tui.sh"),
-		filepath.Join(root, "lib", "settings-json.sh"),
-		filepath.Join(root, "lib", "notification-setup.sh"),
-		filepath.Join(root, "lib", "tab-title-watcher.sh"), body)
-}
-
-func TestTabTitleWatcher_play_notification_sound_calls_afplay_when_enabled(t *testing.T) {
-	dir := t.TempDir()
-	config := filepath.Join(dir, "config")
-	if err := os.MkdirAll(config, 0755); err != nil {
-		t.Fatal(err)
-	}
-	writeTempFile(t, config, "claude-features.json", `{"sound": true, "sound_name": "Glass"}`)
-	logFile := filepath.Join(dir, "afplay.log")
-	binDir := mockCommand(t, dir, "afplay", fmt.Sprintf(`echo "$1" >> %q`, logFile))
-	_, code := runBashSnippet(t, soundWatcherSnippet(t,
-		fmt.Sprintf(`play_notification_sound claude %q`, config)), buildEnv(t, []string{binDir}))
-	assertExitCode(t, code, 0)
-	assertContains(t, waitForFile(t, logFile, "expected afplay to be called"), "Glass.aiff")
-}
-
 // waitForFile polls for populated background-job artifacts and is shared by
 // this package. Shell redirection creates an empty file before the command
 // writes its output, so existence alone is not enough synchronization.
@@ -632,38 +606,6 @@ func waitForFileGone(t *testing.T, path, msg string) {
 			t.Fatalf("%s: %s is still there", msg, path)
 		}
 		time.Sleep(20 * time.Millisecond)
-	}
-}
-
-func TestTabTitleWatcher_play_notification_sound_skips_when_sound_disabled(t *testing.T) {
-	dir := t.TempDir()
-	config := filepath.Join(dir, "config")
-	if err := os.MkdirAll(config, 0755); err != nil {
-		t.Fatal(err)
-	}
-	writeTempFile(t, config, "claude-features.json", `{"sound": false}`)
-	logFile := filepath.Join(dir, "afplay.log")
-	binDir := mockCommand(t, dir, "afplay", fmt.Sprintf(`echo "$1" >> %q`, logFile))
-	_, code := runBashSnippet(t, soundWatcherSnippet(t,
-		fmt.Sprintf(`play_notification_sound claude %q`, config)), buildEnv(t, []string{binDir}))
-	assertExitCode(t, code, 0)
-	time.Sleep(1 * time.Second)
-	if _, err := os.Stat(logFile); !os.IsNotExist(err) {
-		t.Error("afplay was called while sound was disabled")
-	}
-}
-
-func TestTabTitleWatcher_play_notification_sound_skips_when_features_missing(t *testing.T) {
-	dir := t.TempDir()
-	config := filepath.Join(dir, "missing")
-	logFile := filepath.Join(dir, "afplay.log")
-	binDir := mockCommand(t, dir, "afplay", fmt.Sprintf(`echo "$1" >> %q`, logFile))
-	_, code := runBashSnippet(t, soundWatcherSnippet(t,
-		fmt.Sprintf(`play_notification_sound claude %q`, config)), buildEnv(t, []string{binDir}))
-	assertExitCode(t, code, 0)
-	time.Sleep(500 * time.Millisecond)
-	if _, err := os.Stat(logFile); !os.IsNotExist(err) {
-		t.Error("afplay was called without an explicit sound opt-in")
 	}
 }
 

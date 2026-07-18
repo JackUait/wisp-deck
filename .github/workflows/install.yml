@@ -19,6 +19,8 @@ jobs:
   install-from-tarball:
     name: Install from packed tarball
     runs-on: macos-latest
+    env:
+      WISP_DECK_TESTING: "1"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -53,6 +55,8 @@ jobs:
     # release, which says nothing about the change under review.
     if: github.event_name != 'pull_request'
     runs-on: macos-latest
+    env:
+      WISP_DECK_TESTING: "1"
     steps:
       - uses: actions/checkout@v4
         with:

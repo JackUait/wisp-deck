@@ -22,17 +22,17 @@ install: build
 # Run tests
 test:
 	@echo "Running Go tests..."
-	go test ./...
+	WISP_DECK_TESTING=1 go test ./...
 	@echo "Running bash tests..."
-	./run-tests.sh
+	WISP_DECK_TESTING=1 ./run-tests.sh
 
 # Run Go tests only
 test-go:
-	go test -v ./...
+	WISP_DECK_TESTING=1 go test -v ./...
 
 # Run bash tests only
 test-bash:
-	./run-tests.sh
+	WISP_DECK_TESTING=1 ./run-tests.sh
 
 # Clean build artifacts
 clean:

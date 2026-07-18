@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -27,7 +28,7 @@ func runLauncher(t *testing.T, env []string, args ...string) (string, string, in
 	launcher := filepath.Join(root, "bin", "npx-wisp-deck.js")
 	cmdArgs := append([]string{launcher}, args...)
 	cmd := exec.Command("node", cmdArgs...)
-	cmd.Env = env
+	cmd.Env = repositoryTestEnvironment(env)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -41,4 +42,35 @@ func runLauncher(t *testing.T, env []string, args ...string) (string, string, in
 		}
 	}
 	return stdout.String(), stderr.String(), code
+}
+
+func repositoryTestEnvironment(env []string) []string {
+	normalized := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "WISP_DECK_TESTING=") {
+			continue
+		}
+		normalized = append(normalized, entry)
+	}
+	return append(normalized, "WISP_DECK_TESTING=1")
+}
+
+func TestRepositoryTestEnvironment(t *testing.T) {
+	input := []string{
+		"HOME=/tmp/home",
+		"WISP_DECK_TESTING=0",
+		"PATH=/usr/bin",
+		"WISP_DECK_TESTING=stale",
+	}
+	original := append([]string(nil), input...)
+
+	got := repositoryTestEnvironment(input)
+
+	if !reflect.DeepEqual(input, original) {
+		t.Fatalf("repositoryTestEnvironment mutated input: got %v, want %v", input, original)
+	}
+	want := []string{"HOME=/tmp/home", "PATH=/usr/bin", "WISP_DECK_TESTING=1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("repositoryTestEnvironment() = %v, want %v", got, want)
+	}
 }
