@@ -263,3 +263,84 @@ codesign --verify --deep --strict "$HOME/.local/bin/wisp-deck-tui"
 
 Expected: build, path, byte identity, and both signatures pass. Tell the user
 to relaunch running Wisp Deck sessions or ledger panes.
+
+---
+
+### Task 5: Add targeted vertical rhythm
+
+**Files:**
+- Modify: `internal/tui/subscription_modal.go:960-1055`
+- Modify: `internal/tui/subscription_modal.go:1160-1450`
+- Test: `internal/tui/subscription_modal_render_test.go`
+- Test: `internal/tui/subscription_modal_mouse_test.go`
+- Test: `internal/tui/subscription_modal_test.go`
+
+**Step 1: Write failing spacing regressions**
+
+Add a profile-list test that requires `subscriptionProfileLines` line 1 to be
+blank and the first profile to start on line 2. Add a detail test that requires
+a blank line after `MODEL ROUTING`, a blank line between the final model/API-key
+row and `ACTIONS`, and a blank line before Standard Claude's `ACTIONS`.
+
+Use a small line-index helper in the test:
+
+```go
+func subscriptionLineIndex(lines []string, text string) int {
+	for i, line := range lines {
+		if strings.Contains(stripAnsi(line), text) {
+			return i
+		}
+	}
+	return -1
+}
+```
+
+**Step 2: Run the spacing tests and verify RED**
+
+```bash
+go test ./internal/tui -run 'TestSubscriptionModal_(profileListHasHeadingBreathingRoom|detailSectionsHaveVerticalRhythm|standardActionsHaveVerticalRhythm)' -count=1
+```
+
+Expected: FAIL because profile rows, mappings, and actions currently touch their
+adjacent section boundaries.
+
+**Step 3: Add the profile heading gap**
+
+Render one fixed blank line after the `PROFILES` heading. Reduce the inventory
+viewport by one additional row in `ensureSubscriptionProfileVisible`, and
+change profile mouse-row translation from `cardY - 2` to `cardY - 3`.
+
+**Step 4: Add detail section gaps**
+
+Insert one blank line after `MODEL ROUTING`, one before custom-profile
+`ACTIONS`, and one before Standard Claude's `ACTIONS`.
+
+Update `subscriptionDetailCursorLine`:
+
+- mappings begin at `9 + cursor`;
+- the first optional row begins at line `13`;
+- action focus advances across both the pre-action blank and heading; and
+- Standard Claude's action row moves to line `8`.
+
+**Step 5: Run spacing and interaction tests**
+
+```bash
+go test ./internal/tui -run 'TestSubscriptionModal' -count=1
+```
+
+Expected: PASS, including profile mouse targets, long-list scrolling, compact
+save scrolling, card geometry, and action navigation.
+
+**Step 6: Commit**
+
+```bash
+git add internal/tui/subscription_modal.go \
+  internal/tui/subscription_modal_render_test.go \
+  internal/tui/subscription_modal_mouse_test.go \
+  internal/tui/subscription_modal_test.go
+git commit -m "style(tui): space subscription sections"
+```
+
+**Step 7: Verify, push, and reinstall**
+
+Repeat Task 4 against the new source state.
