@@ -220,6 +220,26 @@ func TestSubscriptionModal_wideActionsShareOneLine(t *testing.T) {
 	t.Fatalf("wide action row is missing:\n%s", card)
 }
 
+func TestSubscriptionModal_standardProfileShowsConsistentActionRow(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.subscriptionModal.pane = subscriptionDetailsPane
+
+	card := stripAnsi(m.renderSubscriptionModalCard())
+	for _, line := range strings.Split(card, "\n") {
+		if !strings.Contains(line, "[ Use profile ]") {
+			continue
+		}
+		for _, want := range []string{"[ Rename ]", "[ Delete ]", "[ Save changes ]"} {
+			if !strings.Contains(line, want) {
+				t.Fatalf("standard action row is missing %q: %q", want, line)
+			}
+		}
+		return
+	}
+	t.Fatalf("standard action row is missing:\n%s", card)
+}
+
 func TestSubscriptionModal_wideInlineSaveScrollTargetsSharedActionRow(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.width = 100

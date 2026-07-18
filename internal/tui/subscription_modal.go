@@ -1212,14 +1212,22 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 			"",
 			dim.Render("Uses Claude Code's native models and account."),
 			"",
-			m.subscriptionActionLabel(
-				subscriptionHitUse,
-				subscriptionDetailUse,
-				"[ Use profile ]",
-				accent,
-				label,
-			),
 		)
+		use := m.subscriptionActionLabel(
+			subscriptionHitUse,
+			subscriptionDetailUse,
+			"[ Use profile ]",
+			accent,
+			label,
+		)
+		disabled := lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+		lines = append(lines, m.subscriptionActionLines(
+			width,
+			use,
+			disabled.Render("[ Rename ]"),
+			disabled.Render("[ Delete ]"),
+			disabled.Render("[ Save changes ]"),
+		)...)
 		return modalWindow(lines, m.subscriptionModal.detailOffset, height, width)
 	}
 
@@ -1284,14 +1292,18 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 	rename := m.subscriptionActionLabel(subscriptionHitRename, subscriptionDetailRename, "[ Rename ]", accent, label)
 	deleteAction := m.subscriptionActionLabel(subscriptionHitDelete, subscriptionDetailDelete, "[ Delete ]", accent, label)
 	save := m.subscriptionActionLabel(subscriptionHitSave, subscriptionDetailSave, "[ Save changes ]", accent, label)
-	if subscriptionActionsFitOneLine(width) {
-		lines = append(lines, use+"  "+rename+"  "+deleteAction+"  "+save)
-	} else if m.subscriptionModalCompact() {
-		lines = append(lines, use, rename+"  "+deleteAction, save)
-	} else {
-		lines = append(lines, use+"  "+rename+"  "+deleteAction, save)
-	}
+	lines = append(lines, m.subscriptionActionLines(width, use, rename, deleteAction, save)...)
 	return modalWindow(lines, m.subscriptionModal.detailOffset, height, width)
+}
+
+func (m *MainMenuModel) subscriptionActionLines(width int, use, rename, deleteAction, save string) []string {
+	if subscriptionActionsFitOneLine(width) {
+		return []string{use + "  " + rename + "  " + deleteAction + "  " + save}
+	}
+	if m.subscriptionModalCompact() {
+		return []string{use, rename + "  " + deleteAction, save}
+	}
+	return []string{use + "  " + rename + "  " + deleteAction, save}
 }
 
 func (m *MainMenuModel) subscriptionLifecycleLabels() (confirm, cancel string) {
