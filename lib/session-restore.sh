@@ -110,15 +110,61 @@ next_launch_seq() {
   echo "$next"
 }
 
+# True iff the value is a canonical lowercase Codex thread UUID.
+# Usage: codex_session_id_valid <id>
+codex_session_id_valid() {
+  [[ "$1" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+}
+
+# True iff a snapshot identity key is a safe sidecar basename. Keys are never
+# interpreted as paths: resolution is rooted beneath session-identities.
+# Usage: codex_identity_key_valid <key>
+codex_identity_key_valid() {
+  local key="$1"
+  case "$key" in
+    "" | "." | ".." | */* | *"|"* | *$'\n'* | *$'\r'*) return 1 ;;
+    *.codex) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Print the safe sidecar basename when <path> is directly inside this config
+# directory's session-identities directory.
+# Usage: codex_identity_key <config_dir> <path>
+codex_identity_key() {
+  local config_dir="$1" path="$2" key
+  [ -n "$path" ] || return 1
+  [ "${path%/*}" = "$config_dir/session-identities" ] || return 1
+  key="${path##*/}"
+  codex_identity_key_valid "$key" || return 1
+  echo "$key"
+}
+
+# Print the canonical UUID stored by a safe identity key. Symlinks are
+# rejected so a snapshot key can never escape the controlled directory.
+# Usage: codex_identity_read <config_dir> <key>
+codex_identity_read() {
+  local config_dir="$1" key="$2" file value
+  codex_identity_key_valid "$key" || return 1
+  file="$config_dir/session-identities/$key"
+  [ -f "$file" ] && [ ! -L "$file" ] || return 1
+  value="$(cat "$file" 2>/dev/null)" || return 1
+  codex_session_id_valid "$value" || return 1
+  echo "$value"
+}
+
 # Re-derive the live snapshot from alive Wisp Deck tmux sessions.
 # Usage: write_session_snapshot <tmux_cmd> <snapshot_file>
 # A session is "ours" iff its session environment contains WISP_DECK=1.
 # Sessions are ordered by creation time (tmux lists them alphabetically) so
 # the snapshot's line order reproduces the order the tabs were opened in.
 # Writes atomically (temp + mv). One line per session:
-#   boot_id|project|path|tool|terminal|claude_session_id|window_layout|account
-# claude_session_id (stamped by the statusline, may be empty) lets restore
+#   boot_id|project|path|tool|terminal|conversation_id|window_layout|account|identity_key
+# conversation_id (stamped by the active tool or read from its durable
+# sidecar, may be empty) lets restore
 # reopen each tab's own conversation instead of the project's most recent one.
+# identity_key is a basename rooted beneath session-identities; it lets queue
+# construction recover a Codex UUID written after the last heartbeat began.
 # window_layout is tmux's #{window_layout} (may be empty) so restore reproduces
 # the pane sizes the session had when Wisp Deck was closed.
 # account is the Claude login THIS session runs (WISP_DECK_CLAUDE_ACCOUNT,
@@ -160,7 +206,8 @@ write_session_snapshot() {
   # alphabetical list order, alphabetizing restored tabs (see next_launch_seq).
   local keyed="$tmp.keyed"
   : > "$keyed"
-  local s env boot proj filepath tool term sid layout acct seq
+  local config_dir="${snap_file%/*}"
+  local s env boot proj filepath tool term sid layout acct seq identity_file identity_key
   local _created
   while read -r _created s; do
     [ -n "$s" ] || continue
@@ -171,7 +218,25 @@ write_session_snapshot() {
     filepath="$(echo "$env" | sed -n 's/^WISP_DECK_PATH=//p')"
     tool="$(echo "$env" | sed -n 's/^WISP_DECK_TOOL=//p')"
     term="$(echo "$env" | sed -n 's/^WISP_DECK_TERMINAL=//p')"
-    sid="$(echo "$env" | sed -n 's/^WISP_DECK_CLAUDE_SESSION=//p')"
+    identity_file="$(echo "$env" | sed -n 's/^WISP_DECK_CODEX_SESSION_FILE=//p')"
+    identity_key="$(codex_identity_key "$config_dir" "$identity_file" 2>/dev/null || true)"
+    case "$tool" in
+      claude)
+        sid="$(echo "$env" | sed -n 's/^WISP_DECK_CLAUDE_SESSION=//p')"
+        identity_key=""
+        ;;
+      codex)
+        sid="$(echo "$env" | sed -n 's/^WISP_DECK_CODEX_SESSION=//p')"
+        codex_session_id_valid "$sid" || sid=""
+        if [ -z "$sid" ] && [ -n "$identity_key" ]; then
+          sid="$(codex_identity_read "$config_dir" "$identity_key" 2>/dev/null || true)"
+        fi
+        ;;
+      *)
+        sid=""
+        identity_key=""
+        ;;
+    esac
     # A stamped EMPTY account is a positive "this session runs Default" —
     # encode it as "default" so restore can tell it apart from "unknown"
     # (var absent, empty field) which falls back to the pointer.
@@ -188,7 +253,7 @@ write_session_snapshot() {
     layout="$("$tmux_cmd" display-message -p -t "$s:0" '#{window_layout}' 2>/dev/null || true)"
     seq="$(echo "$env" | sed -n 's/^WISP_DECK_SEQ=//p')"
     case "$seq" in '' | *[!0-9]*) seq="$_created" ;; esac
-    echo "${seq} ${boot}|${proj}|${filepath}|${tool}|${term}|${sid}|${layout}|${acct}" >> "$keyed"
+    echo "${seq} ${boot}|${proj}|${filepath}|${tool}|${term}|${sid}|${layout}|${acct}|${identity_key}" >> "$keyed"
   done <<< "$sessions"
   sort -sn "$keyed" | cut -d' ' -f2- > "$tmp"
   rm -f "$keyed"
@@ -235,7 +300,7 @@ _restore_wait_for_inflight_build() {
 
 # Once-per-boot restore gate. Call only on interactive launch, before the
 # picker. Builds the restore queue (one
-# boot_id|path|tool|claude_session_id|window_layout|account line per
+# boot_id|path|tool|conversation_id|window_layout|account|identity_key line per
 # prior-boot snapshot entry, in snapshot order) and stamps
 # last-restore-boot. Spawns nothing itself — consumers pop entries via
 # restore_queue_pop.
@@ -285,18 +350,19 @@ maybe_restore_session() {
 
   local tmp="$queue.tmp.$$"
   : > "$tmp"
-  local queued=0 b proj filepath tool term sid layout acct
+  local queued=0 b proj filepath tool term sid layout acct identity_key identity_dedupe
   local entries=()
   # Parallel to entries[]: the exact pane layout and the session's Claude
   # login for each entry, held aside so the unstamped-duplicate dedup pass
   # (which rewrites entries[] to path|tool|sid) never has to carry them.
   local layouts=()
   local accts=()
+  local identity_keys=()
   # Non-empty sids queued so far. A snapshot must never yield two entries for
   # one conversation — whatever upstream failure duplicates a line, restoring
   # the same sid twice would open duplicate tabs.
   local queued_sids=$'\n'
-  while IFS='|' read -r b proj filepath tool term sid layout acct; do
+  while IFS='|' read -r b proj filepath tool term sid layout acct identity_key; do
     [ -n "$b" ] || continue
     # Skip sessions of the current boot — they are alive right now, restoring
     # them would duplicate their tabs. Drift-tolerant so entries stamped with
@@ -308,22 +374,33 @@ maybe_restore_session() {
     # `claude --resume <dead-id>` fails hard, dumping the tab to a bare
     # shell. Blank such ids so the tab falls back to `claude -c` (or the
     # duplicate-pinning below).
+    if [ "$tool" = "codex" ]; then
+      codex_session_id_valid "$sid" || sid=""
+      codex_identity_key_valid "$identity_key" || identity_key=""
+      if [ -z "$sid" ] && [ -n "$identity_key" ]; then
+        sid="$(codex_identity_read "$config_dir" "$identity_key" 2>/dev/null || true)"
+      fi
+    else
+      identity_key=""
+    fi
     if [ "$tool" = "claude" ] && [ -n "$sid" ] \
       && ! claude_transcript_resumable "$filepath" "$sid"; then
       sid=""
     fi
     if [ -n "$sid" ]; then
+      identity_dedupe="${tool}|${sid}"
       case "$queued_sids" in
-        *$'\n'"$sid"$'\n'*)
-          restore_log "$config_dir" "queue-build dropped duplicate sid $sid ($filepath)"
+        *$'\n'"$identity_dedupe"$'\n'*)
+          restore_log "$config_dir" "queue-build dropped duplicate sid $tool|$sid ($filepath)"
           continue
           ;;
       esac
-      queued_sids="${queued_sids}${sid}"$'\n'
+      queued_sids="${queued_sids}${identity_dedupe}"$'\n'
     fi
     entries+=("${filepath}|${tool}|${sid}")
     layouts+=("$layout")
     accts+=("$acct")
+    identity_keys+=("$identity_key")
   done < "$snap"
 
   # Unstamped duplicates: when several tabs of one project lack a conversation
@@ -351,7 +428,7 @@ maybe_restore_session() {
         entries[i]="${filepath}|${tool}|${sid}"
       fi
     fi
-    echo "${cur_boot}|${filepath}|${tool}|${sid}|${layouts[$i]}|${accts[$i]}" >> "$tmp"
+    echo "${cur_boot}|${filepath}|${tool}|${sid}|${layouts[$i]}|${accts[$i]}|${identity_keys[$i]}" >> "$tmp"
     queued=1
   done
   if [ "$queued" -eq 1 ]; then
@@ -399,8 +476,9 @@ maybe_restore_session() {
 
 # Atomically pop the first pending entry from the restore queue.
 # Usage: restore_queue_pop <config_dir> <current_boot_id>
-# Echoes "path|tool|claude_session_id|window_layout|account" (id, layout and
-# account may be empty), or nothing when there is no consumable entry. A queue
+# Echoes "path|tool|conversation_id|window_layout|account|identity_key" (id,
+# layout, account, and key may be empty), or nothing when there is no
+# consumable entry. A queue
 # from another boot, or one older than 5 minutes (a chain that broke), is
 # discarded so it can never hijack a tab the user opens later.
 restore_queue_pop() {
@@ -540,20 +618,31 @@ restore_surplus_launch() {
   [ $((now - drained)) -le 15 ]
 }
 
-# True iff an alive Wisp Deck tmux session is already running conversation
-# <sid>. The wrapper stamps WISP_DECK_CLAUDE_SESSION at session creation for
-# restored tabs and the statusline keeps it current afterwards.
-# Usage: restore_sid_already_open <tmux_cmd> <sid>
+# True iff an alive Wisp Deck tmux session is already running the active
+# tool's conversation <sid>. Codex also consults its live durable sidecar.
+# Usage: restore_sid_already_open <tmux_cmd> <tool> <sid>
 restore_sid_already_open() {
-  local tmux_cmd="$1" sid="$2"
+  local tmux_cmd="$1" tool="$2" sid="$3"
   [ -n "$sid" ] || return 1
-  local sessions s env
+  local sessions s env identity_file live_sid
   sessions="$("$tmux_cmd" list-sessions -F '#{session_name}' 2>/dev/null)" || return 1
   while IFS= read -r s; do
     [ -n "$s" ] || continue
     env="$("$tmux_cmd" show-environment -t "$s" 2>/dev/null)" || continue
     echo "$env" | grep -q '^WISP_DECK=1$' || continue
-    echo "$env" | grep -qxF "WISP_DECK_CLAUDE_SESSION=$sid" && return 0
+    case "$tool" in
+      claude)
+        echo "$env" | grep -qxF "WISP_DECK_CLAUDE_SESSION=$sid" && return 0
+        ;;
+      codex)
+        echo "$env" | grep -qxF "WISP_DECK_CODEX_SESSION=$sid" && return 0
+        identity_file="$(echo "$env" | sed -n 's/^WISP_DECK_CODEX_SESSION_FILE=//p')"
+        if [ -f "$identity_file" ] && [ ! -L "$identity_file" ]; then
+          live_sid="$(cat "$identity_file" 2>/dev/null || true)"
+          codex_session_id_valid "$live_sid" && [ "$live_sid" = "$sid" ] && return 0
+        fi
+        ;;
+    esac
   done <<< "$sessions"
   return 1
 }
@@ -565,13 +654,13 @@ restore_sid_already_open() {
 # already-restored session, the tab that pops it refuses the entry. An empty
 # sid carries no identity and is never refused on those grounds (legit
 # multi-tab projects from old snapshots must still restore).
-# Usage: restore_entry_wanted <tmux_cmd> <entry>   entry = path|tool|sid|layout|account
+# Usage: restore_entry_wanted <tmux_cmd> <entry>
+#   entry = path|tool|sid|layout|account|identity_key
 restore_entry_wanted() {
-  local tmux_cmd="$1" entry="$2" filepath sid
-  filepath="${entry%%|*}"
-  sid="$(echo "$entry" | cut -d'|' -f3)"
+  local tmux_cmd="$1" entry="$2" filepath tool sid _layout _account _identity_key
+  IFS='|' read -r filepath tool sid _layout _account _identity_key <<< "$entry"
   [ -d "$filepath" ] || return 1
-  ! restore_sid_already_open "$tmux_cmd" "$sid"
+  ! restore_sid_already_open "$tmux_cmd" "$tool" "$sid"
 }
 
 # Claude's per-project transcript directory: the project path with every

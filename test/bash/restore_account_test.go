@@ -59,7 +59,7 @@ func TestWriteSessionSnapshot_records_session_account(t *testing.T) {
 	dir := t.TempDir()
 	bin := snapshotTmuxMock(t, dir, `WISP_DECK_CLAUDE_ACCOUNT=personal\n`, sampleLayout)
 	got := runSnapshot(t, dir, bin)
-	want := "111|app|/p/app|claude|ghostty||" + sampleLayout + "|personal"
+	want := "111|app|/p/app|claude|ghostty||" + sampleLayout + "|personal|"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -74,7 +74,7 @@ func TestWriteSessionSnapshot_stamped_default_records_default(t *testing.T) {
 	dir := t.TempDir()
 	bin := snapshotTmuxMock(t, dir, `WISP_DECK_CLAUDE_ACCOUNT=\n`, sampleLayout)
 	got := runSnapshot(t, dir, bin)
-	want := "111|app|/p/app|claude|ghostty||" + sampleLayout + "|default"
+	want := "111|app|/p/app|claude|ghostty||" + sampleLayout + "|default|"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -87,7 +87,7 @@ func TestWriteSessionSnapshot_unstamped_account_left_empty(t *testing.T) {
 	dir := t.TempDir()
 	bin := snapshotTmuxMock(t, dir, ``, sampleLayout)
 	got := runSnapshot(t, dir, bin)
-	want := "111|app|/p/app|claude|ghostty||" + sampleLayout + "|"
+	want := "111|app|/p/app|claude|ghostty||" + sampleLayout + "||"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -111,7 +111,7 @@ func TestMaybeRestore_carries_account_into_queue(t *testing.T) {
 		t.Fatalf("restore-queue not written: %v", err)
 	}
 	got := strings.TrimSpace(string(queue))
-	want := "222|/p/app|claude|sid-a|" + sampleLayout + "|personal"
+	want := "222|/p/app|claude|sid-a|" + sampleLayout + "|personal|"
 	if got != want {
 		t.Errorf("queue:\n got %q\nwant %q", got, want)
 	}
@@ -132,7 +132,7 @@ func TestMaybeRestore_old_snapshot_without_account_still_queues(t *testing.T) {
 		t.Fatalf("restore-queue not written: %v", err)
 	}
 	got := strings.TrimSpace(string(queue))
-	want := "222|/p/app|claude|sid-a|" + sampleLayout + "|"
+	want := "222|/p/app|claude|sid-a|" + sampleLayout + "||"
 	if got != want {
 		t.Errorf("queue:\n got %q\nwant %q", got, want)
 	}
