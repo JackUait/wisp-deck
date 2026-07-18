@@ -37,3 +37,24 @@ func TestChatGPTSubscriptionDocumentationCoversSetupAndSafety(t *testing.T) {
 		}
 	}
 }
+
+func TestSubscriptionModalDocumentation(t *testing.T) {
+	root := projectRoot(t)
+	readme, err := os.ReadFile(filepath.Join(root, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readmeText := strings.Join(strings.Fields(string(readme)), " ")
+	for _, want := range []string{
+		"Settings → Subscription",
+		"every configured profile",
+		"Use profile",
+		"Save changes",
+		"add a profile",
+		"rename or delete",
+	} {
+		if !strings.Contains(readmeText, want) {
+			t.Errorf("README subscription manager documentation is missing %q", want)
+		}
+	}
+}

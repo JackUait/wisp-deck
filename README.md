@@ -99,9 +99,9 @@ subscription manager. It shows Standard Claude and every configured profile in
 one overlay, with provider, authentication state, endpoint, and all four model
 routes alongside it. From there you can add a profile for any available
 provider, rename or delete it, edit masked API-key authentication where
-required, save model mappings explicitly, and choose which profile new sessions
-use. On narrow terminals the same overlay switches to a list-and-details
-drill-in view.
+required, choose **Save changes** to persist model mappings, and choose **Use
+profile** to select what new sessions use. On narrow terminals the same overlay
+switches to a list-and-details drill-in view.
 
 ### Use a ChatGPT subscription inside Claude Code
 
