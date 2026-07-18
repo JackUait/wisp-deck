@@ -103,6 +103,37 @@ func TestSubscriptionModal_activeAndCursorMarkersDiffer(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModal_focusedProfileHasFullRowSelectionWash(t *testing.T) {
+	withTrueColor(t)
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(3) // OpenAI GPT focused; Standard Claude remains active.
+
+	var activeLine, focusedLine string
+	for _, line := range m.subscriptionProfileLines(subscriptionListWidth, 6) {
+		switch {
+		case strings.Contains(line, "Standard Claude"):
+			activeLine = line
+		case strings.Contains(line, "OpenAI GPT"):
+			focusedLine = line
+		}
+	}
+	if focusedLine == "" {
+		t.Fatal("focused profile row is missing")
+	}
+	for _, target := range []string{"▌", "OpenAI GPT", "Ready"} {
+		if !ledgerSGRActiveAt(focusedLine, target, "48;5;236") {
+			t.Errorf("selection wash is not active at %q in focused row: %q", target, focusedLine)
+		}
+	}
+	if strings.Contains(activeLine, "48;5;236") {
+		t.Errorf("active-but-unfocused profile incorrectly has selection wash: %q", activeLine)
+	}
+	if !ledgerSGRActiveAt(activeLine, "●", "38;5;114") {
+		t.Errorf("active profile lost its independent green marker: %q", activeLine)
+	}
+}
+
 func TestSubscriptionModal_compactRenderDrillsIntoDetails(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.width = 60

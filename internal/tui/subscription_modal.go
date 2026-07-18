@@ -1081,13 +1081,16 @@ func (m *MainMenuModel) subscriptionProfileLines(width, height int) []string {
 	accent := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
 	green := lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
 	amber := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+	selectionColor := lipgloss.Color("236")
+	selectionWash := lipgloss.NewStyle().Background(selectionColor)
 
 	heading := modalPad(dim.Bold(true).Render("PROFILES"), width)
 	var items []string
 	profiles := m.subscriptionProfiles()
 	for i, profile := range profiles {
+		focused := i == m.subscriptionModal.profileCursor
 		cursor := "  "
-		if i == m.subscriptionModal.profileCursor {
+		if focused {
 			cursor = accent.Render("▌") + " "
 		} else if m.subscriptionModal.hover.kind == subscriptionHitProfile &&
 			m.subscriptionModal.hover.index == i {
@@ -1112,12 +1115,35 @@ func (m *MainMenuModel) subscriptionProfileLines(width, height int) []string {
 		if gap < 1 {
 			gap = 1
 		}
+		if focused {
+			cursor = accent.Background(selectionColor).Render("▌") + selectionWash.Render(" ")
+			active = selectionWash.Render("  ")
+			if profile.Active {
+				active = green.Background(selectionColor).Render("●") + selectionWash.Render(" ")
+			}
+			name = accent.Background(selectionColor).Render(name)
+			statusStyle := green
+			if !profile.Ready {
+				statusStyle = amber
+			}
+			status = statusStyle.Background(selectionColor).Render(statusText)
+			items = append(items, cursor+active+name+selectionWash.Render(strings.Repeat(" ", gap))+status)
+			continue
+		}
 		items = append(items, cursor+active+name+strings.Repeat(" ", gap)+status)
 	}
 
 	add := "  + Add profile"
 	if m.subscriptionModal.profileCursor == len(profiles) {
-		add = accent.Render("▌") + " + Add profile"
+		label := "+ Add profile"
+		padding := width - lipgloss.Width("▌ ") - lipgloss.Width(label)
+		if padding < 0 {
+			padding = 0
+		}
+		add = accent.Background(selectionColor).Render("▌") +
+			selectionWash.Render(" ") +
+			accent.Background(selectionColor).Render(label) +
+			selectionWash.Render(strings.Repeat(" ", padding))
 	} else if m.subscriptionModal.hover.kind == subscriptionHitAdd {
 		add = dim.Render("▌") + " + Add profile"
 	}
