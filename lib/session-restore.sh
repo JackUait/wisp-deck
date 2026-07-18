@@ -132,10 +132,10 @@ codex_identity_key_valid() {
 # directory's session-identities directory.
 # Usage: codex_identity_key <config_dir> <path>
 codex_identity_key() {
-  local config_dir="$1" path="$2" key
-  [ -n "$path" ] || return 1
-  [ "${path%/*}" = "$config_dir/session-identities" ] || return 1
-  key="${path##*/}"
+  local config_dir="$1" filepath="$2" key
+  [ -n "$filepath" ] || return 1
+  [ "${filepath%/*}" = "$config_dir/session-identities" ] || return 1
+  key="${filepath##*/}"
   codex_identity_key_valid "$key" || return 1
   echo "$key"
 }
