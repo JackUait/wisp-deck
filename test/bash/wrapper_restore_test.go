@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -84,6 +85,72 @@ func TestWrapperInteractive_pops_restore_queue_into_current_window(t *testing.T)
 
 	if _, err := os.Stat(filepath.Join(confDir, "restore-queue")); err == nil {
 		t.Error("queue entry must be consumed exactly once (file should be gone)")
+	}
+}
+
+func TestWrapperRestoreCodexWiresDurableIdentityAndToolSpecificSession(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recPath := filepath.Join(home, "rec")
+	mocks := map[string]string{
+		"tmux":          "#!/bin/bash\nif [ \"$1\" = \"new-session\" ]; then printf '%s\\n' \"$*\" > \"$GT_REC\"; exit 0; fi\nexit 0\n",
+		"claude":        "#!/bin/bash\nexit 0\n",
+		"codex":         "#!/bin/bash\nexit 0\n",
+		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
+		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
+	}
+	for name, body := range mocks {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(body), 0o755); err != nil {
+			t.Fatalf("write mock %s: %v", name, err)
+		}
+	}
+	projDir := filepath.Join(home, "proj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	confDir := filepath.Join(home, ".config", "wisp-deck")
+	if err := os.MkdirAll(confDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(confDir, "restore-queue"),
+		[]byte("12345|"+projDir+"|codex|"+codexSessionA+"|||prior.codex\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(confDir, "last-restore-boot"), []byte("12345\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedChainTicket(t, confDir)
+
+	_, code := runBashScript(t, "wrapper.sh", nil,
+		buildEnv(t, nil, "HOME="+home, "GT_REC="+recPath))
+	assertExitCode(t, code, 0)
+	data, err := os.ReadFile(recPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := normalizeShellEscapedSpaces(string(data))
+	assertContains(t, got, "WISP_DECK_TOOL=codex")
+	assertContains(t, got, "WISP_DECK_CODEX_SESSION="+codexSessionA)
+	assertContains(t, got, "WISP_DECK_CLAUDE_SESSION=")
+	assertNotContains(t, got, "WISP_DECK_CLAUDE_SESSION="+codexSessionA)
+	identityPrefix := filepath.Join(confDir, "session-identities", "dev-proj-")
+	assertContains(t, got, "WISP_DECK_CODEX_SESSION_FILE="+identityPrefix)
+	assertContains(t, got, "--session-file "+identityPrefix)
+	assertContains(t, got, "--resume-session "+codexSessionA)
+
+	identityDir := filepath.Join(confDir, "session-identities")
+	info, err := os.Stat(identityDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMode := info.Mode().Perm(); gotMode != 0o700 {
+		t.Fatalf("identity directory mode = %#o, want 0700", gotMode)
+	}
+	if !strings.Contains(got, ".codex") {
+		t.Fatalf("Codex identity path lacks .codex suffix: %q", got)
 	}
 }
 

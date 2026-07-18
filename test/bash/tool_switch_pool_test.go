@@ -267,6 +267,37 @@ func TestRelaunchSwitchTool_leaving_codex_captures_session_and_handoff(t *testin
 	assertContains(t, string(handoff), "refactor the parser")
 }
 
+func TestRelaunchSwitchTool_leaving_codex_prefers_durable_sidecar(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	bin := poolMockTmux(t, dir, rec)
+	croot := filepath.Join(dir, "codex-sessions")
+	durable := "019c4ee5-2e51-7400-ba62-0000000000ad"
+	heuristic := "019c4ee5-2e51-7400-ba62-0000000000ae"
+	writeRollout(t, croot, heuristic, "/proj", time.Now(),
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"wrong rollout"}]}}`,
+	)
+	identityFile := filepath.Join(dir, "session-identities", "dev.codex")
+	writeTempFile(t, filepath.Dir(identityFile), filepath.Base(identityFile), durable+"\n")
+	stampTmuxEnv(t, dir, "WISP_DECK_CODEX_SESSION_FILE", identityFile)
+	ctx := poolCtx(t, dir, "codex")
+	env := buildEnv(t, []string{bin}, "HOME="+dir, "WISP_DECK_CODEX_SESSIONS_DIR="+croot)
+
+	_, code := runBashSnippet(t, poolSwitchSnippet(t,
+		fmt.Sprintf("relaunch_switch_tool tmux %q claude", ctx)), env)
+	assertExitCode(t, code, 0)
+	if got := readTmuxEnv(t, dir, "WISP_DECK_CODEX_SESSION"); got != durable {
+		t.Fatalf("captured Codex id = %q, want durable sidecar %q", got, durable)
+	}
+	pool := filepath.Join(dir, "session-pool", "relaunch")
+	meta, err := os.ReadFile(filepath.Join(pool, "meta"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertContains(t, string(meta), "codex="+durable)
+	assertNotContains(t, string(meta), "codex="+heuristic)
+}
+
 // Switching back to codex with a stamped codex session resumes THAT session
 // natively and re-stamps the stint start for the next capture.
 func TestRelaunchSwitchTool_returning_to_codex_resumes_stamped_session(t *testing.T) {
@@ -274,7 +305,10 @@ func TestRelaunchSwitchTool_returning_to_codex_resumes_stamped_session(t *testin
 	rec := filepath.Join(dir, "tmux.log")
 	bin := poolMockTmux(t, dir, rec)
 	uuid := "019c4ee5-2e51-7400-ba62-0000000000bb"
-	stampTmuxEnv(t, dir, "WISP_DECK_CODEX_SESSION", uuid)
+	identityFile := filepath.Join(dir, "session-identities", "dev.codex")
+	writeTempFile(t, filepath.Dir(identityFile), filepath.Base(identityFile), uuid+"\n")
+	stampTmuxEnv(t, dir, "WISP_DECK_CODEX_SESSION_FILE", identityFile)
+	stampTmuxEnv(t, dir, "WISP_DECK_CODEX_SESSION", "019c4ee5-2e51-7400-ba62-0000000000bc")
 	ctx := poolCtx(t, dir, "claude")
 	env := buildEnv(t, []string{bin}, "HOME="+dir)
 	_, code := runBashSnippet(t, poolSwitchSnippet(t,

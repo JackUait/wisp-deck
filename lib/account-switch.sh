@@ -808,6 +808,15 @@ _pool_tmux_env() {
   return 0
 }
 
+_pool_codex_identity() {
+  local tmux_cmd="$1" identity_file sid
+  identity_file="$(_pool_tmux_env "$tmux_cmd" WISP_DECK_CODEX_SESSION_FILE)"
+  [ -f "$identity_file" ] && [ ! -L "$identity_file" ] || return 0
+  sid="$(cat "$identity_file" 2>/dev/null || true)"
+  _codex_session_id_valid "$sid" || return 0
+  printf '%s\n' "$sid"
+}
+
 # _pool_capture_leaving_tool <tmux_cmd> <pool_dir> — record the LEAVING agent's
 # session into the shared pool before the pane is respawned: stamp its native
 # session id into the tmux env (what a later switch back resumes) and export
@@ -856,7 +865,9 @@ _pool_capture_leaving_tool() {
       [ -n "$since" ] \
         || since="$("$tmux_cmd" display-message -p '#{session_created}' 2>/dev/null)" \
         || since=""
-      csid="$(codex_current_session "$croot" "$_rc_project_dir" "${since:-0}")"
+      csid="$(_pool_codex_identity "$tmux_cmd")"
+      [ -n "$csid" ] \
+        || csid="$(codex_current_session "$croot" "$_rc_project_dir" "${since:-0}")"
       if [ -n "$csid" ]; then
         "$tmux_cmd" set-environment WISP_DECK_CODEX_SESSION "$csid" 2>/dev/null
         pool_set "$meta" codex "$csid"
@@ -984,7 +995,9 @@ relaunch_switch_tool() {
     # Resume the codex session an earlier codex stint of this pane left behind
     # (stamped by _pool_capture_leaving_tool), and stamp the new stint's start
     # so the NEXT switch away can bound its capture.
-    sid="$(_pool_tmux_env "$tmux_cmd" WISP_DECK_CODEX_SESSION)"
+    sid="$(_pool_codex_identity "$tmux_cmd")"
+    [ -n "$sid" ] || sid="$(_pool_tmux_env "$tmux_cmd" WISP_DECK_CODEX_SESSION)"
+    _codex_session_id_valid "$sid" || sid=""
     "$tmux_cmd" set-environment WISP_DECK_CODEX_STARTED_AT "$(date +%s)" 2>/dev/null
   elif [ "$target" = "opencode" ]; then
     # A pane that ran opencode before continues its project-scoped session;

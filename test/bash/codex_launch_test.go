@@ -80,26 +80,26 @@ func TestBuildAiLaunchCmd_codex_takes_no_positional_project_dir(t *testing.T) {
 }
 
 // Resume mode with a captured session id: codex resumes ITS exact session via
-// a guarded `codex resume <id>` that falls back to a plain launch when the
-// resume fails at startup (mirrors claude's --resume → -c → plain chain).
+// a guarded `codex resume <id>` that falls back to the resume selector when
+// the exact id fails at startup. It must never open a silent fresh session.
 func TestBuildAiLaunchCmd_codex_resume_with_sid_uses_guarded_resume_chain(t *testing.T) {
-	env := buildEnv(t, nil, "WISP_DECK_RESUME=1", "WISP_DECK_RESUME_SESSION=sid-42")
+	env := buildEnv(t, nil, "WISP_DECK_RESUME=1", "WISP_DECK_RESUME_SESSION="+codexSessionA)
 	got := codexLaunchCmd(t, env, "")
-	assertContains(t, got, "/usr/bin/codex resume sid-42")
+	assertContains(t, got, "/usr/bin/codex resume "+codexSessionA)
 	assertContains(t, got, "_wd_rc")
-	// The fallback step is the bare binary (a "; /usr/bin/codex;" segment).
-	assertContains(t, got, "; /usr/bin/codex;")
+	assertContains(t, got, "; /usr/bin/codex resume;")
+	assertNotContains(t, got, "; /usr/bin/codex;")
 }
 
-// Resume mode WITHOUT a captured id stays a plain relaunch: `codex resume
-// --last` is cwd-filtered but could still steal another pane's session.
-func TestBuildAiLaunchCmd_codex_resume_without_sid_relaunches_fresh(t *testing.T) {
+// Resume mode WITHOUT a captured id opens Codex's selector. A legacy snapshot
+// is recoverable by user choice; a plain launch would silently erase context.
+func TestBuildAiLaunchCmd_codex_resume_without_sid_uses_picker(t *testing.T) {
 	env := buildEnv(t, nil, "WISP_DECK_RESUME=1", "WISP_DECK_RESUME_SESSION=")
 	got := codexLaunchCmd(t, env, "")
-	if got != "/usr/bin/codex" {
-		t.Errorf("got %q, want a plain relaunch %q", got, "/usr/bin/codex")
+	if got != "/usr/bin/codex resume" {
+		t.Errorf("got %q, want resume picker %q", got, "/usr/bin/codex resume")
 	}
-	for _, flag := range []string{"--continue", "--resume", "-c"} {
+	for _, flag := range []string{"--continue", "-c"} {
 		if strings.Contains(got, flag) {
 			t.Errorf("codex resume launch %q must not carry %q", got, flag)
 		}
@@ -121,6 +121,7 @@ for arg in "$@"; do printf '%s\n' "$arg" >> "$CAPTURE"; done
 	env := buildEnv(t, []string{binDir},
 		"WISP_DECK_ATTENTION_FILE="+state,
 		"WISP_DECK_ATTENTION_GENERATION=generation.Abc123",
+		"WISP_DECK_CODEX_SESSION_FILE="+filepath.Join(dir, "session-identities", "dev-app.codex"),
 		"WISP_DECK_RESUME_FALLBACK_WINDOW=9",
 		"CAPTURE="+capture,
 	)
@@ -156,6 +157,7 @@ for arg in "$@"; do printf '%s\n' "$arg" >> "$CAPTURE"; done
 		"--codex", "/usr/bin/codex",
 		"--state-file", state,
 		"--generation", "generation.Abc123",
+		"--session-file", filepath.Join(dir, "session-identities", "dev-app.codex"),
 		"--fallback-window", "9s",
 		"--", prompt,
 	}
@@ -173,6 +175,7 @@ func TestBuildAiLaunchCmd_codex_attention_resume_is_one_adapter_not_shell_chain(
 	env := buildEnv(t, nil,
 		"WISP_DECK_ATTENTION_FILE=/tmp/generation.Abc/state",
 		"WISP_DECK_ATTENTION_GENERATION=generation.Abc",
+		"WISP_DECK_CODEX_SESSION_FILE=/tmp/session-identities/dev.codex",
 		"WISP_DECK_RESUME=1",
 		"WISP_DECK_RESUME_SESSION=11111111-1111-4111-8111-111111111111",
 		"WISP_DECK_RESUME_FALLBACK_WINDOW=2.5s",
@@ -183,6 +186,7 @@ func TestBuildAiLaunchCmd_codex_attention_resume_is_one_adapter_not_shell_chain(
 		"--codex /usr/bin/codex",
 		"--state-file /tmp/generation.Abc/state",
 		"--generation generation.Abc",
+		"--session-file /tmp/session-identities/dev.codex",
 		"--resume-session 11111111-1111-4111-8111-111111111111",
 		"--fallback-window 2.5s",
 	} {
@@ -193,6 +197,36 @@ func TestBuildAiLaunchCmd_codex_attention_resume_is_one_adapter_not_shell_chain(
 	}
 	if !strings.HasSuffix(got, " --") {
 		t.Fatalf("adapter command must end in -- for a safely appended handoff: %q", got)
+	}
+}
+
+func TestBuildAiLaunchCmd_codex_attention_missing_id_uses_resume_picker(t *testing.T) {
+	env := buildEnv(t, nil,
+		"WISP_DECK_ATTENTION_FILE=/tmp/generation.Abc/state",
+		"WISP_DECK_ATTENTION_GENERATION=generation.Abc",
+		"WISP_DECK_CODEX_SESSION_FILE=/tmp/session-identities/dev.codex",
+		"WISP_DECK_RESUME=1",
+	)
+	got := codexLaunchCmd(t, env, "")
+	for _, want := range []string{
+		"wisp-deck-tui codex-adapter",
+		"--session-file /tmp/session-identities/dev.codex",
+		"--resume-picker",
+	} {
+		assertContains(t, got, want)
+	}
+	assertNotContains(t, got, "--resume-session")
+}
+
+func TestBuildAiLaunchCmd_codex_attention_requires_session_file(t *testing.T) {
+	env := buildEnv(t, nil,
+		"WISP_DECK_ATTENTION_FILE=/tmp/generation.Abc/state",
+		"WISP_DECK_ATTENTION_GENERATION=generation.Abc",
+	)
+	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
+		[]string{"codex", "/usr/bin/codex"}, env)
+	if code == 0 {
+		t.Fatalf("semantic Codex launch without a sidecar succeeded: %q", out)
 	}
 }
 

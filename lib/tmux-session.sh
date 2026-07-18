@@ -2,6 +2,10 @@
 # Tmux session helpers — build launch command, cleanup.
 # Depends on: process.sh (kill_tree)
 
+_codex_session_id_valid() {
+  [[ "$1" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+}
+
 # Get the single accent (focus) colour for a tool's tmux chrome — the active pane
 # border and the active spare-tab chip. Mirrors the Go theme's Primary: purple
 # for OpenCode, orange for claude (the default). Prints a 256-colour number.
@@ -76,7 +80,7 @@ build_ai_launch_cmd() {
   if [ "$tool" = "codex" ] \
      && [ -n "${WISP_DECK_ATTENTION_FILE:-}" ] \
      && [ -n "${WISP_DECK_ATTENTION_GENERATION:-}" ]; then
-    local codex_q fallback fallback_q resume_q="" prompt_q="" extra=""
+    local codex_q fallback fallback_q resume_q="" prompt_q="" session_q="" extra=""
     [ "$#" -ge 3 ] && extra="$3"
     fallback="${WISP_DECK_RESUME_FALLBACK_WINDOW:-10}"
     case "$fallback" in
@@ -87,16 +91,23 @@ build_ai_launch_cmd() {
     printf -v state_q '%q' "$WISP_DECK_ATTENTION_FILE"
     printf -v generation_q '%q' "$WISP_DECK_ATTENTION_GENERATION"
     printf -v fallback_q '%q' "$fallback"
-    if [ "${WISP_DECK_RESUME:-0}" = "1" ] \
-       && [ -n "${WISP_DECK_RESUME_SESSION:-}" ]; then
-      printf -v resume_q ' --resume-session %q' "$WISP_DECK_RESUME_SESSION"
+    case "${WISP_DECK_CODEX_SESSION_FILE:-}" in
+      /*) printf -v session_q '%q' "$WISP_DECK_CODEX_SESSION_FILE" ;;
+      *) return 1 ;;
+    esac
+    if [ "${WISP_DECK_RESUME:-0}" = "1" ]; then
+      if _codex_session_id_valid "${WISP_DECK_RESUME_SESSION:-}"; then
+        printf -v resume_q ' --resume-session %q' "$WISP_DECK_RESUME_SESSION"
+      else
+        resume_q=" --resume-picker"
+      fi
       # build_switch_launch_cmd passes project_dir in the legacy extra slot
       # for resumes. It is cwd metadata, not an initial Codex prompt.
       extra=""
     fi
     [ -n "$extra" ] && printf -v prompt_q ' %q' "$extra"
-    printf 'wisp-deck-tui codex-adapter --codex %s --state-file %s --generation %s%s --fallback-window %s --%s\n' \
-      "$codex_q" "$state_q" "$generation_q" "$resume_q" "$fallback_q" "$prompt_q"
+    printf 'wisp-deck-tui codex-adapter --codex %s --state-file %s --generation %s --session-file %s%s --fallback-window %s --%s\n' \
+      "$codex_q" "$state_q" "$generation_q" "$session_q" "$resume_q" "$fallback_q" "$prompt_q"
     return 0
   fi
 
@@ -145,17 +156,24 @@ build_ai_launch_cmd_raw() {
   # codex takes no flags, no env plumbing and no positional dir (the pane's cwd
   # is already the project dir), so it short-circuits ahead of the claude-only
   # prefixes below. In resume mode a captured session id resumes THAT exact
-  # session via a guarded `codex resume <id>` → plain fallback (same startup
-  # window contract as claude's chain below); without an id it relaunches
-  # fresh — `resume --last` is cwd-filtered but could steal another pane's
-  # session.
+  # session via a guarded `codex resume <id>` → resume-selector fallback (same
+  # startup window contract as the semantic adapter); without an id it opens
+  # the selector. A restore must never silently launch a fresh conversation.
   if [ "$tool" = "codex" ]; then
-    if [ "${WISP_DECK_RESUME:-0}" = "1" ] && [ -n "${WISP_DECK_RESUME_SESSION:-}" ]; then
+    local codex_cmd_q
+    printf -v codex_cmd_q '%q' "$tool_cmd"
+    if [ "${WISP_DECK_RESUME:-0}" = "1" ]; then
+      if ! _codex_session_id_valid "${WISP_DECK_RESUME_SESSION:-}"; then
+        echo "$codex_cmd_q resume"
+        return 0
+      fi
       local cwin="${WISP_DECK_RESUME_FALLBACK_WINDOW:-10}"
-      echo "_wd_t0=\$(date +%s); $tool_cmd resume ${WISP_DECK_RESUME_SESSION}; _wd_rc=\$?; if [ \$_wd_rc -ne 0 ] && [ \$(( \$(date +%s) - _wd_t0 )) -lt $cwin ]; then _wd_t0=\$(date +%s); $tool_cmd; _wd_rc=\$?; fi"
+      local resume_sid_q
+      printf -v resume_sid_q '%q' "$WISP_DECK_RESUME_SESSION"
+      echo "_wd_t0=\$(date +%s); $codex_cmd_q resume $resume_sid_q; _wd_rc=\$?; if [ \$_wd_rc -ne 0 ] && [ \$(( \$(date +%s) - _wd_t0 )) -lt $cwin ]; then _wd_t0=\$(date +%s); $codex_cmd_q resume; _wd_rc=\$?; fi"
       return 0
     fi
-    echo "$tool_cmd"
+    echo "$codex_cmd_q"
     return 0
   fi
 
