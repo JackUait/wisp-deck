@@ -3293,6 +3293,31 @@ func TestMainMenu_SetSoundName_empty_means_off(t *testing.T) {
 	}
 }
 
+func TestMainMenu_SoundCyclingNeverLaunchesHostPlayer(t *testing.T) {
+	spyDir := t.TempDir()
+	marker := filepath.Join(spyDir, "afplay-called")
+	spy := filepath.Join(spyDir, "afplay")
+	if err := os.WriteFile(spy, []byte("#!/bin/sh\n: > \"$AFPLAY_SPY_MARKER\"\n"), 0o755); err != nil {
+		t.Fatalf("write afplay spy: %v", err)
+	}
+	t.Setenv("AFPLAY_SPY_MARKER", marker)
+	t.Setenv("PATH", spyDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
+	m.CycleSoundName()
+	m.CycleSoundNameReverse()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(marker); err == nil {
+			t.Fatal("sound cycling launched the host afplay process")
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("stat afplay spy marker: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestMainMenu_CycleSoundName_forward(t *testing.T) {
 	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
 	m.SetSoundName("Bottle")

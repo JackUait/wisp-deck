@@ -1000,7 +1000,6 @@ func (m *MainMenuModel) CycleSoundName() {
 		return
 	}
 	m.feedbackMsg = ""
-	m.previewSound()
 }
 
 // CycleSoundNameReverse cycles backward through Off + system sounds.
@@ -1030,19 +1029,6 @@ func (m *MainMenuModel) CycleSoundNameReverse() {
 		return
 	}
 	m.feedbackMsg = ""
-	m.previewSound()
-}
-
-// previewSound plays the current sound in the background using afplay.
-func (m *MainMenuModel) previewSound() {
-	if m.soundName == "" {
-		return
-	}
-	path := "/System/Library/Sounds/" + m.soundName + ".aiff"
-	go func() {
-		cmd := exec.Command("afplay", path)
-		_ = cmd.Start()
-	}()
 }
 
 // persistSound writes the current sound state to the features JSON file.
