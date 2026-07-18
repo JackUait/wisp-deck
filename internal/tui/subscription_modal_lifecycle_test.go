@@ -176,3 +176,55 @@ func TestSubscriptionModal_EscCancelsLifecycleMode(t *testing.T) {
 		})
 	}
 }
+
+func TestSubscriptionModal_dirtyAddContinuesAfterDiscard(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+	m.subscriptionModal.detailCursor = subscriptionDetailOpus
+	m.cycleSubscriptionMapping("next")
+
+	m = subscriptionRune(t, m, 'a')
+	if m.subscriptionModal.mode != subscriptionDiscardConfirm {
+		t.Fatalf("dirty Add mode = %v, want discard confirmation", m.subscriptionModal.mode)
+	}
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.subscriptionModal.mode != subscriptionAddProvider {
+		t.Fatalf("confirmed Add mode = %v, want provider chooser", m.subscriptionModal.mode)
+	}
+	if m.subscriptionModal.draft.dirty {
+		t.Fatal("confirmed Add kept the old draft dirty")
+	}
+}
+
+func TestSubscriptionModal_dirtyRenameAndDeleteRequireDiscard(t *testing.T) {
+	for _, tc := range []struct {
+		key      rune
+		wantMode subscriptionModalMode
+	}{
+		{key: 'r', wantMode: subscriptionRename},
+		{key: 'd', wantMode: subscriptionDeleteConfirm},
+	} {
+		t.Run(string(tc.key), func(t *testing.T) {
+			m := newSubscriptionModalMenu(t)
+			m.openSubscriptionModal()
+			m.moveSubscriptionProfile(2)
+			m.subscriptionModal.detailCursor = subscriptionDetailOpus
+			m.cycleSubscriptionMapping("next")
+
+			m = subscriptionRune(t, m, tc.key)
+			if m.subscriptionModal.mode != subscriptionDiscardConfirm {
+				t.Fatalf("dirty %q mode = %v, want discard confirmation", tc.key, m.subscriptionModal.mode)
+			}
+			m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+			if m.subscriptionModal.mode != tc.wantMode {
+				t.Fatalf("confirmed %q mode = %v, want %v", tc.key, m.subscriptionModal.mode, tc.wantMode)
+			}
+			if m.subscriptionModal.draft.dirty {
+				t.Fatalf("confirmed %q kept the old draft dirty", tc.key)
+			}
+		})
+	}
+}

@@ -141,3 +141,58 @@ func TestSubscriptionModal_shortTerminalKeepsTitleAndFooter(t *testing.T) {
 		t.Fatalf("short view lost fixed footer:\n%s", view)
 	}
 }
+
+func TestSubscriptionModal_keyEditorIsVisibleAndMasked(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2) // Xiaomi MiMo
+	m.subscriptionModal.pane = subscriptionDetailsPane
+	m.beginSubscriptionKeyEdit()
+
+	card := stripAnsi(m.renderSubscriptionModalCard())
+	if !strings.Contains(card, "EDIT API KEY") {
+		t.Fatalf("key editor title is missing:\n%s", card)
+	}
+	if !strings.Contains(card, "••••") {
+		t.Fatalf("key editor does not show masked input:\n%s", card)
+	}
+	if strings.Contains(card, "sk-test") {
+		t.Fatalf("key editor exposed the API key:\n%s", card)
+	}
+}
+
+func TestSubscriptionModal_discardConfirmationIsVisible(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+	m.subscriptionModal.draft.dirty = true
+
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+
+	card := stripAnsi(m.renderSubscriptionModalCard())
+	if !strings.Contains(card, "DISCARD UNSAVED CHANGES?") {
+		t.Fatalf("discard confirmation is missing:\n%s", card)
+	}
+	if !strings.Contains(card, "Enter discard") {
+		t.Fatalf("discard confirmation lacks its action hint:\n%s", card)
+	}
+}
+
+func TestSubscriptionModal_detailCursorIsVisible(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+	m.subscriptionModal.pane = subscriptionDetailsPane
+	m.subscriptionModal.detailCursor = subscriptionDetailOpus
+
+	card := stripAnsi(m.renderSubscriptionModalCard())
+	for _, line := range strings.Split(card, "\n") {
+		if strings.Contains(line, "Opus") {
+			if !strings.Contains(line, "▌") {
+				t.Fatalf("focused detail row has no cursor marker: %q", line)
+			}
+			return
+		}
+	}
+	t.Fatalf("Opus row is missing:\n%s", card)
+}

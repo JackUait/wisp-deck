@@ -259,17 +259,9 @@ type MainMenuModel struct {
 	// and so never register as a hover/click.
 	menuLines []string
 	// modalOriginY is the absolute screen row of the first line of the modal
-	// panel (account menu / model map) appended below the menu box, or -1 when no
+	// panel (account menu) appended below the menu box, or -1 when no
 	// modal is open. Lets the modal's rows be hit-tested like the menu's.
 	modalOriginY int
-	// modelMapHover marks which non-cursor element of the model-map panel the
-	// pointer is over so it can highlight: -1 none, 4 = API key row, 5 = Save
-	// button, 6 = Cancel button.
-	modelMapHover int
-	// modelMapSlotHover is the model slot (0..3) under the pointer, or -1. It is a
-	// transient highlight separate from the keyboard cursor (modelMapCursor): it
-	// clears the moment the pointer leaves the slots and never moves the cursor.
-	modelMapSlotHover int
 	// accountMenuHover is the login row under the pointer in the account modal, or
 	// -1. Transient highlight, separate from the keyboard cursor (accountMenuCursor).
 	accountMenuHover int
@@ -387,15 +379,6 @@ type MainMenuModel struct {
 	accountMenuRenameRow int // -1 = adding a login; 0 = renaming Default; 1..len = renaming a managed login (cursor row)
 	accountMenuErr       error
 
-	// Model mapping panel for non-Standard configs
-	modelMapOpen     bool
-	modelMapCursor   int      // 0-3: which Anthropic slot (opus, sonnet, haiku, fable)
-	modelMap         [4]int   // index into modelMapModels for each slot
-	modelMapModels   []string // provider-specific model list
-	modelMapErr      error
-	modelMapKeyMode  bool // true when entering API key
-	modelMapKeyInput textinput.Model
-
 	// Subscription management overlay. It replaces Settings-row cycling and the
 	// appended model-map panel with one profile inventory and detail surface.
 	subscriptionModal subscriptionModalState
@@ -457,8 +440,6 @@ func NewMainMenu(projects []models.Project, aiTools []string, currentAI string, 
 		defaultAccountLabel:       "Default",
 		hoverTab:                  -1,
 		hoverStatsMode:            -1,
-		modelMapHover:             -1,
-		modelMapSlotHover:         -1,
 		accountMenuHover:          -1,
 	}
 }
@@ -1107,9 +1088,6 @@ func (m *MainMenuModel) SetClaudeConfigPaths(listFile, dir string) {
 	m.claudeConfigsList = listFile
 	m.claudeConfigsDir = dir
 }
-
-// APIKeyInputOpen reports whether the API key input is showing.
-func (m *MainMenuModel) APIKeyInputOpen() bool { return m.modelMapOpen }
 
 // SetClaudeConfigs stores the managed config list (excluding the implicit Standard).
 func (m *MainMenuModel) SetClaudeConfigs(configs []ClaudeConfig) { m.claudeConfigs = configs }
@@ -2379,9 +2357,6 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.aboutOpen {
 			return m.updateAbout(msg)
-		}
-		if m.modelMapOpen {
-			return m.updateModelMap(msg)
 		}
 		if m.accountMenuOpen {
 			return m.updateAccountMenu(msg)
@@ -4060,9 +4035,6 @@ func (m *MainMenuModel) View() string {
 		menuBox = m.renderInputBox()
 	case m.activeTab == TabSettings:
 		menuBox = m.renderSettingsBox()
-		if m.modelMapOpen {
-			appendModal(m.renderModelMapPanel())
-		}
 		if m.accountMenuOpen {
 			appendModal(m.renderAccountMenuPanel())
 		}

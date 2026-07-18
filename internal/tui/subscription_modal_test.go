@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -296,5 +298,64 @@ func TestSubscriptionModal_chatGPTDoesNotEnterKeyEditor(t *testing.T) {
 	}
 	if m.subscriptionModal.mode == subscriptionEditKey {
 		t.Fatal("ChatGPT exposed API-key editing")
+	}
+}
+
+func TestSubscriptionModal_compactEscReturnsToProfileList(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.width = 60
+	m.openSubscriptionModal()
+	m.subscriptionModal.pane = subscriptionDetailsPane
+
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+
+	if !m.subscriptionModal.open {
+		t.Fatal("Esc from compact details closed the modal")
+	}
+	if m.subscriptionModal.pane != subscriptionProfilesPane {
+		t.Fatalf("Esc pane = %v, want profiles", m.subscriptionModal.pane)
+	}
+}
+
+func TestSubscriptionModal_profileCursorStaysInScrolledViewport(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	for i := 0; i < 12; i++ {
+		name := fmt.Sprintf("Extra profile %02d", i)
+		if _, err := claudeconfig.AddForProvider(
+			m.claudeConfigsList,
+			m.claudeConfigsDir,
+			name,
+			"mimo",
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.SetClaudeConfigs(LoadClaudeConfigsList(m.claudeConfigsList))
+	m.height = 12
+	m.openSubscriptionModal()
+	for range len(m.subscriptionProfiles()) {
+		m.moveSubscriptionProfile(1)
+	}
+
+	if m.subscriptionModal.profileOffset == 0 {
+		t.Fatal("long profile inventory did not scroll")
+	}
+	card := stripAnsi(m.renderSubscriptionModalCard())
+	if !strings.Contains(card, "+ Add profile") {
+		t.Fatalf("selected Add row is outside viewport:\n%s", card)
+	}
+}
+
+func TestSubscriptionModal_chatGPTNavigationSkipsMissingAPIKeyRow(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(3) // OpenAI GPT
+	m.subscriptionModal.pane = subscriptionDetailsPane
+	m.subscriptionModal.detailCursor = subscriptionDetailFable
+
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
+
+	if m.subscriptionModal.detailCursor != subscriptionDetailUse {
+		t.Fatalf("Down from Fable selected %d, want Use (%d)", m.subscriptionModal.detailCursor, subscriptionDetailUse)
 	}
 }
