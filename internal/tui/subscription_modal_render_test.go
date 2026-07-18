@@ -199,6 +199,43 @@ func TestSubscriptionModal_detailCursorIsVisible(t *testing.T) {
 	t.Fatalf("Opus row is missing:\n%s", card)
 }
 
+func TestSubscriptionModal_wideActionsShareOneLine(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+	m.subscriptionModal.pane = subscriptionDetailsPane
+
+	card := stripAnsi(m.renderSubscriptionModalCard())
+	for _, line := range strings.Split(card, "\n") {
+		if !strings.Contains(line, "[ Use profile ]") {
+			continue
+		}
+		for _, want := range []string{"[ Rename ]", "[ Delete ]", "[ Save changes ]"} {
+			if !strings.Contains(line, want) {
+				t.Fatalf("wide action row is missing %q: %q", want, line)
+			}
+		}
+		return
+	}
+	t.Fatalf("wide action row is missing:\n%s", card)
+}
+
+func TestSubscriptionModal_wideInlineSaveScrollTargetsSharedActionRow(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.width = 100
+	m.height = 12
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+	m.subscriptionModal.pane = subscriptionDetailsPane
+	m.subscriptionModal.detailCursor = subscriptionDetailSave
+
+	m.ensureSubscriptionDetailVisible()
+
+	if got, want := m.subscriptionModal.detailOffset, 11; got != want {
+		t.Fatalf("detail offset = %d, want %d for inline action row", got, want)
+	}
+}
+
 func TestSubscriptionModal_narrowCardNeverExceedsGeometry(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.width = 40

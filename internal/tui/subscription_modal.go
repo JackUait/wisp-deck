@@ -916,6 +916,23 @@ func (m *MainMenuModel) subscriptionModalBodyHeight() int {
 	return height
 }
 
+func (m *MainMenuModel) subscriptionDetailPaneWidth() int {
+	_, _, width, _ := m.subscriptionModalLayout()
+	width -= 2 // card borders
+	if !m.subscriptionModalCompact() {
+		width -= subscriptionListWidth + 1 // profile pane and divider
+	}
+	if width < 1 {
+		return 1
+	}
+	return width
+}
+
+func subscriptionActionsFitOneLine(width int) bool {
+	const actions = "[ Use profile ]  [ Rename ]  [ Delete ]  [ Save changes ]"
+	return width >= lipgloss.Width(actions)
+}
+
 func (m *MainMenuModel) ensureSubscriptionProfileVisible() {
 	viewport := m.subscriptionModalBodyHeight() - 1 // fixed PROFILES heading
 	if viewport < 1 {
@@ -969,6 +986,9 @@ func (m *MainMenuModel) subscriptionDetailCursorLine() int {
 	}
 	line++ // blank line before actions
 	if cursor == subscriptionDetailSave {
+		if subscriptionActionsFitOneLine(m.subscriptionDetailPaneWidth()) {
+			return line
+		}
 		if m.subscriptionModalCompact() {
 			return line + 2
 		}
@@ -1212,7 +1232,9 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 	rename := m.subscriptionActionLabel(subscriptionHitRename, -1, "[ Rename ]", accent, label)
 	deleteAction := m.subscriptionActionLabel(subscriptionHitDelete, -1, "[ Delete ]", accent, label)
 	save := m.subscriptionActionLabel(subscriptionHitSave, subscriptionDetailSave, "[ Save changes ]", accent, label)
-	if m.subscriptionModalCompact() {
+	if subscriptionActionsFitOneLine(width) {
+		lines = append(lines, use+"  "+rename+"  "+deleteAction+"  "+save)
+	} else if m.subscriptionModalCompact() {
 		lines = append(lines, use, rename+"  "+deleteAction, save)
 	} else {
 		lines = append(lines, use+"  "+rename+"  "+deleteAction, save)
