@@ -14,8 +14,8 @@ func TestIdleSoundRuntimeSitesUseSharedLiveGate(t *testing.T) {
 	root := projectRoot(t)
 	allowed := map[string]bool{
 		filepath.Join(root, "lib", "notification-setup.sh"):                 true,
-		filepath.Join(root, "internal", "tui", "mainmenu.go"):               true,
 		filepath.Join(root, "cmd", "wisp-deck-tui", "claude_background.go"): true,
+		filepath.Join(root, "cmd", "wisp-deck-tui", "main_menu.go"):         true,
 	}
 	paths := []string{
 		filepath.Join(root, "lib"),
@@ -72,10 +72,10 @@ func TestIdleSoundRuntimeSitesUseSharedLiveGate(t *testing.T) {
 		filepath.Join(root, "lib", "notification-setup.sh"): {
 			"afplay": 2, "/System/Library/Sounds": 1, "NSSound": 0, "AudioServicesPlaySystemSound": 0,
 		},
-		filepath.Join(root, "internal", "tui", "mainmenu.go"): {
-			"afplay": 2, "/System/Library/Sounds": 1, "NSSound": 0, "AudioServicesPlaySystemSound": 0,
-		},
 		filepath.Join(root, "cmd", "wisp-deck-tui", "claude_background.go"): {
+			"afplay": 1, "/System/Library/Sounds": 1, "NSSound": 0, "AudioServicesPlaySystemSound": 0,
+		},
+		filepath.Join(root, "cmd", "wisp-deck-tui", "main_menu.go"): {
 			"afplay": 1, "/System/Library/Sounds": 1, "NSSound": 0, "AudioServicesPlaySystemSound": 0,
 		},
 	}
@@ -107,11 +107,11 @@ func TestIdleSoundRuntimeSitesUseSharedLiveGate(t *testing.T) {
 		!strings.Contains(string(background), "claudeBackgroundSoundPreference(features)") {
 		t.Fatal("background playback must use the same live preference transaction")
 	}
-	menu, err := os.ReadFile(filepath.Join(root, "internal", "tui", "mainmenu.go"))
+	menu, err := os.ReadFile(filepath.Join(root, "cmd", "wisp-deck-tui", "main_menu.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(menu), `exec.Command("afplay"`) != 1 {
+	if strings.Count(string(menu), `run("/usr/bin/afplay"`) != 1 {
 		t.Fatal("Settings preview must remain the only direct TUI afplay site")
 	}
 	if strings.Count(string(background), `"/usr/bin/afplay"`) != 1 {
