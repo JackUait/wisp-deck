@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -88,6 +90,25 @@ func resolveMainMenuSoundName(flagValue, soundFile string) string {
 	return soundpref.Read(soundFile)
 }
 
+type mainMenuSoundRunner func(string, ...string) error
+
+func mainMenuSoundPreview(run mainMenuSoundRunner) func(string) tea.Cmd {
+	return func(name string) tea.Cmd {
+		if run == nil || !slices.Contains(tui.SystemSounds, name) {
+			return nil
+		}
+		path := "/System/Library/Sounds/" + name + ".aiff"
+		return func() tea.Msg {
+			_ = run("/usr/bin/afplay", path)
+			return nil
+		}
+	}
+}
+
+func runMainMenuSound(name string, args ...string) error {
+	return exec.Command(name, args...).Run()
+}
+
 func runMainMenu(cmd *cobra.Command, args []string) error {
 	// Ignore SIGHUP so the process survives when the terminal window closes.
 	// Bubbletea will detect TTY EOF and shut down gracefully instead.
@@ -103,6 +124,7 @@ func runMainMenu(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to run TUI: %w", err)
 	}
 	defer cleanup()
+	model.SetSoundPreview(mainMenuSoundPreview(runMainMenuSound))
 
 	appModel := tui.NewAppModel(model)
 	// All-motion (not just cell-motion) so hover events arrive without a button
