@@ -107,6 +107,31 @@ heading gap. Detail cursor-to-line calculations must account for the two new
 right-pane rows so keyboard focus and automatic scrolling stay aligned with the
 rendered setting or action.
 
+## Lifecycle Action Navigation
+
+Rename, add-name, API-key, delete, and discard screens use a dedicated
+two-action cursor:
+
+- `Left` and `Right` move between the confirm and cancel actions;
+- `Enter` executes the selected action;
+- `Esc` and `Ctrl+C` remain direct cancel shortcuts; and
+- the selected action uses reverse-video focus, independently of pointer hover.
+
+This intentionally gives horizontal arrows to the visible action row while a
+lifecycle form is open. Text entry still supports normal character insertion,
+Backspace/Delete, Home/End, and mouse placement; the arrow contract prioritizes
+the modal's explicit action navigation.
+
+Provider selection remains a vertical list controlled by `Up` and `Down`, with
+its footer describing that distinct contract.
+
+## Profile Pane Inset
+
+Reserve one blank cell at the right edge of every profile and add-profile row.
+The readiness status and selection wash stop before this inset, preventing them
+from touching the pane divider. Keep the pane at 28 cells and preserve the
+existing name truncation rules within the reduced row content width.
+
 ## Responsive and Interaction Constraints
 
 - The wide modal remains two-pane and the compact modal remains single-pane.
