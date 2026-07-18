@@ -172,7 +172,7 @@ my-project | 23.5% | 512M | 4% | Opus 4.8 [high] | 5h ◼◼◻ 7d ◼◻◻
 
 ## Picking Up Where You Left Off
 
-After a reboot, the first launch automatically brings back the projects you had open before — each one reopens in its own tab and the AI conversation resumes where it left off (Claude Code, OpenCode and Codex alike). A restart doesn't cost you your workspace.
+After a reboot, the first launch automatically brings back the projects you had open before — each one reopens in its own tab and the AI conversation resumes where it left off (Claude Code, OpenCode and Codex alike). Codex tabs are restored by their exact durable thread ID, so multiple tabs of the same project remain distinct. If an older snapshot has no recoverable Codex ID, Wisp Deck opens Codex's resume selector for you instead of silently starting an empty conversation. A restart doesn't cost you your workspace.
 
 ---
 

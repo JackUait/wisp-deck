@@ -182,8 +182,13 @@ func TestClaudeAttentionLaunch_does_not_wrap_other_tools(t *testing.T) {
 		{"opencode", "/usr/bin/opencode"},
 	} {
 		t.Run(tc.tool, func(t *testing.T) {
+			env := claudeAttentionEnv(t)
+			if tc.tool == "codex" {
+				env = claudeAttentionEnv(t,
+					"WISP_DECK_CODEX_SESSION_FILE=/tmp/session-identities/dev.codex")
+			}
 			out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-				[]string{tc.tool, tc.cmd, "/project"}, claudeAttentionEnv(t))
+				[]string{tc.tool, tc.cmd, "/project"}, env)
 			assertExitCode(t, code, 0)
 			assertNotContains(t, out, "claude-attention")
 		})

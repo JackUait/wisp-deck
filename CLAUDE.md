@@ -322,6 +322,16 @@ project while their intended session opens elsewhere. Never add a
 `restore_queue_pop` call site that skips the gate. Guarded by
 `test/bash/restore_chain_ticket_test.go`.
 
+Every Wisp session that can run Codex owns a private durable identity path at
+`session-identities/<session>.codex`, stamped as
+`WISP_DECK_CODEX_SESSION_FILE`. The semantic adapter must persist its exact
+correlated root UUID there; snapshots and tool switches must prefer that
+identity over cwd/rollout guessing. A restored Codex tab may launch an exact
+`codex resume <uuid>` or the interactive `codex resume` selector, but it must
+never fall back to plain Codex: a plain launch silently replaces the lost
+conversation with an empty one. Guarded by
+`test/bash/codex_crash_restore_test.go` and the Codex supervisor tests.
+
 ## Code Conventions
 
 ### Avoid Over-Engineering
