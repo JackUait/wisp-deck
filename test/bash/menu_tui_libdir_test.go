@@ -78,3 +78,36 @@ select_project_interactive `+dir+`/projects || true
 	}
 	t.Fatalf("no --lib-dir in args: %v", args)
 }
+
+func TestMenuTui_passes_resolved_codex_to_main_menu(t *testing.T) {
+	dir := t.TempDir()
+	argLog := filepath.Join(dir, "args")
+	binDir := mockCommand(t, dir, "wisp-deck-tui",
+		fmt.Sprintf(`printf '%%s\n' "$@" > %q; echo '{"selected":false}'`, argLog))
+	mockCommand(t, dir, "jq", `echo "false"`)
+	env := buildEnv(t, []string{binDir}, "XDG_CONFIG_HOME="+dir)
+	writeTempFile(t, dir, "projects", "app:/tmp/app\n")
+
+	runBashSnippet(t, `
+error(){ :; }
+AI_TOOLS_AVAILABLE=(claude)
+CODEX_CMD="/opt/Codex App/codex"
+source `+projectRoot(t)+`/lib/menu-tui.sh
+select_project_interactive `+dir+`/projects || true
+`, env)
+
+	raw, err := os.ReadFile(argLog)
+	if err != nil {
+		t.Fatalf("wisp-deck-tui was never invoked: %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	for i, arg := range args {
+		if arg == "--codex" && i+1 < len(args) {
+			if args[i+1] != "/opt/Codex App/codex" {
+				t.Fatalf("--codex = %q", args[i+1])
+			}
+			return
+		}
+	}
+	t.Fatalf("menu-tui.sh did not pass --codex: %v", args)
+}

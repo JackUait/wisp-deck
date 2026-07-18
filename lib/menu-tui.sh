@@ -73,6 +73,9 @@ select_project_interactive() {
   cmd_args+=("--claude-config-file" "$gt_config_dir/claude-config")
   cmd_args+=("--claude-configs-list" "$gt_config_dir/claude-configs.list")
   cmd_args+=("--claude-configs-dir" "$gt_config_dir/claude-configs")
+  if [[ "${CODEX_CMD:-}" = /* ]]; then
+    cmd_args+=("--codex" "$CODEX_CMD")
+  fi
   cmd_args+=("--claude-account-file" "$gt_config_dir/claude-account")
   cmd_args+=("--claude-accounts-list" "$gt_config_dir/claude-accounts.list")
   cmd_args+=("--claude-accounts-dir" "$gt_config_dir/claude-accounts")

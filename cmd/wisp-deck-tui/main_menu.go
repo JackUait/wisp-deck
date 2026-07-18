@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -39,6 +40,7 @@ var (
 	mainMenuClaudeConfigFile       string
 	mainMenuClaudeConfigsList      string
 	mainMenuClaudeConfigsDir       string
+	mainMenuCodexPath              string
 	mainMenuClaudeAccountFile      string
 	mainMenuClaudeAccountsList     string
 	mainMenuClaudeAccountsDir      string
@@ -68,6 +70,7 @@ func init() {
 	mainMenuCmd.Flags().StringVar(&mainMenuClaudeConfigFile, "claude-config-file", "", "Path to active Claude config pointer file")
 	mainMenuCmd.Flags().StringVar(&mainMenuClaudeConfigsList, "claude-configs-list", "", "Path to Claude configs list (name:file)")
 	mainMenuCmd.Flags().StringVar(&mainMenuClaudeConfigsDir, "claude-configs-dir", "", "Path to Claude configs directory (settings JSON files)")
+	mainMenuCmd.Flags().StringVar(&mainMenuCodexPath, "codex", "", "Absolute Codex executable path for ChatGPT sign-in")
 	mainMenuCmd.Flags().StringVar(&mainMenuClaudeAccountFile, "claude-account-file", "", "Path to active Claude account pointer file")
 	mainMenuCmd.Flags().StringVar(&mainMenuClaudeAccountsList, "claude-accounts-list", "", "Path to Claude accounts list (label:dir)")
 	mainMenuCmd.Flags().StringVar(&mainMenuClaudeAccountsDir, "claude-accounts-dir", "", "Path to Claude accounts directory (per-account config dirs)")
@@ -198,6 +201,9 @@ func runMainMenu(cmd *cobra.Command, args []string) error {
 // buildMainMenuModel constructs the main-menu model from the package-level flag
 // values, applying every flag to the model.
 func buildMainMenuModel() (*tui.MainMenuModel, error) {
+	if mainMenuCodexPath != "" && !filepath.IsAbs(mainMenuCodexPath) {
+		return nil, fmt.Errorf("Codex executable path must be absolute")
+	}
 	projects, err := models.LoadProjects(mainMenuProjectsFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load projects: %w", err)
@@ -243,6 +249,9 @@ func buildMainMenuModel() (*tui.MainMenuModel, error) {
 		model.SetClaudeConfigs(tui.LoadClaudeConfigsList(mainMenuClaudeConfigsList))
 		model.SetActiveClaudeConfig(tui.ReadActiveClaudeConfig(mainMenuClaudeConfigFile))
 		model.SetClaudeConfigPaths(mainMenuClaudeConfigsList, mainMenuClaudeConfigsDir)
+	}
+	if mainMenuCodexPath != "" {
+		model.SetCodexPath(mainMenuCodexPath)
 	}
 	if mainMenuClaudeAccountFile != "" {
 		model.SetClaudeAccountFile(mainMenuClaudeAccountFile)
