@@ -275,12 +275,8 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 			m.moveSubscriptionAction(-1) {
 			break
 		}
-		if m.subscriptionModalCompact() &&
-			m.subscriptionModal.pane == subscriptionDetailsPane {
+		if m.subscriptionModal.pane == subscriptionDetailsPane {
 			m.subscriptionModal.pane = subscriptionProfilesPane
-		} else if m.subscriptionModal.pane == subscriptionDetailsPane &&
-			m.subscriptionModal.detailCursor <= subscriptionDetailFable {
-			m.cycleSubscriptionMapping("prev")
 		}
 	case tea.KeyEnter:
 		if m.subscriptionModalOnAddRow() {
@@ -1609,7 +1605,7 @@ func (m *MainMenuModel) renderSubscriptionModalCard() string {
 	} else if compact {
 		help = "↑↓ navigate · → details · Esc close"
 	} else if m.subscriptionModal.pane == subscriptionDetailsPane {
-		help = "↑↓ setting · Tab pane · ←→ value/action · Enter action · Esc close"
+		help = "↑↓ setting · Tab pane · ← back/previous · → value/next · Enter action · Esc close"
 	}
 	help = modalTruncate(help, innerWidth)
 	lines = append(lines,

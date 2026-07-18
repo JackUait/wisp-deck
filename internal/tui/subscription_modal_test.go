@@ -349,6 +349,47 @@ func TestSubscriptionModal_wideRightEntersAndNavigatesProfileDetails(t *testing.
 	}
 }
 
+func TestSubscriptionModal_wideLeftReturnsFromDetailsToProfiles(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(1)
+	m.subscriptionModal.pane = subscriptionDetailsPane
+	m.subscriptionModal.detailCursor = subscriptionDetailOpus
+	before := m.subscriptionModal.draft.mappings
+
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyLeft})
+
+	if m.subscriptionModal.pane != subscriptionProfilesPane {
+		t.Fatalf("wide Left pane = %v, want profiles", m.subscriptionModal.pane)
+	}
+	if got := m.subscriptionModal.draft.mappings; got != before {
+		t.Fatalf("wide Left changed mapping from %v to %v instead of returning", before, got)
+	}
+}
+
+func TestSubscriptionModal_leftMovesAcrossActionsThenReturnsToProfiles(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+	m.subscriptionModal.pane = subscriptionDetailsPane
+	m.subscriptionModal.detailCursor = subscriptionDetailRename
+
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyLeft})
+	if m.subscriptionModal.pane != subscriptionDetailsPane ||
+		m.subscriptionModal.detailCursor != subscriptionDetailUse {
+		t.Fatalf(
+			"first Left = pane %v cursor %d, want details/Use",
+			m.subscriptionModal.pane,
+			m.subscriptionModal.detailCursor,
+		)
+	}
+
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyLeft})
+	if m.subscriptionModal.pane != subscriptionProfilesPane {
+		t.Fatalf("second Left pane = %v, want profiles", m.subscriptionModal.pane)
+	}
+}
+
 func TestSubscriptionModal_actionRowUsesHorizontalKeyboardNavigation(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

@@ -290,8 +290,10 @@ func TestSubscriptionModal_wideFooterFollowsDetailsPane(t *testing.T) {
 	m.subscriptionModal.pane = subscriptionDetailsPane
 
 	card := stripAnsi(m.renderSubscriptionModalCard())
-	if !strings.Contains(card, "↑↓ setting") || !strings.Contains(card, "←→ value/action") {
-		t.Fatalf("wide details footer does not describe setting and action navigation:\n%s", card)
+	for _, want := range []string{"↑↓ setting", "← back/previous", "→ value/next"} {
+		if !strings.Contains(card, want) {
+			t.Fatalf("wide details footer is missing %q:\n%s", want, card)
+		}
 	}
 }
 
