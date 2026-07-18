@@ -94,7 +94,14 @@ If you use Claude Code, Settings also lets you manage **multiple logins** — ke
 
 Turn on **Auto-switch accounts** and Wisp Deck rotates to your next login automatically when the active one runs out of quota, continuing the conversation where it left off.
 
-The **Subscription** row lets you keep several Claude configurations and switch the active one per session.
+Press **Enter** on the **Subscription** row (or the PLAN header) to open the
+subscription manager. It shows Standard Claude and every configured profile in
+one overlay, with provider, authentication state, endpoint, and all four model
+routes alongside it. From there you can add a profile for any available
+provider, rename or delete it, edit masked API-key authentication where
+required, save model mappings explicitly, and choose which profile new sessions
+use. On narrow terminals the same overlay switches to a list-and-details
+drill-in view.
 
 ### Use a ChatGPT subscription inside Claude Code
 
@@ -102,7 +109,7 @@ Wisp Deck can keep Claude Code as the interface and tool runner while using GPT 
 
 1. Install or update Wisp Deck with `npx wisp-deck`; its setup can install Codex for you.
 2. Run `codex login` and choose ChatGPT sign-in.
-3. In Wisp Deck, open **Settings → Account → Subscription** and select **OpenAI GPT**.
+3. In Wisp Deck, open **Settings → Subscription**, press **Enter**, and use **OpenAI GPT**.
 4. Open a new session. After updating Wisp Deck, relaunch any existing ledger panes or sessions so they load the new binary and provider environment.
 
 This path accepts only Codex-managed ChatGPT authentication. An OpenAI Platform API-key login is rejected so Wisp Deck cannot silently switch to metered API billing. The local adapter never reads or stores your ChatGPT token; Codex owns authentication and refresh, while Claude Code continues to execute tools and enforce permissions.
