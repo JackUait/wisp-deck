@@ -106,6 +106,15 @@ func TestHostEffectsDecisionUsesStableDenialReasons(t *testing.T) {
 			},
 			wantReason: hostEffectsDeniedAncestorMarker,
 		},
+		"ancestor sentinel beats every fallback": {
+			capability: "enabled",
+			ancestry: hostProcessAncestry{
+				TestSentinel:   true,
+				TestMarker:     true,
+				TestExecutable: true,
+			},
+			wantReason: hostEffectsDeniedAncestorSentinel,
+		},
 		"test path fallback": {
 			capability: "enabled",
 			ancestry: hostProcessAncestry{
@@ -151,5 +160,11 @@ func TestHostEffectsBoundaryDefaultsFailClosed(t *testing.T) {
 	}
 	if HostEffectsBoundaryVersion != 1 {
 		t.Fatalf("HostEffectsBoundaryVersion = %d, want 1", HostEffectsBoundaryVersion)
+	}
+	if wispDeckRepositoryTestSentinel != "__WISP_DECK_REPOSITORY_TEST_V1__.test" {
+		t.Fatalf(
+			"wispDeckRepositoryTestSentinel = %q, want exact versioned sentinel",
+			wispDeckRepositoryTestSentinel,
+		)
 	}
 }

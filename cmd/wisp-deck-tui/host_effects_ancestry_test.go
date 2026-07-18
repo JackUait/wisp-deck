@@ -37,6 +37,23 @@ func TestHostProcessAncestryDetectsStructuralSignals(t *testing.T) {
 			},
 			want: hostProcessAncestry{TestMarker: true},
 		},
+		"exact sentinel in argv zero": {
+			start: 40,
+			infos: map[int]hostProcessInfo{
+				40: {
+					ParentPID:  30,
+					Executable: "/bin/bash",
+					Arguments: []string{
+						"__WISP_DECK_REPOSITORY_TEST_V1__.test",
+						"-c",
+						"wait",
+					},
+				},
+				30: {ParentPID: 1, Executable: "/usr/local/bin/node"},
+				1:  {ParentPID: 0},
+			},
+			want: hostProcessAncestry{TestSentinel: true},
+		},
 		"marker prefix is not exact": {
 			start: 40,
 			infos: map[int]hostProcessInfo{
@@ -151,6 +168,28 @@ func TestHostProcessAncestryFailsClosedWhenTraversalIsUntrusted(t *testing.T) {
 		}
 	})
 
+	t.Run("confirmed sentinel survives later lookup error", func(t *testing.T) {
+		got := inspectHostProcessAncestry(22, func(pid int) (hostProcessInfo, error) {
+			switch pid {
+			case 22:
+				return hostProcessInfo{
+					ParentPID:  21,
+					Executable: "/bin/bash",
+					Arguments: []string{
+						"__WISP_DECK_REPOSITORY_TEST_V1__.test",
+						"-c",
+						"wait",
+					},
+				}, nil
+			default:
+				return hostProcessInfo{}, errors.New("unavailable")
+			}
+		})
+		if !got.TestSentinel {
+			t.Fatalf("confirmed sentinel was erased by later lookup failure: %#v", got)
+		}
+	})
+
 	t.Run("cycle", func(t *testing.T) {
 		infos := map[int]hostProcessInfo{
 			22: {ParentPID: 21, Executable: "/bin/zsh"},
@@ -232,7 +271,7 @@ func TestHostProcessAncestryRawProcArgsSeparatesArgumentsAndEnvironment(t *testi
 		[]string{"HOME=/tmp/home", "WISP_DECK_TESTING=10", "PATH=/usr/bin"},
 	)
 
-	gotExecutable, gotEnvironment, err := parseKernProcArgs2(raw)
+	gotExecutable, gotArguments, gotEnvironment, err := parseKernProcArgs2(raw)
 	if err != nil {
 		t.Fatalf("parseKernProcArgs2: %v", err)
 	}
@@ -247,8 +286,15 @@ func TestHostProcessAncestryRawProcArgsSeparatesArgumentsAndEnvironment(t *testi
 	if !reflect.DeepEqual(gotEnvironment, wantEnvironment) {
 		t.Fatalf("environment = %v, want %v", gotEnvironment, wantEnvironment)
 	}
+	wantArguments := []string{"renamed-worker", "WISP_DECK_TESTING=1", "--flag"}
+	if !reflect.DeepEqual(gotArguments, wantArguments) {
+		t.Fatalf("arguments = %v, want %v", gotArguments, wantArguments)
+	}
 	if hostEnvironmentHasTestMarker(gotEnvironment) {
 		t.Fatal("marker present only in argv or as a prefix was treated as exact environment")
+	}
+	if hostArgumentsHaveTestSentinel(gotArguments) {
+		t.Fatal("environment marker in argv was treated as the repository sentinel")
 	}
 
 	exactRaw := kernProcArgsFixture(
@@ -256,7 +302,7 @@ func TestHostProcessAncestryRawProcArgsSeparatesArgumentsAndEnvironment(t *testi
 		[]string{"node", "script.js"},
 		[]string{"WISP_DECK_TESTING=1"},
 	)
-	_, exactEnvironment, err := parseKernProcArgs2(exactRaw)
+	_, _, exactEnvironment, err := parseKernProcArgs2(exactRaw)
 	if err != nil {
 		t.Fatalf("parse exact fixture: %v", err)
 	}
@@ -269,12 +315,96 @@ func TestHostProcessAncestryRawProcArgsSeparatesArgumentsAndEnvironment(t *testi
 		[]string{"zsh", "-c", "true"},
 		nil,
 	)
-	_, zeroEnvironment, err := parseKernProcArgs2(zeroEnvironmentRaw)
+	_, _, zeroEnvironment, err := parseKernProcArgs2(zeroEnvironmentRaw)
 	if err != nil {
 		t.Fatalf("parse valid zero-environment fixture: %v", err)
 	}
 	if len(zeroEnvironment) != 0 {
 		t.Fatalf("zero environment fixture returned %v", zeroEnvironment)
+	}
+}
+
+func TestHostProcessAncestrySentinelIsExactAndOnlyInArgvZero(t *testing.T) {
+	tests := map[string]struct {
+		arguments []string
+		want      bool
+	}{
+		"exact argv zero": {
+			arguments: []string{
+				"__WISP_DECK_REPOSITORY_TEST_V1__.test",
+				"-test.run=TestOne",
+			},
+			want: true,
+		},
+		"argv one": {
+			arguments: []string{
+				"/tmp/worker.test",
+				"__WISP_DECK_REPOSITORY_TEST_V1__.test",
+			},
+		},
+		"prefix": {
+			arguments: []string{
+				"prefix__WISP_DECK_REPOSITORY_TEST_V1__.test",
+			},
+		},
+		"suffix": {
+			arguments: []string{
+				"__WISP_DECK_REPOSITORY_TEST_V1__.test.suffix",
+			},
+		},
+		"environment marker": {
+			arguments: []string{"WISP_DECK_TESTING=1"},
+		},
+		"empty": {},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			arguments := test.arguments
+			if len(arguments) > 0 {
+				raw := kernProcArgsFixture("/bin/bash", arguments, nil)
+				_, parsedArguments, environment, err := parseKernProcArgs2(raw)
+				if err != nil {
+					t.Fatalf("parseKernProcArgs2: %v", err)
+				}
+				if len(environment) != 0 {
+					t.Fatalf("argv-only fixture returned environment %v", environment)
+				}
+				arguments = parsedArguments
+			}
+			if got := hostArgumentsHaveTestSentinel(arguments); got != test.want {
+				t.Fatalf("hostArgumentsHaveTestSentinel(%v) = %t, want %t", arguments, got, test.want)
+			}
+		})
+	}
+}
+
+func TestHostProcessAncestryRestrictedArgvOnlySentinelDenies(t *testing.T) {
+	raw := kernProcArgsFixture(
+		"/bin/bash",
+		[]string{
+			"__WISP_DECK_REPOSITORY_TEST_V1__.test",
+			"-c",
+			"child & wait",
+		},
+		nil,
+	)
+	executable, arguments, environment, err := parseKernProcArgs2(raw)
+	if err != nil {
+		t.Fatalf("parse restricted-style fixture: %v", err)
+	}
+	got := inspectHostProcessAncestry(50, func(pid int) (hostProcessInfo, error) {
+		if pid != 50 {
+			return hostProcessInfo{}, errors.New("farther ancestry unavailable")
+		}
+		return hostProcessInfo{
+			ParentPID:   49,
+			Executable:  executable,
+			Arguments:   arguments,
+			Environment: environment,
+		}, nil
+	})
+	if !got.TestSentinel || got.TestMarker {
+		t.Fatalf("restricted argv-only sentinel result = %#v", got)
 	}
 }
 
@@ -328,7 +458,7 @@ func TestHostProcessAncestryRawProcArgsRejectsMalformedRecords(t *testing.T) {
 
 	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, _, err := parseKernProcArgs2(raw); err == nil {
+			if _, _, _, err := parseKernProcArgs2(raw); err == nil {
 				t.Fatal("parseKernProcArgs2 accepted malformed record")
 			}
 		})
@@ -437,8 +567,61 @@ func TestHostProcessLookupDarwinPID1AvoidsProtectedProcArgs(t *testing.T) {
 	if info.ParentPID != 0 {
 		t.Fatalf("PID 1 parent = %d, want 0", info.ParentPID)
 	}
-	if info.Executable != "" || len(info.Environment) != 0 {
+	if info.Executable != "" ||
+		len(info.Arguments) != 0 ||
+		len(info.Environment) != 0 {
 		t.Fatalf("PID 1 unexpectedly read protected procargs: %#v", info)
+	}
+}
+
+func TestHostProcessLookupDarwinRestrictedShellKeepsArgvSentinel(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("KERN_PROCARGS2 is Darwin-only")
+	}
+	cmd := exec.Command("/bin/bash", "-c", "printf 'ready\\n'; read -r _")
+	cmd.Args[0] = "__WISP_DECK_REPOSITORY_TEST_V1__.test"
+	cmd.Env = append(
+		environmentWithoutKey(os.Environ(), wispDeckTestingEnvironment),
+		wispDeckTestingEnvironment+"=1",
+	)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = stdin.Close()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	line, err := bufio.NewReader(stdout).ReadString('\n')
+	if err != nil {
+		t.Fatalf("wait for restricted shell: %v", err)
+	}
+	if strings.TrimSpace(line) != "ready" {
+		t.Fatalf("restricted shell handshake = %q, want ready", line)
+	}
+
+	info, err := lookupHostProcess(cmd.Process.Pid)
+	if err != nil {
+		t.Fatalf("lookup restricted shell: %v", err)
+	}
+	if len(info.Arguments) == 0 ||
+		info.Arguments[0] != "__WISP_DECK_REPOSITORY_TEST_V1__.test" {
+		t.Fatalf("restricted shell arguments = %v, want exact argv0 sentinel", info.Arguments)
+	}
+	if !hostArgumentsHaveTestSentinel(info.Arguments) {
+		t.Fatal("restricted shell exact argv0 sentinel was not detected")
+	}
+	ancestry := inspectHostProcessAncestry(cmd.Process.Pid, lookupHostProcess)
+	if !ancestry.TestSentinel {
+		t.Fatalf("restricted shell ancestry = %#v, want sentinel denial", ancestry)
 	}
 }
 

@@ -16,11 +16,13 @@ var HostEffectsCapability = "disabled"
 
 const HostEffectsBoundaryVersion = 1
 const wispDeckTestingEnvironment = "WISP_DECK_TESTING"
+const wispDeckRepositoryTestSentinel = "__WISP_DECK_REPOSITORY_TEST_V1__.test"
 
 const (
 	hostEffectsDeniedCompiled           = "compiled_disabled"
 	hostEffectsDeniedGoTest             = "go_test_binary"
 	hostEffectsDeniedCurrentMarker      = "current_test_marker"
+	hostEffectsDeniedAncestorSentinel   = "test_ancestor_sentinel"
 	hostEffectsDeniedAncestorMarker     = "test_ancestor_marker"
 	hostEffectsDeniedAncestorTestBinary = "test_ancestor_binary"
 	hostEffectsDeniedUnknownAncestry    = "unknown_ancestry"
@@ -56,7 +58,7 @@ func hostEffectsDecisionFor(
 		capability,
 		testBinary,
 		testEnvironment,
-		ancestry.TestMarker || ancestry.TestExecutable,
+		ancestry.TestSentinel || ancestry.TestMarker || ancestry.TestExecutable,
 		ancestry.Known,
 	)
 	if allowed {
@@ -70,6 +72,8 @@ func hostEffectsDecisionFor(
 		return hostEffectsDecision{DenialReason: hostEffectsDeniedGoTest}
 	case testEnvironment == "1":
 		return hostEffectsDecision{DenialReason: hostEffectsDeniedCurrentMarker}
+	case ancestry.TestSentinel:
+		return hostEffectsDecision{DenialReason: hostEffectsDeniedAncestorSentinel}
 	case ancestry.TestMarker:
 		return hostEffectsDecision{DenialReason: hostEffectsDeniedAncestorMarker}
 	case ancestry.TestExecutable:
@@ -107,6 +111,7 @@ func currentHostEffectsDecision() hostEffectsDecision {
 type hostProcessInfo struct {
 	ParentPID   int
 	Executable  string
+	Arguments   []string
 	Environment []string
 }
 
@@ -114,6 +119,7 @@ type hostProcessLookup func(int) (hostProcessInfo, error)
 
 type hostProcessAncestry struct {
 	Known          bool
+	TestSentinel   bool
 	TestMarker     bool
 	TestExecutable bool
 }
@@ -142,6 +148,10 @@ func inspectHostProcessAncestry(
 		if err != nil {
 			return hostProcessAncestry{}
 		}
+		if hostArgumentsHaveTestSentinel(info.Arguments) {
+			result.TestSentinel = true
+			return result
+		}
 		if hostEnvironmentHasTestMarker(info.Environment) {
 			result.TestMarker = true
 			return result
@@ -165,6 +175,11 @@ func inspectHostProcessAncestry(
 	return hostProcessAncestry{}
 }
 
+func hostArgumentsHaveTestSentinel(arguments []string) bool {
+	return len(arguments) > 0 &&
+		arguments[0] == wispDeckRepositoryTestSentinel
+}
+
 func hostEnvironmentHasTestMarker(environment []string) bool {
 	const marker = wispDeckTestingEnvironment + "=1"
 	for _, entry := range environment {
@@ -178,24 +193,24 @@ func hostEnvironmentHasTestMarker(environment []string) bool {
 // parseKernProcArgs2 decodes Darwin's KERN_PROCARGS2 record without relying on
 // the truncated P_comm field. argc is a signed native-endian int32, followed by
 // the executable, NUL padding, exactly argc argument strings, and environment.
-func parseKernProcArgs2(raw []byte) (string, []string, error) {
+func parseKernProcArgs2(raw []byte) (string, []string, []string, error) {
 	const argcBytes = 4
 	if len(raw) < argcBytes {
-		return "", nil, fmt.Errorf("KERN_PROCARGS2 argc is truncated")
+		return "", nil, nil, fmt.Errorf("KERN_PROCARGS2 argc is truncated")
 	}
 	argc32 := int32(binary.NativeEndian.Uint32(raw[:argcBytes]))
 	if argc32 <= 0 {
-		return "", nil, fmt.Errorf("KERN_PROCARGS2 argc is invalid: %d", argc32)
+		return "", nil, nil, fmt.Errorf("KERN_PROCARGS2 argc is invalid: %d", argc32)
 	}
 	argc := int(argc32)
 	if argc > len(raw)-argcBytes {
-		return "", nil, fmt.Errorf("KERN_PROCARGS2 argc is impossible: %d", argc)
+		return "", nil, nil, fmt.Errorf("KERN_PROCARGS2 argc is impossible: %d", argc)
 	}
 
 	offset := argcBytes
 	executableEnd := bytes.IndexByte(raw[offset:], 0)
 	if executableEnd <= 0 {
-		return "", nil, fmt.Errorf("KERN_PROCARGS2 executable is malformed")
+		return "", nil, nil, fmt.Errorf("KERN_PROCARGS2 executable is malformed")
 	}
 	executable := string(raw[offset : offset+executableEnd])
 	offset += executableEnd + 1
@@ -203,23 +218,25 @@ func parseKernProcArgs2(raw []byte) (string, []string, error) {
 		offset++
 	}
 	if offset >= len(raw) {
-		return "", nil, fmt.Errorf("KERN_PROCARGS2 argv is missing")
+		return "", nil, nil, fmt.Errorf("KERN_PROCARGS2 argv is missing")
 	}
 
+	arguments := make([]string, 0, argc)
 	for argument := 0; argument < argc; argument++ {
 		end := bytes.IndexByte(raw[offset:], 0)
 		if end < 0 {
-			return "", nil, fmt.Errorf(
+			return "", nil, nil, fmt.Errorf(
 				"KERN_PROCARGS2 argv[%d] is unterminated",
 				argument,
 			)
 		}
 		if argument == 0 && end == 0 {
-			return "", nil, fmt.Errorf("KERN_PROCARGS2 argv[0] is empty")
+			return "", nil, nil, fmt.Errorf("KERN_PROCARGS2 argv[0] is empty")
 		}
+		arguments = append(arguments, string(raw[offset:offset+end]))
 		offset += end + 1
 		if offset > len(raw) {
-			return "", nil, fmt.Errorf("KERN_PROCARGS2 argv is truncated")
+			return "", nil, nil, fmt.Errorf("KERN_PROCARGS2 argv is truncated")
 		}
 	}
 
@@ -231,15 +248,15 @@ func parseKernProcArgs2(raw []byte) (string, []string, error) {
 		}
 		end := bytes.IndexByte(raw[offset:], 0)
 		if end < 0 {
-			return "", nil, fmt.Errorf("KERN_PROCARGS2 environment is unterminated")
+			return "", nil, nil, fmt.Errorf("KERN_PROCARGS2 environment is unterminated")
 		}
 		entry := string(raw[offset : offset+end])
 		if !strings.Contains(entry, "=") {
-			return "", nil, fmt.Errorf("KERN_PROCARGS2 environment entry is malformed")
+			return "", nil, nil, fmt.Errorf("KERN_PROCARGS2 environment entry is malformed")
 		}
 		environment = append(environment, entry)
 		offset += end + 1
 	}
 
-	return executable, environment, nil
+	return executable, arguments, environment, nil
 }

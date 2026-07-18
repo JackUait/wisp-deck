@@ -365,6 +365,20 @@ func TestGlobalHostEffectsBoundaryOwnershipGuardRejectsBypasses(t *testing.T) {
 			"testEnvironment := os.Getenv(wispDeckTestingEnvironment)",
 			`testEnvironment := ""`,
 		),
+		"changed repository sentinel": mutateBoundarySource(
+			t,
+			sources,
+			"policy",
+			`const wispDeckRepositoryTestSentinel = "__WISP_DECK_REPOSITORY_TEST_V1__.test"`,
+			`const wispDeckRepositoryTestSentinel = "__WISP_DECK_REPOSITORY_TEST_V2__.test"`,
+		),
+		"missing ancestor sentinel scan": mutateBoundarySource(
+			t,
+			sources,
+			"policy",
+			"hostArgumentsHaveTestSentinel(info.Arguments)",
+			"false",
+		),
 		"missing ancestor marker scan": mutateBoundarySource(
 			t,
 			sources,
@@ -441,11 +455,15 @@ func validateGlobalHostEffectsBoundary(sources map[string]string) error {
 		"const HostEffectsBoundaryVersion = 1",
 		`const wispDeckTestingEnvironment = "WISP_DECK_TESTING"`,
 		"func currentHostEffectsDecision() hostEffectsDecision",
+		`const wispDeckRepositoryTestSentinel = "__WISP_DECK_REPOSITORY_TEST_V1__.test"`,
+		`hostEffectsDeniedAncestorSentinel   = "test_ancestor_sentinel"`,
 		"capability := HostEffectsCapability",
 		"testBinary := testing.Testing()",
 		"testEnvironment := os.Getenv(wispDeckTestingEnvironment)",
 		"inspectHostProcessAncestry(os.Getpid(), lookupHostProcess)",
+		"hostArgumentsHaveTestSentinel(info.Arguments)",
 		"hostEnvironmentHasTestMarker(info.Environment)",
+		"case ancestry.TestSentinel:",
 		`strings.HasSuffix(filepath.Base(info.Executable), ".test")`,
 		"if err != nil {\n\t\t\treturn hostProcessAncestry{}\n\t\t}",
 	} {
@@ -461,7 +479,8 @@ func validateGlobalHostEffectsBoundary(sources map[string]string) error {
 		"process.Eproc.Ppid",
 		"if pid == 1",
 		`unix.SysctlRaw("kern.procargs2", pid)`,
-		"parseKernProcArgs2(raw)",
+		"executable, arguments, environment, err := parseKernProcArgs2(raw)",
+		"Arguments:   arguments,",
 	} {
 		if !strings.Contains(darwin, required) {
 			return fmt.Errorf("Darwin ancestry lookup is missing %q", required)

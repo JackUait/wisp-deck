@@ -35,13 +35,14 @@ func lookupHostProcess(pid int) (hostProcessInfo, error) {
 	if err != nil {
 		return hostProcessInfo{}, fmt.Errorf("read process %d arguments: %w", pid, err)
 	}
-	executable, environment, err := parseKernProcArgs2(raw)
+	executable, arguments, environment, err := parseKernProcArgs2(raw)
 	if err != nil {
 		return hostProcessInfo{}, fmt.Errorf("parse process %d arguments: %w", pid, err)
 	}
 	return hostProcessInfo{
 		ParentPID:   parentPID,
 		Executable:  executable,
+		Arguments:   arguments,
 		Environment: environment,
 	}, nil
 }

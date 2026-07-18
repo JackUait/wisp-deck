@@ -4,11 +4,42 @@
 
 **Goal:** Keep intentional sound previews in normal builds while making every audited repository-owned host-effect path fail closed during tests and their descendants.
 
-**Architecture:** Use a global disabled-by-default host-effects build capability, Go's in-process test identity, exact exec-time test markers in the current process and ancestor environments, and a fail-closed Darwin ancestry lookup. Treat a `.test` ancestor name only as defense in depth. Collapse all real player/Notification Center process creation into one typed Go runner; shell notification playback delegates to that runner and marked shell tests execute no player. Version the boundary in a machine-readable capability command so installers and release tooling reject incomplete binaries.
+**Architecture:** Use a global disabled-by-default host-effects build
+capability, Go's in-process test identity, an exact versioned argv0
+repository-test sentinel, exact exec-time markers where XNU exposes ancestor
+environments, and a fail-closed Darwin ancestry lookup. Treat a `.test`
+ancestor name only as defense in depth. Collapse all real player/Notification
+Center process creation into one typed Go runner; shell notification playback
+delegates to that runner and marked shell tests execute no player. Version the
+boundary in a machine-readable capability command so installers and release
+tooling reject incomplete binaries.
 
 **Tech Stack:** Go 1.25, Cobra, `golang.org/x/sys/unix`, Bash, Node.js, macOS `sysctl`, `/usr/bin/afplay`, and existing Go integration tests.
 
 **Repository constraint:** Work directly on the existing `main` branch. Never create a branch, worktree, or detached checkout.
+
+## Review correction: XNU-redaction-safe test identity
+
+This correction is authoritative anywhere the original task steps below refer
+to an environment-marker-only ancestry contract.
+
+XNU redacts `KERN_PROCARGS2` environment entries for restricted executables
+such as `/bin/bash` and `/bin/zsh`; their full argv remains visible. Repository
+test identity therefore consists of the marker `WISP_DECK_TESTING=1` and the
+exact versioned argv0 sentinel
+`__WISP_DECK_REPOSITORY_TEST_V1__.test`. Every executable repository `go test`
+entrypoint routes through executable `scripts/go-test.sh`, which exports the
+marker and runs `exec -a '<sentinel>' go test "$@"`. Make, `run-tests.sh`, both
+workflows, and release preflight contain no executable raw `go test` command.
+
+The Bash and Npx `TestMain` functions re-exec unless both the exact marker and
+exact argv0 sentinel are present. They copy `os.Args`, replace only argv0,
+normalize the environment, and call `syscall.Exec` once. Production ancestry
+parsing retains executable, argv, and environment separately. It checks exact
+argv0 sentinel first, then exact environment marker, then the full `.test`
+executable fallback. Sentinel and marker are conclusive; `.test` requires a
+successful walk to PID 1. A marker-only restricted ancestor is out of contract
+because XNU has information-hidden the only marker signal.
 
 **Before Task 1:** Commit this reviewed plan and its design so execution starts
 from a clean documented state:
@@ -24,6 +55,7 @@ git commit -m "docs(sound): plan host-effect boundary"
 ### Task 1: Make test-mode propagation unavoidable in current harnesses
 
 **Files:**
+- Create: `scripts/go-test.sh`
 - Create: `test/bash/main_test.go`
 - Create: `test/npx/main_test.go`
 - Create: `test/bash/test_mode_contract_test.go`
@@ -69,9 +101,11 @@ append exactly one `WISP_DECK_TESTING=1`.
 In `test_mode_contract_test.go`, inspect source and require exact propagation in
 `run-tests.sh`, Makefile test targets, both workflows, both TestMain files,
 `buildEnv`, `runLauncher`, and `installSandbox.run`. The TestMain contract must
-require a one-time `syscall.Exec` with a normalized marker environment, not
-`os.Setenv`: `KERN_PROCARGS2` exposes the exec-time environment snapshot and
-does not see later in-process mutations.
+require a one-time `syscall.Exec` with normalized copied arguments and marker
+environment, not `os.Setenv`: `KERN_PROCARGS2` exposes exec-time state, does
+not see later in-process mutations, and may redact restricted environments.
+Add pure argument-normalizer tests requiring exact sentinel argv0, preserved
+remaining arguments, input copying, and safe empty input.
 
 Before installing the package-wide marker, replace the legacy shell tests that
 execute a PATH-shadowed `afplay`. First add a safe source-contract test requiring
@@ -122,14 +156,17 @@ this one-time re-exec shape:
 
 ```go
 func TestMain(m *testing.M) {
-	if os.Getenv("WISP_DECK_TESTING") != "1" {
+	if os.Getenv("WISP_DECK_TESTING") != "1" ||
+		len(os.Args) == 0 ||
+		os.Args[0] != repositoryTestArgv0 {
 		executable, err := os.Executable()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
 		}
 		environment := repositoryTestEnvironment(os.Environ())
-		if err := syscall.Exec(executable, os.Args, environment); err != nil {
+		arguments := repositoryTestArguments(os.Args)
+		if err := syscall.Exec(executable, arguments, environment); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
 		}
@@ -138,13 +175,19 @@ func TestMain(m *testing.M) {
 }
 ```
 
-The normalizer removes every prior marker entry and appends exactly one
-`WISP_DECK_TESTING=1`. Re-exec preserves all Go test arguments and standard
-streams. Add an exact allowlist for this non-audio `syscall.Exec` shape to the
-final source invariant.
+The environment normalizer removes every prior marker entry and appends exactly
+one `WISP_DECK_TESTING=1`. The argument normalizer copies the slice, preserves
+arguments 1 onward, and sets argv0 to
+`__WISP_DECK_REPOSITORY_TEST_V1__.test`. Re-exec preserves all Go test flags
+and standard streams. Add an exact allowlist for this non-audio `syscall.Exec`
+shape to the final source invariant.
 
-Export the marker at the top of `run-tests.sh`. Prefix all Makefile test
-commands with `WISP_DECK_TESTING=1`. Set job-level:
+Create executable `scripts/go-test.sh` with strict Bash mode, export the marker,
+and execute `exec -a '__WISP_DECK_REPOSITORY_TEST_V1__.test' go test "$@"`.
+Route `run-tests.sh`, Make test commands, every direct Go-test step in both
+workflows, and release preflight through it while preserving arguments,
+statuses, and workflow pipes. The driver is the only executable raw `go test`
+owner. Keep job-level:
 
 ```yaml
 env:
@@ -240,6 +283,7 @@ Define:
 type hostProcessInfo struct {
 	ParentPID  int
 	Executable string
+	Arguments []string
 	Environment []string
 }
 
@@ -248,6 +292,8 @@ type hostProcessLookup func(int) (hostProcessInfo, error)
 
 Pure ancestry tests must cover:
 
+- the exact `__WISP_DECK_REPOSITORY_TEST_V1__.test` sentinel only at argv0;
+- rejection of the sentinel in argv1 and prefix/suffix variants;
 - an exact `WISP_DECK_TESTING=1` in any ancestor environment;
 - a full executable basename ending `.test`, including a long name that would
   be truncated by Darwin's `P_comm`, as a defense-in-depth signal;
@@ -265,6 +311,7 @@ ancestry fixtures. They must prove:
 
 - the native-endian argc and NUL boundaries separate executable, argv, and
   environment;
+- argv is returned independently and an exact argv0 sentinel is detectable;
 - `WISP_DECK_TESTING=1` appearing only in argv is not treated as environment;
 - the exact environment entry is distinguished from prefixes such as
   `WISP_DECK_TESTING=10`;
@@ -277,6 +324,9 @@ Add Darwin-only live tests that:
 - start a harmless helper subprocess with the marker in its initial environment
   and prove `KERN_PROCARGS2` returns both its exact full executable and exact
   environment entry; and
+- start restricted `/bin/bash` with the exact sentinel argv0, keep it alive,
+  and prove its argv0 remains visible and denies even if its environment is
+  redacted; and
 - look up PID 1 through the production lookup and prove it terminates with
   parent PID 0 without calling `KERN_PROCARGS2` for PID 1.
 
@@ -292,8 +342,10 @@ In `test/bash/small_test.go`, build a temporary child with:
 -X main.HostEffectsCapability=enabled
 ```
 
-Run `capabilities` with a deliberately rebuilt environment slice that excludes
-`WISP_DECK_TESTING`. Require:
+Run `capabilities` beneath a restricted Bash helper and child whose
+environments exclude every `WISP_DECK_TESTING` entry. Set only the helper's
+exact argv0 sentinel and use a background child plus `wait` so Bash cannot
+tail-exec it. Require:
 
 ```json
 {
@@ -301,12 +353,12 @@ Run `capabilities` with a deliberately rebuilt environment slice that excludes
   "sound_preview_compiled": true,
   "host_effects_boundary": 1,
   "host_effects_allowed": false,
-  "host_effects_denial_reason": "test_ancestor_marker"
+  "host_effects_denial_reason": "test_ancestor_sentinel"
 }
 ```
 
-The stable denial reason proves the child sees the exec-time test marker in its
-ancestor process rather than relying on its own environment or the `.test`
+The distinct stable denial reason proves the child sees the non-redacted exact
+sentinel rather than its own environment, a farther marker, or the `.test`
 filename fallback. No audio command is invoked.
 
 Also extend the existing Makefile build test: marked `make build` must report
@@ -327,7 +379,7 @@ Before production edits, update the ownership test to reject:
 - default `HostEffectsCapability = "enabled"`;
 - a marked Make build that honors a command-line enabled override;
 - a preview process policy that omits any of global capability, Go test,
-  current marker, ancestry marker/path, or fail-closed lookup;
+  current marker, ancestry sentinel/marker/path, or fail-closed lookup;
 - a capability command whose boundary version is absent or not `1`.
 
 Keep current preview allowlist/deferred-command/injection assertions.
@@ -350,12 +402,15 @@ Use:
 var HostEffectsCapability = "disabled"
 const HostEffectsBoundaryVersion = 1
 const wispDeckTestingEnvironment = "WISP_DECK_TESTING"
+const wispDeckRepositoryTestSentinel = "__WISP_DECK_REPOSITORY_TEST_V1__.test"
 ```
 
 `currentHostEffectsAllowed` must short-circuit false for disabled capability,
 `testing.Testing()`, or the current marker. Otherwise it walks from
-`os.Getpid()` through Darwin process metadata. A lookup or parse error is
-fail-closed. Reaching the well-known PID 1 boundary is successful traversal;
+`os.Getpid()` through Darwin process metadata, checking exact argv0 sentinel
+before environment marker and `.test` fallback. Sentinel and marker are
+conclusive; a lookup or parse error without them is fail-closed. Reaching the
+well-known PID 1 boundary is successful traversal;
 after `SysctlKinfoProc` validates PID 1 and parent PID 0, do not call
 `KERN_PROCARGS2` for PID 1 because macOS returns `EINVAL`.
 
@@ -381,9 +436,10 @@ type binaryCapabilities struct {
 ```
 
 Define stable denial values for compiled-disabled, Go test binary, current test
-marker, ancestor test marker, `.test` ancestor fallback, and unknown ancestry.
-When both ancestor signals exist, the exact marker reason wins. This ordering
-is what makes the enabled-child integration test prove the structural signal.
+marker, ancestor test sentinel, ancestor test marker, `.test` ancestor
+fallback, and unknown ancestry. Sentinel wins over marker and `.test`; marker
+wins over `.test`. This ordering makes the enabled-child integration prove the
+non-redacted structural signal.
 
 Add `--require-production`; it exits nonzero unless compiled host effects and
 sound previews are true and the boundary is exactly `1`. Runtime test denial
@@ -419,7 +475,8 @@ go test ./test/bash -run 'TestMakefile_build_creates_binary|TestEnabledChild|Tes
 go test ./cmd/wisp-deck-tui ./test/bash -run 'TestHost|TestIdleSound|TestMainMenuSound|TestMakefile' -count=1
 ```
 
-Expected: PASS, including an enabled child with its own marker removed.
+Expected: PASS, including an enabled child beneath a marker-free restricted
+helper identified only by its exact sentinel argv0.
 
 **Step 9: Commit**
 
@@ -837,8 +894,8 @@ Before final source changes, add mutations proving the guard rejects:
 - a second `exec.Command*` host-effect owner, while preserving exact-audited
   non-effect process owners;
 - a generic executor injected into notifier or preview code;
-- loss of global compile denial, current marker, ancestor marker/path, or
-  fail-closed ancestry;
+- loss of global compile denial, current marker, ancestor sentinel/marker/path,
+  or fail-closed ancestry;
 - loss of shell early denial, Go delegation, tmux propagation, installer
   verification, release ordering, or command-package CI coverage.
 
@@ -848,11 +905,12 @@ Allow unrelated Git, tmux, shell-fixture, and process-lifecycle commands to
 manage their own environments; the test must distinguish those from audited
 Wisp Deck application/installer launch paths.
 Exact-audit the TestMain `syscall.Exec` as the one non-audio re-exec that
-establishes the kernel-visible test contract.
-Exact-allow only the named enabled-child ancestry regression to remove the
-child's own marker; it must still use the standard build environment before
-that deliberate final deletion. Mutation-test that the exception cannot apply
-to another test/function or remove any other reserved test contract.
+establishes the kernel-visible marker and exact argv0 sentinel contract.
+Exact-allow only the named enabled-child ancestry regression to strip markers
+from a restricted helper and child while setting the helper's exact sentinel
+argv0. Its distinct `test_ancestor_sentinel` reason must win over farther
+marker/`.test` signals. Mutation-test that the exception cannot apply to
+another test/function or change any reserved test contract.
 Exact-allow the named Make override regression to pass only the literal
 `WISP_DECK_TESTING=0` Make variable argument. It may not alter `cmd.Env`, use
 `env -u`, launch an application child, or authorize any other test/function.
@@ -872,6 +930,10 @@ Define the audited inventory explicitly:
   script even though npm ships this manifest outside its `files` array;
 - build/release surfaces: `Makefile`, `scripts/`, `run-tests.sh`, and the two
   relevant workflows.
+
+Require every executable repository `go test` entrypoint in those surfaces to
+route through `scripts/go-test.sh`; only that strict, executable driver may
+contain the raw command, and its exact versioned sentinel is mutation-tested.
 
 Use tracked text files only and exact-ignore binary/generated artifacts such as
 the ignored local `bin/wisp-deck-tui`, ignored root `wisp-deck-tui`, and
@@ -952,8 +1014,8 @@ Confirm from fresh source/output:
 - normal Make/release builds compile global host effects and previews enabled;
 - ordinary Go and marked Make builds compile them disabled;
 - marked Make cannot be overridden from the command line;
-- an enabled installed-style child with its own marker removed remains denied
-  through its marked ancestor;
+- an enabled installed-style child and restricted helper with markers removed
+  remain denied through the helper's exact sentinel argv0;
 - tmux panes retain exact test mode;
 - one typed Go runner solely owns real player/Notification Center execution;
 - shell production delegates and marked shell tests return before delegation;

@@ -112,7 +112,7 @@ func TestMakefile_ordinaryGoBuildStaysFailClosed(t *testing.T) {
 	requireProductionCapabilities(t, binary, false)
 }
 
-func TestEnabledChildDetectsExactTestAncestorMarker(t *testing.T) {
+func TestEnabledChildDetectsExactTestAncestorSentinel(t *testing.T) {
 	root := projectRoot(t)
 	binary := filepath.Join(t.TempDir(), "enabled-child")
 	build := exec.Command(
@@ -130,18 +130,18 @@ func TestEnabledChildDetectsExactTestAncestorMarker(t *testing.T) {
 		t.Fatalf("build enabled child: %v\n%s", err, output)
 	}
 
-	// This non-.test shell is started with the repository test marker, remains
-	// the child's direct parent while waiting, and strips the marker only from
-	// the child. The exact denial reason must therefore come from structural
-	// ancestor environment inspection rather than the child's environment.
+	// This restricted shell and its child have every environment marker
+	// removed. The shell remains the direct parent while waiting and carries
+	// only the exact, non-redacted argv0 repository sentinel.
 	helper := exec.Command(
 		"/bin/bash",
 		"-c",
-		`env -u WISP_DECK_TESTING "$1" capabilities`,
+		`"$1" capabilities & child_pid=$!; wait "$child_pid"`,
 		"host-boundary-helper",
 		binary,
 	)
-	helper.Env = repositoryTestEnvironment(os.Environ())
+	helper.Args[0] = "__WISP_DECK_REPOSITORY_TEST_V1__.test"
+	helper.Env = environmentWithoutTestMarker(os.Environ())
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	helper.Stdout = &stdout
@@ -159,7 +159,7 @@ func TestEnabledChildDetectsExactTestAncestorMarker(t *testing.T) {
 		SoundPreviewCompiled:    true,
 		HostEffectsBoundary:     1,
 		HostEffectsAllowed:      false,
-		HostEffectsDenialReason: "test_ancestor_marker",
+		HostEffectsDenialReason: "test_ancestor_sentinel",
 	}
 	if capabilities != want {
 		t.Fatalf("enabled child capabilities = %#v, want %#v", capabilities, want)

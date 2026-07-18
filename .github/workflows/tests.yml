@@ -22,7 +22,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Run Go tests
-        run: go test -json ./internal/... ./test/internal/... ./test/npx/... 2>&1 | tee go-test-output.json
+        run: ./scripts/go-test.sh -json ./internal/... ./test/internal/... ./test/npx/... 2>&1 | tee go-test-output.json
         continue-on-error: true
 
       # Names every failing test, replays its output, annotates the source line,
@@ -52,7 +52,7 @@ jobs:
         # Explicit -timeout: the package runs close to go test's default 10m on
         # a loaded machine, and a timeout panic reads as a hang rather than the
         # slow-but-green suite it is. A real hang still dies, just later.
-        run: go test -json -timeout 20m ./test/bash/... 2>&1 | tee bash-test-output.json
+        run: ./scripts/go-test.sh -json -timeout 20m ./test/bash/... 2>&1 | tee bash-test-output.json
         continue-on-error: true
 
       - name: Report bash test results

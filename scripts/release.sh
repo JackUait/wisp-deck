@@ -61,7 +61,7 @@ check_gh_auth() {
 check_install_verified() {
   local project_dir="$1" out
   [[ "${RELEASE_SKIP_INSTALL_CHECK:-}" == "1" ]] && return 0
-  if ! out="$(cd "$project_dir" && go test ./test/npx/... -count=1 2>&1)"; then
+  if ! out="$(cd "$project_dir" && ./scripts/go-test.sh ./test/npx/... -count=1 2>&1)"; then
     echo "$out" >&2
     return 1
   fi

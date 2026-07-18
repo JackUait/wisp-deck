@@ -28,13 +28,13 @@ install: build
 # Run tests
 test:
 	@echo "Running Go tests..."
-	WISP_DECK_TESTING=1 go test ./...
+	WISP_DECK_TESTING=1 ./scripts/go-test.sh ./...
 	@echo "Running bash tests..."
 	WISP_DECK_TESTING=1 ./run-tests.sh
 
 # Run Go tests only
 test-go:
-	WISP_DECK_TESTING=1 go test -v ./...
+	WISP_DECK_TESTING=1 ./scripts/go-test.sh -v ./...
 
 # Run bash tests only
 test-bash:
