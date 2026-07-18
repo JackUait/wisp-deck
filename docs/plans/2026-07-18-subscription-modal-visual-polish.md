@@ -344,3 +344,85 @@ git commit -m "style(tui): space subscription sections"
 **Step 7: Verify, push, and reinstall**
 
 Repeat Task 4 against the new source state.
+
+---
+
+### Task 6: Make lifecycle actions navigable and inset profile rows
+
+**Files:**
+- Modify: `internal/tui/subscription_modal.go`
+- Modify: `internal/tui/subscription_modal_lifecycle_test.go`
+- Modify: `internal/tui/subscription_modal_render_test.go`
+
+**Step 1: Write failing keyboard and spacing regressions**
+
+Add lifecycle tests proving that:
+
+- `Right` selects Cancel in rename mode and `Enter` exits without renaming;
+- `Right` selects Cancel in delete mode and `Enter` exits without deleting;
+- `Right` selects Keep editing in discard mode and `Enter` preserves the
+  unsaved draft; and
+- `Left` can return from Cancel to the confirm action before `Enter`.
+
+Add render tests proving that the selected lifecycle action uses reverse video,
+the lifecycle footer advertises `←→ action`, the provider chooser footer
+advertises `↑↓ provider`, and every profile/add row ends in one unstyled blank
+cell before the pane divider.
+
+**Step 2: Run the focused tests and verify RED**
+
+```bash
+go test ./internal/tui -run \
+  'TestSubscriptionModal_(renameArrowSelectsCancel|deleteArrowSelectsCancel|discardArrowSelectsKeepEditing|lifecycleActionFocus|lifecycleHelp|profileRowsReserveRightInset)' \
+  -count=1
+```
+
+Expected: FAIL because lifecycle input modes currently consume or ignore
+horizontal arrows, Enter always confirms, actions have no keyboard-selected
+state, and profile rows occupy the full pane width.
+
+**Step 3: Add a dedicated lifecycle action cursor**
+
+Add `lifecycleCursor` to `subscriptionModalState`, with confirm and cancel
+positions. Reset it to confirm whenever edit-key, add-name, rename, delete, or
+discard mode opens. Add a small movement helper that wraps between the two
+actions.
+
+Intercept `Left` and `Right` before forwarding keys to text inputs. On `Enter`,
+run the existing confirm behavior when Confirm is selected and the existing
+cancel behavior when Cancel is selected. Preserve `Esc` and `Ctrl+C` as direct
+cancel shortcuts.
+
+**Step 4: Render selected actions and accurate help**
+
+In `subscriptionLifecycleLines`, reverse the selected confirm or cancel action
+independently of pointer hover. Keep provider-picker rows vertical and render
+mode-specific footer help:
+
+```text
+←→ action · Enter choose · Esc cancel
+↑↓ provider · Enter choose · Esc cancel
+```
+
+**Step 5: Reserve a profile-pane trailing cell**
+
+Compose profile and add rows inside `width - 1`, including focused-row
+backgrounds, status alignment, and name truncation. Let the outer modal padding
+append the final unstyled cell so content and focus wash stop before the
+divider.
+
+**Step 6: Run modal and package tests**
+
+```bash
+go test ./internal/tui -run 'TestSubscriptionModal' -count=1
+go test ./internal/claudeconfig ./internal/tui -count=1 -timeout=5m
+```
+
+Expected: PASS.
+
+**Step 7: Commit, verify, publish, and reinstall**
+
+Commit only the subscription modal files and forced-added plan documents,
+leaving unrelated working-tree changes untouched. Run repository verification,
+push `main`, then run `make install` and verify the installed path, SHA-256
+identity, and both code signatures as required by `AGENTS.md`.
