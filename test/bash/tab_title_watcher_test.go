@@ -599,17 +599,22 @@ func TestTabTitleWatcher_play_notification_sound_calls_afplay_when_enabled(t *te
 	assertContains(t, waitForFile(t, logFile, "expected afplay to be called"), "Glass.aiff")
 }
 
-// waitForFile polls for background-job artifacts and is shared by this package.
+// waitForFile polls for populated background-job artifacts and is shared by
+// this package. Shell redirection creates an empty file before the command
+// writes its output, so existence alone is not enough synchronization.
 func waitForFile(t *testing.T, path, msg string) string {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		data, err := os.ReadFile(path)
-		if err == nil {
+		if err == nil && len(data) > 0 {
 			return string(data)
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("%s: %s never appeared: %v", msg, path, err)
+			if err != nil {
+				t.Fatalf("%s: %s never appeared: %v", msg, path, err)
+			}
+			t.Fatalf("%s: %s remained empty", msg, path)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
