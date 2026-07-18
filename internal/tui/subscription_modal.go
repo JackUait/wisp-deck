@@ -262,7 +262,7 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 	case tea.KeyRight:
 		if m.subscriptionModal.pane == subscriptionDetailsPane {
 			m.cycleSubscriptionMapping("next")
-		} else if m.subscriptionModalCompact() {
+		} else {
 			m.subscriptionModal.pane = subscriptionDetailsPane
 			m.ensureSubscriptionDetailVisible()
 		}
@@ -1515,7 +1515,7 @@ func (m *MainMenuModel) renderSubscriptionModalCard() string {
 		}
 	}
 
-	help := "↑↓ profile · Tab pane · ←→ value · Enter action · Esc close"
+	help := "↑↓ profile · → details · Tab pane · Enter action · Esc close"
 	if m.subscriptionModal.mode != subscriptionBrowse {
 		help = "Enter confirm · Esc cancel"
 	} else if compact && m.subscriptionModal.pane == subscriptionDetailsPane {

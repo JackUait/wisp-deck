@@ -238,6 +238,16 @@ func TestSubscriptionModal_wideFooterFollowsDetailsPane(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModal_wideProfilesFooterAdvertisesRightDetails(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+
+	card := stripAnsi(m.renderSubscriptionModalCard())
+	if !strings.Contains(card, "→ details") {
+		t.Fatalf("wide profiles footer does not advertise Right navigation:\n%s", card)
+	}
+}
+
 func TestSubscriptionModal_displaysConfiguredEndpoint(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	path := filepath.Join(m.claudeConfigsDir, "xiaomi-mimo.json")

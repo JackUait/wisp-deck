@@ -329,6 +329,26 @@ func TestSubscriptionModal_compactEnterOpensProfileDetails(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModal_wideRightEntersAndNavigatesProfileDetails(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(1) // Zhipu GLM; detail cursor starts on Opus.
+	profileCursor := m.subscriptionModal.profileCursor
+
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	if m.subscriptionModal.pane != subscriptionDetailsPane {
+		t.Fatalf("wide Right pane = %v, want details", m.subscriptionModal.pane)
+	}
+
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.subscriptionModal.detailCursor != subscriptionDetailSonnet {
+		t.Fatalf("Down after Right selected detail %d, want Sonnet", m.subscriptionModal.detailCursor)
+	}
+	if m.subscriptionModal.profileCursor != profileCursor {
+		t.Fatalf("detail navigation moved profile cursor from %d to %d", profileCursor, m.subscriptionModal.profileCursor)
+	}
+}
+
 func TestSubscriptionModal_addRowCannotActivateLastProfile(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.openSubscriptionModal()
