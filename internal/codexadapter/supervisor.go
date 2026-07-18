@@ -343,10 +343,16 @@ func (s *CodexSupervisor) Run(ctx context.Context, options CodexSupervisorOption
 		return result, nil
 	}
 
+	identityBaseline := make(map[string]struct{})
+	persistedRoot := ""
 	newReducer := func(resume string, snapshot []Thread, reliable bool) (*Reducer, error) {
 		baseline := []string(nil)
 		if resume == "" && reliable {
 			baseline = snapshotThreadIDs(snapshot)
+		}
+		identityBaseline = make(map[string]struct{}, len(snapshot)+1)
+		for _, thread := range snapshot {
+			identityBaseline[thread.ID] = struct{}{}
 		}
 		reducer, err := NewReducer(ReducerConfig{
 			Generation: options.Generation, ProjectCWD: options.ProjectCWD,
@@ -376,22 +382,73 @@ func (s *CodexSupervisor) Run(ctx context.Context, options CodexSupervisorOption
 		}
 		return CodexExitResult{}, err
 	}
-	persistedRoot := ""
-	persistIdentity := func() error {
+	persistIdentity := func(root string) error {
 		if options.IdentityFile == "" {
 			return nil
 		}
-		root := reducer.RootThreadID()
-		if root == "" || root == persistedRoot {
+		if root == "" {
 			return nil
 		}
-		if err := writeCodexIdentity(options.IdentityFile, root); err != nil {
-			return fmt.Errorf("%w: %v", errCodexIdentityPersistence, err)
+		if _, known := identityBaseline[root]; !known {
+			identityBaseline[root] = struct{}{}
 		}
-		persistedRoot = root
+		if root != persistedRoot {
+			if err := writeCodexIdentity(options.IdentityFile, root); err != nil {
+				return fmt.Errorf("%w: %v", errCodexIdentityPersistence, err)
+			}
+			persistedRoot = root
+		}
 		return nil
 	}
-	if err := persistIdentity(); err != nil {
+	persistThreadIdentity := func(thread Thread) error {
+		if options.IdentityFile == "" || thread.ParentThreadID != "" || thread.CWD != options.ProjectCWD {
+			return nil
+		}
+		if _, known := identityBaseline[thread.ID]; known {
+			return nil
+		}
+		if err := validateCanonicalUUID("observed Codex root thread id", thread.ID); err != nil {
+			return fmt.Errorf("%w: %v", errCodexIdentityPersistence, err)
+		}
+		return persistIdentity(thread.ID)
+	}
+	persistSnapshotIdentity := func(snapshot []Thread) error {
+		if options.IdentityFile == "" {
+			return nil
+		}
+		candidate := ""
+		for _, thread := range snapshot {
+			if thread.ParentThreadID != "" || thread.CWD != options.ProjectCWD {
+				continue
+			}
+			if _, known := identityBaseline[thread.ID]; known {
+				continue
+			}
+			if err := validateCanonicalUUID("observed Codex root thread id", thread.ID); err != nil {
+				return fmt.Errorf("%w: %v", errCodexIdentityPersistence, err)
+			}
+			if candidate != "" && candidate != thread.ID {
+				return fmt.Errorf(
+					"%w: observer reconnect found multiple unseen root threads",
+					errCodexIdentityPersistence,
+				)
+			}
+			candidate = thread.ID
+		}
+		return persistIdentity(candidate)
+	}
+	persistMessageIdentity := func(message supervisorMessage) error {
+		switch message.kind {
+		case supervisorObserverEvent:
+			if message.event.Kind == EventThreadObserved {
+				return persistThreadIdentity(message.event.Thread)
+			}
+		case supervisorObserverSnapshot:
+			return persistSnapshotIdentity(message.snapshot)
+		}
+		return nil
+	}
+	if err := persistIdentity(reducer.RootThreadID()); err != nil {
 		if initial != nil {
 			initial.Close()
 		}
@@ -466,9 +523,13 @@ func (s *CodexSupervisor) Run(ctx context.Context, options CodexSupervisorOption
 			options.CodexPath, socketPath, remote, resume, resumePicker, options.Prompt,
 		)
 		result, runErr := s.runAttempt(
-			ctx, argv, runPTY, messages, managerEpoch, reducer, publish, persistIdentity, &oscCounter,
+			ctx, argv, runPTY, messages, managerEpoch, reducer, publish,
+			persistMessageIdentity,
+			func() bool { return options.IdentityFile == "" || persistedRoot != "" },
+			setupTimeout,
+			&oscCounter,
 		)
-		if errors.Is(runErr, errCodexIdentityPersistence) {
+		if errors.Is(runErr, errCodexIdentityPersistence) || errors.Is(runErr, errCodexIdentityObserver) {
 			return result, runErr
 		}
 		if signalResult, signaled := signalOutcome(); signaled {
@@ -701,7 +762,9 @@ func (s *CodexSupervisor) runAttempt(
 	epoch uint64,
 	reducer *Reducer,
 	publish func(attention.State),
-	persistIdentity func() error,
+	persistIdentity func(supervisorMessage) error,
+	identityReady func() bool,
+	identityRecoveryWindow time.Duration,
 	oscCounter *uint64,
 ) (CodexExitResult, error) {
 	attemptContext, cancelAttempt := context.WithCancel(ctx)
@@ -733,6 +796,22 @@ func (s *CodexSupervisor) runAttempt(
 		}{result: result, err: err}
 	}()
 
+	var identityRecoveryTimer *time.Timer
+	var identityRecovery <-chan time.Time
+	stopIdentityRecovery := func() {
+		if identityRecoveryTimer != nil {
+			if !identityRecoveryTimer.Stop() {
+				select {
+				case <-identityRecoveryTimer.C:
+				default:
+				}
+			}
+		}
+		identityRecoveryTimer = nil
+		identityRecovery = nil
+	}
+	defer stopIdentityRecovery()
+
 	for {
 		select {
 		case message := <-messages:
@@ -745,8 +824,13 @@ func (s *CodexSupervisor) runAttempt(
 			switch message.kind {
 			case supervisorObserverLost:
 				publish(reducer.Reduce(ReducerEvent{Kind: EventObserverLost}))
+				if identityReady != nil && !identityReady() && identityRecoveryWindow > 0 && identityRecoveryTimer == nil {
+					identityRecoveryTimer = time.NewTimer(identityRecoveryWindow)
+					identityRecovery = identityRecoveryTimer.C
+				}
 			case supervisorObserverSnapshot:
 				publish(reducer.Reduce(ReducerEvent{Kind: EventObserverSnapshot, Threads: message.snapshot}))
+				stopIdentityRecovery()
 			case supervisorObserverEvent:
 				publish(reducer.Reduce(message.event))
 			case supervisorOSC9:
@@ -757,7 +841,7 @@ func (s *CodexSupervisor) runAttempt(
 				publish(reducer.Reduce(ReducerEvent{}))
 			}
 			if persistIdentity != nil {
-				if err := persistIdentity(); err != nil {
+				if err := persistIdentity(message); err != nil {
 					if message.ack != nil {
 						close(message.ack)
 					}
@@ -766,9 +850,17 @@ func (s *CodexSupervisor) runAttempt(
 					return outcome.result, err
 				}
 			}
+			if identityReady != nil && identityReady() {
+				stopIdentityRecovery()
+			}
 			if message.ack != nil {
 				close(message.ack)
 			}
+
+		case <-identityRecovery:
+			cancelAttempt()
+			outcome := <-resultCh
+			return outcome.result, errCodexIdentityObserver
 
 		case outcome := <-resultCh:
 			return outcome.result, outcome.err

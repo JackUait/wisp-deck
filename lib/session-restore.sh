@@ -228,8 +228,10 @@ write_session_snapshot() {
       codex)
         sid="$(echo "$env" | sed -n 's/^WISP_DECK_CODEX_SESSION=//p')"
         codex_session_id_valid "$sid" || sid=""
-        if [ -z "$sid" ] && [ -n "$identity_key" ]; then
-          sid="$(codex_identity_read "$config_dir" "$identity_key" 2>/dev/null || true)"
+        if [ -n "$identity_key" ]; then
+          local durable_sid
+          durable_sid="$(codex_identity_read "$config_dir" "$identity_key" 2>/dev/null || true)"
+          [ -n "$durable_sid" ] && sid="$durable_sid"
         fi
         ;;
       *)
@@ -377,8 +379,10 @@ maybe_restore_session() {
     if [ "$tool" = "codex" ]; then
       codex_session_id_valid "$sid" || sid=""
       codex_identity_key_valid "$identity_key" || identity_key=""
-      if [ -z "$sid" ] && [ -n "$identity_key" ]; then
-        sid="$(codex_identity_read "$config_dir" "$identity_key" 2>/dev/null || true)"
+      if [ -n "$identity_key" ]; then
+        local durable_sid
+        durable_sid="$(codex_identity_read "$config_dir" "$identity_key" 2>/dev/null || true)"
+        [ -n "$durable_sid" ] && sid="$durable_sid"
       fi
     else
       identity_key=""

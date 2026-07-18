@@ -8,6 +8,7 @@ import (
 )
 
 var errCodexIdentityPersistence = errors.New("persist Codex session identity")
+var errCodexIdentityObserver = errors.New("observer lost before Codex session identity was persisted")
 
 func writeCodexIdentity(path, identity string) error {
 	if err := validateCanonicalUUID("Codex session identity", identity); err != nil {

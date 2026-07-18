@@ -1090,6 +1090,8 @@ func TestCodexRunAttemptPreservesAdmittedLossAsUnknownAfterLaterOSC(t *testing.T
 				})
 			},
 			nil,
+			nil,
+			0,
 			&counter,
 		)
 		if err != nil {

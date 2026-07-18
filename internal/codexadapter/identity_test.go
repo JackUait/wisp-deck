@@ -2,6 +2,8 @@ package codexadapter
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -166,4 +168,144 @@ func TestCodexSupervisorStopsWhenFreshIdentityCannotPersist(t *testing.T) {
 	if !canceled.Load() {
 		t.Fatal("PTY attempt was not canceled after identity persistence failed")
 	}
+}
+
+func TestCodexSupervisorStopsWhenObserverIsLostBeforeIdentity(t *testing.T) {
+	options := supervisorOptions(t, "", "")
+	options.IdentityFile = filepath.Join(t.TempDir(), "session-identities", "fresh.codex")
+	observer := newFakeObserverSession()
+	observer.next <- observerNext{err: errors.New("socket lost")}
+	var openCalls atomic.Int32
+	var canceled atomic.Bool
+
+	supervisor := CodexSupervisor{
+		TempBase: t.TempDir(),
+		StartServer: func(context.Context, []string, io.Writer) (AppServerProcess, error) {
+			return &fakeServerProcess{}, nil
+		},
+		OpenObserver: func(context.Context, ObserverConfig) (ObserverConnection, error) {
+			if openCalls.Add(1) == 1 {
+				return observer, nil
+			}
+			return nil, errors.New("observer remains unavailable")
+		},
+		SetupTimeout:   20 * time.Millisecond,
+		ReconnectDelay: time.Millisecond,
+		EnterRaw:       func() (func(), error) { return func() {}, nil },
+		RunPTY: func(ctx context.Context, _ []string, _ func(OSC9Event)) (CodexExitResult, error) {
+			<-ctx.Done()
+			canceled.Store(true)
+			return CodexExitResult{ExitCode: 1, Elapsed: options.FallbackWindow}, ctx.Err()
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := supervisor.Run(ctx, options)
+	if err == nil || !strings.Contains(err.Error(), "observer lost before Codex session identity was persisted") {
+		t.Fatalf("Run() error = %v, want bounded pre-identity observer failure", err)
+	}
+	if elapsed := time.Since(started); elapsed >= 250*time.Millisecond {
+		t.Fatalf("observer failure took %s, want internal deadline before caller timeout", elapsed)
+	}
+	if !canceled.Load() {
+		t.Fatal("PTY attempt was not canceled after pre-identity observer loss")
+	}
+}
+
+func TestCodexSupervisorReplacesIdentityForNewConversation(t *testing.T) {
+	options := supervisorOptions(t, "", "")
+	options.IdentityFile = filepath.Join(t.TempDir(), "session-identities", "fresh.codex")
+	observer := newFakeObserverSession()
+	const nextID = "33333333-3333-4333-8333-333333333333"
+
+	supervisor := CodexSupervisor{
+		TempBase: t.TempDir(),
+		StartServer: func(context.Context, []string, io.Writer) (AppServerProcess, error) {
+			return &fakeServerProcess{}, nil
+		},
+		OpenObserver: func(context.Context, ObserverConfig) (ObserverConnection, error) {
+			return observer, nil
+		},
+		EnterRaw: func() (func(), error) { return func() {}, nil },
+		RunPTY: func(context.Context, []string, func(OSC9Event)) (CodexExitResult, error) {
+			observer.next <- observerNext{event: ReducerEvent{
+				Kind:   EventThreadObserved,
+				Thread: testSupervisorThread(supervisorFreshID, "first-session", "", ThreadStatusIdle),
+			}}
+			if err := waitForCodexIdentity(options.IdentityFile, supervisorFreshID); err != nil {
+				return CodexExitResult{Elapsed: options.FallbackWindow}, err
+			}
+			observer.next <- observerNext{event: ReducerEvent{
+				Kind:   EventThreadObserved,
+				Thread: testSupervisorThread(nextID, "second-session", "", ThreadStatusIdle),
+			}}
+			if err := waitForCodexIdentity(options.IdentityFile, nextID); err != nil {
+				return CodexExitResult{Elapsed: options.FallbackWindow}, err
+			}
+			return CodexExitResult{Elapsed: options.FallbackWindow}, nil
+		},
+	}
+
+	if _, err := supervisor.Run(context.Background(), options); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCodexSupervisorRecoversNewConversationIdentityFromReconnectSnapshot(t *testing.T) {
+	options := supervisorOptions(t, "", "")
+	options.IdentityFile = filepath.Join(t.TempDir(), "session-identities", "fresh.codex")
+	firstRoot := testSupervisorThread(supervisorFreshID, "first-session", "", ThreadStatusIdle)
+	const nextID = "33333333-3333-4333-8333-333333333333"
+	secondRoot := testSupervisorThread(nextID, "second-session", "", ThreadStatusIdle)
+	first := newFakeObserverSession()
+	second := newFakeObserverSession(firstRoot, secondRoot)
+	var openCalls atomic.Int32
+
+	supervisor := CodexSupervisor{
+		TempBase: t.TempDir(),
+		StartServer: func(context.Context, []string, io.Writer) (AppServerProcess, error) {
+			return &fakeServerProcess{}, nil
+		},
+		OpenObserver: func(context.Context, ObserverConfig) (ObserverConnection, error) {
+			if openCalls.Add(1) == 1 {
+				return first, nil
+			}
+			return second, nil
+		},
+		ReconnectDelay: time.Millisecond,
+		EnterRaw:       func() (func(), error) { return func() {}, nil },
+		RunPTY: func(context.Context, []string, func(OSC9Event)) (CodexExitResult, error) {
+			first.next <- observerNext{event: ReducerEvent{Kind: EventThreadObserved, Thread: firstRoot}}
+			if err := waitForCodexIdentity(options.IdentityFile, supervisorFreshID); err != nil {
+				return CodexExitResult{Elapsed: options.FallbackWindow}, err
+			}
+			first.next <- observerNext{err: errors.New("socket lost during /new")}
+			if err := waitForCodexIdentity(options.IdentityFile, nextID); err != nil {
+				return CodexExitResult{Elapsed: options.FallbackWindow}, err
+			}
+			return CodexExitResult{Elapsed: options.FallbackWindow}, nil
+		},
+	}
+
+	if _, err := supervisor.Run(context.Background(), options); err != nil {
+		t.Fatal(err)
+	}
+	if got := openCalls.Load(); got != 2 {
+		t.Fatalf("observer opens = %d, want initial plus reconnect", got)
+	}
+}
+
+func waitForCodexIdentity(path, want string) error {
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if err == nil && string(data) == want+"\n" {
+			return nil
+		}
+		time.Sleep(time.Millisecond)
+	}
+	data, err := os.ReadFile(path)
+	return fmt.Errorf("identity file = %q (%v), want %q", data, err, want)
 }

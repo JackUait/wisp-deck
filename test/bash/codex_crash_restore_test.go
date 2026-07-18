@@ -8,8 +8,13 @@ import (
 	"testing"
 )
 
-func codexCrashTmuxMock(t *testing.T, dir, identityA, identityB string) string {
+func codexCrashTmuxMock(t *testing.T, dir, identityA, identityB string, staleStampedIDs bool) string {
 	t.Helper()
+	stampedA, stampedB := "", ""
+	if staleStampedIDs {
+		stampedA = "WISP_DECK_CODEX_SESSION=cccccccc-cccc-4ccc-8ccc-cccccccccccc\\n"
+		stampedB = "WISP_DECK_CODEX_SESSION=dddddddd-dddd-4ddd-8ddd-dddddddddddd\\n"
+	}
 	return mockCommand(t, dir, "tmux", fmt.Sprintf(`
 case "$1" in
   list-sessions)
@@ -18,17 +23,17 @@ case "$1" in
   show-environment)
     case "$3" in
       dev-app-1)
-        printf 'WISP_DECK=1\nWISP_DECK_BOOT=old-boot\nWISP_DECK_PROJECT=app\nWISP_DECK_PATH=/p/app\nWISP_DECK_TOOL=codex\nWISP_DECK_TERMINAL=ghostty\nWISP_DECK_CLAUDE_SESSION=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nWISP_DECK_CODEX_SESSION_FILE=%s\n'
+        printf 'WISP_DECK=1\nWISP_DECK_BOOT=old-boot\nWISP_DECK_PROJECT=app\nWISP_DECK_PATH=/p/app\nWISP_DECK_TOOL=codex\nWISP_DECK_TERMINAL=ghostty\nWISP_DECK_CLAUDE_SESSION=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\n%sWISP_DECK_CODEX_SESSION_FILE=%s\n'
         ;;
       dev-app-2)
-        printf 'WISP_DECK=1\nWISP_DECK_BOOT=old-boot\nWISP_DECK_PROJECT=app\nWISP_DECK_PATH=/p/app\nWISP_DECK_TOOL=codex\nWISP_DECK_TERMINAL=ghostty\nWISP_DECK_CLAUDE_SESSION=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\nWISP_DECK_CODEX_SESSION_FILE=%s\n'
+        printf 'WISP_DECK=1\nWISP_DECK_BOOT=old-boot\nWISP_DECK_PROJECT=app\nWISP_DECK_PATH=/p/app\nWISP_DECK_TOOL=codex\nWISP_DECK_TERMINAL=ghostty\nWISP_DECK_CLAUDE_SESSION=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\n%sWISP_DECK_CODEX_SESSION_FILE=%s\n'
         ;;
     esac
     ;;
   display-message) :
     ;;
 esac
-`, identityA, identityB))
+`, stampedA, identityA, stampedB, identityB))
 }
 
 func runCodexCrashQueueAndBuild(t *testing.T, configDir string) string {
@@ -80,7 +85,7 @@ func TestCodexCrashRestorePreservesDistinctSameProjectThreads(t *testing.T) {
 	if err := os.WriteFile(identityB, []byte(codexSessionB+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	binDir := codexCrashTmuxMock(t, dir, identityA, identityB)
+	binDir := codexCrashTmuxMock(t, dir, identityA, identityB, true)
 	snapshot := filepath.Join(dir, "last-session")
 	_, code := runBashFunc(t, "lib/session-restore.sh", "write_session_snapshot",
 		[]string{"tmux", snapshot}, buildEnv(t, []string{binDir}))
@@ -98,6 +103,8 @@ func TestCodexCrashRestorePreservesDistinctSameProjectThreads(t *testing.T) {
 	}
 	assertNotContains(t, gotSnapshot, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 	assertNotContains(t, gotSnapshot, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+	assertNotContains(t, gotSnapshot, "cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+	assertNotContains(t, gotSnapshot, "dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 
 	out := runCodexCrashQueueAndBuild(t, dir)
 	assertSubstringsInOrder(t, out,
@@ -119,7 +126,7 @@ func TestCodexCrashRestoreMissingOneSidecarDegradesOnlyThatTabToPicker(t *testin
 	}
 	identityA := filepath.Join(identityDir, "dev-app-1.codex")
 	identityB := filepath.Join(identityDir, "dev-app-2.codex")
-	binDir := codexCrashTmuxMock(t, dir, identityA, identityB)
+	binDir := codexCrashTmuxMock(t, dir, identityA, identityB, false)
 	snapshot := filepath.Join(dir, "last-session")
 	_, code := runBashFunc(t, "lib/session-restore.sh", "write_session_snapshot",
 		[]string{"tmux", snapshot}, buildEnv(t, []string{binDir}))
@@ -137,6 +144,29 @@ func TestCodexCrashRestoreMissingOneSidecarDegradesOnlyThatTabToPicker(t *testin
 	if got := strings.Count(out, "--resume-picker"); got != 1 {
 		t.Fatalf("resume picker count = %d, want exactly one\n%s", got, out)
 	}
+}
+
+func TestCodexCrashRestoreQueuePrefersSidecarOverFrozenEmbeddedIdentity(t *testing.T) {
+	dir := t.TempDir()
+	identityDir := filepath.Join(dir, "session-identities")
+	if err := os.Mkdir(identityDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(identityDir, "dev-app-1.codex"),
+		[]byte(codexSessionB+"\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	writeTempFile(t, dir, "last-session",
+		"old-boot|app|/p/app|codex|ghostty|cccccccc-cccc-4ccc-8ccc-cccccccccccc|||dev-app-1.codex\n")
+
+	out := runCodexCrashQueueAndBuild(t, dir)
+	assertContains(t, out, "ENTRY1=/p/app|codex|"+codexSessionB)
+	assertContains(t, out, "--resume-session "+codexSessionB)
+	assertNotContains(t, out, "cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+	assertNotContains(t, out, "--resume-picker")
 }
 
 func TestCodexCrashRestoreLegacySnapshotUsesPicker(t *testing.T) {
