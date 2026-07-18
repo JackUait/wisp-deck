@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jackuait/wisp-deck/internal/models"
 	"github.com/muesli/termenv"
@@ -386,6 +387,330 @@ func TestCycleSoundNameReverse(t *testing.T) {
 	if m.SoundName() != "Tink" {
 		t.Errorf("expected 'Tink' after reverse cycling from Off, got %q", m.SoundName())
 	}
+}
+
+func TestSoundPreview_DirectCyclingDoesNotRequestCapability(t *testing.T) {
+	var previews []string
+	preview := func(name string) tea.Cmd {
+		previews = append(previews, name)
+		return func() tea.Msg { return nil }
+	}
+
+	forward := newTestMenu()
+	forward.SetSoundName("")
+	forward.SetSoundPreview(preview)
+	if !forward.CycleSoundName() {
+		t.Fatal("forward cycle unexpectedly failed")
+	}
+
+	reverse := newTestMenu()
+	reverse.SetSoundName("")
+	reverse.SetSoundPreview(preview)
+	if !reverse.CycleSoundNameReverse() {
+		t.Fatal("reverse cycle unexpectedly failed")
+	}
+
+	if len(previews) != 0 {
+		t.Fatalf("direct cycles requested previews: %v", previews)
+	}
+}
+
+func TestSoundPreview_InteractiveHandlersRequestSelectedSound(t *testing.T) {
+	tests := []struct {
+		name   string
+		start  string
+		want   string
+		invoke func(*MainMenuModel) tea.Cmd
+	}{
+		{
+			name:  "enter",
+			start: "Bottle",
+			want:  "Frog",
+			invoke: func(m *MainMenuModel) tea.Cmd {
+				_, cmd := m.settingsEnter()
+				return cmd
+			},
+		},
+		{
+			name:   "right",
+			start:  "Glass",
+			want:   "Hero",
+			invoke: func(m *MainMenuModel) tea.Cmd { return m.settingsValueRight() },
+		},
+		{
+			name:   "left",
+			start:  "Glass",
+			want:   "Funk",
+			invoke: func(m *MainMenuModel) tea.Cmd { return m.settingsValueLeft() },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var previews []string
+			m := newTestMenu()
+			m.SetSoundName(tt.start)
+			m.settingsSelected = rowIdleSound
+			m.SetSoundPreview(func(name string) tea.Cmd {
+				previews = append(previews, name)
+				return func() tea.Msg { return nil }
+			})
+
+			cmd := tt.invoke(m)
+
+			if cmd == nil {
+				t.Fatal("interactive sound selection returned no preview command")
+			}
+			if m.SoundName() != tt.want {
+				t.Fatalf("selected sound = %q, want %q", m.SoundName(), tt.want)
+			}
+			if len(previews) != 1 || previews[0] != tt.want {
+				t.Fatalf("previews = %v, want [%s]", previews, tt.want)
+			}
+			if !isSystemSound(previews[0]) {
+				t.Fatalf("previewed sound %q is not allowlisted", previews[0])
+			}
+		})
+	}
+}
+
+func TestSoundPreview_FocusArrowsPropagateCommands(t *testing.T) {
+	tests := []struct {
+		name   string
+		start  string
+		want   string
+		invoke func(*MainMenuModel) tea.Cmd
+	}{
+		{
+			name:   "right",
+			start:  "Bottle",
+			want:   "Frog",
+			invoke: func(m *MainMenuModel) tea.Cmd { return m.focusRight() },
+		},
+		{
+			name:   "left",
+			start:  "Bottle",
+			want:   "Blow",
+			invoke: func(m *MainMenuModel) tea.Cmd { return m.focusLeft() },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var previews []string
+			m := newTestMenu()
+			m.EnterSettings()
+			m.settingsSelected = rowIdleSound
+			m.SetSoundName(tt.start)
+			m.SetSoundPreview(func(name string) tea.Cmd {
+				previews = append(previews, name)
+				return func() tea.Msg { return nil }
+			})
+
+			cmd := tt.invoke(m)
+
+			if cmd == nil {
+				t.Fatal("focus handler discarded the preview command")
+			}
+			if m.SoundName() != tt.want {
+				t.Fatalf("selected sound = %q, want %q", m.SoundName(), tt.want)
+			}
+			if len(previews) != 1 || previews[0] != tt.want {
+				t.Fatalf("previews = %v, want [%s]", previews, tt.want)
+			}
+		})
+	}
+}
+
+func TestSoundPreview_MouseActivationPropagatesCommand(t *testing.T) {
+	var previews []string
+	m := newTestMenu()
+	m.SetSoundName("Bottle")
+	m.SetSoundPreview(func(name string) tea.Cmd {
+		previews = append(previews, name)
+		return func() tea.Msg { return nil }
+	})
+
+	_, cmd := m.clickSettings(rowIdleSound)
+
+	if cmd == nil {
+		t.Fatal("mouse activation discarded the preview command")
+	}
+	if m.SoundName() != "Frog" {
+		t.Fatalf("selected sound = %q, want Frog", m.SoundName())
+	}
+	if len(previews) != 1 || previews[0] != "Frog" {
+		t.Fatalf("previews = %v, want [Frog]", previews)
+	}
+}
+
+func TestSoundPreview_SelectingOffDoesNotRequestCapability(t *testing.T) {
+	tests := []struct {
+		name   string
+		start  string
+		invoke func(*MainMenuModel) tea.Cmd
+	}{
+		{
+			name:  "enter",
+			start: "Tink",
+			invoke: func(m *MainMenuModel) tea.Cmd {
+				_, cmd := m.settingsEnter()
+				return cmd
+			},
+		},
+		{
+			name:   "right",
+			start:  "Tink",
+			invoke: func(m *MainMenuModel) tea.Cmd { return m.settingsValueRight() },
+		},
+		{
+			name:   "left",
+			start:  "Basso",
+			invoke: func(m *MainMenuModel) tea.Cmd { return m.settingsValueLeft() },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var previews []string
+			m := newTestMenu()
+			m.SetSoundName(tt.start)
+			m.settingsSelected = rowIdleSound
+			m.SetSoundPreview(func(name string) tea.Cmd {
+				previews = append(previews, name)
+				return func() tea.Msg { return nil }
+			})
+
+			cmd := tt.invoke(m)
+
+			if cmd != nil {
+				t.Fatal("selecting Off returned a preview command")
+			}
+			if m.SoundName() != "" {
+				t.Fatalf("selected sound = %q, want Off", m.SoundName())
+			}
+			if len(previews) != 0 {
+				t.Fatalf("selecting Off requested previews: %v", previews)
+			}
+		})
+	}
+}
+
+func TestSoundPreview_DefaultMenuFailsClosed(t *testing.T) {
+	m := newTestMenu()
+	m.SetSoundName("")
+	m.settingsSelected = rowIdleSound
+
+	_, cmd := m.settingsEnter()
+
+	if cmd != nil {
+		t.Fatal("default menu returned a preview command without an injected capability")
+	}
+	if m.SoundName() != "Basso" {
+		t.Fatalf("selected sound = %q, want Basso", m.SoundName())
+	}
+}
+
+func TestSoundPreview_CyclesReportPersistenceFailure(t *testing.T) {
+	tests := []struct {
+		name  string
+		cycle func(*MainMenuModel) bool
+	}{
+		{
+			name:  "forward",
+			cycle: func(m *MainMenuModel) bool { return m.CycleSoundName() },
+		},
+		{
+			name:  "reverse",
+			cycle: func(m *MainMenuModel) bool { return m.CycleSoundNameReverse() },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blockedParent := filepath.Join(t.TempDir(), "not-a-directory")
+			if err := os.WriteFile(blockedParent, []byte("block parent creation"), 0o600); err != nil {
+				t.Fatalf("write parent blocker: %v", err)
+			}
+
+			m := newTestMenu()
+			m.SetSoundFile(filepath.Join(blockedParent, "claude-features.json"))
+			m.SetSoundName("Bottle")
+
+			if tt.cycle(m) {
+				t.Fatal("cycle reported success after persistence failed")
+			}
+			if m.SoundName() != "Bottle" {
+				t.Fatalf("failed persistence left sound at %q, want rolled-back Bottle", m.SoundName())
+			}
+		})
+	}
+}
+
+func TestSoundPreview_PersistenceFailureRollsBackWithoutRequest(t *testing.T) {
+	tests := []struct {
+		name   string
+		invoke func(*MainMenuModel) tea.Cmd
+	}{
+		{
+			name: "enter",
+			invoke: func(m *MainMenuModel) tea.Cmd {
+				_, cmd := m.settingsEnter()
+				return cmd
+			},
+		},
+		{
+			name:   "right",
+			invoke: func(m *MainMenuModel) tea.Cmd { return m.settingsValueRight() },
+		},
+		{
+			name:   "left",
+			invoke: func(m *MainMenuModel) tea.Cmd { return m.settingsValueLeft() },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blockedParent := filepath.Join(t.TempDir(), "not-a-directory")
+			if err := os.WriteFile(blockedParent, []byte("block parent creation"), 0o600); err != nil {
+				t.Fatalf("write parent blocker: %v", err)
+			}
+
+			var previews []string
+			m := newTestMenu()
+			m.SetSoundFile(filepath.Join(blockedParent, "claude-features.json"))
+			m.SetSoundName("Bottle")
+			m.settingsSelected = rowIdleSound
+			m.SetSoundPreview(func(name string) tea.Cmd {
+				previews = append(previews, name)
+				return func() tea.Msg { return nil }
+			})
+
+			cmd := tt.invoke(m)
+
+			if cmd != nil {
+				t.Fatal("failed persistence returned a preview command")
+			}
+			if m.SoundName() != "Bottle" {
+				t.Fatalf("failed persistence left sound at %q, want rolled-back Bottle", m.SoundName())
+			}
+			if len(previews) != 0 {
+				t.Fatalf("failed persistence requested previews: %v", previews)
+			}
+			if !strings.Contains(m.FeedbackMsg(), "Failed to save") {
+				t.Fatalf("feedback = %q, want save failure", m.FeedbackMsg())
+			}
+		})
+	}
+}
+
+func isSystemSound(name string) bool {
+	for _, candidate := range SystemSounds {
+		if name == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCycleAIToolLoadsSelectedToolsSoundPreference(t *testing.T) {

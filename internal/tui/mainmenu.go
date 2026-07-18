@@ -235,6 +235,7 @@ type MainMenuModel struct {
 	soundName           string // "" means Off
 	initialSoundName    string
 	soundNameChanged    bool
+	soundPreview        func(string) tea.Cmd
 	usageBars           string // "7d", "5h", "both", or "none" — which statusline usage pills show
 	initialUsageBars    string
 	usageBarsChanged    bool
@@ -957,9 +958,21 @@ func (m *MainMenuModel) SetSoundName(name string) {
 	m.initialSoundName = name
 }
 
+// SetSoundPreview injects the capability used to preview interactive sound changes.
+func (m *MainMenuModel) SetSoundPreview(preview func(string) tea.Cmd) {
+	m.soundPreview = preview
+}
+
 // SoundName returns the current sound name ("" means off).
 func (m *MainMenuModel) SoundName() string {
 	return m.soundName
+}
+
+func (m *MainMenuModel) soundPreviewCmd() tea.Cmd {
+	if m.soundPreview == nil || m.soundName == "" {
+		return nil
+	}
+	return m.soundPreview(m.soundName)
 }
 
 func (m *MainMenuModel) loadCurrentToolSound() {
@@ -974,7 +987,7 @@ func (m *MainMenuModel) loadCurrentToolSound() {
 }
 
 // CycleSoundName cycles forward through system sounds + Off.
-func (m *MainMenuModel) CycleSoundName() {
+func (m *MainMenuModel) CycleSoundName() bool {
 	previous := m.soundName
 	if m.soundName == "" {
 		m.soundName = SystemSounds[0]
@@ -997,13 +1010,14 @@ func (m *MainMenuModel) CycleSoundName() {
 		m.soundName = previous
 		m.soundNameChanged = m.soundName != m.initialSoundName
 		m.feedbackMsg = "Failed to save Idle Sound"
-		return
+		return false
 	}
 	m.feedbackMsg = ""
+	return true
 }
 
 // CycleSoundNameReverse cycles backward through Off + system sounds.
-func (m *MainMenuModel) CycleSoundNameReverse() {
+func (m *MainMenuModel) CycleSoundNameReverse() bool {
 	previous := m.soundName
 	if m.soundName == "" {
 		m.soundName = SystemSounds[len(SystemSounds)-1]
@@ -1026,9 +1040,10 @@ func (m *MainMenuModel) CycleSoundNameReverse() {
 		m.soundName = previous
 		m.soundNameChanged = m.soundName != m.initialSoundName
 		m.feedbackMsg = "Failed to save Idle Sound"
-		return
+		return false
 	}
 	m.feedbackMsg = ""
+	return true
 }
 
 // persistSound writes the current sound state to the features JSON file.
@@ -2534,7 +2549,7 @@ func (m *MainMenuModel) focusLeft() tea.Cmd {
 		}
 	case FocusBody:
 		if m.activeTab == TabSettings {
-			m.settingsValueLeft()
+			return m.settingsValueLeft()
 		}
 		// On the Stats tab, ← targets the Full label of the view-mode toggle
 		// (keyboard equivalent of clicking it), instead of blindly flipping.
@@ -2561,7 +2576,7 @@ func (m *MainMenuModel) focusRight() tea.Cmd {
 		}
 	case FocusBody:
 		if m.activeTab == TabSettings {
-			m.settingsValueRight()
+			return m.settingsValueRight()
 		}
 		// On the Stats tab, → targets the Compact label of the view-mode toggle
 		// (keyboard equivalent of clicking it), instead of blindly flipping.
@@ -2798,7 +2813,9 @@ func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 	case rowTabTitle:
 		m.CycleTabTitle()
 	case rowIdleSound:
-		m.CycleSoundName()
+		if m.CycleSoundName() {
+			return m, m.soundPreviewCmd()
+		}
 	case rowTheme:
 		m.CycleTheme()
 	case rowUsageBars:
@@ -2821,14 +2838,16 @@ func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 }
 
 // settingsValueRight increments the focused settings row's value.
-func (m *MainMenuModel) settingsValueRight() {
+func (m *MainMenuModel) settingsValueRight() tea.Cmd {
 	switch m.settingsSelected {
 	case rowMascot:
 		m.CycleGhostDisplay()
 	case rowTabTitle:
 		m.CycleTabTitle()
 	case rowIdleSound:
-		m.CycleSoundName()
+		if m.CycleSoundName() {
+			return m.soundPreviewCmd()
+		}
 	case rowTheme:
 		m.CycleTheme()
 	case rowUsageBars:
@@ -2840,17 +2859,20 @@ func (m *MainMenuModel) settingsValueRight() {
 	case m.keepAwakeRowIndex():
 		m.CycleKeepAwake()
 	}
+	return nil
 }
 
 // settingsValueLeft decrements the focused settings row's value.
-func (m *MainMenuModel) settingsValueLeft() {
+func (m *MainMenuModel) settingsValueLeft() tea.Cmd {
 	switch m.settingsSelected {
 	case rowMascot:
 		m.CycleGhostDisplayReverse()
 	case rowTabTitle:
 		m.CycleTabTitleReverse()
 	case rowIdleSound:
-		m.CycleSoundNameReverse()
+		if m.CycleSoundNameReverse() {
+			return m.soundPreviewCmd()
+		}
 	case rowTheme:
 		m.CycleThemeReverse()
 	case rowUsageBars:
@@ -2862,6 +2884,7 @@ func (m *MainMenuModel) settingsValueLeft() {
 	case m.keepAwakeRowIndex():
 		m.CycleKeepAwake()
 	}
+	return nil
 }
 
 func (m *MainMenuModel) enterInputMode(mode string) (tea.Model, tea.Cmd) {

@@ -476,8 +476,7 @@ func (m *MainMenuModel) clickSettings(idx int) (tea.Model, tea.Cmd) {
 	case idx == rowSubscription && m.ClaudeConfigVisible():
 		return m.settingsEnter()
 	default:
-		m.settingsValueRight()
-		return m, nil
+		return m, m.settingsValueRight()
 	}
 }
 
