@@ -118,6 +118,21 @@ func TestSubscriptionModalMouse_clickMappingCyclesDraft(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModalMouse_clickFooterBackReturnsToProfiles(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+	m.subscriptionModal.pane = subscriptionDetailsPane
+	x, y := subscriptionCardCell(t, m, "← back/previous")
+
+	updated, _ := m.Update(subscriptionScreenMouse(m, x, y, tea.MouseActionPress, tea.MouseButtonLeft))
+	got := updated.(*MainMenuModel)
+
+	if got.subscriptionModal.pane != subscriptionProfilesPane {
+		t.Fatalf("footer back click pane = %v, want profiles", got.subscriptionModal.pane)
+	}
+}
+
 func TestSubscriptionModalMouse_outsideClickClosesCleanModal(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.openSubscriptionModal()

@@ -62,6 +62,7 @@ const (
 	subscriptionHitSave
 	subscriptionHitRename
 	subscriptionHitDelete
+	subscriptionHitBack
 	subscriptionHitProvider
 	subscriptionHitConfirm
 	subscriptionHitCancel
@@ -1382,6 +1383,13 @@ func (m *MainMenuModel) subscriptionModalTarget(cardX, cardY int) subscriptionHi
 	if m.subscriptionModal.mode != subscriptionBrowse {
 		return subscriptionHitTarget{}
 	}
+	if m.subscriptionModal.pane == subscriptionDetailsPane {
+		for _, text := range []string{"← back/previous", "←/Esc profiles"} {
+			if hitText(text) {
+				return subscriptionHitTarget{kind: subscriptionHitBack}
+			}
+		}
+	}
 
 	compact := m.subscriptionModalCompact()
 	listVisible := !compact || m.subscriptionModal.pane == subscriptionProfilesPane
@@ -1539,6 +1547,8 @@ func (m *MainMenuModel) handleSubscriptionModalMouse(msg tea.MouseMsg) (tea.Mode
 			m.startSubscriptionRename()
 		case subscriptionHitDelete:
 			m.startSubscriptionDelete()
+		case subscriptionHitBack:
+			m.subscriptionModal.pane = subscriptionProfilesPane
 		}
 	}
 	return m, nil
