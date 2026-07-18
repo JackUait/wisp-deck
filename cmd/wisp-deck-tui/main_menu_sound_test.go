@@ -95,30 +95,35 @@ func TestRunMainMenuSound_TestBinaryCannotLaunchProcesses(t *testing.T) {
 	}
 }
 
-func TestMainMenuSoundProcessAllowed_RequiresProductionBuildOutsideTests(t *testing.T) {
+func TestMainMenuSoundProcessAllowed_RequiresPreviewAndGlobalCapabilities(t *testing.T) {
 	tests := map[string]struct {
-		testBinary bool
-		capability string
-		want       bool
+		soundCapability string
+		decision        hostEffectsDecision
+		want            bool
 	}{
 		"ordinary go build": {
-			capability: "disabled",
+			soundCapability: "disabled",
+			decision:        hostEffectsDecision{Allowed: true},
 		},
-		"go test with production capability": {
-			testBinary: true,
-			capability: "enabled",
+		"global policy denied": {
+			soundCapability: "enabled",
+			decision: hostEffectsDecision{
+				DenialReason: hostEffectsDeniedGoTest,
+			},
 		},
 		"production build": {
-			capability: "enabled",
-			want:       true,
+			soundCapability: "enabled",
+			decision:        hostEffectsDecision{Allowed: true},
+			want:            true,
 		},
-		"unknown capability": {
-			capability: "anything-else",
+		"unknown sound capability": {
+			soundCapability: "anything-else",
+			decision:        hostEffectsDecision{Allowed: true},
 		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			if got := mainMenuSoundProcessAllowed(test.testBinary, test.capability); got != test.want {
+			if got := mainMenuSoundProcessAllowed(test.soundCapability, test.decision); got != test.want {
 				t.Fatalf("mainMenuSoundProcessAllowed() = %t, want %t", got, test.want)
 			}
 		})

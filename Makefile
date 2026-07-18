@@ -1,10 +1,16 @@
 .PHONY: build install test clean lint release sync-version help
 
+ifeq ($(origin WISP_DECK_TESTING),undefined)
+override HOST_EFFECTS_CAPABILITY := enabled
+else
+override HOST_EFFECTS_CAPABILITY := disabled
+endif
+
 # Build the Go binary. Stamp it with the VERSION file (like release builds)
 # so --version and the About card report the real version instead of "dev".
 build:
 	@echo "Building wisp-deck-tui..."
-	go build -ldflags "-X main.Version=$$(cat VERSION) -X main.SoundPreviewCapability=enabled" -o bin/wisp-deck-tui ./cmd/wisp-deck-tui
+	go build -ldflags "-X main.Version=$$(cat VERSION) -X main.HostEffectsCapability=$(HOST_EFFECTS_CAPABILITY) -X main.SoundPreviewCapability=$(HOST_EFFECTS_CAPABILITY)" -o bin/wisp-deck-tui ./cmd/wisp-deck-tui
 	@codesign --sign - --force bin/wisp-deck-tui
 	@echo "✓ Built bin/wisp-deck-tui"
 

@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strings"
 	"syscall"
-	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jackuait/wisp-deck/internal/models"
@@ -97,8 +96,11 @@ type mainMenuSoundRunner func(string, ...string) error
 // Ordinary `go build` output remains silent, including binaries built by tests.
 var SoundPreviewCapability = "disabled"
 
-func mainMenuSoundProcessAllowed(testBinary bool, capability string) bool {
-	return !testBinary && capability == "enabled"
+func mainMenuSoundProcessAllowed(
+	soundCapability string,
+	decision hostEffectsDecision,
+) bool {
+	return soundCapability == "enabled" && decision.Allowed
 }
 
 func mainMenuSoundCommand(name string) (string, []string, bool) {
@@ -127,11 +129,11 @@ func runMainMenuSound(name string) error {
 }
 
 func runMainMenuSoundWith(name string, run mainMenuSoundRunner) error {
-	// testing.Testing is linker-backed, so this remains fail-closed even when a
-	// test binary is renamed or run with an unusual flag set.
+	// The global decision includes linker-backed Go test identity, the exact
+	// current marker, and structural ancestor inspection.
 	if !mainMenuSoundProcessAllowed(
-		testing.Testing(),
 		SoundPreviewCapability,
+		currentHostEffectsDecision(),
 	) || run == nil {
 		return nil
 	}
@@ -158,8 +160,8 @@ func runMainMenu(cmd *cobra.Command, args []string) error {
 	}
 	defer cleanup()
 	if mainMenuSoundProcessAllowed(
-		testing.Testing(),
 		SoundPreviewCapability,
+		currentHostEffectsDecision(),
 	) {
 		model.SetSoundPreview(mainMenuSoundPreview)
 	}

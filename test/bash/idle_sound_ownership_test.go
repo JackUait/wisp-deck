@@ -125,15 +125,15 @@ func TestIdleSoundRuntimeSitesUseSharedLiveGate(t *testing.T) {
 	if strings.Count(string(background), `"/usr/bin/afplay"`) != 1 {
 		t.Fatal("background notifier must have exactly one locked afplay site")
 	}
-	for _, buildPath := range []string{
-		filepath.Join(root, "Makefile"),
-		filepath.Join(root, "scripts", "release.sh"),
-	} {
+	productionBuildCapabilities := map[string]string{
+		filepath.Join(root, "Makefile"):              "-X main.SoundPreviewCapability=$(HOST_EFFECTS_CAPABILITY)",
+		filepath.Join(root, "scripts", "release.sh"): "-X main.SoundPreviewCapability=enabled",
+	}
+	for buildPath, capability := range productionBuildCapabilities {
 		buildSource, err := os.ReadFile(buildPath)
 		if err != nil {
 			t.Fatal(err)
 		}
-		const capability = "-X main.SoundPreviewCapability=enabled"
 		if strings.Count(string(buildSource), capability) != 1 {
 			t.Fatalf("%s must explicitly enable previews in production builds", buildPath)
 		}
@@ -172,8 +172,8 @@ func TestMainMenuSoundPreviewOwnershipGuardRejectsBypasses(t *testing.T) {
 	}
 
 	previewInjection := "\tif mainMenuSoundProcessAllowed(\n" +
-		"\t\ttesting.Testing(),\n" +
 		"\t\tSoundPreviewCapability,\n" +
+		"\t\tcurrentHostEffectsDecision(),\n" +
 		"\t) {\n" +
 		"\t\tmodel.SetSoundPreview(mainMenuSoundPreview)\n" +
 		"\t}\n"
@@ -259,29 +259,29 @@ func TestMainMenuSoundPreviewOwnershipGuardRejectsBypasses(t *testing.T) {
 			1,
 		),
 		"builder helper has capability": helperBuilderInjection,
-		"missing test boundary": strings.Replace(
+		"missing global boundary": strings.Replace(
 			safe,
-			"return !testBinary && capability == \"enabled\"",
-			"return capability == \"enabled\"",
+			"return soundCapability == \"enabled\" && decision.Allowed",
+			"return soundCapability == \"enabled\"",
 			1,
 		),
-		"comment-only test boundary": strings.Replace(
+		"comment-only global boundary": strings.Replace(
 			safe,
-			"return !testBinary && capability == \"enabled\"",
-			"return capability == \"enabled\" // !testBinary",
+			"return soundCapability == \"enabled\" && decision.Allowed",
+			"return soundCapability == \"enabled\" // decision.Allowed",
 			1,
 		),
-		"negated test boundary": strings.Replace(
+		"negated global boundary": strings.Replace(
 			safe,
-			"return !testBinary && capability == \"enabled\"",
-			"return testBinary && capability == \"enabled\"",
+			"return soundCapability == \"enabled\" && decision.Allowed",
+			"return soundCapability == \"enabled\" && !decision.Allowed",
 			1,
 		),
 		"runner skips capability": strings.Replace(
 			safe,
 			"if !mainMenuSoundProcessAllowed(\n"+
-				"\t\ttesting.Testing(),\n"+
 				"\t\tSoundPreviewCapability,\n"+
+				"\t\tcurrentHostEffectsDecision(),\n"+
 				"\t) || run == nil {",
 			"if run == nil {",
 			1,
@@ -306,6 +306,207 @@ func TestMainMenuSoundPreviewOwnershipGuardRejectsBypasses(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGlobalHostEffectsBoundaryOwnershipGuardRejectsBypasses(t *testing.T) {
+	root := projectRoot(t)
+	paths := map[string]string{
+		"policy":       filepath.Join(root, "cmd", "wisp-deck-tui", "host_effects_policy.go"),
+		"darwin":       filepath.Join(root, "cmd", "wisp-deck-tui", "host_effects_ancestry_darwin.go"),
+		"capabilities": filepath.Join(root, "cmd", "wisp-deck-tui", "capabilities.go"),
+		"make":         filepath.Join(root, "Makefile"),
+		"release":      filepath.Join(root, "scripts", "release.sh"),
+	}
+	sources := make(map[string]string, len(paths))
+	for name, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sources[name] = string(data)
+	}
+	if err := validateGlobalHostEffectsBoundary(sources); err != nil {
+		t.Fatalf("current global host-effect boundary rejected: %v", err)
+	}
+
+	mutations := map[string]map[string]string{
+		"default capability enabled": mutateBoundarySource(
+			t,
+			sources,
+			"policy",
+			`var HostEffectsCapability = "disabled"`,
+			`var HostEffectsCapability = "enabled"`,
+		),
+		"Make CLI override defeats marked build": mutateBoundarySource(
+			t,
+			sources,
+			"make",
+			"override HOST_EFFECTS_CAPABILITY := disabled",
+			"HOST_EFFECTS_CAPABILITY ?= disabled",
+		),
+		"missing global capability": mutateBoundarySource(
+			t,
+			sources,
+			"policy",
+			"capability := HostEffectsCapability",
+			`capability := "enabled"`,
+		),
+		"missing Go test identity": mutateBoundarySource(
+			t,
+			sources,
+			"policy",
+			"testBinary := testing.Testing()",
+			"testBinary := false",
+		),
+		"missing current marker": mutateBoundarySource(
+			t,
+			sources,
+			"policy",
+			"testEnvironment := os.Getenv(wispDeckTestingEnvironment)",
+			`testEnvironment := ""`,
+		),
+		"missing ancestor marker scan": mutateBoundarySource(
+			t,
+			sources,
+			"policy",
+			"hostEnvironmentHasTestMarker(info.Environment)",
+			"false",
+		),
+		"missing ancestor executable path scan": mutateBoundarySource(
+			t,
+			sources,
+			"policy",
+			`strings.HasSuffix(filepath.Base(info.Executable), ".test")`,
+			"false",
+		),
+		"lookup failure allowed": mutateBoundarySource(
+			t,
+			sources,
+			"policy",
+			"if err != nil {\n\t\t\treturn hostProcessAncestry{}\n\t\t}",
+			"if err != nil {\n\t\t\treturn hostProcessAncestry{Known: true}\n\t\t}",
+		),
+		"boundary removed": mutateBoundarySource(
+			t,
+			sources,
+			"policy",
+			"const HostEffectsBoundaryVersion = 1",
+			"const HostEffectsBoundaryVersion = 0",
+		),
+		"capabilities omit boundary": mutateBoundarySource(
+			t,
+			sources,
+			"capabilities",
+			"HostEffectsBoundary:     HostEffectsBoundaryVersion,",
+			"HostEffectsBoundary:     0,",
+		),
+	}
+	for name, mutated := range mutations {
+		t.Run(name, func(t *testing.T) {
+			if err := validateGlobalHostEffectsBoundary(mutated); err == nil {
+				t.Fatal("unsafe global host-effect boundary passed the ownership guard")
+			}
+		})
+	}
+}
+
+func mutateBoundarySource(
+	t *testing.T,
+	sources map[string]string,
+	file string,
+	old string,
+	replacement string,
+) map[string]string {
+	t.Helper()
+	if strings.Count(sources[file], old) != 1 {
+		t.Fatalf(
+			"mutation prerequisite %q in %s occurs %d times, want exactly once",
+			old,
+			file,
+			strings.Count(sources[file], old),
+		)
+	}
+	mutated := make(map[string]string, len(sources))
+	for name, source := range sources {
+		mutated[name] = source
+	}
+	mutated[file] = strings.Replace(sources[file], old, replacement, 1)
+	return mutated
+}
+
+func validateGlobalHostEffectsBoundary(sources map[string]string) error {
+	policy := sources["policy"]
+	for _, required := range []string{
+		`var HostEffectsCapability = "disabled"`,
+		"const HostEffectsBoundaryVersion = 1",
+		`const wispDeckTestingEnvironment = "WISP_DECK_TESTING"`,
+		"func currentHostEffectsDecision() hostEffectsDecision",
+		"capability := HostEffectsCapability",
+		"testBinary := testing.Testing()",
+		"testEnvironment := os.Getenv(wispDeckTestingEnvironment)",
+		"inspectHostProcessAncestry(os.Getpid(), lookupHostProcess)",
+		"hostEnvironmentHasTestMarker(info.Environment)",
+		`strings.HasSuffix(filepath.Base(info.Executable), ".test")`,
+		"if err != nil {\n\t\t\treturn hostProcessAncestry{}\n\t\t}",
+	} {
+		if !strings.Contains(policy, required) {
+			return fmt.Errorf("policy is missing required fail-closed shape %q", required)
+		}
+	}
+
+	darwin := sources["darwin"]
+	for _, required := range []string{
+		`unix.SysctlKinfoProc("kern.proc.pid", pid)`,
+		"process.Proc.P_pid",
+		"process.Eproc.Ppid",
+		"if pid == 1",
+		`unix.SysctlRaw("kern.procargs2", pid)`,
+		"parseKernProcArgs2(raw)",
+	} {
+		if !strings.Contains(darwin, required) {
+			return fmt.Errorf("Darwin ancestry lookup is missing %q", required)
+		}
+	}
+	pid1 := strings.Index(darwin, "if pid == 1")
+	procargs := strings.Index(darwin, `unix.SysctlRaw("kern.procargs2", pid)`)
+	if pid1 < 0 || procargs < 0 || pid1 > procargs {
+		return fmt.Errorf("Darwin lookup reads protected PID 1 procargs")
+	}
+
+	makefile := sources["make"]
+	for _, required := range []string{
+		"ifeq ($(origin WISP_DECK_TESTING),undefined)",
+		"override HOST_EFFECTS_CAPABILITY := enabled",
+		"override HOST_EFFECTS_CAPABILITY := disabled",
+		"-X main.HostEffectsCapability=$(HOST_EFFECTS_CAPABILITY)",
+		"-X main.SoundPreviewCapability=$(HOST_EFFECTS_CAPABILITY)",
+	} {
+		if strings.Count(makefile, required) != 1 {
+			return fmt.Errorf("Makefile must contain exactly one %q", required)
+		}
+	}
+
+	release := sources["release"]
+	for _, required := range []string{
+		"-X main.HostEffectsCapability=enabled",
+		"-X main.SoundPreviewCapability=enabled",
+	} {
+		if strings.Count(release, required) != 1 {
+			return fmt.Errorf("release build must contain exactly one %q", required)
+		}
+	}
+
+	capabilities := sources["capabilities"]
+	for _, required := range []string{
+		"HostEffectsBoundary:     HostEffectsBoundaryVersion,",
+		"\t\t\"require-production\",\n",
+		"HostEffectsBoundary != 1",
+	} {
+		if !strings.Contains(capabilities, required) {
+			return fmt.Errorf("capability diagnostics are missing %q", required)
+		}
+	}
+	return nil
 }
 
 func TestTestSourcesCannotDirectlyLaunchHostAudio(t *testing.T) {
@@ -993,26 +1194,26 @@ func isProductionCapabilityPolicy(function *ast.FuncDecl) bool {
 	if !ok || and.Op != token.LAND {
 		return false
 	}
-	notTest, ok := and.X.(*ast.UnaryExpr)
-	if !ok || notTest.Op != token.NOT {
-		return false
-	}
-	testBinary, ok := notTest.X.(*ast.Ident)
-	if !ok || testBinary.Name != "testBinary" {
-		return false
-	}
-	enabled, ok := and.Y.(*ast.BinaryExpr)
+	enabled, ok := and.X.(*ast.BinaryExpr)
 	if !ok || enabled.Op != token.EQL {
 		return false
 	}
 	capability, leftOK := enabled.X.(*ast.Ident)
 	value, rightOK := enabled.Y.(*ast.BasicLit)
-	if !leftOK || !rightOK || capability.Name != "capability" ||
+	if !leftOK || !rightOK || capability.Name != "soundCapability" ||
 		value.Kind != token.STRING {
 		return false
 	}
 	unquoted, err := strconv.Unquote(value.Value)
-	return err == nil && unquoted == "enabled"
+	if err != nil || unquoted != "enabled" {
+		return false
+	}
+	allowed, ok := and.Y.(*ast.SelectorExpr)
+	if !ok || allowed.Sel.Name != "Allowed" {
+		return false
+	}
+	decision, ok := allowed.X.(*ast.Ident)
+	return ok && decision.Name == "decision"
 }
 
 func hasOneStringParameter(function *ast.FuncDecl, name string) bool {
@@ -1049,11 +1250,16 @@ func isTestingCall(expression ast.Expr) bool {
 func isProductionCapabilityCall(expression ast.Expr) bool {
 	call, ok := expression.(*ast.CallExpr)
 	if !ok || expressionName(call.Fun) != "mainMenuSoundProcessAllowed" ||
-		len(call.Args) != 2 || !isTestingCall(call.Args[0]) {
+		len(call.Args) != 2 {
 		return false
 	}
-	capability, ok := call.Args[1].(*ast.Ident)
-	return ok && capability.Name == "SoundPreviewCapability"
+	capability, ok := call.Args[0].(*ast.Ident)
+	if !ok || capability.Name != "SoundPreviewCapability" {
+		return false
+	}
+	decision, ok := call.Args[1].(*ast.CallExpr)
+	return ok && expressionName(decision.Fun) == "currentHostEffectsDecision" &&
+		len(decision.Args) == 0
 }
 
 func isNilRunnerComparison(expression ast.Expr) bool {

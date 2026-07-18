@@ -136,7 +136,7 @@ main() {
   echo "Building wisp-deck-tui binaries..."
   build_dir="$(mktemp -d)"
 
-  local ldflags="-X main.Version=$version -X main.SoundPreviewCapability=enabled"
+  local ldflags="-X main.Version=$version -X main.HostEffectsCapability=enabled -X main.SoundPreviewCapability=enabled"
   (cd "$project_dir" && GOOS=darwin GOARCH=arm64 go build -ldflags "$ldflags" -o "$build_dir/wisp-deck-tui-darwin-arm64" ./cmd/wisp-deck-tui) || {
     echo "Error: failed to build wisp-deck-tui for arm64" >&2; exit 1
   }
