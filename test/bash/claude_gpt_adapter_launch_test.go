@@ -135,6 +135,8 @@ func TestClaudeGPTLaunchRequiresAbsoluteCodexPath(t *testing.T) {
 				t.Fatalf("invalid Codex path accepted: %q", out)
 			}
 			assertContains(t, out, "Codex")
+			assertContains(t, out, "relaunch")
+			assertNotContains(t, out, "codex login")
 		})
 	}
 }

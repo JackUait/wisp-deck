@@ -49,13 +49,13 @@ type AdapterResult struct {
 // metered API billing or externally supplied tokens.
 func ValidateChatGPTSubscription(account AccountReadResult) error {
 	if account.Account == nil {
-		return errors.New("Codex is signed out; run `codex login` and choose ChatGPT")
+		return errors.New("Codex is still signed out after ChatGPT sign-in; relaunch the session to try again")
 	}
 	switch account.Account.Type {
 	case "chatgpt":
 		return nil
 	case "apiKey":
-		return errors.New("Codex is using API-key authentication; run `codex logout`, then `codex login` with ChatGPT to use subscription access")
+		return errors.New("Codex is using API-key authentication; run `codex logout`, then relaunch the session to sign in with ChatGPT subscription access")
 	default:
 		return fmt.Errorf("Codex authentication type %q is unsupported; use Codex-managed ChatGPT login", account.Account.Type)
 	}
@@ -121,7 +121,7 @@ func appendNoProxy(existing string, values ...string) string {
 // Wisp Deck pane.
 func RunAdapter(ctx context.Context, options AdapterOptions) (AdapterResult, error) {
 	if options.CodexPath == "" {
-		return AdapterResult{}, errors.New("Codex is required for OpenAI GPT; install it with `wisp-deck`, then run `codex login`")
+		return AdapterResult{}, errors.New("Codex is required for OpenAI GPT; install it with `wisp-deck`, then relaunch—the ChatGPT sign-in will open automatically")
 	}
 	if len(options.ClaudeArgv) == 0 || options.ClaudeArgv[0] == "" {
 		return AdapterResult{}, errors.New("Claude command is required")

@@ -122,7 +122,7 @@ build_ai_launch_cmd() {
     case "$codex_cmd" in
       /*) ;;
       *)
-        printf 'Error: Codex is required for OpenAI GPT. Install Codex and run codex login.\n' >&2
+        printf 'Error: Codex is required for OpenAI GPT. Install Codex, then relaunch; ChatGPT sign-in will open automatically.\n' >&2
         return 1
         ;;
     esac

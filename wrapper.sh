@@ -534,7 +534,7 @@ case "$SELECTED_AI_TOOL" in
   *)
     AI_LAUNCH_CMD="$(build_ai_launch_cmd "$SELECTED_AI_TOOL" "$AI_TOOL_CMD" "$*")" || {
       if [ "$WISP_DECK_CLAUDE_PROVIDER" = "openai-chatgpt" ]; then
-        printf '\033[31mError:\033[0m OpenAI GPT requires Codex. Install Codex, then run \033[1mcodex login\033[0m.\n' >&3
+        printf '\033[31mError:\033[0m OpenAI GPT requires Codex. Install Codex, then relaunch; ChatGPT sign-in will open automatically.\n' >&3
       else
         printf '\033[31mError:\033[0m Could not prepare the Claude launch command.\n' >&3
       fi

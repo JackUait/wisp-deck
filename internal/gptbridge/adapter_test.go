@@ -29,7 +29,7 @@ func TestValidateChatGPTSubscriptionAuth(t *testing.T) {
 		{
 			name:    "signed out",
 			account: AccountReadResult{RequiresOpenAIAuth: true},
-			wantErr: "codex login",
+			wantErr: "relaunch",
 		},
 		{
 			name:    "API key",
@@ -52,6 +52,18 @@ func TestValidateChatGPTSubscriptionAuth(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestRunAdapterMissingCodexExplainsAutomaticLoginRecovery(t *testing.T) {
+	_, err := RunAdapter(context.Background(), AdapterOptions{
+		ClaudeArgv: []string{"claude"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "relaunch") {
+		t.Fatalf("RunAdapter error = %v, want relaunch recovery", err)
+	}
+	if strings.Contains(err.Error(), "codex login") {
+		t.Fatalf("RunAdapter still requires manual login: %v", err)
 	}
 }
 
