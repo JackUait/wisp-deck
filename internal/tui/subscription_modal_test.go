@@ -345,6 +345,19 @@ func TestSubscriptionModal_addRowCannotActivateLastProfile(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModal_addPromptEnterOpensProviderChooser(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.subscriptionModal.profileCursor = len(m.subscriptionProfiles())
+	m.subscriptionModal.pane = subscriptionDetailsPane
+
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.subscriptionModal.mode != subscriptionAddProvider {
+		t.Fatalf("Add prompt Enter mode = %v, want provider chooser", m.subscriptionModal.mode)
+	}
+}
+
 func TestSubscriptionModal_profileCursorStaysInScrolledViewport(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	for i := 0; i < 12; i++ {

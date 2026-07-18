@@ -214,6 +214,30 @@ func TestSubscriptionModal_narrowCardNeverExceedsGeometry(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModal_ultraNarrowTitleFitsGeometry(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.width = 20
+	m.openSubscriptionModal()
+
+	_, _, width, _ := m.subscriptionModalLayout()
+	for i, line := range strings.Split(m.renderSubscriptionModalCard(), "\n") {
+		if got := lipgloss.Width(line); got != width {
+			t.Errorf("ultra-narrow line %d width = %d, want %d: %q", i, got, width, stripAnsi(line))
+		}
+	}
+}
+
+func TestSubscriptionModal_wideFooterFollowsDetailsPane(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.subscriptionModal.pane = subscriptionDetailsPane
+
+	card := stripAnsi(m.renderSubscriptionModalCard())
+	if !strings.Contains(card, "↑↓ setting") {
+		t.Fatalf("wide details footer describes profile navigation:\n%s", card)
+	}
+}
+
 func TestSubscriptionModal_displaysConfiguredEndpoint(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	path := filepath.Join(m.claudeConfigsDir, "xiaomi-mimo.json")

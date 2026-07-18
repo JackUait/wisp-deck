@@ -275,8 +275,7 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 			m.cycleSubscriptionMapping("prev")
 		}
 	case tea.KeyEnter:
-		if m.subscriptionModal.pane == subscriptionProfilesPane &&
-			m.subscriptionModalOnAddRow() {
+		if m.subscriptionModalOnAddRow() {
 			m.startSubscriptionAdd()
 		} else if m.subscriptionModal.pane == subscriptionProfilesPane &&
 			m.subscriptionModalCompact() {
@@ -1476,14 +1475,19 @@ func (m *MainMenuModel) renderSubscriptionModalCard() string {
 
 	border := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	title := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
-	topPrefix := "╭─ "
-	topSuffix := " "
-	fill := innerWidth - lipgloss.Width("─ ") - lipgloss.Width("Subscriptions") - lipgloss.Width(topSuffix)
-	if fill < 0 {
-		fill = 0
+	topInner := border.Render(strings.Repeat("─", innerWidth))
+	if innerWidth >= 3 {
+		titleText := modalTruncate("Subscriptions", innerWidth-3)
+		fill := innerWidth - lipgloss.Width("─ ") - lipgloss.Width(titleText) - lipgloss.Width(" ")
+		if fill < 0 {
+			fill = 0
+		}
+		topInner = border.Render("─ ") +
+			title.Render(titleText) +
+			border.Render(" "+strings.Repeat("─", fill))
 	}
 	lines := []string{
-		border.Render(topPrefix) + title.Render("Subscriptions") + border.Render(topSuffix+strings.Repeat("─", fill)+"╮"),
+		border.Render("╭") + topInner + border.Render("╮"),
 	}
 
 	compact := m.subscriptionModalCompact()
@@ -1518,6 +1522,8 @@ func (m *MainMenuModel) renderSubscriptionModalCard() string {
 		help = "↑↓ setting · Enter action · ←/Esc profiles"
 	} else if compact {
 		help = "↑↓ navigate · → details · Esc close"
+	} else if m.subscriptionModal.pane == subscriptionDetailsPane {
+		help = "↑↓ setting · Tab pane · ←→ value · Enter action · Esc close"
 	}
 	help = modalTruncate(help, innerWidth)
 	lines = append(lines,
