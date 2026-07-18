@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/jackuait/wisp-deck/internal/claudeconfig"
 )
 
 func subscriptionCardCell(t *testing.T, m *MainMenuModel, text string) (x, y int) {
@@ -143,5 +144,95 @@ func TestSubscriptionModalMouse_outsideClickProtectsDirtyDraft(t *testing.T) {
 	}
 	if got.subscriptionModal.mode != subscriptionDiscardConfirm || !got.subscriptionModal.pendingClose {
 		t.Fatalf("dirty outside click state = mode %v pendingClose %v", got.subscriptionModal.mode, got.subscriptionModal.pendingClose)
+	}
+}
+
+func TestSubscriptionModalHit_duplicateNamesResolveRenderedRow(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	if _, err := claudeconfig.AddForProvider(
+		m.claudeConfigsList,
+		m.claudeConfigsDir,
+		"Xiaomi MiMo",
+		"mimo",
+	); err != nil {
+		t.Fatal(err)
+	}
+	m.SetClaudeConfigs(LoadClaudeConfigsList(m.claudeConfigsList))
+	m.openSubscriptionModal()
+
+	seen := 0
+	for y, styled := range strings.Split(m.renderSubscriptionModalCard(), "\n") {
+		line := stripAnsi(styled)
+		x := strings.Index(line, "Xiaomi MiMo")
+		if x < 0 {
+			continue
+		}
+		seen++
+		if seen != 2 {
+			continue
+		}
+		target := m.subscriptionModalTarget(lipgloss.Width(line[:x]), y)
+		if target.kind != subscriptionHitProfile || target.index != 4 {
+			t.Fatalf("second duplicate target = %+v, want profile 4", target)
+		}
+		return
+	}
+	t.Fatal("second duplicate profile row not rendered")
+}
+
+func TestSubscriptionModalMouse_confirmationButtonsMatchKeyboard(t *testing.T) {
+	t.Run("delete", func(t *testing.T) {
+		m := newSubscriptionModalMenu(t)
+		m.openSubscriptionModal()
+		m.moveSubscriptionProfile(2)
+		m.startSubscriptionDelete()
+		x, y := subscriptionCardCell(t, m, "[ Delete ]")
+
+		updated, _ := m.Update(subscriptionScreenMouse(m, x, y, tea.MouseActionPress, tea.MouseButtonLeft))
+		got := updated.(*MainMenuModel)
+		if cfg := findSubscriptionConfig(got.claudeConfigs, "Xiaomi MiMo"); cfg.File != "" {
+			t.Fatalf("mouse-confirmed delete left config %+v", cfg)
+		}
+	})
+
+	t.Run("cancel", func(t *testing.T) {
+		m := newSubscriptionModalMenu(t)
+		m.openSubscriptionModal()
+		m.moveSubscriptionProfile(2)
+		m.startSubscriptionDelete()
+		x, y := subscriptionCardCell(t, m, "[ Cancel ]")
+
+		updated, _ := m.Update(subscriptionScreenMouse(m, x, y, tea.MouseActionPress, tea.MouseButtonLeft))
+		got := updated.(*MainMenuModel)
+		if got.subscriptionModal.mode != subscriptionBrowse {
+			t.Fatalf("mouse cancel mode = %v, want browse", got.subscriptionModal.mode)
+		}
+		if cfg := findSubscriptionConfig(got.claudeConfigs, "Xiaomi MiMo"); cfg.File == "" {
+			t.Fatal("mouse cancel deleted the profile")
+		}
+	})
+}
+
+func TestSubscriptionModalMouse_keyInputConfirmKeepsDraft(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+	m.beginSubscriptionKeyEdit()
+	m.subscriptionModal.input.SetValue("sk-mouse")
+	x, y := subscriptionCardCell(t, m, "[ Keep changes ]")
+
+	updated, _ := m.Update(subscriptionScreenMouse(m, x, y, tea.MouseActionPress, tea.MouseButtonLeft))
+	got := updated.(*MainMenuModel)
+
+	if got.subscriptionModal.mode != subscriptionBrowse {
+		t.Fatalf("mouse key confirm mode = %v, want browse", got.subscriptionModal.mode)
+	}
+	if got.subscriptionModal.draft.apiKey != "sk-mouse" ||
+		!got.subscriptionModal.draft.keyEdited ||
+		!got.subscriptionModal.draft.dirty {
+		t.Fatalf("mouse key confirm draft = %+v", got.subscriptionModal.draft)
+	}
+	if disk := claudeconfig.ReadAPIKey(got.claudeConfigsDir, "xiaomi-mimo.json"); disk != "sk-test" {
+		t.Fatalf("mouse key confirm wrote before Save: %q", disk)
 	}
 }

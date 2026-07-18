@@ -2,6 +2,7 @@ package claudeconfig
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -170,6 +171,43 @@ func TestRename_missing_file_returns_error(t *testing.T) {
 	data, _ := os.ReadFile(list)
 	if !strings.Contains(string(data), "Work:work.json") || strings.Contains(string(data), "New Name") {
 		t.Fatalf("list mutated on failed rename: %q", data)
+	}
+}
+
+func TestProfileNamesRejectListDelimitersBeforeWriting(t *testing.T) {
+	for _, name := range []string{"Work: GPT", "Work\nGPT", "Work\rGPT"} {
+		t.Run(fmt.Sprintf("%q", name), func(t *testing.T) {
+			dir := t.TempDir()
+			list := filepath.Join(dir, "claude-configs.list")
+			configsDir := filepath.Join(dir, "claude-configs")
+
+			if _, err := Add(list, configsDir, name); err == nil {
+				t.Fatal("Add accepted a list-delimiter character")
+			}
+			if _, err := AddForProvider(list, configsDir, name, "mimo"); err == nil {
+				t.Fatal("AddForProvider accepted a list-delimiter character")
+			}
+			if entries, err := os.ReadDir(configsDir); err == nil && len(entries) != 0 {
+				t.Fatalf("invalid names created config files: %v", entries)
+			}
+			if data, err := os.ReadFile(list); err == nil && len(data) != 0 {
+				t.Fatalf("invalid names changed list file: %q", data)
+			}
+
+			if err := os.WriteFile(list, []byte("Work:work.json\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := Rename(list, "work.json", name); err == nil {
+				t.Fatal("Rename accepted a list-delimiter character")
+			}
+			data, err := os.ReadFile(list)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != "Work:work.json\n" {
+				t.Fatalf("invalid rename changed list to %q", data)
+			}
+		})
 	}
 }
 

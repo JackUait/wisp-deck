@@ -317,6 +317,34 @@ func TestSubscriptionModal_compactEscReturnsToProfileList(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModal_compactEnterOpensProfileDetails(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.width = 60
+	m.openSubscriptionModal()
+
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.subscriptionModal.pane != subscriptionDetailsPane {
+		t.Fatalf("compact Enter pane = %v, want details", m.subscriptionModal.pane)
+	}
+}
+
+func TestSubscriptionModal_addRowCannotActivateLastProfile(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.subscriptionModal.profileCursor = len(m.subscriptionProfiles())
+
+	m = subscriptionRune(t, m, 'u')
+
+	if got := m.CurrentClaudeConfigFile(); got != "" {
+		t.Fatalf("Use on Add row activated %q", got)
+	}
+	card := stripAnsi(m.renderSubscriptionModalCard())
+	if !strings.Contains(card, "Add a provider profile") {
+		t.Fatalf("Add row renders another profile's details:\n%s", card)
+	}
+}
+
 func TestSubscriptionModal_profileCursorStaysInScrolledViewport(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	for i := 0; i < 12; i++ {

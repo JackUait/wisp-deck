@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -112,6 +114,38 @@ func TestSubscriptionModal_renameProfilePreservesProvider(t *testing.T) {
 	)
 	if provider.Key != "mimo" {
 		t.Fatalf("rename changed provider to %q", provider.Key)
+	}
+}
+
+func TestSubscriptionModal_renameLegacyProfileBackfillsProviderMarker(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	legacyPath := filepath.Join(m.claudeConfigsDir, "xiaomi-mimo.json")
+	if err := os.WriteFile(legacyPath, []byte(`{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://api.xiaomimimo.com/anthropic",
+    "ANTHROPIC_AUTH_TOKEN": "sk-test"
+  }
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+
+	m = subscriptionRune(t, m, 'r')
+	m.subscriptionModal.input.SetValue("Research Gateway")
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	cfg := findSubscriptionConfig(m.claudeConfigs, "Research Gateway")
+	provider := claudeconfig.ProviderForConfig(m.claudeConfigsDir, claudeconfig.Config{
+		Name: cfg.Name,
+		File: cfg.File,
+	})
+	if provider.Key != "mimo" {
+		t.Fatalf("renamed legacy provider = %q, want mimo", provider.Key)
+	}
+	if marker := claudeconfig.ReadProviderMarker(m.claudeConfigsDir, cfg.File); marker != "mimo" {
+		t.Fatalf("backfilled marker = %q, want mimo", marker)
 	}
 }
 

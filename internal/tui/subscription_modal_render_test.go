@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -173,7 +175,7 @@ func TestSubscriptionModal_discardConfirmationIsVisible(t *testing.T) {
 	if !strings.Contains(card, "DISCARD UNSAVED CHANGES?") {
 		t.Fatalf("discard confirmation is missing:\n%s", card)
 	}
-	if !strings.Contains(card, "Enter discard") {
+	if !strings.Contains(card, "[ Discard ]") {
 		t.Fatalf("discard confirmation lacks its action hint:\n%s", card)
 	}
 }
@@ -195,4 +197,68 @@ func TestSubscriptionModal_detailCursorIsVisible(t *testing.T) {
 		}
 	}
 	t.Fatalf("Opus row is missing:\n%s", card)
+}
+
+func TestSubscriptionModal_narrowCardNeverExceedsGeometry(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.width = 40
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+	m.subscriptionModal.pane = subscriptionDetailsPane
+
+	_, _, width, _ := m.subscriptionModalLayout()
+	for i, line := range strings.Split(m.renderSubscriptionModalCard(), "\n") {
+		if got := lipgloss.Width(line); got != width {
+			t.Errorf("narrow line %d width = %d, want %d: %q", i, got, width, stripAnsi(line))
+		}
+	}
+}
+
+func TestSubscriptionModal_displaysConfiguredEndpoint(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	path := filepath.Join(m.claudeConfigsDir, "xiaomi-mimo.json")
+	if err := os.WriteFile(path, []byte(`{
+  "env": {
+    "WISP_DECK_SUBSCRIPTION_PROVIDER": "mimo",
+    "ANTHROPIC_BASE_URL": "http://localhost:4312",
+    "ANTHROPIC_AUTH_TOKEN": "sk-test"
+  }
+}
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+
+	card := stripAnsi(m.renderSubscriptionModalCard())
+	if !strings.Contains(card, "http://localhost:4312") {
+		t.Fatalf("details do not show configured endpoint:\n%s", card)
+	}
+}
+
+func TestSubscriptionModal_compactFooterDescribesCurrentPane(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.width = 60
+	m.openSubscriptionModal()
+	m.subscriptionModal.pane = subscriptionDetailsPane
+
+	card := stripAnsi(m.renderSubscriptionModalCard())
+	if !strings.Contains(card, "Esc profiles") {
+		t.Fatalf("compact details footer describes the wrong Esc action:\n%s", card)
+	}
+}
+
+func TestSubscriptionModal_compactScrollKeepsSaveActionVisible(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.width, m.height = 60, 12
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+	m.subscriptionModal.pane = subscriptionDetailsPane
+	m.subscriptionModal.detailCursor = subscriptionDetailSave
+	m.ensureSubscriptionDetailVisible()
+
+	card := stripAnsi(m.renderSubscriptionModalCard())
+	if !strings.Contains(card, "[ Save changes ]") {
+		t.Fatalf("compact detail scroll hid selected Save action:\n%s", card)
+	}
 }

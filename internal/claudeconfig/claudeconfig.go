@@ -27,6 +27,13 @@ type Config struct {
 
 var nonSlug = regexp.MustCompile(`[^a-z0-9]+`)
 
+func validateName(name string) error {
+	if strings.ContainsAny(name, ":\r\n") {
+		return fmt.Errorf("claudeconfig: profile name cannot contain ':', carriage return, or newline")
+	}
+	return nil
+}
+
 // Slugify lowercases name, collapses every run of non-alphanumeric characters
 // to a single dash, and trims leading/trailing dashes.
 func Slugify(name string) string {
@@ -106,6 +113,9 @@ func ResolvePath(configsDir, pointerFile string) string {
 // "name:file" to the list file, and returns the chosen filename. A name that
 // slugifies to empty falls back to "config".
 func Add(listFile, configsDir, name string) (string, error) {
+	if err := validateName(name); err != nil {
+		return "", err
+	}
 	file := nextConfigFilename(configsDir, name)
 	if err := os.MkdirAll(configsDir, 0755); err != nil {
 		return "", err
@@ -152,6 +162,9 @@ func appendConfig(listFile, name, file string) error {
 // AddForProvider creates a securely initialized config for a catalog provider.
 // The explicit marker keeps provider identity stable if the profile is renamed.
 func AddForProvider(listFile, configsDir, name, providerKey string) (string, error) {
+	if err := validateName(name); err != nil {
+		return "", err
+	}
 	provider, ok := providerByKey(providerKey)
 	if !ok {
 		return "", fmt.Errorf("claudeconfig: unknown provider %q", providerKey)
@@ -196,6 +209,9 @@ func AddForProvider(listFile, configsDir, name, providerKey string) (string, err
 // Rename rewrites the display name of the list line whose filename matches file.
 // It returns an error if no line matches (including when the list is unreadable).
 func Rename(listFile, file, newName string) error {
+	if err := validateName(newName); err != nil {
+		return err
+	}
 	configs := Load(listFile)
 	found := false
 	var b strings.Builder
@@ -270,6 +286,10 @@ func writeSecure(path string, data []byte) error {
 // ReadAPIKey reads ANTHROPIC_AUTH_TOKEN from a config JSON's env section.
 // Returns "" if the file is missing, invalid JSON, or has no key.
 func ReadAPIKey(configsDir, file string) string {
+	return readEnvValue(configsDir, file, "ANTHROPIC_AUTH_TOKEN")
+}
+
+func readEnvValue(configsDir, file, key string) string {
 	data, err := os.ReadFile(filepath.Join(configsDir, file))
 	if err != nil {
 		return ""
@@ -280,24 +300,48 @@ func ReadAPIKey(configsDir, file string) string {
 	if json.Unmarshal(data, &s) != nil || s.Env == nil {
 		return ""
 	}
-	return s.Env["ANTHROPIC_AUTH_TOKEN"]
+	return s.Env[key]
 }
 
 // ReadProviderMarker returns Wisp Deck's explicit subscription-provider marker
 // from a settings file. Missing files, invalid JSON, and absent markers return
 // an empty string.
 func ReadProviderMarker(configsDir, file string) string {
-	data, err := os.ReadFile(filepath.Join(configsDir, file))
+	return readEnvValue(configsDir, file, "WISP_DECK_SUBSCRIPTION_PROVIDER")
+}
+
+// ReadBaseURL returns the configured Anthropic-compatible endpoint from a
+// settings file, or an empty string if it is absent or unreadable.
+func ReadBaseURL(configsDir, file string) string {
+	return readEnvValue(configsDir, file, "ANTHROPIC_BASE_URL")
+}
+
+// WriteProviderMarker persists an explicit catalog provider identity in an
+// existing settings file while preserving all other settings.
+func WriteProviderMarker(configsDir, file, providerKey string) error {
+	if _, ok := providerByKey(providerKey); !ok {
+		return fmt.Errorf("claudeconfig: unknown provider %q", providerKey)
+	}
+	path := filepath.Join(configsDir, file)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return err
 	}
-	var settings struct {
-		Env map[string]string `json:"env"`
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return err
 	}
-	if json.Unmarshal(data, &settings) != nil {
-		return ""
+	env, _ := settings["env"].(map[string]any)
+	if env == nil {
+		env = make(map[string]any)
 	}
-	return settings.Env["WISP_DECK_SUBSCRIPTION_PROVIDER"]
+	env["WISP_DECK_SUBSCRIPTION_PROVIDER"] = providerKey
+	settings["env"] = env
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeSecure(path, append(out, '\n'))
 }
 
 // ProviderForConfig resolves explicit provider metadata first and retains the

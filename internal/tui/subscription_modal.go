@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/jackuait/wisp-deck/internal/claudeconfig"
 	"github.com/mattn/go-runewidth"
 )
@@ -60,6 +61,8 @@ const (
 	subscriptionHitRename
 	subscriptionHitDelete
 	subscriptionHitProvider
+	subscriptionHitConfirm
+	subscriptionHitCancel
 )
 
 type subscriptionHitTarget struct {
@@ -138,6 +141,10 @@ func (m *MainMenuModel) subscriptionModalProfile() subscriptionProfile {
 		cursor = len(profiles) - 1
 	}
 	return profiles[cursor]
+}
+
+func (m *MainMenuModel) subscriptionModalOnAddRow() bool {
+	return m.subscriptionModal.profileCursor >= len(m.subscriptionProfiles())
 }
 
 func (m *MainMenuModel) openSubscriptionModal() {
@@ -269,8 +276,12 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 		}
 	case tea.KeyEnter:
 		if m.subscriptionModal.pane == subscriptionProfilesPane &&
-			m.subscriptionModal.profileCursor == len(m.subscriptionProfiles()) {
+			m.subscriptionModalOnAddRow() {
 			m.startSubscriptionAdd()
+		} else if m.subscriptionModal.pane == subscriptionProfilesPane &&
+			m.subscriptionModalCompact() {
+			m.subscriptionModal.pane = subscriptionDetailsPane
+			m.ensureSubscriptionDetailVisible()
 		} else if m.subscriptionModal.pane == subscriptionDetailsPane {
 			return m.activateSubscriptionDetail()
 		}
@@ -352,6 +363,9 @@ func (m *MainMenuModel) selectSubscriptionProfile(next int) {
 }
 
 func (m *MainMenuModel) subscriptionDetailRows() []int {
+	if m.subscriptionModalOnAddRow() {
+		return nil
+	}
 	profile := m.subscriptionModalProfile()
 	if profile.Standard {
 		return []int{subscriptionDetailUse}
@@ -414,6 +428,9 @@ func (m *MainMenuModel) loadSubscriptionDraft(profile subscriptionProfile) {
 }
 
 func (m *MainMenuModel) useSubscriptionProfile() {
+	if m.subscriptionModalOnAddRow() {
+		return
+	}
 	profile := m.subscriptionModalProfile()
 	if !profile.Ready {
 		m.subscriptionModal.err = fmt.Errorf("%s needs an API key before it can be used", profile.Name)
@@ -429,6 +446,9 @@ func (m *MainMenuModel) useSubscriptionProfile() {
 }
 
 func (m *MainMenuModel) cycleSubscriptionMapping(direction string) {
+	if m.subscriptionModalOnAddRow() {
+		return
+	}
 	profile := m.subscriptionModalProfile()
 	cursor := m.subscriptionModal.detailCursor
 	if profile.Standard || cursor < subscriptionDetailOpus || cursor > subscriptionDetailFable {
@@ -458,6 +478,9 @@ func (m *MainMenuModel) cycleSubscriptionMapping(direction string) {
 }
 
 func (m *MainMenuModel) saveSubscriptionDraft() {
+	if m.subscriptionModalOnAddRow() {
+		return
+	}
 	profile := m.subscriptionModalProfile()
 	draft := &m.subscriptionModal.draft
 	if profile.Standard || draft.file == "" || !draft.dirty {
@@ -482,6 +505,9 @@ func (m *MainMenuModel) saveSubscriptionDraft() {
 }
 
 func (m *MainMenuModel) beginSubscriptionKeyEdit() tea.Cmd {
+	if m.subscriptionModalOnAddRow() {
+		return nil
+	}
 	profile := m.subscriptionModalProfile()
 	if profile.Standard || profile.Provider.Auth != claudeconfig.AuthAPIKey {
 		return nil
@@ -688,6 +714,17 @@ func (m *MainMenuModel) renameSubscriptionProfile(name string) {
 	if profile.Standard || profile.File == "" {
 		return
 	}
+	marker := claudeconfig.ReadProviderMarker(m.claudeConfigsDir, profile.File)
+	if _, marked := claudeconfig.ProviderByKey(marker); !marked {
+		if err := claudeconfig.WriteProviderMarker(
+			m.claudeConfigsDir,
+			profile.File,
+			profile.Provider.Key,
+		); err != nil {
+			m.subscriptionModal.err = err
+			return
+		}
+	}
 	if err := claudeconfig.Rename(m.claudeConfigsList, profile.File, name); err != nil {
 		m.subscriptionModal.err = err
 		return
@@ -756,6 +793,19 @@ func (m *MainMenuModel) subscriptionLifecycleLines(width, height int) []string {
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	accent := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
 	danger := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+	action := func(kind subscriptionHitKind, text string, style lipgloss.Style) string {
+		if m.subscriptionModal.hover.kind == kind {
+			return style.Reverse(true).Render(text)
+		}
+		return style.Render(text)
+	}
+	buttons := func(confirm string, confirmStyle lipgloss.Style, cancel string) string {
+		line := ""
+		if confirm != "" {
+			line = action(subscriptionHitConfirm, confirm, confirmStyle) + "  "
+		}
+		return line + action(subscriptionHitCancel, cancel, dim)
+	}
 	var lines []string
 	switch m.subscriptionModal.mode {
 	case subscriptionEditKey:
@@ -765,7 +815,7 @@ func (m *MainMenuModel) subscriptionLifecycleLines(width, height int) []string {
 			"API key",
 			m.subscriptionModal.input.View(),
 			"",
-			dim.Render("Enter keep changes · Esc cancel"),
+			buttons("[ Keep changes ]", accent, "[ Cancel ]"),
 		)
 	case subscriptionAddProvider:
 		lines = append(lines, dim.Bold(true).Render("CHOOSE PROVIDER"), "")
@@ -778,7 +828,7 @@ func (m *MainMenuModel) subscriptionLifecycleLines(width, height int) []string {
 			}
 			lines = append(lines, marker+style.Render(provider.Name))
 		}
-		lines = append(lines, "", dim.Render("Enter continue · Esc cancel"))
+		lines = append(lines, "", action(subscriptionHitCancel, "[ Cancel ]", dim))
 	case subscriptionAddName:
 		provider, _ := claudeconfig.ProviderByKey(m.subscriptionModal.providerKey)
 		lines = append(lines,
@@ -787,7 +837,7 @@ func (m *MainMenuModel) subscriptionLifecycleLines(width, height int) []string {
 			"Profile name",
 			m.subscriptionModal.input.View(),
 			"",
-			dim.Render("Enter create · Esc cancel"),
+			buttons("[ Create ]", accent, "[ Cancel ]"),
 		)
 	case subscriptionRename:
 		lines = append(lines,
@@ -796,7 +846,7 @@ func (m *MainMenuModel) subscriptionLifecycleLines(width, height int) []string {
 			"Profile name",
 			m.subscriptionModal.input.View(),
 			"",
-			dim.Render("Enter rename · Esc cancel"),
+			buttons("[ Rename ]", accent, "[ Cancel ]"),
 		)
 	case subscriptionDeleteConfirm:
 		profile := m.subscriptionModalProfile()
@@ -805,7 +855,7 @@ func (m *MainMenuModel) subscriptionLifecycleLines(width, height int) []string {
 			"",
 			"This removes the profile settings file.",
 			"",
-			danger.Render("Enter delete")+" · "+dim.Render("Esc cancel"),
+			buttons("[ Delete ]", danger, "[ Cancel ]"),
 		)
 	case subscriptionDiscardConfirm:
 		lines = append(lines,
@@ -813,7 +863,7 @@ func (m *MainMenuModel) subscriptionLifecycleLines(width, height int) []string {
 			"",
 			"Your saved profile will stay unchanged.",
 			"",
-			danger.Render("Enter discard")+" · "+dim.Render("Esc keep editing"),
+			buttons("[ Discard ]", danger, "[ Keep editing ]"),
 		)
 	}
 	if m.subscriptionModal.err != nil {
@@ -893,6 +943,9 @@ func (m *MainMenuModel) ensureSubscriptionProfileVisible() {
 }
 
 func (m *MainMenuModel) subscriptionDetailCursorLine() int {
+	if m.subscriptionModalOnAddRow() {
+		return 0
+	}
 	profile := m.subscriptionModalProfile()
 	if profile.Standard {
 		return 7
@@ -917,6 +970,9 @@ func (m *MainMenuModel) subscriptionDetailCursorLine() int {
 	}
 	line++ // blank line before actions
 	if cursor == subscriptionDetailSave {
+		if m.subscriptionModalCompact() {
+			return line + 2
+		}
 		return line + 1
 	}
 	return line
@@ -944,6 +1000,7 @@ func modalTruncate(s string, width int) string {
 }
 
 func modalPad(s string, width int) string {
+	s = ansi.Truncate(s, width, "")
 	gap := width - lipgloss.Width(s)
 	if gap < 0 {
 		gap = 0
@@ -1044,6 +1101,19 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 		return m.subscriptionLifecycleLines(width, height)
 	}
 
+	if m.subscriptionModalOnAddRow() {
+		lines := []string{
+			dim.Bold(true).Render("ADD A PROFILE"),
+			"",
+			"Add a provider profile",
+			dim.Render("Choose from every available provider and configure"),
+			dim.Render("its authentication and model routes in this overlay."),
+			"",
+			accent.Render("[ Press Enter to choose provider ]"),
+		}
+		return modalWindow(lines, 0, height, width)
+	}
+
 	profile := m.subscriptionModalProfile()
 	lines := []string{dim.Bold(true).Render("PROFILE DETAILS")}
 	valueRow := func(row int, name, value string, style lipgloss.Style) string {
@@ -1086,6 +1156,9 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 	authStyle := amber
 	authState := "Needs key"
 	endpoint := profile.Provider.BaseURL
+	if configured := claudeconfig.ReadBaseURL(m.claudeConfigsDir, profile.File); configured != "" {
+		endpoint = configured
+	}
 	if profile.Provider.Auth == claudeconfig.AuthCodexChatGPT {
 		auth = "codex login"
 		authStyle = green
@@ -1135,14 +1208,36 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("196")).
 			Render(modalTruncate(m.subscriptionModal.err.Error(), width)))
 	}
-	lines = append(lines,
-		"",
-		m.subscriptionActionLabel(subscriptionHitUse, subscriptionDetailUse, "[ Use profile ]", accent, label)+"  "+
-			m.subscriptionActionLabel(subscriptionHitRename, -1, "[ Rename ]", accent, label)+"  "+
-			m.subscriptionActionLabel(subscriptionHitDelete, -1, "[ Delete ]", accent, label),
-		m.subscriptionActionLabel(subscriptionHitSave, subscriptionDetailSave, "[ Save changes ]", accent, label),
-	)
+	lines = append(lines, "")
+	use := m.subscriptionActionLabel(subscriptionHitUse, subscriptionDetailUse, "[ Use profile ]", accent, label)
+	rename := m.subscriptionActionLabel(subscriptionHitRename, -1, "[ Rename ]", accent, label)
+	deleteAction := m.subscriptionActionLabel(subscriptionHitDelete, -1, "[ Delete ]", accent, label)
+	save := m.subscriptionActionLabel(subscriptionHitSave, subscriptionDetailSave, "[ Save changes ]", accent, label)
+	if m.subscriptionModalCompact() {
+		lines = append(lines, use, rename+"  "+deleteAction, save)
+	} else {
+		lines = append(lines, use+"  "+rename+"  "+deleteAction, save)
+	}
 	return modalWindow(lines, m.subscriptionModal.detailOffset, height, width)
+}
+
+func (m *MainMenuModel) subscriptionLifecycleLabels() (confirm, cancel string) {
+	switch m.subscriptionModal.mode {
+	case subscriptionEditKey:
+		return "[ Keep changes ]", "[ Cancel ]"
+	case subscriptionAddProvider:
+		return "", "[ Cancel ]"
+	case subscriptionAddName:
+		return "[ Create ]", "[ Cancel ]"
+	case subscriptionRename:
+		return "[ Rename ]", "[ Cancel ]"
+	case subscriptionDeleteConfirm:
+		return "[ Delete ]", "[ Cancel ]"
+	case subscriptionDiscardConfirm:
+		return "[ Discard ]", "[ Keep editing ]"
+	default:
+		return "", ""
+	}
 }
 
 func (m *MainMenuModel) subscriptionActionLabel(
@@ -1185,12 +1280,25 @@ func (m *MainMenuModel) subscriptionModalTarget(cardX, cardY int) subscriptionHi
 		return ok && cardX >= start && cardX < end
 	}
 
+	if m.subscriptionModal.mode != subscriptionBrowse {
+		confirm, cancel := m.subscriptionLifecycleLabels()
+		if confirm != "" && hitText(confirm) {
+			return subscriptionHitTarget{kind: subscriptionHitConfirm}
+		}
+		if cancel != "" && hitText(cancel) {
+			return subscriptionHitTarget{kind: subscriptionHitCancel}
+		}
+	}
+
 	if m.subscriptionModal.mode == subscriptionAddProvider {
 		for i, provider := range claudeconfig.Providers {
 			if hitText(provider.Name) {
 				return subscriptionHitTarget{kind: subscriptionHitProvider, index: i}
 			}
 		}
+		return subscriptionHitTarget{}
+	}
+	if m.subscriptionModal.mode != subscriptionBrowse {
 		return subscriptionHitTarget{}
 	}
 
@@ -1202,12 +1310,12 @@ func (m *MainMenuModel) subscriptionModalTarget(cardX, cardY int) subscriptionHi
 		listEnd = width - 1
 	}
 	if listVisible && cardX < listEnd {
-		for i, profile := range m.subscriptionProfiles() {
-			if hitText(profile.Name) {
-				return subscriptionHitTarget{kind: subscriptionHitProfile, index: i}
-			}
+		item := cardY - 2 + m.subscriptionModal.profileOffset
+		profiles := m.subscriptionProfiles()
+		if item >= 0 && item < len(profiles) && hitText(profiles[item].Name) {
+			return subscriptionHitTarget{kind: subscriptionHitProfile, index: item}
 		}
-		if hitText("+ Add profile") {
+		if item == len(profiles) && hitText("+ Add profile") {
 			return subscriptionHitTarget{kind: subscriptionHitAdd}
 		}
 		return subscriptionHitTarget{}
@@ -1263,6 +1371,37 @@ func (m *MainMenuModel) handleSubscriptionModalMouse(msg tea.MouseMsg) (tea.Mode
 
 	if m.subscriptionModal.mode != subscriptionBrowse &&
 		m.subscriptionModal.mode != subscriptionAddProvider {
+		target := m.subscriptionModalTarget(cardX, cardY)
+		if msg.Action == tea.MouseActionMotion {
+			m.subscriptionModal.hover = target
+			return m, nil
+		}
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			switch target.kind {
+			case subscriptionHitConfirm:
+				return m.updateSubscriptionModal(tea.KeyMsg{Type: tea.KeyEnter})
+			case subscriptionHitCancel:
+				return m.updateSubscriptionModal(tea.KeyMsg{Type: tea.KeyEsc})
+			}
+		}
+		return m, nil
+	}
+
+	if m.subscriptionModal.mode == subscriptionAddProvider {
+		target := m.subscriptionModalTarget(cardX, cardY)
+		if msg.Action == tea.MouseActionMotion {
+			m.subscriptionModal.hover = target
+			return m, nil
+		}
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			switch target.kind {
+			case subscriptionHitProvider:
+				m.subscriptionModal.providerCursor = target.index
+				return m, m.beginSubscriptionAddName()
+			case subscriptionHitCancel:
+				return m.updateSubscriptionModal(tea.KeyMsg{Type: tea.KeyEsc})
+			}
+		}
 		return m, nil
 	}
 
@@ -1373,7 +1512,11 @@ func (m *MainMenuModel) renderSubscriptionModalCard() string {
 	}
 
 	help := "↑↓ profile · Tab pane · ←→ value · Enter action · Esc close"
-	if compact {
+	if m.subscriptionModal.mode != subscriptionBrowse {
+		help = "Enter confirm · Esc cancel"
+	} else if compact && m.subscriptionModal.pane == subscriptionDetailsPane {
+		help = "↑↓ setting · Enter action · ←/Esc profiles"
+	} else if compact {
 		help = "↑↓ navigate · → details · Esc close"
 	}
 	help = modalTruncate(help, innerWidth)
