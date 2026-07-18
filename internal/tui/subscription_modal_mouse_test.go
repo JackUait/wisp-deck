@@ -147,6 +147,33 @@ func TestSubscriptionModalMouse_clickMappingCyclesDraft(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModalMouse_clickChatGPTLoginStartsAuth(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.SetActiveClaudeConfig("openai-gpt.json")
+	m.SetCodexPath("/opt/codex")
+	m.openSubscriptionModal()
+	m.subscriptionModal.auth.status = subscriptionAuthSignedOut
+	x, y := subscriptionCardCell(t, m, "[ Sign in / switch account ]")
+
+	if target := m.subscriptionModalTarget(x, y); target.kind != subscriptionHitAuth {
+		t.Fatalf("login target = %+v, want auth", target)
+	}
+	updated, cmd := m.Update(subscriptionScreenMouse(
+		m,
+		x,
+		y,
+		tea.MouseActionPress,
+		tea.MouseButtonLeft,
+	))
+	got := updated.(*MainMenuModel)
+	if cmd == nil {
+		t.Fatal("login click returned no authentication command")
+	}
+	if !got.subscriptionModal.auth.pending {
+		t.Fatal("login click did not enter pending state")
+	}
+}
+
 func TestSubscriptionModalMouse_clickFooterBackReturnsToProfiles(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.openSubscriptionModal()

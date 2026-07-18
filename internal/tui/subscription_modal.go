@@ -607,7 +607,7 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 					m.moveSubscriptionProfile(1)
 				}
 			case 'u':
-				m.useSubscriptionProfile()
+				return m, m.useSubscriptionProfile()
 			case 's':
 				m.saveSubscriptionDraft()
 			case 'e':
@@ -682,7 +682,8 @@ func (m *MainMenuModel) subscriptionDetailRows() []int {
 		subscriptionDetailHaiku,
 		subscriptionDetailFable,
 	}
-	if profile.Provider.Auth == claudeconfig.AuthAPIKey {
+	if profile.Provider.Auth == claudeconfig.AuthAPIKey ||
+		profile.Provider.Auth == claudeconfig.AuthCodexChatGPT {
 		rows = append(rows, subscriptionDetailAuth)
 	}
 	return append(rows, subscriptionDetailRename)
@@ -768,22 +769,27 @@ func (m *MainMenuModel) loadSubscriptionDraft(profile subscriptionProfile) {
 	m.subscriptionModal.err = nil
 }
 
-func (m *MainMenuModel) useSubscriptionProfile() {
+func (m *MainMenuModel) useSubscriptionProfile() tea.Cmd {
 	if m.subscriptionModalOnAddRow() {
-		return
+		return nil
 	}
 	profile := m.subscriptionModalProfile()
 	if !profile.Ready {
 		m.subscriptionModal.err = fmt.Errorf("%s needs an API key before it can be used", profile.Name)
-		return
+		return nil
 	}
 	if err := claudeconfig.SetActive(m.claudeConfigFile, profile.File); err != nil {
 		m.subscriptionModal.err = err
-		return
+		return nil
 	}
 	m.SetActiveClaudeConfig(profile.File)
 	m.subscriptionModal.err = nil
 	m.syncOpenCode()
+	if profile.Provider.Auth == claudeconfig.AuthCodexChatGPT &&
+		m.subscriptionModal.auth.status == subscriptionAuthSignedOut {
+		return m.startSubscriptionChatGPTLogin()
+	}
+	return nil
 }
 
 func (m *MainMenuModel) cycleSubscriptionMapping(direction string) {
@@ -904,6 +910,9 @@ func (m *MainMenuModel) activateSubscriptionDetail() (tea.Model, tea.Cmd) {
 	case subscriptionDetailOpus, subscriptionDetailSonnet, subscriptionDetailHaiku, subscriptionDetailFable:
 		m.cycleSubscriptionMapping("next")
 	case subscriptionDetailAuth:
+		if m.subscriptionModalProfile().Provider.Auth == claudeconfig.AuthCodexChatGPT {
+			return m, m.startSubscriptionChatGPTLogin()
+		}
 		return m, m.beginSubscriptionKeyEdit()
 	case subscriptionDetailRename:
 		m.startSubscriptionRename()
@@ -1667,8 +1676,8 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 		endpoint = configured
 	}
 	if profile.Provider.Auth == claudeconfig.AuthCodexChatGPT {
-		auth = "codex login"
-		authStyle = green
+		auth = m.subscriptionChatGPTAuthStatus()
+		authStyle = m.subscriptionChatGPTAuthStatusStyle(green, amber, dim)
 		endpoint = "Local Codex bridge"
 	} else if profile.Ready {
 		authStyle = green
@@ -1678,6 +1687,39 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 		subscriptionSectionLine("CONNECTION", width, dim.Bold(true), dim),
 		valueRow(-1, "Authentication", auth, authStyle),
 		valueRow(-1, "Endpoint", endpoint, dim),
+	)
+	if profile.Provider.Auth == claudeconfig.AuthCodexChatGPT {
+		loginLabel := "[ Sign in / switch account ]"
+		if m.subscriptionModal.auth.pending {
+			loginLabel = "[ Waiting for browser… ]"
+		}
+		lines = append(lines, m.subscriptionActionLabel(
+			subscriptionHitAuth,
+			subscriptionDetailAuth,
+			loginLabel,
+			accent,
+			label,
+		))
+		if m.subscriptionModal.auth.url != "" {
+			const prefix = "Open manually: "
+			lines = append(lines, dim.Render(prefix)+accent.Render(modalTruncate(
+				m.subscriptionModal.auth.url,
+				width-lipgloss.Width(prefix),
+			)))
+		}
+		if m.subscriptionModal.auth.openErr != nil {
+			lines = append(lines, amber.Render(modalTruncate(
+				m.subscriptionModal.auth.openErr.Error(),
+				width,
+			)))
+		}
+		if m.subscriptionModal.auth.err != nil {
+			lines = append(lines, lipgloss.NewStyle().
+				Foreground(lipgloss.Color("196")).
+				Render(modalTruncate(m.subscriptionModal.auth.err.Error(), width)))
+		}
+	}
+	lines = append(lines,
 		"",
 		subscriptionSectionLine("MODEL ROUTING", width, dim.Bold(true), dim),
 		"",
@@ -1723,6 +1765,34 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 	save := m.subscriptionActionLabel(subscriptionHitSave, subscriptionDetailSave, "[ Save changes ]", accent, label)
 	lines = append(lines, m.subscriptionActionLines(width, rename, deleteAction, save)...)
 	return modalWindow(lines, m.subscriptionModal.detailOffset, height, width)
+}
+
+func (m *MainMenuModel) subscriptionChatGPTAuthStatus() string {
+	switch m.subscriptionModal.auth.status {
+	case subscriptionAuthSignedOut:
+		return "Signed out"
+	case subscriptionAuthSignedIn:
+		return "Signed in"
+	case subscriptionAuthUnavailable:
+		return "Unavailable"
+	default:
+		return "Checking…"
+	}
+}
+
+func (m *MainMenuModel) subscriptionChatGPTAuthStatusStyle(
+	green,
+	amber,
+	dim lipgloss.Style,
+) lipgloss.Style {
+	switch m.subscriptionModal.auth.status {
+	case subscriptionAuthSignedIn:
+		return green
+	case subscriptionAuthSignedOut, subscriptionAuthUnavailable:
+		return amber
+	default:
+		return dim
+	}
 }
 
 func (m *MainMenuModel) subscriptionActionLines(width int, rename, deleteAction, save string) []string {
@@ -1851,7 +1921,9 @@ func (m *MainMenuModel) subscriptionModalTarget(cardX, cardY int) subscriptionHi
 			return subscriptionHitTarget{kind: subscriptionHitMapping, index: i}
 		}
 	}
-	if hitText("API key") {
+	if hitText("API key") ||
+		hitText("[ Sign in / switch account ]") ||
+		hitText("[ Waiting for browser… ]") {
 		return subscriptionHitTarget{kind: subscriptionHitAuth}
 	}
 	for _, button := range []struct {
@@ -1883,6 +1955,7 @@ func (m *MainMenuModel) handleSubscriptionModalMouse(msg tea.MouseMsg) (tea.Mode
 				m.enterSubscriptionLifecycle(subscriptionDiscardConfirm)
 				m.subscriptionModal.pendingClose = true
 			} else {
+				m.cancelSubscriptionAuth()
 				m.subscriptionModal.open = false
 			}
 		}
@@ -1974,6 +2047,9 @@ func (m *MainMenuModel) handleSubscriptionModalMouse(msg tea.MouseMsg) (tea.Mode
 			m.cycleSubscriptionMapping("next")
 		case subscriptionHitAuth:
 			m.subscriptionModal.detailCursor = subscriptionDetailAuth
+			if m.subscriptionModalProfile().Provider.Auth == claudeconfig.AuthCodexChatGPT {
+				return m, m.startSubscriptionChatGPTLogin()
+			}
 			return m, m.beginSubscriptionKeyEdit()
 		case subscriptionHitSave:
 			m.saveSubscriptionDraft()

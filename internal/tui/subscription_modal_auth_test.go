@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,6 +171,50 @@ func TestSubscriptionModalChatGPTAuthDiscardCloseCancelsLogin(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModalChatGPTAuthOutsideClickCancelsLogin(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.SetActiveClaudeConfig("openai-gpt.json")
+	m.SetCodexPath("/opt/codex")
+	m.openSubscriptionModal()
+
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	m.chatGPTAuthLogin = func(
+		ctx context.Context,
+		_ string,
+		_ func(gptbridge.ChatGPTAuthEvent),
+	) (gptbridge.AccountReadResult, error) {
+		close(started)
+		<-ctx.Done()
+		close(canceled)
+		return gptbridge.AccountReadResult{}, ctx.Err()
+	}
+	cmd := m.startSubscriptionChatGPTLogin()
+	go func() { _ = cmd() }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("login did not start")
+	}
+
+	updated, _ := m.Update(tea.MouseMsg{
+		X:      0,
+		Y:      0,
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+	})
+	m = updated.(*MainMenuModel)
+	if m.subscriptionModal.open {
+		t.Fatal("outside click did not close modal")
+	}
+	select {
+	case <-canceled:
+	case <-time.After(100 * time.Millisecond):
+		m.cancelSubscriptionAuth()
+		t.Fatal("outside-click close did not cancel login")
+	}
+}
+
 func TestSubscriptionModalChatGPTAuthIgnoresStaleCheckAfterReopen(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.SetActiveClaudeConfig("openai-gpt.json")
@@ -188,5 +234,80 @@ func TestSubscriptionModalChatGPTAuthIgnoresStaleCheckAfterReopen(t *testing.T) 
 
 	if m.subscriptionModal.auth.status != subscriptionAuthChecking {
 		t.Fatalf("stale check changed status to %v", m.subscriptionModal.auth.status)
+	}
+}
+
+func TestSubscriptionModalChatGPTAuthRendersPersistentActionAndStatus(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.SetActiveClaudeConfig("openai-gpt.json")
+	m.openSubscriptionModal()
+	m.subscriptionModal.auth.status = subscriptionAuthSignedOut
+
+	details := stripAnsi(strings.Join(
+		m.subscriptionDetailLines(m.subscriptionDetailPaneWidth(), 20),
+		"\n",
+	))
+	for _, want := range []string{
+		"Authentication",
+		"Signed out",
+		"[ Sign in / switch account ]",
+	} {
+		if !strings.Contains(details, want) {
+			t.Errorf("details missing %q:\n%s", want, details)
+		}
+	}
+
+	m.subscriptionModal.auth.pending = true
+	m.subscriptionModal.auth.url = "https://chatgpt.com/auth/wisp"
+	m.subscriptionModal.auth.openErr = errors.New("browser unavailable")
+	details = stripAnsi(strings.Join(
+		m.subscriptionDetailLines(m.subscriptionDetailPaneWidth(), 20),
+		"\n",
+	))
+	for _, want := range []string{
+		"[ Waiting for browser… ]",
+		"https://chatgpt.com/auth/wisp",
+		"browser unavailable",
+	} {
+		if !strings.Contains(details, want) {
+			t.Errorf("pending details missing %q:\n%s", want, details)
+		}
+	}
+}
+
+func TestSubscriptionModalChatGPTAuthEnterStartsLogin(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.SetActiveClaudeConfig("openai-gpt.json")
+	m.SetCodexPath("/opt/codex")
+	m.openSubscriptionModal()
+	m.subscriptionModal.pane = subscriptionDetailsPane
+	m.subscriptionModal.detailCursor = subscriptionDetailAuth
+	m.subscriptionModal.auth.status = subscriptionAuthSignedIn
+
+	_, cmd := m.activateSubscriptionDetail()
+	if cmd == nil {
+		t.Fatal("Enter on ChatGPT auth action did not start login")
+	}
+	if !m.subscriptionModal.auth.pending {
+		t.Fatal("Enter on ChatGPT auth action did not enter pending state")
+	}
+}
+
+func TestSubscriptionModalChatGPTAuthActivatingSignedOutProfileStartsLogin(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.SetCodexPath("/opt/codex")
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(3)
+	m.subscriptionModal.auth.status = subscriptionAuthSignedOut
+
+	cmd := m.useSubscriptionProfile()
+	if got := m.CurrentClaudeConfigFile(); got != "openai-gpt.json" {
+		t.Fatalf("active file = %q, want OpenAI GPT", got)
+	}
+	if cmd == nil {
+		t.Fatal("activating signed-out ChatGPT profile returned no login command")
+	}
+	if !m.subscriptionModal.auth.pending {
+		t.Fatal("activating signed-out ChatGPT profile did not enter pending state")
 	}
 }

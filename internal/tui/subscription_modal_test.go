@@ -484,7 +484,7 @@ func TestSubscriptionModal_profileCursorStaysInScrolledViewport(t *testing.T) {
 	}
 }
 
-func TestSubscriptionModal_chatGPTNavigationSkipsMissingAPIKeyRow(t *testing.T) {
+func TestSubscriptionModal_chatGPTNavigationIncludesLoginAction(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.openSubscriptionModal()
 	m.moveSubscriptionProfile(3) // OpenAI GPT
@@ -493,11 +493,16 @@ func TestSubscriptionModal_chatGPTNavigationSkipsMissingAPIKeyRow(t *testing.T) 
 
 	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 
-	if m.subscriptionModal.detailCursor != subscriptionDetailRename {
+	if m.subscriptionModal.detailCursor != subscriptionDetailAuth {
 		t.Fatalf(
-			"Down from Fable selected %d, want Rename (%d)",
+			"Down from Fable selected %d, want login action (%d)",
 			m.subscriptionModal.detailCursor,
-			subscriptionDetailRename,
+			subscriptionDetailAuth,
 		)
+	}
+
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.subscriptionModal.detailCursor != subscriptionDetailRename {
+		t.Fatalf("Down from login selected %d, want Rename", m.subscriptionModal.detailCursor)
 	}
 }
