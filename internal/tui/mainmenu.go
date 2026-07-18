@@ -986,7 +986,8 @@ func (m *MainMenuModel) loadCurrentToolSound() {
 	m.soundNameChanged = false
 }
 
-// CycleSoundName cycles forward through system sounds + Off.
+// CycleSoundName cycles forward through system sounds + Off. It returns true
+// only when the new value persists; failure restores the previous value.
 func (m *MainMenuModel) CycleSoundName() bool {
 	previous := m.soundName
 	if m.soundName == "" {
@@ -1016,7 +1017,8 @@ func (m *MainMenuModel) CycleSoundName() bool {
 	return true
 }
 
-// CycleSoundNameReverse cycles backward through Off + system sounds.
+// CycleSoundNameReverse cycles backward through Off + system sounds. It returns
+// true only when the new value persists; failure restores the previous value.
 func (m *MainMenuModel) CycleSoundNameReverse() bool {
 	previous := m.soundName
 	if m.soundName == "" {

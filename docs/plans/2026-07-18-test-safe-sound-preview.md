@@ -4,7 +4,7 @@
 
 **Goal:** Keep intentional interactive sound previews while making automated and programmatic menu use structurally unable to launch host audio.
 
-**Architecture:** Make sound cycling and persistence pure model transitions. Add a nil-by-default, instance-scoped preview capability that interactive Settings handlers may turn into a Bubble Tea command, and inject the real `/usr/bin/afplay` adapter only after the command layer acquires its TTY. Strengthen source ownership tests so audio execution cannot migrate back into model or test code.
+**Architecture:** Make sound cycling and persistence pure model transitions. Add a nil-by-default, instance-scoped preview capability that interactive Settings handlers may turn into a Bubble Tea command, and inject a fixed `/usr/bin/afplay` adapter only after the command layer acquires its TTY. The adapter accepts no process runner, ordinary `go build` output leaves its linker capability disabled, production build entrypoints explicitly enable it, and its process boundary is inert in every `go test` binary. Strengthen syntax-aware source ownership tests so audio execution cannot migrate back into model or test code.
 
 **Tech Stack:** Go 1.25, Bubble Tea, macOS `afplay`, existing Go and bash test suites.
 
@@ -187,30 +187,21 @@ git commit -m "feat(tui): inject sound preview capability"
 
 **Step 1: Write failing adapter tests**
 
-Specify a small factory around an injected command runner:
+Specify a pure, allowlisted command builder and a fixed preview function:
 
 ```go
-func TestMainMenuSoundPreview_usesAuditedPlayerAndAllowlist(t *testing.T) {
-	var gotName string
-	var gotArgs []string
-	preview := mainMenuSoundPreview(func(name string, args ...string) error {
-		gotName, gotArgs = name, append([]string(nil), args...)
-		return nil
-	})
+func TestMainMenuSoundCommand_usesAuditedPlayerAndAllowlist(t *testing.T) {
+    executable, args, ok := mainMenuSoundCommand("Glass")
+    // Assert /usr/bin/afplay, the fixed system path, and ok.
+}
 
-	cmd := preview("Glass")
-	if cmd == nil {
-		t.Fatal("allowlisted sound returned nil command")
-	}
-	_ = cmd()
-
-	if gotName != "/usr/bin/afplay" ||
-		!reflect.DeepEqual(gotArgs, []string{"/System/Library/Sounds/Glass.aiff"}) {
-		t.Fatalf("runner = %q %v", gotName, gotArgs)
-	}
-	if preview("") != nil || preview("../../tmp/evil") != nil {
-		t.Fatal("empty or non-allowlisted sound produced a command")
-	}
+func TestRunMainMenuSound_testBinaryCannotLaunchProcesses(t *testing.T) {
+    calls := 0
+    _ = runMainMenuSoundWith("Glass", func(string, ...string) error {
+        calls++
+        return nil
+    })
+    // Assert calls == 0.
 }
 ```
 
@@ -228,15 +219,16 @@ Expected: build FAIL because the adapter factory does not exist.
 
 Implement:
 
-- a runner type `func(string, ...string) error`;
-- an allowlist check against `tui.SystemSounds`;
-- a Bubble Tea command that runs and waits for
-  `/usr/bin/afplay /System/Library/Sounds/<name>.aiff`; and
-- a real runner backed by `exec.Command(name, args...).Run()`.
+- a pure allowlist-to-command function;
+- a fixed `func(string) tea.Cmd` preview adapter with no runner parameter;
+- a process boundary guarded by `testing.Testing()` and a disabled-by-default
+  linker capability;
+- a real runner that waits for the allowlisted absolute command.
 
 In `runMainMenu`, call `model.SetSoundPreview(...)` only after
 `util.TUITeaOptions()` succeeds. Keep `buildMainMenuModel` silent so command
-unit tests and non-interactive construction have no audio capability.
+unit tests and non-interactive construction have no audio capability. Enable
+the linker capability only in the Makefile and release build entrypoints.
 
 **Step 4: Run adapter and command tests to verify GREEN**
 
@@ -264,13 +256,16 @@ git commit -m "fix(tui): wire interactive sound previews"
 
 **Step 1: Update the ownership test for the new boundary**
 
-Require:
+Require with Go AST inspection rather than textual snippets:
 
 - no audio marker in `internal/tui`;
 - exactly one audited Settings preview site in
   `cmd/wisp-deck-tui/main_menu.go`;
 - the command adapter uses absolute `/usr/bin/afplay`;
-- preview injection text occurs after TTY acquisition text;
+- preview injection occurs after TTY acquisition;
+- the process runner is inert in `go test` binaries;
+- comments cannot satisfy the ownership checks;
+- `buildMainMenuModel` cannot directly or indirectly reach preview injection;
 - the existing shell and Claude background sites retain their live preference
   locks; and
 - direct process-launch forms using audio markers are absent from `_test.go`

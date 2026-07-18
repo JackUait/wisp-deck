@@ -23,10 +23,15 @@ capability. Cycling a sound will only update and persist state. The interactive
 Settings handlers will request a preview after a successful cycle and return it
 as a Bubble Tea command. With no injected capability, the request is a no-op.
 
-The `main-menu` command will inject the real macOS player only after interactive
-TTY setup succeeds. `buildMainMenuModel` and every ordinary `NewMainMenu` call
-remain silent. The real adapter will use the absolute `/usr/bin/afplay` path and
-accept only names selected from the existing `SystemSounds` allowlist.
+The `main-menu` command will inject a fixed preview function only after
+interactive TTY setup succeeds. `buildMainMenuModel` and every ordinary
+`NewMainMenu` call remain silent. The adapter has no injectable process runner:
+it derives the absolute `/usr/bin/afplay` command only from the existing
+`SystemSounds` allowlist. Production builds explicitly enable that capability
+through the `main.SoundPreviewCapability` linker value. As defense in depth,
+the process boundary uses Go's
+linker-backed `testing.Testing()` signal and is inert in every binary produced
+by `go test`.
 
 This creates a fail-closed capability boundary:
 
@@ -35,7 +40,10 @@ tests / reusable model
     sound selection -> persistence -> nil preview capability -> silence
 
 interactive main-menu
-    sound selection -> persistence -> injected Tea command -> /usr/bin/afplay
+    sound selection -> persistence -> fixed Tea command -> /usr/bin/afplay
+
+go test binary
+    fixed Tea command -> test-process boundary -> silence
 ```
 
 ## Interaction Semantics
@@ -58,7 +66,9 @@ Tests will prove both sides of the boundary:
    from interactive Settings activation.
 3. `Off` and failed persistence produce no preview.
 4. The production model builder has no preview capability.
-5. A repository ownership guard rejects audio process markers in
+5. The real process boundary refuses to invoke even an injected callback in a
+   `go test` binary.
+6. A syntax-aware repository ownership guard rejects audio process markers in
    `internal/tui`, test files, or any new unaudited source. The only Settings
    preview executable site is the explicit command-layer adapter.
 
@@ -69,8 +79,10 @@ state-transition methods or tests.
 
 - **TTY detection:** tests can run under pseudo-terminals, while legitimate
   output can be piped. It is not a reliable automation boundary.
-- **Test-process or environment detection:** each new test package would need
-  to preserve convention, and subprocess integration tests could bypass it.
+- **Test-process detection as the primary boundary:** subprocess integration
+  tests can execute a separately built production binary. The linker-backed
+  signal is therefore used only as defense in depth behind the capability and
+  allowlist boundaries, not as their replacement.
 - **PATH-only shims:** absolute executable paths and focused test invocations
   can bypass a harness.
 - **Removing previews:** this would guarantee silence but discard intentional

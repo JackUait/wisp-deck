@@ -4,7 +4,7 @@
 # so --version and the About card report the real version instead of "dev".
 build:
 	@echo "Building wisp-deck-tui..."
-	go build -ldflags "-X main.Version=$$(cat VERSION)" -o bin/wisp-deck-tui ./cmd/wisp-deck-tui
+	go build -ldflags "-X main.Version=$$(cat VERSION) -X main.SoundPreviewCapability=enabled" -o bin/wisp-deck-tui ./cmd/wisp-deck-tui
 	@codesign --sign - --force bin/wisp-deck-tui
 	@echo "✓ Built bin/wisp-deck-tui"
 

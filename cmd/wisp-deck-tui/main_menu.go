@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jackuait/wisp-deck/internal/models"
@@ -92,21 +93,53 @@ func resolveMainMenuSoundName(flagValue, soundFile string) string {
 
 type mainMenuSoundRunner func(string, ...string) error
 
-func mainMenuSoundPreview(run mainMenuSoundRunner) func(string) tea.Cmd {
-	return func(name string) tea.Cmd {
-		if run == nil || !slices.Contains(tui.SystemSounds, name) {
-			return nil
-		}
-		path := "/System/Library/Sounds/" + name + ".aiff"
-		return func() tea.Msg {
-			_ = run("/usr/bin/afplay", path)
-			return nil
-		}
+// SoundPreviewCapability is set to "enabled" by production build entrypoints.
+// Ordinary `go build` output remains silent, including binaries built by tests.
+var SoundPreviewCapability = "disabled"
+
+func mainMenuSoundProcessAllowed(testBinary bool, capability string) bool {
+	return !testBinary && capability == "enabled"
+}
+
+func mainMenuSoundCommand(name string) (string, []string, bool) {
+	if !slices.Contains(tui.SystemSounds, name) {
+		return "", nil, false
+	}
+	return "/usr/bin/afplay", []string{
+		"/System/Library/Sounds/" + name + ".aiff",
+	}, true
+}
+
+func mainMenuSoundPreview(name string) tea.Cmd {
+	if _, _, ok := mainMenuSoundCommand(name); !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		_ = runMainMenuSound(name)
+		return nil
 	}
 }
 
-func runMainMenuSound(name string, args ...string) error {
-	return exec.Command(name, args...).Run()
+func runMainMenuSound(name string) error {
+	return runMainMenuSoundWith(name, func(executable string, args ...string) error {
+		return exec.Command(executable, args...).Run()
+	})
+}
+
+func runMainMenuSoundWith(name string, run mainMenuSoundRunner) error {
+	// testing.Testing is linker-backed, so this remains fail-closed even when a
+	// test binary is renamed or run with an unusual flag set.
+	if !mainMenuSoundProcessAllowed(
+		testing.Testing(),
+		SoundPreviewCapability,
+	) || run == nil {
+		return nil
+	}
+	executable, args, ok := mainMenuSoundCommand(name)
+	if !ok {
+		return nil
+	}
+	return run(executable, args...)
 }
 
 func runMainMenu(cmd *cobra.Command, args []string) error {
@@ -124,7 +157,12 @@ func runMainMenu(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to run TUI: %w", err)
 	}
 	defer cleanup()
-	model.SetSoundPreview(mainMenuSoundPreview(runMainMenuSound))
+	if mainMenuSoundProcessAllowed(
+		testing.Testing(),
+		SoundPreviewCapability,
+	) {
+		model.SetSoundPreview(mainMenuSoundPreview)
+	}
 
 	appModel := tui.NewAppModel(model)
 	// All-motion (not just cell-motion) so hover events arrive without a button
