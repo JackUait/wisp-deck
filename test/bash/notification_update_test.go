@@ -171,7 +171,8 @@ func TestNotification_set_sound_feature_flag_preserves_other_keys(t *testing.T) 
 
 func TestNotificationTestModeIsSilent(t *testing.T) {
 	tmpDir := t.TempDir()
-	writeTempFile(t, tmpDir, "claude-features.json", `{"sound": true, "sound_name": "Glass"}`)
+	writeTempFile(t, tmpDir, "claude-features.json", `{"sound": false}`)
+	lockPath := filepath.Join(tmpDir, ".claude-features.json.lock")
 	calls := filepath.Join(tmpDir, "tui-calls")
 	binDir := mockCommand(t, t.TempDir(), "wisp-deck-tui",
 		fmt.Sprintf(`printf 'called\n' >> %q`, calls))
@@ -180,6 +181,11 @@ func TestNotificationTestModeIsSilent(t *testing.T) {
 		fmt.Sprintf(`play_notification_sound "claude" %q; wait`, tmpDir)),
 		buildEnv(t, []string{binDir}, "WISP_DECK_TESTING=1"))
 	assertExitCode(t, code, 0)
+	if _, err := os.Stat(lockPath); err == nil {
+		t.Fatal("marked test mode created the notification preference lock")
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat notification preference lock: %v", err)
+	}
 	if _, err := os.Stat(calls); !os.IsNotExist(err) {
 		t.Fatal("marked test mode invoked wisp-deck-tui")
 	}
