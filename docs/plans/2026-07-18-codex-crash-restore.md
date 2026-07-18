@@ -60,10 +60,13 @@ write `id+"\n"`; `Sync`, close, rename, and sync the parent directory. Cleanup
 the temporary file on every failure.
 
 Add `IdentityFile string` to `CodexSupervisorOptions`. In `Run`, publish a
-resume UUID before the TUI starts. For a fresh run, after every reducer event
-or snapshot, publish a newly non-empty `RootThreadID()` exactly once. Refactor
+resume UUID before the TUI starts. Track later top-level roots from the private
+TUI independently of the attention reducer so Codex `/new` atomically replaces
+the sidecar. Recover one missed transition from a reconnect snapshot. Refactor
 `runAttempt` to use a cancellable attempt context so an identity-write failure
-terminates and reaps the active PTY before returning the error.
+terminates and reaps the active PTY before returning the error, and fail closed
+after a bounded reconnect window when observer loss occurs before the first
+identity is known.
 
 If `IdentityFile` is non-empty, failure to initialize the observer is fatal:
 an embedded/OSC-only session cannot discover an exact root and must not create
@@ -200,13 +203,15 @@ codex_identity_read
 ```
 
 Accept only canonical lowercase UUIDs. Accept identity basenames only when
-they contain no slash or pipe, then read strictly under
-`$config_dir/session-identities/`.
+they contain no slash, pipe, CR, or LF and end in `.codex`, then read strictly
+under `$config_dir/session-identities/`. The adapter CLI likewise accepts only
+a clean `.codex` child of a non-symlinked `session-identities` directory.
 
 Change snapshot field six selection to a `case "$tool"`:
 
 - Claude reads `WISP_DECK_CLAUDE_SESSION`.
-- Codex reads valid `WISP_DECK_CODEX_SESSION`, then the valid sidecar.
+- Codex reads the valid sidecar, then a valid `WISP_DECK_CODEX_SESSION`
+  compatibility stamp.
 - Other tools emit empty.
 
 Append the sidecar basename as field nine. Extend snapshot and queue parsers
@@ -282,7 +287,10 @@ mkdir -p "$WISP_DECK_CODEX_SESSION_DIR"
 chmod 700 "$WISP_DECK_CODEX_SESSION_DIR"
 ```
 
-Do not remove this file in `cleanup()`.
+Do not remove this file in `cleanup()`. On launch, opportunistically prune
+`.codex` sidecars older than 30 days only when they are unreferenced by live
+tmux sessions, `last-session`, `last-session.prev`, and `restore-queue`. A tmux
+inspection failure defers pruning.
 
 Add `--session-file` to the adapter command. In restore mode, add
 `--resume-picker` when Codex has no exact UUID. Change raw Codex restore so

@@ -40,19 +40,23 @@ Each Wisp session gets a persistent identity file under:
 the tmux session environment as `WISP_DECK_CODEX_SESSION_FILE`, and passes it
 to `wisp-deck-tui codex-adapter`.
 
-The adapter already correlates the exact root thread through
-`Reducer.RootThreadID()`. When that value becomes available, the supervisor
-writes it to the identity file atomically and durably. A resumed UUID is
-published before the TUI starts. A fresh UUID is published on the observer
-event that establishes the root. Once a thread exists, failure to persist its
-identity is fatal and visible; Wisp Deck must not allow an unrestoreable chat
-to continue silently.
+The adapter correlates the exact initial root and separately tracks every new
+top-level thread created by its private Codex TUI. It writes the current root
+to the identity file atomically and durably. A resumed UUID is published
+before the TUI starts. A fresh UUID and later `/new` transitions are published
+on their observer events; a coherent reconnect snapshot recovers one
+transition missed during an outage. Observer loss before the first identity
+has a bounded recovery window, after which the adapter cancels the TUI and
+reports the failure. Once a thread exists, failure to persist its identity is
+fatal and visible; Wisp Deck must not allow an unrestoreable chat to continue
+silently.
 
 The identity file is deliberately not deleted from the wrapper's shutdown
 trap. A graceful tab close and a machine crash deliver indistinguishable
-signals. Stale identity files are harmless because restore only reads keys
-referenced by the frozen live-session snapshot; opportunistic pruning removes
-old unreferenced files.
+signals. Stale identity files are harmless because restore reads only safe
+keys rooted in `session-identities`. Opportunistic pruning removes files older
+than 30 days only when no live tmux session, snapshot, snapshot backup, or
+restore queue references them.
 
 ### Tool-aware snapshot
 
@@ -65,16 +69,16 @@ boot|project|path|tool|terminal|conversation|layout|account|identity_key
 The `conversation` value is selected by active tool:
 
 - Claude: `WISP_DECK_CLAUDE_SESSION`
-- Codex: valid `WISP_DECK_CODEX_SESSION`, otherwise the valid durable identity
-  file contents
+- Codex: valid durable identity file contents, otherwise a valid
+  `WISP_DECK_CODEX_SESSION` compatibility stamp
 - OpenCode: empty, because its current contract is project-scoped continuation
 
 For Codex, a Claude UUID is never consulted. This prevents both empty native
 Codex restores and stale cross-tool identity reuse.
 
 The queue carries the identity key with the existing fields. On restore,
-Codex resolution prefers the valid embedded UUID, then the durable sidecar
-referenced by the key. UUIDs are validated before launch.
+Codex resolution prefers the current durable sidecar, then the valid embedded
+UUID. UUIDs are validated before launch.
 
 ### Fail-closed recovery
 
