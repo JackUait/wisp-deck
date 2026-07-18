@@ -334,6 +334,9 @@ type MainMenuModel struct {
 	claudeConfigFile  string         // pointer file path for persistence
 	claudeConfigsList string         // name:file list file path (for mutations)
 	claudeConfigsDir  string         // directory holding the settings JSON files
+	codexPath         string         // absolute Codex executable used for ChatGPT auth
+	chatGPTAuthCheck  chatGPTAuthCheckFunc
+	chatGPTAuthLogin  chatGPTAuthLoginFunc
 
 	// Claude account (native login) selection state
 	claudeAccounts         []ClaudeAccount // Default is implicit index 0, not stored here
@@ -442,6 +445,8 @@ func NewMainMenu(projects []models.Project, aiTools []string, currentAI string, 
 		hoverTab:                  -1,
 		hoverStatsMode:            -1,
 		accountMenuHover:          -1,
+		chatGPTAuthCheck:          defaultChatGPTAuthCheck,
+		chatGPTAuthLogin:          defaultChatGPTAuthLogin,
 	}
 }
 
@@ -1091,6 +1096,10 @@ func (m *MainMenuModel) SetClaudeConfigPaths(listFile, dir string) {
 	m.claudeConfigsList = listFile
 	m.claudeConfigsDir = dir
 }
+
+// SetCodexPath records the absolute Codex executable used for subscription
+// account checks and managed browser login.
+func (m *MainMenuModel) SetCodexPath(path string) { m.codexPath = path }
 
 // SetClaudeConfigs stores the managed config list (excluding the implicit Standard).
 func (m *MainMenuModel) SetClaudeConfigs(configs []ClaudeConfig) { m.claudeConfigs = configs }
@@ -2333,6 +2342,12 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case worktreeRemoveDoneMsg:
 		return m.applyWorktreeRemoveDone(msg)
 
+	case subscriptionAuthCheckedMsg:
+		return m, m.applySubscriptionAuthChecked(msg)
+
+	case subscriptionAuthLoginMsg:
+		return m, m.applySubscriptionAuthLogin(msg)
+
 	case statsLoadedMsg:
 		m.statsMonths = msg.months
 		m.statsLoading = false
@@ -2601,8 +2616,7 @@ func (m *MainMenuModel) focusEnter() (tea.Model, tea.Cmd) {
 	case FocusAI:
 		return m, nil
 	case FocusSubscription:
-		m.openSubscriptionModal()
-		return m, nil
+		return m, m.openSubscriptionModal()
 	case FocusTabs:
 		m.focus = FocusBody
 		if m.activeTab == TabStats {
@@ -2823,7 +2837,7 @@ func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 	case rowUsageBars:
 		m.CycleUsageBars()
 	case rowSubscription:
-		m.openSubscriptionModal()
+		return m, m.openSubscriptionModal()
 	case rowAccount:
 		// Open the login-management panel (switch / add / remove logins).
 		m.openAccountMenu()

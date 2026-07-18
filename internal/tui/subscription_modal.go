@@ -1,14 +1,17 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/jackuait/wisp-deck/internal/claudeconfig"
+	"github.com/jackuait/wisp-deck/internal/gptbridge"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -20,6 +23,11 @@ const (
 )
 
 const subscriptionDetailNone = -1
+
+const (
+	subscriptionAuthCheckTimeout = 15 * time.Second
+	subscriptionAuthLoginTimeout = 10 * time.Minute
+)
 
 const (
 	subscriptionDetailOpus = iota
@@ -78,6 +86,55 @@ type subscriptionHitTarget struct {
 	index int
 }
 
+type subscriptionAuthStatus int
+
+const (
+	subscriptionAuthChecking subscriptionAuthStatus = iota
+	subscriptionAuthSignedOut
+	subscriptionAuthSignedIn
+	subscriptionAuthUnavailable
+)
+
+type subscriptionAuthState struct {
+	status     subscriptionAuthStatus
+	pending    bool
+	url        string
+	openErr    error
+	err        error
+	generation uint64
+	cancel     context.CancelFunc
+}
+
+type chatGPTAuthCheckFunc func(
+	context.Context,
+	string,
+) (gptbridge.AccountReadResult, error)
+
+type chatGPTAuthLoginFunc func(
+	context.Context,
+	string,
+	func(gptbridge.ChatGPTAuthEvent),
+) (gptbridge.AccountReadResult, error)
+
+type subscriptionAuthCheckedMsg struct {
+	generation uint64
+	account    gptbridge.AccountReadResult
+	err        error
+}
+
+type subscriptionAuthLoginEvent struct {
+	presented *gptbridge.ChatGPTAuthEvent
+	account   gptbridge.AccountReadResult
+	err       error
+	done      bool
+}
+
+type subscriptionAuthLoginMsg struct {
+	generation uint64
+	event      subscriptionAuthLoginEvent
+	events     <-chan subscriptionAuthLoginEvent
+}
+
 type subscriptionDraft struct {
 	file      string
 	models    []string
@@ -105,6 +162,7 @@ type subscriptionModalState struct {
 	pendingClose    bool
 	hover           subscriptionHitTarget
 	err             error
+	auth            subscriptionAuthState
 }
 
 type subscriptionProfile struct {
@@ -156,7 +214,11 @@ func (m *MainMenuModel) subscriptionModalOnAddRow() bool {
 	return m.subscriptionModal.profileCursor >= len(m.subscriptionProfiles())
 }
 
-func (m *MainMenuModel) openSubscriptionModal() {
+func (m *MainMenuModel) openSubscriptionModal() tea.Cmd {
+	if m.subscriptionModal.auth.cancel != nil {
+		m.subscriptionModal.auth.cancel()
+	}
+	generation := m.subscriptionModal.auth.generation + 1
 	active := m.CurrentClaudeConfigFile()
 	m.subscriptionModal = subscriptionModalState{
 		open:           true,
@@ -164,6 +226,10 @@ func (m *MainMenuModel) openSubscriptionModal() {
 		mode:           subscriptionBrowse,
 		profileCursor:  0,
 		pendingProfile: -1,
+		auth: subscriptionAuthState{
+			status:     subscriptionAuthChecking,
+			generation: generation,
+		},
 	}
 	for i, profile := range m.subscriptionProfiles() {
 		if profile.File == active {
@@ -173,6 +239,198 @@ func (m *MainMenuModel) openSubscriptionModal() {
 	}
 	m.loadSubscriptionDraft(m.subscriptionModalProfile())
 	m.ensureSubscriptionProfileVisible()
+	if !m.hasChatGPTSubscriptionProfile() {
+		m.subscriptionModal.auth.status = subscriptionAuthUnavailable
+		return nil
+	}
+	return m.startSubscriptionChatGPTCheck()
+}
+
+func defaultChatGPTAuthCheck(
+	ctx context.Context,
+	codexPath string,
+) (gptbridge.AccountReadResult, error) {
+	return gptbridge.ReadChatGPTAccount(ctx, gptbridge.ChatGPTAuthOptions{
+		CodexPath: codexPath,
+	})
+}
+
+func defaultChatGPTAuthLogin(
+	ctx context.Context,
+	codexPath string,
+	present func(gptbridge.ChatGPTAuthEvent),
+) (gptbridge.AccountReadResult, error) {
+	return gptbridge.AuthenticateChatGPT(ctx, gptbridge.ChatGPTAuthOptions{
+		CodexPath: codexPath,
+	}, present)
+}
+
+func (m *MainMenuModel) hasChatGPTSubscriptionProfile() bool {
+	for _, profile := range m.subscriptionProfiles() {
+		if profile.Provider.Auth == claudeconfig.AuthCodexChatGPT {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *MainMenuModel) startSubscriptionChatGPTCheck() tea.Cmd {
+	auth := &m.subscriptionModal.auth
+	if m.codexPath == "" {
+		auth.status = subscriptionAuthUnavailable
+		auth.err = fmt.Errorf("Codex is required for ChatGPT sign-in")
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), subscriptionAuthCheckTimeout)
+	auth.cancel = cancel
+	auth.status = subscriptionAuthChecking
+	auth.err = nil
+	generation := auth.generation
+	check := m.chatGPTAuthCheck
+	codexPath := m.codexPath
+	return func() tea.Msg {
+		account, err := check(ctx, codexPath)
+		cancel()
+		return subscriptionAuthCheckedMsg{
+			generation: generation,
+			account:    account,
+			err:        err,
+		}
+	}
+}
+
+func (m *MainMenuModel) startSubscriptionChatGPTLogin() tea.Cmd {
+	auth := &m.subscriptionModal.auth
+	if auth.pending {
+		return nil
+	}
+	if m.codexPath == "" {
+		auth.status = subscriptionAuthUnavailable
+		auth.err = fmt.Errorf("Codex is required for ChatGPT sign-in")
+		return nil
+	}
+	if auth.cancel != nil {
+		auth.cancel()
+	}
+	auth.generation++
+	generation := auth.generation
+	ctx, cancel := context.WithTimeout(context.Background(), subscriptionAuthLoginTimeout)
+	auth.cancel = cancel
+	auth.pending = true
+	auth.url = ""
+	auth.openErr = nil
+	auth.err = nil
+	login := m.chatGPTAuthLogin
+	codexPath := m.codexPath
+	events := make(chan subscriptionAuthLoginEvent, 4)
+	return func() tea.Msg {
+		go func() {
+			account, err := login(ctx, codexPath, func(event gptbridge.ChatGPTAuthEvent) {
+				copy := event
+				events <- subscriptionAuthLoginEvent{presented: &copy}
+			})
+			events <- subscriptionAuthLoginEvent{
+				account: account,
+				err:     err,
+				done:    true,
+			}
+			close(events)
+		}()
+		event := <-events
+		return subscriptionAuthLoginMsg{
+			generation: generation,
+			event:      event,
+			events:     events,
+		}
+	}
+}
+
+func waitSubscriptionAuthLogin(
+	generation uint64,
+	events <-chan subscriptionAuthLoginEvent,
+) tea.Cmd {
+	return func() tea.Msg {
+		event, ok := <-events
+		if !ok {
+			event = subscriptionAuthLoginEvent{
+				err:  fmt.Errorf("ChatGPT sign-in ended unexpectedly"),
+				done: true,
+			}
+		}
+		return subscriptionAuthLoginMsg{
+			generation: generation,
+			event:      event,
+			events:     events,
+		}
+	}
+}
+
+func (m *MainMenuModel) applySubscriptionAuthChecked(
+	msg subscriptionAuthCheckedMsg,
+) tea.Cmd {
+	auth := &m.subscriptionModal.auth
+	if msg.generation != auth.generation {
+		return nil
+	}
+	auth.cancel = nil
+	m.setSubscriptionAuthResult(msg.account, msg.err)
+	return nil
+}
+
+func (m *MainMenuModel) applySubscriptionAuthLogin(
+	msg subscriptionAuthLoginMsg,
+) tea.Cmd {
+	auth := &m.subscriptionModal.auth
+	if msg.generation != auth.generation {
+		return nil
+	}
+	if msg.event.presented != nil {
+		auth.url = msg.event.presented.URL
+		auth.openErr = msg.event.presented.OpenErr
+		return waitSubscriptionAuthLogin(msg.generation, msg.events)
+	}
+	if !msg.event.done {
+		return waitSubscriptionAuthLogin(msg.generation, msg.events)
+	}
+	if auth.cancel != nil {
+		auth.cancel()
+	}
+	auth.cancel = nil
+	auth.pending = false
+	m.setSubscriptionAuthResult(msg.event.account, msg.event.err)
+	return nil
+}
+
+func (m *MainMenuModel) setSubscriptionAuthResult(
+	account gptbridge.AccountReadResult,
+	err error,
+) {
+	auth := &m.subscriptionModal.auth
+	auth.err = err
+	if err != nil {
+		auth.status = subscriptionAuthUnavailable
+		return
+	}
+	if account.Account == nil {
+		auth.status = subscriptionAuthSignedOut
+		return
+	}
+	if err := gptbridge.ValidateChatGPTSubscription(account); err != nil {
+		auth.status = subscriptionAuthUnavailable
+		auth.err = err
+		return
+	}
+	auth.status = subscriptionAuthSignedIn
+}
+
+func (m *MainMenuModel) cancelSubscriptionAuth() {
+	auth := &m.subscriptionModal.auth
+	if auth.cancel != nil {
+		auth.cancel()
+		auth.cancel = nil
+	}
+	auth.pending = false
+	auth.generation++
 }
 
 func (m *MainMenuModel) enterSubscriptionLifecycle(mode subscriptionModalMode) {
@@ -233,6 +491,7 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 				return m, nil
 			}
 			if m.subscriptionModal.pendingClose {
+				m.cancelSubscriptionAuth()
 				m.subscriptionModal.open = false
 				return m, nil
 			}
@@ -276,6 +535,7 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 			m.subscriptionModal.pendingClose = true
 			return m, nil
 		}
+		m.cancelSubscriptionAuth()
 		m.subscriptionModal.open = false
 	case tea.KeyCtrlC:
 		if m.subscriptionModal.draft.dirty {
@@ -283,6 +543,7 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 			m.subscriptionModal.pendingClose = true
 			return m, nil
 		}
+		m.cancelSubscriptionAuth()
 		m.subscriptionModal.open = false
 	case tea.KeyTab, tea.KeyShiftTab:
 		if m.subscriptionModal.pane == subscriptionProfilesPane {
