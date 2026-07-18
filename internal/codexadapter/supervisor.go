@@ -661,8 +661,10 @@ func validateCodexSupervisorOptions(options CodexSupervisorOptions) error {
 	if options.ResumeSession != "" && options.ResumePicker {
 		return errors.New("resume session and resume picker are mutually exclusive")
 	}
-	if options.IdentityFile != "" && !filepath.IsAbs(options.IdentityFile) {
-		return errors.New("Codex session identity file must be absolute")
+	if options.IdentityFile != "" {
+		if err := ValidateIdentityFilePath(options.IdentityFile); err != nil {
+			return err
+		}
 	}
 	if options.FallbackWindow <= 0 {
 		return errors.New("fallback window must be positive")

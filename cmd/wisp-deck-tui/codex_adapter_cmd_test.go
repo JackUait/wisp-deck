@@ -84,6 +84,7 @@ func TestCodexAdapterCommandResolvesProjectCWDPhysically(t *testing.T) {
 }
 
 func TestCodexAdapterCommandRejectsInvalidRuntimeIdentityAndArguments(t *testing.T) {
+	validCWD := t.TempDir()
 	valid := []string{
 		"--codex", "/opt/codex",
 		"--state-file", "/tmp/generation.Abc/state",
@@ -105,6 +106,9 @@ func TestCodexAdapterCommandRejectsInvalidRuntimeIdentityAndArguments(t *testing
 		{"malformed generation", replaceCLIArg(valid, "--generation", "generation.bad-name"), nil},
 		{"missing session file", removeCLIArg(valid, "--session-file"), nil},
 		{"relative session file", replaceCLIArg(valid, "--session-file", "session-identities/dev.codex"), nil},
+		{"session file outside identity dir", replaceCLIArg(valid, "--session-file", "/tmp/dev.codex"), nil},
+		{"session file wrong suffix", replaceCLIArg(valid, "--session-file", "/tmp/session-identities/dev.txt"), nil},
+		{"unclean session file", replaceCLIArg(valid, "--session-file", "/tmp/session-identities/../dev.codex"), nil},
 		{"zero fallback", replaceCLIArg(valid, "--fallback-window", "0s"), nil},
 		{"negative fallback", replaceCLIArg(valid, "--fallback-window", "-1s"), nil},
 		{"malformed resume UUID", append(append([]string(nil), valid...), "--resume-session", "ABC"), nil},
@@ -119,7 +123,7 @@ func TestCodexAdapterCommandRejectsInvalidRuntimeIdentityAndArguments(t *testing
 			called := false
 			cwd := test.cwd
 			if cwd == nil {
-				cwd = func() (string, error) { return "/repo", nil }
+				cwd = func() (string, error) { return validCWD, nil }
 			}
 			cmd := newCodexAdapterCommand(
 				func(context.Context, codexAdapterOptions) (codexadapter.CodexExitResult, error) {
@@ -136,6 +140,36 @@ func TestCodexAdapterCommandRejectsInvalidRuntimeIdentityAndArguments(t *testing
 				t.Fatal("runner called for invalid invocation")
 			}
 		})
+	}
+}
+
+func TestCodexAdapterCommandRejectsSymlinkedIdentityDirectory(t *testing.T) {
+	target := t.TempDir()
+	container := t.TempDir()
+	identityDir := filepath.Join(container, "session-identities")
+	if err := os.Symlink(target, identityDir); err != nil {
+		t.Fatal(err)
+	}
+	args := replaceCLIArg(
+		validCodexAdapterArgs(),
+		"--session-file",
+		filepath.Join(identityDir, "dev.codex"),
+	)
+	called := false
+	cmd := newCodexAdapterCommand(
+		func(context.Context, codexAdapterOptions) (codexadapter.CodexExitResult, error) {
+			called = true
+			return codexadapter.CodexExitResult{}, nil
+		},
+		func(int) {},
+		func() (string, error) { return t.TempDir(), nil },
+	)
+	cmd.SetArgs(args)
+	if err := cmd.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("symlinked identity directory accepted")
+	}
+	if called {
+		t.Fatal("runner called with symlinked identity directory")
 	}
 }
 

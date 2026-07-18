@@ -118,8 +118,8 @@ func validateCodexAdapterOptions(options codexAdapterOptions) error {
 	if options.ResumeSession != "" && options.ResumePicker {
 		return errors.New("--resume-session and --resume-picker are mutually exclusive")
 	}
-	if options.SessionFile == "" || !filepath.IsAbs(options.SessionFile) {
-		return errors.New("--session-file must be absolute")
+	if err := codexadapter.ValidateIdentityFilePath(options.SessionFile); err != nil {
+		return fmt.Errorf("invalid --session-file: %w", err)
 	}
 	if options.FallbackWindow <= 0 {
 		return errors.New("--fallback-window must be positive")

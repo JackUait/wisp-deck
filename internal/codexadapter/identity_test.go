@@ -58,6 +58,30 @@ func TestCodexIdentityWriteIsAtomicPrivateAndCanonical(t *testing.T) {
 	}
 }
 
+func TestCodexIdentityRejectsPathsOutsidePrivateIdentityDirectory(t *testing.T) {
+	dir := t.TempDir()
+	target := t.TempDir()
+	symlinked := filepath.Join(dir, "session-identities")
+	if err := os.Symlink(target, symlinked); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []string{
+		filepath.Join(dir, "outside.codex"),
+		filepath.Join(dir, "session-identities", "wrong.txt"),
+		filepath.Join(dir, "session-identities", "..", "escaped.codex"),
+		filepath.Join(symlinked, "linked.codex"),
+	}
+	for _, path := range tests {
+		if err := writeCodexIdentity(path, supervisorResumeID); err == nil {
+			t.Fatalf("unsafe identity path %q accepted", path)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(target, "linked.codex")); !os.IsNotExist(err) {
+		t.Fatalf("identity writer followed symlinked directory: %v", err)
+	}
+}
+
 func TestCodexSupervisorPersistsResumeIdentityBeforeTUI(t *testing.T) {
 	options := supervisorOptions(t, supervisorResumeID, "")
 	options.IdentityFile = filepath.Join(t.TempDir(), "session-identities", "resume.codex")
@@ -132,16 +156,12 @@ func TestCodexSupervisorPersistsFreshCorrelatedRoot(t *testing.T) {
 
 func TestCodexSupervisorStopsWhenFreshIdentityCannotPersist(t *testing.T) {
 	options := supervisorOptions(t, "", "")
-	blockedParent := filepath.Join(t.TempDir(), "not-a-directory")
-	if err := os.WriteFile(blockedParent, []byte("blocked"), 0o600); err != nil {
+	blockedParent := filepath.Join(t.TempDir(), "session-identities")
+	if err := os.Mkdir(blockedParent, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	options.IdentityFile = filepath.Join(blockedParent, "fresh.codex")
 	observer := newFakeObserverSession()
-	observer.next <- observerNext{event: ReducerEvent{
-		Kind:   EventThreadObserved,
-		Thread: testSupervisorThread(supervisorFreshID, "fresh-session", "", ThreadStatusActive),
-	}}
 	server := &fakeServerProcess{}
 	var canceled atomic.Bool
 
@@ -155,6 +175,16 @@ func TestCodexSupervisorStopsWhenFreshIdentityCannotPersist(t *testing.T) {
 		},
 		EnterRaw: func() (func(), error) { return func() {}, nil },
 		RunPTY: func(ctx context.Context, _ []string, _ func(OSC9Event)) (CodexExitResult, error) {
+			if err := os.Remove(blockedParent); err != nil {
+				return CodexExitResult{}, err
+			}
+			if err := os.WriteFile(blockedParent, []byte("blocked"), 0o600); err != nil {
+				return CodexExitResult{}, err
+			}
+			observer.next <- observerNext{event: ReducerEvent{
+				Kind:   EventThreadObserved,
+				Thread: testSupervisorThread(supervisorFreshID, "fresh-session", "", ThreadStatusActive),
+			}}
 			<-ctx.Done()
 			canceled.Store(true)
 			return CodexExitResult{ExitCode: 1, Elapsed: time.Second}, ctx.Err()
