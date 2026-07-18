@@ -44,7 +44,6 @@ func TestSubscriptionModalHit_profilesMappingsAndActions(t *testing.T) {
 		{"Xiaomi MiMo", subscriptionHitProfile, 2},
 		{"+ Add profile", subscriptionHitAdd, 0},
 		{"Opus", subscriptionHitMapping, 0},
-		{"[ Use profile ]", subscriptionHitUse, 0},
 		{"[ Rename ]", subscriptionHitRename, 0},
 		{"[ Delete ]", subscriptionHitDelete, 0},
 		{"[ Save changes ]", subscriptionHitSave, 0},

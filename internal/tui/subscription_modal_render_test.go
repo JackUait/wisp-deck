@@ -147,13 +147,10 @@ func TestSubscriptionModal_detailRenderUsesStructuredSections(t *testing.T) {
 	m.SetActiveClaudeConfig("openai-gpt.json")
 	m.openSubscriptionModal()
 
-	details := stripAnsi(strings.Join(
-		m.subscriptionDetailLines(m.subscriptionDetailPaneWidth(), 18),
-		"\n",
-	))
+	lines := m.subscriptionDetailLines(m.subscriptionDetailPaneWidth(), 18)
+	details := stripAnsi(strings.Join(lines, "\n"))
 	for _, want := range []string{
-		"OpenAI GPT",
-		"● READY",
+		"PROVIDER",
 		"OpenAI / ChatGPT",
 		"CONNECTION",
 		"MODEL ROUTING",
@@ -165,6 +162,14 @@ func TestSubscriptionModal_detailRenderUsesStructuredSections(t *testing.T) {
 	}
 	if strings.Contains(details, "PROFILE DETAILS") {
 		t.Errorf("details kept duplicate generic heading:\n%s", details)
+	}
+	for _, unwanted := range []string{"OpenAI GPT", "● READY", "[ Use profile ]"} {
+		if strings.Contains(details, unwanted) {
+			t.Errorf("details kept redundant %q:\n%s", unwanted, details)
+		}
+	}
+	if got := strings.TrimSpace(stripAnsi(lines[0])); !strings.HasPrefix(got, "PROVIDER") {
+		t.Errorf("first detail row = %q, want PROVIDER first", got)
 	}
 }
 
@@ -364,17 +369,24 @@ func TestSubscriptionModal_detailSectionsHaveVerticalRhythm(t *testing.T) {
 	}
 }
 
-func TestSubscriptionModal_standardActionsHaveVerticalRhythm(t *testing.T) {
+func TestSubscriptionModal_standardProfileOmitsActions(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.openSubscriptionModal()
 
-	lines := m.subscriptionDetailLines(m.subscriptionDetailPaneWidth(), 18)
-	actions := subscriptionLineIndex(lines, "ACTIONS")
-	if actions <= 0 {
-		t.Fatalf("standard action heading is missing:\n%s", stripAnsi(strings.Join(lines, "\n")))
-	}
-	if got := strings.TrimSpace(stripAnsi(lines[actions-1])); got != "" {
-		t.Fatalf("row before Standard actions = %q, want blank breathing room", got)
+	details := stripAnsi(strings.Join(
+		m.subscriptionDetailLines(m.subscriptionDetailPaneWidth(), 18),
+		"\n",
+	))
+	for _, unwanted := range []string{
+		"ACTIONS",
+		"[ Use profile ]",
+		"[ Rename ]",
+		"[ Delete ]",
+		"[ Save changes ]",
+	} {
+		if strings.Contains(details, unwanted) {
+			t.Errorf("Standard details kept unsupported %q:\n%s", unwanted, details)
+		}
 	}
 }
 
@@ -396,14 +408,16 @@ func TestSubscriptionModal_compactRenderDrillsIntoDetails(t *testing.T) {
 
 	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRight})
 	details := stripAnsi(m.renderSubscriptionModalCard())
-	for _, want := range []string{"Standard Claude", "CONNECTION", "ACTIONS"} {
+	for _, want := range []string{"PROVIDER", "Anthropic / Claude", "CONNECTION"} {
 		if strings.Contains(details, want) {
 			continue
 		}
 		t.Fatalf("Right did not drill into compact details:\n%s", details)
 	}
-	if strings.Contains(details, "PROFILES") {
-		t.Fatalf("compact details still rendered list pane:\n%s", details)
+	for _, unwanted := range []string{"Standard Claude", "PROFILES", "ACTIONS", "[ Use profile ]"} {
+		if strings.Contains(details, unwanted) {
+			t.Fatalf("compact details kept redundant %q:\n%s", unwanted, details)
+		}
 	}
 }
 
@@ -487,11 +501,14 @@ func TestSubscriptionModal_wideActionsShareOneLine(t *testing.T) {
 	m.subscriptionModal.pane = subscriptionDetailsPane
 
 	card := stripAnsi(m.renderSubscriptionModalCard())
+	if strings.Contains(card, "[ Use profile ]") {
+		t.Fatalf("wide details kept Use profile action:\n%s", card)
+	}
 	for _, line := range strings.Split(card, "\n") {
-		if !strings.Contains(line, "[ Use profile ]") {
+		if !strings.Contains(line, "[ Rename ]") {
 			continue
 		}
-		for _, want := range []string{"[ Rename ]", "[ Delete ]", "[ Save changes ]"} {
+		for _, want := range []string{"[ Delete ]", "[ Save changes ]"} {
 			if !strings.Contains(line, want) {
 				t.Fatalf("wide action row is missing %q: %q", want, line)
 			}
@@ -501,24 +518,23 @@ func TestSubscriptionModal_wideActionsShareOneLine(t *testing.T) {
 	t.Fatalf("wide action row is missing:\n%s", card)
 }
 
-func TestSubscriptionModal_standardProfileShowsConsistentActionRow(t *testing.T) {
+func TestSubscriptionModal_standardProfileOmitsActionRow(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.openSubscriptionModal()
 	m.subscriptionModal.pane = subscriptionDetailsPane
 
 	card := stripAnsi(m.renderSubscriptionModalCard())
-	for _, line := range strings.Split(card, "\n") {
-		if !strings.Contains(line, "[ Use profile ]") {
-			continue
+	for _, unwanted := range []string{
+		"ACTIONS",
+		"[ Use profile ]",
+		"[ Rename ]",
+		"[ Delete ]",
+		"[ Save changes ]",
+	} {
+		if strings.Contains(card, unwanted) {
+			t.Errorf("Standard card kept unsupported %q:\n%s", unwanted, card)
 		}
-		for _, want := range []string{"[ Rename ]", "[ Delete ]", "[ Save changes ]"} {
-			if !strings.Contains(line, want) {
-				t.Fatalf("standard action row is missing %q: %q", want, line)
-			}
-		}
-		return
 	}
-	t.Fatalf("standard action row is missing:\n%s", card)
 }
 
 func TestSubscriptionModal_wideInlineSaveScrollTargetsSharedActionRow(t *testing.T) {
@@ -532,7 +548,7 @@ func TestSubscriptionModal_wideInlineSaveScrollTargetsSharedActionRow(t *testing
 
 	m.ensureSubscriptionDetailVisible()
 
-	if got, want := m.subscriptionModal.detailOffset, 13; got != want {
+	if got, want := m.subscriptionModal.detailOffset, 12; got != want {
 		t.Fatalf("detail offset = %d, want %d for inline action row", got, want)
 	}
 }

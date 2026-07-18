@@ -367,7 +367,7 @@ func TestSubscriptionModal_wideLeftReturnsFromDetailsToProfiles(t *testing.T) {
 	}
 }
 
-func TestSubscriptionModal_leftMovesAcrossActionsThenReturnsToProfiles(t *testing.T) {
+func TestSubscriptionModal_leftFromRenameReturnsToProfiles(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.openSubscriptionModal()
 	m.moveSubscriptionProfile(2)
@@ -375,18 +375,8 @@ func TestSubscriptionModal_leftMovesAcrossActionsThenReturnsToProfiles(t *testin
 	m.subscriptionModal.detailCursor = subscriptionDetailRename
 
 	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyLeft})
-	if m.subscriptionModal.pane != subscriptionDetailsPane ||
-		m.subscriptionModal.detailCursor != subscriptionDetailUse {
-		t.Fatalf(
-			"first Left = pane %v cursor %d, want details/Use",
-			m.subscriptionModal.pane,
-			m.subscriptionModal.detailCursor,
-		)
-	}
-
-	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyLeft})
 	if m.subscriptionModal.pane != subscriptionProfilesPane {
-		t.Fatalf("second Left pane = %v, want profiles", m.subscriptionModal.pane)
+		t.Fatalf("Left from Rename pane = %v, want profiles", m.subscriptionModal.pane)
 	}
 }
 
@@ -396,15 +386,15 @@ func TestSubscriptionModal_actionRowUsesHorizontalKeyboardNavigation(t *testing.
 		rights   int
 		wantMode subscriptionModalMode
 	}{
-		{name: "Rename", rights: 1, wantMode: subscriptionRename},
-		{name: "Delete", rights: 2, wantMode: subscriptionDeleteConfirm},
+		{name: "Rename", rights: 0, wantMode: subscriptionRename},
+		{name: "Delete", rights: 1, wantMode: subscriptionDeleteConfirm},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newSubscriptionModalMenu(t)
 			m.openSubscriptionModal()
 			m.moveSubscriptionProfile(2)
 			m.subscriptionModal.pane = subscriptionDetailsPane
-			m.subscriptionModal.detailCursor = subscriptionDetailUse
+			m.subscriptionModal.detailCursor = subscriptionDetailRename
 
 			for range tc.rights {
 				m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRight})
@@ -423,16 +413,16 @@ func TestSubscriptionModal_actionRowCanReachSaveWithKeyboard(t *testing.T) {
 	m.openSubscriptionModal()
 	m.moveSubscriptionProfile(2)
 	m.subscriptionModal.pane = subscriptionDetailsPane
-	m.subscriptionModal.detailCursor = subscriptionDetailUse
+	m.subscriptionModal.detailCursor = subscriptionDetailRename
 	m.subscriptionModal.draft.dirty = true
 
-	for range 3 {
+	for range 2 {
 		m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRight})
 	}
 	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	if m.subscriptionModal.draft.dirty {
-		t.Fatal("three Right presses from Use did not focus and activate Save")
+		t.Fatal("two Right presses from Rename did not focus and activate Save")
 	}
 }
 
@@ -503,7 +493,11 @@ func TestSubscriptionModal_chatGPTNavigationSkipsMissingAPIKeyRow(t *testing.T) 
 
 	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 
-	if m.subscriptionModal.detailCursor != subscriptionDetailUse {
-		t.Fatalf("Down from Fable selected %d, want Use (%d)", m.subscriptionModal.detailCursor, subscriptionDetailUse)
+	if m.subscriptionModal.detailCursor != subscriptionDetailRename {
+		t.Fatalf(
+			"Down from Fable selected %d, want Rename (%d)",
+			m.subscriptionModal.detailCursor,
+			subscriptionDetailRename,
+		)
 	}
 }
