@@ -27,7 +27,6 @@ func TestSubscriptionModal_wideRenderShowsInventoryAndDetails(t *testing.T) {
 	view := stripAnsi(m.View())
 	for _, want := range []string{
 		"Subscriptions",
-		"PROFILES",
 		"Standard Claude",
 		"Zhipu GLM",
 		"Xiaomi MiMo",
@@ -303,16 +302,44 @@ func TestSubscriptionModal_profileRowsReserveRightInset(t *testing.T) {
 	assertInset("+ Add profile", lines)
 }
 
-func TestSubscriptionModal_profileListHasHeadingBreathingRoom(t *testing.T) {
+func TestSubscriptionModal_profilePaneOmitsHeading(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.openSubscriptionModal()
 
-	lines := m.subscriptionProfileLines(subscriptionListWidth, 8)
-	if got := strings.TrimSpace(stripAnsi(lines[1])); got != "" {
-		t.Fatalf("row below PROFILES = %q, want blank breathing room", got)
+	lines := m.subscriptionProfileLines(subscriptionListWidth, 10)
+	plain := stripAnsi(strings.Join(lines, "\n"))
+	if strings.Contains(plain, "PROFILES") {
+		t.Fatalf("profile pane kept its redundant heading:\n%s", plain)
 	}
-	if got := stripAnsi(lines[2]); !strings.Contains(got, "Standard Claude") {
-		t.Fatalf("first profile row = %q, want Standard Claude after gap", got)
+	if got := strings.TrimSpace(stripAnsi(lines[0])); got != "" {
+		t.Fatalf("profile pane top row = %q, want blank gutter", got)
+	}
+	if got := stripAnsi(lines[1]); !strings.Contains(got, "Standard Claude") {
+		t.Fatalf("first profile row = %q, want Standard Claude after gutter", got)
+	}
+}
+
+func TestSubscriptionModal_addProfileIsPinnedToBottom(t *testing.T) {
+	withTrueColor(t)
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(len(m.subscriptionProfiles()))
+
+	lines := m.subscriptionProfileLines(subscriptionListWidth, 10)
+	for i, line := range lines[:len(lines)-1] {
+		if strings.Contains(stripAnsi(line), "+ Add profile") {
+			t.Fatalf("Add profile rendered on row %d instead of the bottom: %q", i, stripAnsi(line))
+		}
+	}
+	add := lines[len(lines)-1]
+	if !strings.Contains(stripAnsi(add), "+ Add profile") {
+		t.Fatalf("bottom row is not Add profile: %q", stripAnsi(add))
+	}
+	if !ledgerSGRActiveAt(add, "+ Add profile", "48;5;236") {
+		t.Fatalf("focused Add profile lost its selection wash: %q", add)
+	}
+	if !strings.HasSuffix(add, " ") {
+		t.Fatalf("fixed Add profile row lost its right inset: %q", add)
 	}
 }
 
@@ -357,8 +384,11 @@ func TestSubscriptionModal_compactRenderDrillsIntoDetails(t *testing.T) {
 	m.openSubscriptionModal()
 
 	list := stripAnsi(m.renderSubscriptionModalCard())
-	if !strings.Contains(list, "PROFILES") {
-		t.Fatalf("compact list missing profile heading:\n%s", list)
+	if !strings.Contains(list, "Standard Claude") {
+		t.Fatalf("compact list missing subscriptions:\n%s", list)
+	}
+	if strings.Contains(list, "PROFILES") {
+		t.Fatalf("compact list kept the redundant profile heading:\n%s", list)
 	}
 	if strings.Contains(list, "MODEL ROUTING") {
 		t.Fatalf("compact list rendered details simultaneously:\n%s", list)

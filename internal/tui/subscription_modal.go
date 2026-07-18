@@ -1054,12 +1054,19 @@ func subscriptionActionsFitOneLine(width int) bool {
 }
 
 func (m *MainMenuModel) ensureSubscriptionProfileVisible() {
-	viewport := m.subscriptionModalBodyHeight() - 2 // fixed PROFILES heading and breathing room
+	viewport := m.subscriptionModalBodyHeight() - 2 // top gutter and fixed Add profile row
 	if viewport < 1 {
 		viewport = 1
 	}
-	itemCount := len(m.subscriptionProfiles()) + 1 // Add profile
+	itemCount := len(m.subscriptionProfiles())
+	if itemCount == 0 {
+		m.subscriptionModal.profileOffset = 0
+		return
+	}
 	cursor := m.subscriptionModal.profileCursor
+	if cursor >= itemCount {
+		cursor = itemCount - 1
+	}
 	if cursor < m.subscriptionModal.profileOffset {
 		m.subscriptionModal.profileOffset = cursor
 	}
@@ -1240,12 +1247,6 @@ func (m *MainMenuModel) subscriptionProfileLines(width, height int) []string {
 		rowWidth = 1
 	}
 
-	headingStyle := dim.Bold(true)
-	if m.subscriptionModal.mode == subscriptionBrowse &&
-		m.subscriptionModal.pane == subscriptionProfilesPane {
-		headingStyle = accent
-	}
-	heading := modalPad(headingStyle.Render("PROFILES"), width)
 	var items []string
 	profiles := m.subscriptionProfiles()
 	for i, profile := range profiles {
@@ -1308,17 +1309,18 @@ func (m *MainMenuModel) subscriptionProfileLines(width, height int) []string {
 	} else if m.subscriptionModal.hover.kind == subscriptionHitAdd {
 		add = dim.Render("▌") + " + Add profile"
 	}
-	items = append(items, add)
 	if height <= 0 {
 		return nil
 	}
 	if height == 1 {
-		return []string{heading}
+		return []string{modalPad(add, width)}
 	}
-	return append(
-		[]string{heading, strings.Repeat(" ", width)},
+	lines := []string{strings.Repeat(" ", width)}
+	lines = append(
+		lines,
 		modalWindow(items, m.subscriptionModal.profileOffset, height-2, width)...,
 	)
+	return append(lines, modalPad(add, width))
 }
 
 func modalWindow(lines []string, offset, height, width int) []string {
@@ -1615,13 +1617,13 @@ func (m *MainMenuModel) subscriptionModalTarget(cardX, cardY int) subscriptionHi
 		listEnd = width - 1
 	}
 	if listVisible && cardX < listEnd {
-		item := cardY - 3 + m.subscriptionModal.profileOffset
+		if hitText("+ Add profile") {
+			return subscriptionHitTarget{kind: subscriptionHitAdd}
+		}
+		item := cardY - 2 + m.subscriptionModal.profileOffset
 		profiles := m.subscriptionProfiles()
 		if item >= 0 && item < len(profiles) && hitText(profiles[item].Name) {
 			return subscriptionHitTarget{kind: subscriptionHitProfile, index: item}
-		}
-		if item == len(profiles) && hitText("+ Add profile") {
-			return subscriptionHitTarget{kind: subscriptionHitAdd}
 		}
 		return subscriptionHitTarget{}
 	}
