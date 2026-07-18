@@ -147,3 +147,154 @@ func TestSubscriptionModal_CtrlCClosesOnlyModal(t *testing.T) {
 		t.Fatal("Ctrl+C from modal quit Wisp Deck")
 	}
 }
+
+func TestSubscriptionModal_previewDoesNotPersistActiveProfile(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+
+	if got := m.subscriptionModalProfile().File; got != "xiaomi-mimo.json" {
+		t.Fatalf("preview file = %q, want xiaomi-mimo.json", got)
+	}
+	if got := claudeconfig.GetActive(m.claudeConfigFile); got != "" {
+		t.Fatalf("preview persisted %q", got)
+	}
+	if got := m.CurrentClaudeConfigFile(); got != "" {
+		t.Fatalf("preview changed in-memory active profile to %q", got)
+	}
+}
+
+func TestSubscriptionModal_useProfilePersists(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2) // ready Xiaomi MiMo
+
+	m.useSubscriptionProfile()
+
+	if got := m.CurrentClaudeConfigFile(); got != "xiaomi-mimo.json" {
+		t.Fatalf("active file = %q, want xiaomi-mimo.json", got)
+	}
+	if got := claudeconfig.GetActive(m.claudeConfigFile); got != "xiaomi-mimo.json" {
+		t.Fatalf("pointer = %q, want xiaomi-mimo.json", got)
+	}
+	if m.subscriptionModal.err != nil {
+		t.Fatalf("activation error: %v", m.subscriptionModal.err)
+	}
+}
+
+func TestSubscriptionModal_refusesUnreadyProfile(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(1) // keyless Zhipu
+
+	m.useSubscriptionProfile()
+
+	if got := m.CurrentClaudeConfigFile(); got != "" {
+		t.Fatalf("unready profile became active: %q", got)
+	}
+	if got := claudeconfig.GetActive(m.claudeConfigFile); got != "" {
+		t.Fatalf("unready profile wrote pointer: %q", got)
+	}
+	if m.subscriptionModal.err == nil {
+		t.Fatal("unready activation did not report an inline error")
+	}
+}
+
+func TestSubscriptionModal_mappingDraftDoesNotWriteUntilSave(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2) // Xiaomi MiMo
+	m.subscriptionModal.pane = subscriptionDetailsPane
+	m.subscriptionModal.detailCursor = subscriptionDetailOpus
+
+	before := claudeconfig.ReadModelMappings(
+		m.claudeConfigsDir,
+		"xiaomi-mimo.json",
+		claudeconfig.ProviderModels["mimo"],
+	)
+	m.cycleSubscriptionMapping("next")
+	if !m.subscriptionModal.draft.dirty {
+		t.Fatal("mapping edit did not dirty the draft")
+	}
+	onDisk := claudeconfig.ReadModelMappings(
+		m.claudeConfigsDir,
+		"xiaomi-mimo.json",
+		claudeconfig.ProviderModels["mimo"],
+	)
+	if onDisk != before {
+		t.Fatalf("mapping edit wrote before Save: before %v after %v", before, onDisk)
+	}
+
+	m.saveSubscriptionDraft()
+	saved := claudeconfig.ReadModelMappings(
+		m.claudeConfigsDir,
+		"xiaomi-mimo.json",
+		claudeconfig.ProviderModels["mimo"],
+	)
+	if saved != m.subscriptionModal.draft.mappings {
+		t.Fatalf("saved mappings = %v, draft %v", saved, m.subscriptionModal.draft.mappings)
+	}
+	if m.subscriptionModal.draft.dirty {
+		t.Fatal("successful Save left draft dirty")
+	}
+}
+
+func TestSubscriptionModal_dirtyProfileSwitchRequiresDiscard(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+	m.subscriptionModal.detailCursor = subscriptionDetailOpus
+	m.cycleSubscriptionMapping("next")
+
+	m.moveSubscriptionProfile(-1)
+	if m.subscriptionModal.mode != subscriptionDiscardConfirm {
+		t.Fatalf("dirty switch mode = %v, want discard confirmation", m.subscriptionModal.mode)
+	}
+	if got := m.subscriptionModalProfile().File; got != "xiaomi-mimo.json" {
+		t.Fatalf("dirty switch moved cursor early to %q", got)
+	}
+
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.subscriptionModal.mode != subscriptionBrowse {
+		t.Fatalf("confirmed discard mode = %v, want browse", m.subscriptionModal.mode)
+	}
+	if got := m.subscriptionModalProfile().File; got != "zhipu-glm.json" {
+		t.Fatalf("confirmed switch focused %q, want zhipu-glm.json", got)
+	}
+	if m.subscriptionModal.draft.dirty {
+		t.Fatal("discard confirmation kept dirty draft")
+	}
+}
+
+func TestSubscriptionModal_saveAPIKeyDraft(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(1) // keyless Zhipu
+	m.subscriptionModal.draft.apiKey = "sk-new"
+	m.subscriptionModal.draft.keyEdited = true
+	m.subscriptionModal.draft.dirty = true
+
+	m.saveSubscriptionDraft()
+
+	if got := claudeconfig.ReadAPIKey(m.claudeConfigsDir, "zhipu-glm.json"); got != "sk-new" {
+		t.Fatalf("saved API key = %q, want sk-new", got)
+	}
+	if !m.subscriptionModalProfile().Ready {
+		t.Fatal("saved API key did not refresh readiness")
+	}
+}
+
+func TestSubscriptionModal_chatGPTDoesNotEnterKeyEditor(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(3) // OpenAI GPT
+
+	cmd := m.beginSubscriptionKeyEdit()
+
+	if cmd != nil {
+		t.Fatal("ChatGPT key editor returned a command")
+	}
+	if m.subscriptionModal.mode == subscriptionEditKey {
+		t.Fatal("ChatGPT exposed API-key editing")
+	}
+}

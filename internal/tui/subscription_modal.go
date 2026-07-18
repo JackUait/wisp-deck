@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jackuait/wisp-deck/internal/claudeconfig"
@@ -15,6 +16,16 @@ const (
 	subscriptionModalMinWide  = 64
 	subscriptionListWidth     = 28
 	subscriptionModalHeight   = 22
+)
+
+const (
+	subscriptionDetailOpus = iota
+	subscriptionDetailSonnet
+	subscriptionDetailHaiku
+	subscriptionDetailFable
+	subscriptionDetailAuth
+	subscriptionDetailUse
+	subscriptionDetailSave
 )
 
 type subscriptionPane int
@@ -46,16 +57,19 @@ type subscriptionDraft struct {
 }
 
 type subscriptionModalState struct {
-	open          bool
-	pane          subscriptionPane
-	mode          subscriptionModalMode
-	profileCursor int
-	detailCursor  int
-	profileOffset int
-	detailOffset  int
-	draft         subscriptionDraft
-	providerKey   string
-	err           error
+	open           bool
+	pane           subscriptionPane
+	mode           subscriptionModalMode
+	profileCursor  int
+	detailCursor   int
+	profileOffset  int
+	detailOffset   int
+	draft          subscriptionDraft
+	input          textinput.Model
+	providerKey    string
+	pendingProfile int
+	pendingClose   bool
+	err            error
 }
 
 type subscriptionProfile struct {
@@ -117,11 +131,39 @@ func (m *MainMenuModel) openSubscriptionModal() {
 			break
 		}
 	}
+	m.loadSubscriptionDraft(m.subscriptionModalProfile())
 }
 
 func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.subscriptionModal.mode == subscriptionEditKey {
+		return m.updateSubscriptionKeyInput(msg)
+	}
+	if m.subscriptionModal.mode == subscriptionDiscardConfirm {
+		switch msg.Type {
+		case tea.KeyEnter:
+			if m.subscriptionModal.pendingClose {
+				m.subscriptionModal.open = false
+				return m, nil
+			}
+			m.subscriptionModal.profileCursor = m.subscriptionModal.pendingProfile
+			m.subscriptionModal.mode = subscriptionBrowse
+			m.subscriptionModal.pendingProfile = -1
+			m.loadSubscriptionDraft(m.subscriptionModalProfile())
+		case tea.KeyEsc, tea.KeyCtrlC:
+			m.subscriptionModal.mode = subscriptionBrowse
+			m.subscriptionModal.pendingProfile = -1
+			m.subscriptionModal.pendingClose = false
+		}
+		return m, nil
+	}
+
 	switch msg.Type {
 	case tea.KeyEsc, tea.KeyCtrlC:
+		if m.subscriptionModal.draft.dirty {
+			m.subscriptionModal.mode = subscriptionDiscardConfirm
+			m.subscriptionModal.pendingClose = true
+			return m, nil
+		}
 		m.subscriptionModal.open = false
 	case tea.KeyTab:
 		if m.subscriptionModal.pane == subscriptionProfilesPane {
@@ -130,24 +172,63 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 			m.subscriptionModal.pane = subscriptionProfilesPane
 		}
 	case tea.KeyUp:
-		m.moveSubscriptionProfile(-1)
+		if m.subscriptionModal.pane == subscriptionDetailsPane {
+			if m.subscriptionModal.detailCursor > subscriptionDetailOpus {
+				m.subscriptionModal.detailCursor--
+			}
+		} else {
+			m.moveSubscriptionProfile(-1)
+		}
 	case tea.KeyDown:
-		m.moveSubscriptionProfile(1)
+		if m.subscriptionModal.pane == subscriptionDetailsPane {
+			if m.subscriptionModal.detailCursor < m.subscriptionDetailLastRow() {
+				m.subscriptionModal.detailCursor++
+			}
+		} else {
+			m.moveSubscriptionProfile(1)
+		}
 	case tea.KeyRight:
-		if m.subscriptionModalCompact() {
+		if m.subscriptionModal.pane == subscriptionDetailsPane {
+			m.cycleSubscriptionMapping("next")
+		} else if m.subscriptionModalCompact() {
 			m.subscriptionModal.pane = subscriptionDetailsPane
 		}
 	case tea.KeyLeft:
-		if m.subscriptionModalCompact() {
+		if m.subscriptionModal.pane == subscriptionDetailsPane &&
+			m.subscriptionModal.detailCursor <= subscriptionDetailFable {
+			m.cycleSubscriptionMapping("prev")
+		} else if m.subscriptionModalCompact() {
 			m.subscriptionModal.pane = subscriptionProfilesPane
+		}
+	case tea.KeyEnter:
+		if m.subscriptionModal.pane == subscriptionDetailsPane {
+			return m.activateSubscriptionDetail()
 		}
 	case tea.KeyRunes:
 		if len(msg.Runes) == 1 {
 			switch TranslateRune(msg.Runes[0]) {
 			case 'k':
-				m.moveSubscriptionProfile(-1)
+				if m.subscriptionModal.pane == subscriptionDetailsPane {
+					if m.subscriptionModal.detailCursor > subscriptionDetailOpus {
+						m.subscriptionModal.detailCursor--
+					}
+				} else {
+					m.moveSubscriptionProfile(-1)
+				}
 			case 'j':
-				m.moveSubscriptionProfile(1)
+				if m.subscriptionModal.pane == subscriptionDetailsPane {
+					if m.subscriptionModal.detailCursor < m.subscriptionDetailLastRow() {
+						m.subscriptionModal.detailCursor++
+					}
+				} else {
+					m.moveSubscriptionProfile(1)
+				}
+			case 'u':
+				m.useSubscriptionProfile()
+			case 's':
+				m.saveSubscriptionDraft()
+			case 'e':
+				return m, m.beginSubscriptionKeyEdit()
 			}
 		}
 	}
@@ -166,7 +247,163 @@ func (m *MainMenuModel) moveSubscriptionProfile(delta int) {
 	if next > last {
 		next = last
 	}
+	if next == m.subscriptionModal.profileCursor {
+		return
+	}
+	if m.subscriptionModal.draft.dirty {
+		m.subscriptionModal.mode = subscriptionDiscardConfirm
+		m.subscriptionModal.pendingProfile = next
+		m.subscriptionModal.pendingClose = false
+		return
+	}
 	m.subscriptionModal.profileCursor = next
+	m.loadSubscriptionDraft(m.subscriptionModalProfile())
+}
+
+func (m *MainMenuModel) subscriptionDetailLastRow() int {
+	if m.subscriptionModalProfile().Standard {
+		return subscriptionDetailUse
+	}
+	return subscriptionDetailSave
+}
+
+func (m *MainMenuModel) loadSubscriptionDraft(profile subscriptionProfile) {
+	draft := subscriptionDraft{file: profile.File}
+	for i := range draft.mappings {
+		draft.mappings[i] = -1
+	}
+	if !profile.Standard {
+		draft.models = append([]string(nil), claudeconfig.ProviderModels[profile.Provider.Key]...)
+		draft.mappings = claudeconfig.ReadModelMappings(m.claudeConfigsDir, profile.File, draft.models)
+		if profile.Provider.Auth == claudeconfig.AuthAPIKey {
+			draft.apiKey = claudeconfig.ReadAPIKey(m.claudeConfigsDir, profile.File)
+		}
+	}
+	m.subscriptionModal.draft = draft
+	m.subscriptionModal.detailCursor = subscriptionDetailOpus
+	m.subscriptionModal.err = nil
+}
+
+func (m *MainMenuModel) useSubscriptionProfile() {
+	profile := m.subscriptionModalProfile()
+	if !profile.Ready {
+		m.subscriptionModal.err = fmt.Errorf("%s needs an API key before it can be used", profile.Name)
+		return
+	}
+	if err := claudeconfig.SetActive(m.claudeConfigFile, profile.File); err != nil {
+		m.subscriptionModal.err = err
+		return
+	}
+	m.SetActiveClaudeConfig(profile.File)
+	m.subscriptionModal.err = nil
+	m.syncOpenCode()
+}
+
+func (m *MainMenuModel) cycleSubscriptionMapping(direction string) {
+	profile := m.subscriptionModalProfile()
+	cursor := m.subscriptionModal.detailCursor
+	if profile.Standard || cursor < subscriptionDetailOpus || cursor > subscriptionDetailFable {
+		return
+	}
+	n := len(m.subscriptionModal.draft.models)
+	if n == 0 {
+		return
+	}
+	current := m.subscriptionModal.draft.mappings[cursor]
+	if direction == "prev" {
+		if current <= -1 {
+			current = n - 1
+		} else {
+			current--
+		}
+	} else {
+		if current >= n-1 {
+			current = -1
+		} else {
+			current++
+		}
+	}
+	m.subscriptionModal.draft.mappings[cursor] = current
+	m.subscriptionModal.draft.dirty = true
+	m.subscriptionModal.err = nil
+}
+
+func (m *MainMenuModel) saveSubscriptionDraft() {
+	profile := m.subscriptionModalProfile()
+	draft := &m.subscriptionModal.draft
+	if profile.Standard || draft.file == "" || !draft.dirty {
+		return
+	}
+	if err := claudeconfig.WriteModelMappings(m.claudeConfigsDir, draft.file, draft.mappings, draft.models); err != nil {
+		m.subscriptionModal.err = err
+		return
+	}
+	if draft.keyEdited {
+		if err := claudeconfig.WriteAPIKey(m.claudeConfigsDir, draft.file, strings.TrimSpace(draft.apiKey)); err != nil {
+			draft.mappings = claudeconfig.ReadModelMappings(m.claudeConfigsDir, draft.file, draft.models)
+			m.subscriptionModal.err = err
+			return
+		}
+	}
+	draft.apiKey = claudeconfig.ReadAPIKey(m.claudeConfigsDir, draft.file)
+	draft.keyEdited = false
+	draft.dirty = false
+	m.subscriptionModal.err = nil
+	m.syncOpenCode()
+}
+
+func (m *MainMenuModel) beginSubscriptionKeyEdit() tea.Cmd {
+	profile := m.subscriptionModalProfile()
+	if profile.Standard || profile.Provider.Auth != claudeconfig.AuthAPIKey {
+		return nil
+	}
+	input := textinput.New()
+	input.Width = 32
+	input.Placeholder = "API key"
+	input.EchoMode = textinput.EchoPassword
+	input.EchoCharacter = '•'
+	input.SetValue(m.subscriptionModal.draft.apiKey)
+	input.Focus()
+	m.subscriptionModal.input = input
+	m.subscriptionModal.mode = subscriptionEditKey
+	m.subscriptionModal.err = nil
+	return textinput.Blink
+}
+
+func (m *MainMenuModel) updateSubscriptionKeyInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc, tea.KeyCtrlC:
+		m.subscriptionModal.mode = subscriptionBrowse
+		m.subscriptionModal.input.Blur()
+		return m, nil
+	case tea.KeyEnter:
+		key := strings.TrimSpace(m.subscriptionModal.input.Value())
+		if key != m.subscriptionModal.draft.apiKey {
+			m.subscriptionModal.draft.apiKey = key
+			m.subscriptionModal.draft.keyEdited = true
+			m.subscriptionModal.draft.dirty = true
+		}
+		m.subscriptionModal.mode = subscriptionBrowse
+		m.subscriptionModal.input.Blur()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.subscriptionModal.input, cmd = m.subscriptionModal.input.Update(msg)
+	return m, cmd
+}
+
+func (m *MainMenuModel) activateSubscriptionDetail() (tea.Model, tea.Cmd) {
+	switch m.subscriptionModal.detailCursor {
+	case subscriptionDetailOpus, subscriptionDetailSonnet, subscriptionDetailHaiku, subscriptionDetailFable:
+		m.cycleSubscriptionMapping("next")
+	case subscriptionDetailAuth:
+		return m, m.beginSubscriptionKeyEdit()
+	case subscriptionDetailUse:
+		m.useSubscriptionProfile()
+	case subscriptionDetailSave:
+		m.saveSubscriptionDraft()
+	}
+	return m, nil
 }
 
 func (m *MainMenuModel) subscriptionModalCompact() bool {
@@ -347,6 +584,10 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 
 	models := claudeconfig.ProviderModels[profile.Provider.Key]
 	mappings := claudeconfig.ReadModelMappings(m.claudeConfigsDir, profile.File, models)
+	if m.subscriptionModal.draft.file == profile.File {
+		models = m.subscriptionModal.draft.models
+		mappings = m.subscriptionModal.draft.mappings
+	}
 	for i, alias := range claudeconfig.AnthropicAliases {
 		value := "(none)"
 		style := dim
@@ -355,6 +596,22 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 			style = green
 		}
 		lines = append(lines, valueRow(strings.ToUpper(alias[:1])+alias[1:], "→ "+value, style))
+	}
+	if profile.Provider.Auth == claudeconfig.AuthAPIKey {
+		keyStatus := "(not set)"
+		keyStyle := amber
+		if m.subscriptionModal.draft.apiKey != "" {
+			keyStatus = "••••••••"
+			keyStyle = green
+		}
+		lines = append(lines, valueRow("API key", keyStatus, keyStyle))
+	}
+	if m.subscriptionModal.draft.dirty {
+		lines = append(lines, amber.Render("• Unsaved changes"))
+	}
+	if m.subscriptionModal.err != nil {
+		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("196")).
+			Render(modalTruncate(m.subscriptionModal.err.Error(), width)))
 	}
 	lines = append(lines,
 		"",
