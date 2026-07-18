@@ -17,6 +17,7 @@ import (
 const (
 	defaultAdapterStartupTimeout  = 15 * time.Second
 	defaultAdapterShutdownTimeout = 2 * time.Second
+	defaultAdapterLoginTimeout    = 10 * time.Minute
 )
 
 // AdapterOptions configures the hidden Claude-to-GPT process supervisor.
@@ -33,6 +34,8 @@ type AdapterOptions struct {
 
 	StartupTimeout  time.Duration
 	ShutdownTimeout time.Duration
+	LoginTimeout    time.Duration
+	OpenURL         func(string) error
 }
 
 // AdapterResult mirrors the Claude child exit.
@@ -155,6 +158,36 @@ func RunAdapter(ctx context.Context, options AdapterOptions) (AdapterResult, err
 		defer cancel()
 		_ = appServer.Close(closeContext)
 	}()
+	if appServer.Account.Account == nil {
+		loginTimeout := options.LoginTimeout
+		if loginTimeout <= 0 {
+			loginTimeout = defaultAdapterLoginTimeout
+		}
+		stderr := options.Stderr
+		if stderr == nil {
+			stderr = os.Stderr
+		}
+		openURL := options.OpenURL
+		if openURL == nil {
+			openURL = openChatGPTAuthURL
+		}
+		loginContext, cancelLogin := context.WithTimeout(ctx, loginTimeout)
+		err := appServer.LoginChatGPT(loginContext, func(authURL string) {
+			fmt.Fprintln(stderr, "OpenAI GPT needs ChatGPT sign-in.")
+			fmt.Fprintf(stderr, "Sign in in your browser: %s\n", authURL)
+			if openErr := openURL(authURL); openErr != nil {
+				fmt.Fprintf(stderr, "Could not open the browser automatically; use the URL above: %v\n", openErr)
+			}
+			fmt.Fprintln(stderr, "Waiting for ChatGPT sign-in to finish…")
+		})
+		cancelLogin()
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+				return AdapterResult{}, fmt.Errorf("ChatGPT sign-in timed out after %s; relaunch the session to try again", loginTimeout)
+			}
+			return AdapterResult{}, err
+		}
+	}
 	if err := ValidateChatGPTSubscription(appServer.Account); err != nil {
 		return AdapterResult{}, err
 	}
@@ -259,6 +292,13 @@ func RunAdapter(ctx context.Context, options AdapterOptions) (AdapterResult, err
 			return result, ctx.Err()
 		}
 	}
+}
+
+func openChatGPTAuthURL(authURL string) error {
+	if err := exec.Command("open", authURL).Start(); err != nil {
+		return fmt.Errorf("open ChatGPT sign-in URL: %w", err)
+	}
+	return nil
 }
 
 func checkBridgeHealth(ctx context.Context, server *BridgeHTTPServer, key string) error {

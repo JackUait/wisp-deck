@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ const (
 	defaultRPCMaxMessageBytes = 16 << 20
 	defaultStderrTailBytes    = 64 << 10
 	defaultShutdownTimeout    = 2 * time.Second
+	loginCancelTimeout        = time.Second
 	processTerminateGrace     = 250 * time.Millisecond
 )
 
@@ -472,6 +474,18 @@ type AccountReadResult struct {
 	RequiresOpenAIAuth bool     `json:"requiresOpenaiAuth"`
 }
 
+type accountLoginStartResult struct {
+	Type    string `json:"type"`
+	LoginID string `json:"loginId"`
+	AuthURL string `json:"authUrl"`
+}
+
+type accountLoginCompletedNotification struct {
+	LoginID string  `json:"loginId"`
+	Success bool    `json:"success"`
+	Error   *string `json:"error"`
+}
+
 // Model is the model metadata needed by the bridge.
 type Model struct {
 	ID                     string                  `json:"id"`
@@ -601,6 +615,84 @@ func StartAppServer(ctx context.Context, options AppServerOptions) (*AppServer, 
 	}
 	server.Models = models.Data
 	return server, nil
+}
+
+// LoginChatGPT starts Codex's managed browser login, waits for the matching
+// completion notification, then refreshes the account and visible model list.
+func (s *AppServer) LoginChatGPT(ctx context.Context, presentAuthURL func(string)) error {
+	if s == nil || s.RPC == nil {
+		return errors.New("Codex app-server is unavailable")
+	}
+	var started accountLoginStartResult
+	if err := s.RPC.Call(ctx, "account/login/start", map[string]any{
+		"type":                      "chatgpt",
+		"useHostedLoginSuccessPage": true,
+		"appBrand":                  "chatgpt",
+	}, &started); err != nil {
+		return fmt.Errorf("start ChatGPT login: %w", err)
+	}
+	if started.Type != "chatgpt" || started.LoginID == "" {
+		return errors.New("start ChatGPT login: response is missing a managed login ID")
+	}
+	authURL, err := url.Parse(started.AuthURL)
+	if err != nil || authURL.Scheme != "https" || authURL.Host == "" {
+		return errors.New("start ChatGPT login: response has an invalid authentication URL")
+	}
+	if presentAuthURL != nil {
+		presentAuthURL(started.AuthURL)
+	}
+
+	for {
+		select {
+		case notification := <-s.RPC.Notifications():
+			if notification.Method != "account/login/completed" {
+				continue
+			}
+			var completed accountLoginCompletedNotification
+			if err := json.Unmarshal(notification.Params, &completed); err != nil {
+				return fmt.Errorf("decode ChatGPT login completion: %w", err)
+			}
+			if completed.LoginID != started.LoginID {
+				continue
+			}
+			if !completed.Success {
+				message := "login failed"
+				if completed.Error != nil && strings.TrimSpace(*completed.Error) != "" {
+					message = strings.TrimSpace(*completed.Error)
+				}
+				return fmt.Errorf("ChatGPT login failed: %s", message)
+			}
+		case <-ctx.Done():
+			cancelContext, cancel := context.WithTimeout(context.Background(), loginCancelTimeout)
+			var result struct{}
+			_ = s.RPC.Call(cancelContext, "account/login/cancel", map[string]string{
+				"loginId": started.LoginID,
+			}, &result)
+			cancel()
+			return ctx.Err()
+		case <-s.RPC.Done():
+			if err := s.RPC.Err(); err != nil {
+				return err
+			}
+			return ErrRPCClosed
+		}
+		break
+	}
+
+	if err := s.RPC.Call(ctx, "account/read", map[string]bool{"refreshToken": false}, &s.Account); err != nil {
+		return fmt.Errorf("read Codex account after ChatGPT login: %w", err)
+	}
+	var models struct {
+		Data []Model `json:"data"`
+	}
+	if err := s.RPC.Call(ctx, "model/list", map[string]any{
+		"includeHidden": false,
+		"limit":         100,
+	}, &models); err != nil {
+		return fmt.Errorf("list Codex models after ChatGPT login: %w", err)
+	}
+	s.Models = models.Data
+	return nil
 }
 
 // Close closes stdio, waits for app-server, and kills it if the context expires.

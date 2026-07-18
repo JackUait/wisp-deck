@@ -238,6 +238,192 @@ func TestRPCRejectsMalformedEnvelope(t *testing.T) {
 	}
 }
 
+func TestAppServerLoginChatGPTCompletesManagedBrowserFlow(t *testing.T) {
+	h := newRPCHarness(t, 1<<20)
+	server := &AppServer{RPC: h.client}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	authURLs := make(chan string, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.LoginChatGPT(ctx, func(authURL string) {
+			authURLs <- authURL
+		})
+	}()
+
+	start := h.readObject(t)
+	if string(start["method"]) != `"account/login/start"` {
+		t.Fatalf("first method = %s, want account/login/start", start["method"])
+	}
+	var startParams struct {
+		Type                      string `json:"type"`
+		UseHostedLoginSuccessPage bool   `json:"useHostedLoginSuccessPage"`
+		AppBrand                  string `json:"appBrand"`
+	}
+	if err := json.Unmarshal(start["params"], &startParams); err != nil {
+		t.Fatal(err)
+	}
+	if startParams.Type != "chatgpt" ||
+		!startParams.UseHostedLoginSuccessPage ||
+		startParams.AppBrand != "chatgpt" {
+		t.Fatalf("login params = %+v", startParams)
+	}
+	h.writeLine(t, fmt.Sprintf(
+		`{"id":%s,"result":{"type":"chatgpt","loginId":"login-42","authUrl":"https://chatgpt.com/auth/wisp"}}`,
+		start["id"],
+	))
+
+	select {
+	case got := <-authURLs:
+		if got != "https://chatgpt.com/auth/wisp" {
+			t.Fatalf("auth URL = %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("authentication URL was not presented")
+	}
+
+	h.writeLine(t, `{"method":"account/login/completed","params":{"loginId":"other-login","success":true,"error":null}}`)
+	h.writeLine(t, `{"method":"account/login/completed","params":{"loginId":"login-42","success":true,"error":null}}`)
+
+	account := h.readObject(t)
+	if string(account["method"]) != `"account/read"` {
+		t.Fatalf("post-login method = %s, want account/read", account["method"])
+	}
+	h.writeLine(t, fmt.Sprintf(
+		`{"id":%s,"result":{"account":{"type":"chatgpt","email":"user@example.com","planType":"plus"},"requiresOpenaiAuth":true}}`,
+		account["id"],
+	))
+
+	models := h.readObject(t)
+	if string(models["method"]) != `"model/list"` {
+		t.Fatalf("post-account method = %s, want model/list", models["method"])
+	}
+	h.writeLine(t, fmt.Sprintf(
+		`{"id":%s,"result":{"data":[{"id":"gpt-test","model":"gpt-test","displayName":"GPT Test","hidden":false}]}}`,
+		models["id"],
+	))
+
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+	if server.Account.Account == nil ||
+		server.Account.Account.Type != "chatgpt" ||
+		server.Account.Account.PlanType != "plus" {
+		t.Fatalf("refreshed account = %+v", server.Account)
+	}
+	if len(server.Models) != 1 || server.Models[0].ID != "gpt-test" {
+		t.Fatalf("refreshed models = %+v", server.Models)
+	}
+}
+
+func TestAppServerLoginChatGPTCancelsPendingManagedLogin(t *testing.T) {
+	h := newRPCHarness(t, 1<<20)
+	server := &AppServer{RPC: h.client}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	authURLPresented := make(chan struct{})
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.LoginChatGPT(ctx, func(string) {
+			close(authURLPresented)
+		})
+	}()
+
+	start := h.readObject(t)
+	h.writeLine(t, fmt.Sprintf(
+		`{"id":%s,"result":{"type":"chatgpt","loginId":"login-cancel","authUrl":"https://chatgpt.com/auth/cancel"}}`,
+		start["id"],
+	))
+	select {
+	case <-authURLPresented:
+	case <-time.After(time.Second):
+		t.Fatal("authentication URL was not presented")
+	}
+	cancel()
+
+	cancelRequestCh := make(chan map[string]json.RawMessage, 1)
+	readErrCh := make(chan error, 1)
+	go func() {
+		line, err := h.fromClient.ReadBytes('\n')
+		if err != nil {
+			readErrCh <- err
+			return
+		}
+		var request map[string]json.RawMessage
+		if err := json.Unmarshal(line, &request); err != nil {
+			readErrCh <- err
+			return
+		}
+		cancelRequestCh <- request
+	}()
+
+	var cancelRequest map[string]json.RawMessage
+	select {
+	case cancelRequest = <-cancelRequestCh:
+	case err := <-readErrCh:
+		t.Fatalf("read cancel request: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("account/login/cancel was not sent")
+	}
+	if string(cancelRequest["method"]) != `"account/login/cancel"` {
+		t.Fatalf("cancel method = %s", cancelRequest["method"])
+	}
+	var params struct {
+		LoginID string `json:"loginId"`
+	}
+	if err := json.Unmarshal(cancelRequest["params"], &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.LoginID != "login-cancel" {
+		t.Fatalf("cancel login ID = %q", params.LoginID)
+	}
+	h.writeLine(t, fmt.Sprintf(`{"id":%s,"result":{}}`, cancelRequest["id"]))
+
+	if err := <-errCh; !errors.Is(err, context.Canceled) {
+		t.Fatalf("LoginChatGPT error = %v, want context.Canceled", err)
+	}
+}
+
+func TestAppServerLoginChatGPTReturnsMatchingFailure(t *testing.T) {
+	h := newRPCHarness(t, 1<<20)
+	server := &AppServer{RPC: h.client}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.LoginChatGPT(context.Background(), nil)
+	}()
+
+	start := h.readObject(t)
+	h.writeLine(t, fmt.Sprintf(
+		`{"id":%s,"result":{"type":"chatgpt","loginId":"login-failed","authUrl":"https://chatgpt.com/auth/failed"}}`,
+		start["id"],
+	))
+	h.writeLine(t, `{"method":"account/login/completed","params":{"loginId":"login-failed","success":false,"error":"access denied"}}`)
+
+	if err := <-errCh; err == nil || !strings.Contains(err.Error(), "access denied") {
+		t.Fatalf("LoginChatGPT error = %v, want access denied", err)
+	}
+}
+
+func TestAppServerLoginChatGPTRejectsUnsafeAuthenticationURL(t *testing.T) {
+	h := newRPCHarness(t, 1<<20)
+	server := &AppServer{RPC: h.client}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.LoginChatGPT(context.Background(), nil)
+	}()
+
+	start := h.readObject(t)
+	h.writeLine(t, fmt.Sprintf(
+		`{"id":%s,"result":{"type":"chatgpt","loginId":"login-unsafe","authUrl":"file:///tmp/not-browser-auth"}}`,
+		start["id"],
+	))
+
+	if err := <-errCh; err == nil || !strings.Contains(err.Error(), "invalid authentication URL") {
+		t.Fatalf("LoginChatGPT error = %v, want invalid authentication URL", err)
+	}
+}
+
 func TestStartAppServerInitializesAndDiscoversAccountAndModels(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "wire.log")

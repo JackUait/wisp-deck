@@ -1,7 +1,9 @@
 package gptbridge
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -160,6 +162,74 @@ set -eu
 	}
 	if !strings.Contains(text, "PGID="+strconv.Itoa(syscall.Getpgrp())+"\n") {
 		t.Fatalf("Claude left the interactive foreground process group: %s", text)
+	}
+}
+
+func TestRunAdapterLogsInSignedOutChatGPTUser(t *testing.T) {
+	dir := t.TempDir()
+	codex := filepath.Join(dir, "codex")
+	claude := filepath.Join(dir, "claude")
+	launched := filepath.Join(dir, "launched")
+	codexScript := `#!/bin/sh
+set -eu
+read init
+printf '{"id":1,"result":{"userAgent":"fake","codexHome":"/tmp","platformFamily":"unix","platformOs":"macos"}}\n'
+read initialized
+read account_before_login
+printf '{"id":2,"result":{"account":null,"requiresOpenaiAuth":true}}\n'
+read models_before_login
+printf '{"id":3,"result":{"data":[]}}\n'
+read login_start
+printf '{"id":4,"result":{"type":"chatgpt","loginId":"login-42","authUrl":"https://chatgpt.com/auth/wisp"}}\n'
+printf '{"method":"account/login/completed","params":{"loginId":"login-42","success":true,"error":null}}\n'
+read account_after_login
+printf '{"id":5,"result":{"account":{"type":"chatgpt","email":"user@example.com","planType":"plus"},"requiresOpenaiAuth":true}}\n'
+read models_after_login
+printf '{"id":6,"result":{"data":[{"id":"gpt-test","model":"gpt-test","displayName":"GPT Test","description":"test","hidden":false,"isDefault":true,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[]}]}}\n'
+while read line; do :; done
+`
+	claudeScript := `#!/bin/sh
+set -eu
+touch "$CLAUDE_LAUNCHED"
+`
+	if err := os.WriteFile(codex, []byte(codexScript), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(claude, []byte(claudeScript), 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	var openedURL string
+	var stderr bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := RunAdapter(ctx, AdapterOptions{
+		CodexPath: codex, ClaudeArgv: []string{claude},
+		Environment:   append(os.Environ(), "CLAUDE_LAUNCHED="+launched),
+		ClientVersion: "test",
+		Stderr:        &stderr,
+		OpenURL: func(authURL string) error {
+			openedURL = authURL
+			return errors.New("browser unavailable")
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+	if openedURL != "https://chatgpt.com/auth/wisp" {
+		t.Fatalf("opened URL = %q", openedURL)
+	}
+	if !strings.Contains(stderr.String(), "https://chatgpt.com/auth/wisp") {
+		t.Fatalf("login URL was not printed:\n%s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Could not open the browser automatically") {
+		t.Fatalf("browser failure did not preserve the manual URL path:\n%s", stderr.String())
+	}
+	if _, err := os.Stat(launched); err != nil {
+		t.Fatalf("Claude did not launch after login: %v", err)
 	}
 }
 

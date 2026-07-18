@@ -20,8 +20,9 @@ func TestChatGPTSubscriptionDocumentationCoversSetupAndSafety(t *testing.T) {
 	readmeText := string(readme)
 	for _, want := range []string{
 		"OpenAI GPT",
-		"codex login",
 		"ChatGPT",
+		"opens ChatGPT sign-in in your browser automatically",
+		"copy the printed URL",
 		"OpenAI Platform API-key",
 		"never reads or stores",
 		"not mirrored into OpenCode",
@@ -31,7 +32,11 @@ func TestChatGPTSubscriptionDocumentationCoversSetupAndSafety(t *testing.T) {
 			t.Errorf("README is missing %q", want)
 		}
 	}
-	for _, want := range []string{"Unreleased", "OpenAI GPT", "codex login"} {
+	for _, want := range []string{
+		"Unreleased",
+		"OpenAI GPT",
+		"opens the ChatGPT browser login automatically",
+	} {
 		if !strings.Contains(string(changelog), want) {
 			t.Errorf("CHANGELOG is missing %q", want)
 		}

@@ -27,8 +27,12 @@ func TestLiveGPTSubscriptionInClaude(t *testing.T) {
 	}
 	status := exec.Command(codexPath, "login", "status")
 	statusOutput, err := status.CombinedOutput()
-	if err != nil || !strings.Contains(strings.ToLower(string(statusOutput)), "chatgpt") {
-		t.Fatalf("Codex must be logged in with ChatGPT: %v: %s", err, statusOutput)
+	statusText := strings.ToLower(string(statusOutput))
+	if strings.Contains(statusText, "api key") {
+		t.Fatalf("Codex is using API-key authentication; ChatGPT subscription auth is required: %s", statusOutput)
+	}
+	if err != nil && !strings.Contains(statusText, "not logged in") {
+		t.Fatalf("could not determine Codex login status: %v: %s", err, statusOutput)
 	}
 
 	root := projectRoot(t)
