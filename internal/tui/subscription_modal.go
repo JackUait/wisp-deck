@@ -67,6 +67,7 @@ type subscriptionModalState struct {
 	draft          subscriptionDraft
 	input          textinput.Model
 	providerKey    string
+	providerCursor int
 	pendingProfile int
 	pendingClose   bool
 	err            error
@@ -138,6 +139,21 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 	if m.subscriptionModal.mode == subscriptionEditKey {
 		return m.updateSubscriptionKeyInput(msg)
 	}
+	if m.subscriptionModal.mode == subscriptionAddProvider {
+		return m.updateSubscriptionProviderPicker(msg)
+	}
+	if m.subscriptionModal.mode == subscriptionAddName || m.subscriptionModal.mode == subscriptionRename {
+		return m.updateSubscriptionNameInput(msg)
+	}
+	if m.subscriptionModal.mode == subscriptionDeleteConfirm {
+		switch msg.Type {
+		case tea.KeyEnter:
+			m.deleteSubscriptionProfile()
+		case tea.KeyEsc, tea.KeyCtrlC:
+			m.subscriptionModal.mode = subscriptionBrowse
+		}
+		return m, nil
+	}
 	if m.subscriptionModal.mode == subscriptionDiscardConfirm {
 		switch msg.Type {
 		case tea.KeyEnter:
@@ -201,7 +217,10 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 			m.subscriptionModal.pane = subscriptionProfilesPane
 		}
 	case tea.KeyEnter:
-		if m.subscriptionModal.pane == subscriptionDetailsPane {
+		if m.subscriptionModal.pane == subscriptionProfilesPane &&
+			m.subscriptionModal.profileCursor == len(m.subscriptionProfiles()) {
+			m.startSubscriptionAdd()
+		} else if m.subscriptionModal.pane == subscriptionDetailsPane {
 			return m.activateSubscriptionDetail()
 		}
 	case tea.KeyRunes:
@@ -229,6 +248,12 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 				m.saveSubscriptionDraft()
 			case 'e':
 				return m, m.beginSubscriptionKeyEdit()
+			case 'a':
+				m.startSubscriptionAdd()
+			case 'r':
+				m.startSubscriptionRename()
+			case 'd':
+				m.startSubscriptionDelete()
 			}
 		}
 	}
@@ -239,7 +264,7 @@ func (m *MainMenuModel) moveSubscriptionProfile(delta int) {
 	if m.subscriptionModal.pane != subscriptionProfilesPane {
 		return
 	}
-	last := len(m.subscriptionProfiles()) - 1
+	last := len(m.subscriptionProfiles()) // final row is Add profile
 	next := m.subscriptionModal.profileCursor + delta
 	if next < 0 {
 		next = 0
@@ -257,6 +282,11 @@ func (m *MainMenuModel) moveSubscriptionProfile(delta int) {
 		return
 	}
 	m.subscriptionModal.profileCursor = next
+	if next == len(m.subscriptionProfiles()) {
+		m.subscriptionModal.draft = subscriptionDraft{}
+		m.subscriptionModal.err = nil
+		return
+	}
 	m.loadSubscriptionDraft(m.subscriptionModalProfile())
 }
 
@@ -406,6 +436,259 @@ func (m *MainMenuModel) activateSubscriptionDetail() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *MainMenuModel) startSubscriptionAdd() {
+	if m.subscriptionModal.draft.dirty {
+		m.subscriptionModal.mode = subscriptionDiscardConfirm
+		m.subscriptionModal.pendingProfile = len(m.subscriptionProfiles())
+		return
+	}
+	m.subscriptionModal.mode = subscriptionAddProvider
+	m.subscriptionModal.providerCursor = 0
+	m.subscriptionModal.pane = subscriptionDetailsPane
+	m.subscriptionModal.err = nil
+}
+
+func (m *MainMenuModel) updateSubscriptionProviderPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc, tea.KeyCtrlC:
+		m.subscriptionModal.mode = subscriptionBrowse
+		m.subscriptionModal.pane = subscriptionProfilesPane
+	case tea.KeyUp:
+		if m.subscriptionModal.providerCursor > 0 {
+			m.subscriptionModal.providerCursor--
+		}
+	case tea.KeyDown:
+		if m.subscriptionModal.providerCursor < len(claudeconfig.Providers)-1 {
+			m.subscriptionModal.providerCursor++
+		}
+	case tea.KeyEnter:
+		return m, m.beginSubscriptionAddName()
+	case tea.KeyRunes:
+		if len(msg.Runes) == 1 {
+			switch TranslateRune(msg.Runes[0]) {
+			case 'k':
+				if m.subscriptionModal.providerCursor > 0 {
+					m.subscriptionModal.providerCursor--
+				}
+			case 'j':
+				if m.subscriptionModal.providerCursor < len(claudeconfig.Providers)-1 {
+					m.subscriptionModal.providerCursor++
+				}
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m *MainMenuModel) newSubscriptionNameInput(value string) textinput.Model {
+	input := textinput.New()
+	input.Width = 36
+	input.Placeholder = "Profile name"
+	input.SetValue(value)
+	input.Focus()
+	return input
+}
+
+func (m *MainMenuModel) beginSubscriptionAddName() tea.Cmd {
+	if m.subscriptionModal.providerCursor < 0 ||
+		m.subscriptionModal.providerCursor >= len(claudeconfig.Providers) {
+		return nil
+	}
+	provider := claudeconfig.Providers[m.subscriptionModal.providerCursor]
+	m.subscriptionModal.providerKey = provider.Key
+	m.subscriptionModal.input = m.newSubscriptionNameInput(provider.Name)
+	m.subscriptionModal.mode = subscriptionAddName
+	m.subscriptionModal.err = nil
+	return textinput.Blink
+}
+
+func (m *MainMenuModel) startSubscriptionRename() {
+	profile := m.subscriptionModalProfile()
+	if profile.Standard || profile.File == "" ||
+		m.subscriptionModal.profileCursor >= len(m.subscriptionProfiles()) {
+		return
+	}
+	m.subscriptionModal.input = m.newSubscriptionNameInput(profile.Name)
+	m.subscriptionModal.mode = subscriptionRename
+	m.subscriptionModal.pane = subscriptionDetailsPane
+	m.subscriptionModal.err = nil
+}
+
+func (m *MainMenuModel) updateSubscriptionNameInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc, tea.KeyCtrlC:
+		m.subscriptionModal.mode = subscriptionBrowse
+		m.subscriptionModal.input.Blur()
+		return m, nil
+	case tea.KeyEnter:
+		name := strings.TrimSpace(m.subscriptionModal.input.Value())
+		if name == "" {
+			m.subscriptionModal.err = fmt.Errorf("profile name cannot be empty")
+			return m, nil
+		}
+		if m.subscriptionModal.mode == subscriptionAddName {
+			m.addSubscriptionProfile(name)
+		} else {
+			m.renameSubscriptionProfile(name)
+		}
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.subscriptionModal.input, cmd = m.subscriptionModal.input.Update(msg)
+	return m, cmd
+}
+
+func (m *MainMenuModel) reloadSubscriptionConfigs() {
+	m.claudeConfigs = LoadClaudeConfigsList(m.claudeConfigsList)
+	m.SetActiveClaudeConfig(claudeconfig.GetActive(m.claudeConfigFile))
+}
+
+func (m *MainMenuModel) focusSubscriptionFile(file string) {
+	m.subscriptionModal.profileCursor = 0
+	for i, profile := range m.subscriptionProfiles() {
+		if profile.File == file {
+			m.subscriptionModal.profileCursor = i
+			break
+		}
+	}
+	m.loadSubscriptionDraft(m.subscriptionModalProfile())
+}
+
+func (m *MainMenuModel) addSubscriptionProfile(name string) {
+	file, err := claudeconfig.AddForProvider(
+		m.claudeConfigsList,
+		m.claudeConfigsDir,
+		name,
+		m.subscriptionModal.providerKey,
+	)
+	if err != nil {
+		m.subscriptionModal.err = err
+		return
+	}
+	m.reloadSubscriptionConfigs()
+	m.focusSubscriptionFile(file)
+	m.subscriptionModal.mode = subscriptionBrowse
+	m.subscriptionModal.pane = subscriptionProfilesPane
+	m.subscriptionModal.input.Blur()
+	m.subscriptionModal.err = nil
+	m.syncOpenCode()
+}
+
+func (m *MainMenuModel) renameSubscriptionProfile(name string) {
+	profile := m.subscriptionModalProfile()
+	if profile.Standard || profile.File == "" {
+		return
+	}
+	if err := claudeconfig.Rename(m.claudeConfigsList, profile.File, name); err != nil {
+		m.subscriptionModal.err = err
+		return
+	}
+	m.reloadSubscriptionConfigs()
+	m.focusSubscriptionFile(profile.File)
+	m.subscriptionModal.mode = subscriptionBrowse
+	m.subscriptionModal.input.Blur()
+	m.subscriptionModal.err = nil
+	m.syncOpenCode()
+}
+
+func (m *MainMenuModel) startSubscriptionDelete() {
+	profile := m.subscriptionModalProfile()
+	if profile.Standard || profile.File == "" ||
+		m.subscriptionModal.profileCursor >= len(m.subscriptionProfiles()) {
+		return
+	}
+	m.subscriptionModal.mode = subscriptionDeleteConfirm
+	m.subscriptionModal.pane = subscriptionDetailsPane
+	m.subscriptionModal.err = nil
+}
+
+func (m *MainMenuModel) deleteSubscriptionProfile() {
+	profile := m.subscriptionModalProfile()
+	if profile.Standard || profile.File == "" {
+		m.subscriptionModal.mode = subscriptionBrowse
+		return
+	}
+	wasActive := profile.Active
+	oldCursor := m.subscriptionModal.profileCursor
+	if err := claudeconfig.Delete(
+		m.claudeConfigsList,
+		m.claudeConfigsDir,
+		m.claudeConfigFile,
+		profile.File,
+	); err != nil {
+		m.subscriptionModal.err = err
+		return
+	}
+	m.reloadSubscriptionConfigs()
+	if wasActive {
+		m.focusSubscriptionFile("")
+	} else {
+		profiles := m.subscriptionProfiles()
+		if oldCursor >= len(profiles) {
+			oldCursor = len(profiles) - 1
+		}
+		m.subscriptionModal.profileCursor = oldCursor
+		m.loadSubscriptionDraft(m.subscriptionModalProfile())
+	}
+	m.subscriptionModal.mode = subscriptionBrowse
+	m.subscriptionModal.pane = subscriptionProfilesPane
+	m.subscriptionModal.err = nil
+	m.syncOpenCode()
+}
+
+func (m *MainMenuModel) subscriptionLifecycleLines(width, height int) []string {
+	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	accent := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
+	danger := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+	var lines []string
+	switch m.subscriptionModal.mode {
+	case subscriptionAddProvider:
+		lines = append(lines, dim.Bold(true).Render("CHOOSE PROVIDER"), "")
+		for i, provider := range claudeconfig.Providers {
+			marker := "  "
+			style := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+			if i == m.subscriptionModal.providerCursor {
+				marker = accent.Render("▌") + " "
+				style = accent
+			}
+			lines = append(lines, marker+style.Render(provider.Name))
+		}
+		lines = append(lines, "", dim.Render("Enter continue · Esc cancel"))
+	case subscriptionAddName:
+		provider, _ := claudeconfig.ProviderByKey(m.subscriptionModal.providerKey)
+		lines = append(lines,
+			dim.Bold(true).Render("NEW "+strings.ToUpper(provider.Name)+" PROFILE"),
+			"",
+			"Profile name",
+			m.subscriptionModal.input.View(),
+			"",
+			dim.Render("Enter create · Esc cancel"),
+		)
+	case subscriptionRename:
+		lines = append(lines,
+			dim.Bold(true).Render("RENAME PROFILE"),
+			"",
+			"Profile name",
+			m.subscriptionModal.input.View(),
+			"",
+			dim.Render("Enter rename · Esc cancel"),
+		)
+	case subscriptionDeleteConfirm:
+		profile := m.subscriptionModalProfile()
+		lines = append(lines,
+			danger.Render("DELETE "+strings.ToUpper(profile.Name)+"?"),
+			"",
+			"This removes the profile settings file.",
+			"",
+			danger.Render("Enter delete")+" · "+dim.Render("Esc cancel"),
+		)
+	}
+	if m.subscriptionModal.err != nil {
+		lines = append(lines, "", danger.Render(modalTruncate(m.subscriptionModal.err.Error(), width)))
+	}
+	return modalWindow(lines, 0, height, width)
+}
+
 func (m *MainMenuModel) subscriptionModalCompact() bool {
 	_, _, width, _ := m.subscriptionModalLayout()
 	return width < subscriptionModalMinWide
@@ -534,6 +817,11 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 	accent := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
 	green := lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
 	amber := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+
+	switch m.subscriptionModal.mode {
+	case subscriptionAddProvider, subscriptionAddName, subscriptionRename, subscriptionDeleteConfirm:
+		return m.subscriptionLifecycleLines(width, height)
+	}
 
 	profile := m.subscriptionModalProfile()
 	lines := []string{dim.Bold(true).Render("PROFILE DETAILS")}
