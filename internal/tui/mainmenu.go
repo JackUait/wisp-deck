@@ -4202,6 +4202,9 @@ func (m *MainMenuModel) View() string {
 		if m.aboutOpen {
 			return m.overlayAbout(placed)
 		}
+		if m.subscriptionModal.open {
+			return m.overlaySubscriptionModal(placed)
+		}
 		return placed
 	}
 	m.centerOffsetY = 0
@@ -4215,6 +4218,9 @@ func (m *MainMenuModel) View() string {
 	}
 	if m.aboutOpen {
 		return m.renderAboutCard()
+	}
+	if m.subscriptionModal.open {
+		return m.renderSubscriptionModalCard()
 	}
 	return content
 }

@@ -1,8 +1,20 @@
 package tui
 
 import (
+	"fmt"
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/jackuait/wisp-deck/internal/claudeconfig"
+	"github.com/mattn/go-runewidth"
+)
+
+const (
+	subscriptionModalMaxWidth = 92
+	subscriptionModalMinWide  = 64
+	subscriptionListWidth     = 28
+	subscriptionModalHeight   = 22
 )
 
 type subscriptionPane int
@@ -121,6 +133,14 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 		m.moveSubscriptionProfile(-1)
 	case tea.KeyDown:
 		m.moveSubscriptionProfile(1)
+	case tea.KeyRight:
+		if m.subscriptionModalCompact() {
+			m.subscriptionModal.pane = subscriptionDetailsPane
+		}
+	case tea.KeyLeft:
+		if m.subscriptionModalCompact() {
+			m.subscriptionModal.pane = subscriptionProfilesPane
+		}
 	case tea.KeyRunes:
 		if len(msg.Runes) == 1 {
 			switch TranslateRune(msg.Runes[0]) {
@@ -147,4 +167,270 @@ func (m *MainMenuModel) moveSubscriptionProfile(delta int) {
 		next = last
 	}
 	m.subscriptionModal.profileCursor = next
+}
+
+func (m *MainMenuModel) subscriptionModalCompact() bool {
+	_, _, width, _ := m.subscriptionModalLayout()
+	return width < subscriptionModalMinWide
+}
+
+func (m *MainMenuModel) subscriptionModalLayout() (left, top, width, height int) {
+	width = subscriptionModalMaxWidth
+	if m.width > 0 && width > m.width-4 {
+		width = m.width - 4
+	}
+	if width < 1 {
+		width = 1
+	}
+
+	height = subscriptionModalHeight
+	if m.height > 0 && height > m.height-4 {
+		height = m.height - 4
+	}
+	if height < 6 {
+		height = 6
+	}
+	if m.height > 0 && height > m.height {
+		height = m.height
+	}
+
+	left = (m.width - width) / 2
+	if left < 0 {
+		left = 0
+	}
+	top = (m.height - height) / 2
+	if top < 0 {
+		top = 0
+	}
+	return left, top, width, height
+}
+
+func modalTruncate(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return runewidth.Truncate(s, width, "…")
+}
+
+func modalPad(s string, width int) string {
+	gap := width - lipgloss.Width(s)
+	if gap < 0 {
+		gap = 0
+	}
+	return s + strings.Repeat(" ", gap)
+}
+
+func (m *MainMenuModel) subscriptionProfileLines(width, height int) []string {
+	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	accent := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
+	green := lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
+	amber := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+
+	lines := []string{dim.Bold(true).Render("PROFILES")}
+	profiles := m.subscriptionProfiles()
+	for i, profile := range profiles {
+		cursor := "  "
+		if i == m.subscriptionModal.profileCursor {
+			cursor = accent.Render("▌") + " "
+		}
+		active := "  "
+		if profile.Active {
+			active = green.Render("●") + " "
+		}
+		statusText := "Ready"
+		status := green.Render(statusText)
+		if !profile.Ready {
+			statusText = "Needs key"
+			status = amber.Render(statusText)
+		}
+		nameWidth := width - lipgloss.Width(cursor) - lipgloss.Width(active) - lipgloss.Width(statusText) - 1
+		if nameWidth < 1 {
+			nameWidth = 1
+		}
+		name := modalTruncate(profile.Name, nameWidth)
+		gap := width - lipgloss.Width(cursor) - lipgloss.Width(active) - lipgloss.Width(name) - lipgloss.Width(status)
+		if gap < 1 {
+			gap = 1
+		}
+		lines = append(lines, cursor+active+name+strings.Repeat(" ", gap)+status)
+	}
+
+	add := "  + Add profile"
+	if m.subscriptionModal.profileCursor == len(profiles) {
+		add = accent.Render("▌") + " + Add profile"
+	}
+	lines = append(lines, add)
+	return modalWindow(lines, m.subscriptionModal.profileOffset, height, width)
+}
+
+func modalWindow(lines []string, offset, height, width int) []string {
+	if height < 0 {
+		height = 0
+	}
+	maxOffset := len(lines) - height
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	end := offset + height
+	if end > len(lines) {
+		end = len(lines)
+	}
+	out := append([]string(nil), lines[offset:end]...)
+	for len(out) < height {
+		out = append(out, strings.Repeat(" ", width))
+	}
+	for i := range out {
+		out[i] = modalPad(out[i], width)
+	}
+	return out
+}
+
+func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
+	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	label := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	accent := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
+	green := lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
+	amber := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+
+	profile := m.subscriptionModalProfile()
+	lines := []string{dim.Bold(true).Render("PROFILE DETAILS")}
+	valueRow := func(name, value string, style lipgloss.Style) string {
+		const labelWidth = 15
+		valueWidth := width - labelWidth
+		if valueWidth < 1 {
+			valueWidth = 1
+		}
+		return label.Render(fmt.Sprintf("%-14s ", modalTruncate(name, 14))) +
+			style.Render(modalTruncate(value, valueWidth))
+	}
+
+	lines = append(lines, valueRow("Profile", profile.Name, accent))
+	if profile.Standard {
+		lines = append(lines,
+			valueRow("Provider", "Anthropic / Claude", green),
+			valueRow("Authentication", "Claude Code login", green),
+			"",
+			dim.Render("Uses Claude Code's native models and account."),
+			"",
+			accent.Render("[ Use profile ]"),
+		)
+		return modalWindow(lines, m.subscriptionModal.detailOffset, height, width)
+	}
+
+	auth := "API key"
+	authStyle := amber
+	authState := "Needs key"
+	endpoint := profile.Provider.BaseURL
+	if profile.Provider.Auth == claudeconfig.AuthCodexChatGPT {
+		auth = "codex login"
+		authStyle = green
+		authState = "Ready"
+		endpoint = "Local Codex bridge"
+	} else if profile.Ready {
+		authStyle = green
+		authState = "Ready · API key"
+	}
+	lines = append(lines,
+		valueRow("Provider", profile.Provider.Name, green),
+		valueRow("Authentication", auth, authStyle),
+		valueRow("Status", authState, authStyle),
+		valueRow("Endpoint", endpoint, dim),
+		"",
+		dim.Bold(true).Render("MODEL ROUTING"),
+	)
+
+	models := claudeconfig.ProviderModels[profile.Provider.Key]
+	mappings := claudeconfig.ReadModelMappings(m.claudeConfigsDir, profile.File, models)
+	for i, alias := range claudeconfig.AnthropicAliases {
+		value := "(none)"
+		style := dim
+		if mappings[i] >= 0 && mappings[i] < len(models) {
+			value = models[mappings[i]]
+			style = green
+		}
+		lines = append(lines, valueRow(strings.ToUpper(alias[:1])+alias[1:], "→ "+value, style))
+	}
+	lines = append(lines,
+		"",
+		accent.Render("[ Use profile ]")+"  "+label.Render("[ Rename ]")+"  "+label.Render("[ Delete ]"),
+		label.Render("[ Save changes ]"),
+	)
+	return modalWindow(lines, m.subscriptionModal.detailOffset, height, width)
+}
+
+func (m *MainMenuModel) renderSubscriptionModalCard() string {
+	_, _, width, height := m.subscriptionModalLayout()
+	innerWidth := width - 2
+	if innerWidth < 1 {
+		innerWidth = 1
+	}
+	bodyHeight := height - 4 // top + separator/footer + bottom
+	if bodyHeight < 1 {
+		bodyHeight = 1
+	}
+
+	border := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	title := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	topPrefix := "╭─ "
+	topSuffix := " "
+	fill := innerWidth - lipgloss.Width("─ ") - lipgloss.Width("Subscriptions") - lipgloss.Width(topSuffix)
+	if fill < 0 {
+		fill = 0
+	}
+	lines := []string{
+		border.Render(topPrefix) + title.Render("Subscriptions") + border.Render(topSuffix+strings.Repeat("─", fill)+"╮"),
+	}
+
+	compact := m.subscriptionModalCompact()
+	if compact {
+		var body []string
+		if m.subscriptionModal.pane == subscriptionDetailsPane {
+			body = m.subscriptionDetailLines(innerWidth, bodyHeight)
+		} else {
+			body = m.subscriptionProfileLines(innerWidth, bodyHeight)
+		}
+		for _, line := range body {
+			lines = append(lines, border.Render("│")+line+border.Render("│"))
+		}
+	} else {
+		leftWidth := subscriptionListWidth
+		rightWidth := innerWidth - leftWidth - 1
+		if rightWidth < 1 {
+			rightWidth = 1
+		}
+		left := m.subscriptionProfileLines(leftWidth, bodyHeight)
+		right := m.subscriptionDetailLines(rightWidth, bodyHeight)
+		for i := 0; i < bodyHeight; i++ {
+			lines = append(lines, border.Render("│")+left[i]+border.Render("│")+right[i]+border.Render("│"))
+		}
+	}
+
+	help := "↑↓ profile · Tab pane · ←→ value · Enter action · Esc close"
+	if compact {
+		help = "↑↓ navigate · → details · Esc close"
+	}
+	help = modalTruncate(help, innerWidth)
+	lines = append(lines,
+		border.Render("├"+strings.Repeat("─", innerWidth)+"┤"),
+		border.Render("│")+lipgloss.NewStyle().Foreground(lipgloss.Color("247")).Render(modalPad(help, innerWidth))+border.Render("│"),
+		border.Render("╰"+strings.Repeat("─", innerWidth)+"╯"),
+	)
+	return strings.Join(lines, "\n")
+}
+
+func (m *MainMenuModel) overlaySubscriptionModal(placed string) string {
+	left, top, width, _ := m.subscriptionModalLayout()
+	return m.overlayCard(
+		placed,
+		strings.Split(m.renderSubscriptionModalCard(), "\n"),
+		left,
+		top,
+		width,
+	)
 }
