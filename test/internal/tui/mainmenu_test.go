@@ -3303,9 +3303,11 @@ func TestMainMenu_SoundCyclingNeverLaunchesHostPlayer(t *testing.T) {
 	t.Setenv("AFPLAY_SPY_MARKER", marker)
 	t.Setenv("PATH", spyDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
-	m.CycleSoundName()
-	m.CycleSoundNameReverse()
+	forward := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
+	forward.CycleSoundName()
+
+	reverse := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
+	reverse.CycleSoundNameReverse()
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
