@@ -223,6 +223,86 @@ func TestSubscriptionModal_providerChooserUsesFullRowFocus(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModal_lifecycleActionFocus(t *testing.T) {
+	withTrueColor(t)
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+	m.startSubscriptionRename()
+
+	lines := m.subscriptionLifecycleLines(m.subscriptionDetailPaneWidth(), 18)
+	actionLine := lines[subscriptionLineIndex(lines, "[ Rename ]")]
+	confirm := lipgloss.NewStyle().
+		Foreground(m.theme.Primary).
+		Bold(true).
+		Reverse(true).
+		Render("[ Rename ]")
+	if !strings.Contains(actionLine, confirm) {
+		t.Fatalf("initial lifecycle focus is not on Rename: %q", actionLine)
+	}
+
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	lines = m.subscriptionLifecycleLines(m.subscriptionDetailPaneWidth(), 18)
+	actionLine = lines[subscriptionLineIndex(lines, "[ Rename ]")]
+	cancel := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("245")).
+		Reverse(true).
+		Render("[ Cancel ]")
+	if !strings.Contains(actionLine, cancel) {
+		t.Fatalf("Right did not move lifecycle focus to Cancel: %q", actionLine)
+	}
+}
+
+func TestSubscriptionModal_lifecycleHelp(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+	m.startSubscriptionRename()
+
+	if card := stripAnsi(m.renderSubscriptionModalCard()); !strings.Contains(card, "←→ action · Enter choose · Esc cancel") {
+		t.Fatalf("lifecycle footer does not describe action navigation:\n%s", card)
+	}
+
+	m.subscriptionModal.mode = subscriptionBrowse
+	m.startSubscriptionAdd()
+	if card := stripAnsi(m.renderSubscriptionModalCard()); !strings.Contains(card, "↑↓ provider · Enter choose · Esc cancel") {
+		t.Fatalf("provider footer does not describe provider navigation:\n%s", card)
+	}
+}
+
+func TestSubscriptionModal_profileRowsReserveRightInset(t *testing.T) {
+	withTrueColor(t)
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	height := len(m.subscriptionProfiles()) + 3
+
+	assertInset := func(label string, lines []string) {
+		t.Helper()
+		for _, line := range lines {
+			plain := stripAnsi(line)
+			if !strings.Contains(plain, label) {
+				continue
+			}
+			if !strings.HasSuffix(plain, " ") {
+				t.Fatalf("%s row has no right inset: %q", label, plain)
+			}
+			if !strings.HasSuffix(line, " ") {
+				t.Fatalf("%s right inset is still styled: %q", label, line)
+			}
+			return
+		}
+		t.Fatalf("%s row is missing", label)
+	}
+
+	lines := m.subscriptionProfileLines(subscriptionListWidth, height)
+	assertInset("Standard Claude", lines)
+	assertInset("Xiaomi MiMo", lines)
+
+	m.moveSubscriptionProfile(len(m.subscriptionProfiles()))
+	lines = m.subscriptionProfileLines(subscriptionListWidth, height)
+	assertInset("+ Add profile", lines)
+}
+
 func TestSubscriptionModal_profileListHasHeadingBreathingRoom(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.openSubscriptionModal()

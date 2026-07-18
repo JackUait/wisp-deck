@@ -50,6 +50,11 @@ const (
 	subscriptionDiscardConfirm
 )
 
+const (
+	subscriptionLifecycleConfirm = iota
+	subscriptionLifecycleCancel
+)
+
 type subscriptionHitKind int
 
 const (
@@ -83,22 +88,23 @@ type subscriptionDraft struct {
 }
 
 type subscriptionModalState struct {
-	open           bool
-	pane           subscriptionPane
-	mode           subscriptionModalMode
-	profileCursor  int
-	detailCursor   int
-	profileOffset  int
-	detailOffset   int
-	draft          subscriptionDraft
-	input          textinput.Model
-	providerKey    string
-	providerCursor int
-	pendingProfile int
-	pendingMode    subscriptionModalMode
-	pendingClose   bool
-	hover          subscriptionHitTarget
-	err            error
+	open            bool
+	pane            subscriptionPane
+	mode            subscriptionModalMode
+	profileCursor   int
+	detailCursor    int
+	profileOffset   int
+	detailOffset    int
+	draft           subscriptionDraft
+	input           textinput.Model
+	providerKey     string
+	providerCursor  int
+	lifecycleCursor int
+	pendingProfile  int
+	pendingMode     subscriptionModalMode
+	pendingClose    bool
+	hover           subscriptionHitTarget
+	err             error
 }
 
 type subscriptionProfile struct {
@@ -169,6 +175,22 @@ func (m *MainMenuModel) openSubscriptionModal() {
 	m.ensureSubscriptionProfileVisible()
 }
 
+func (m *MainMenuModel) enterSubscriptionLifecycle(mode subscriptionModalMode) {
+	m.subscriptionModal.mode = mode
+	m.subscriptionModal.lifecycleCursor = subscriptionLifecycleConfirm
+}
+
+func (m *MainMenuModel) moveSubscriptionLifecycleAction(delta int) {
+	next := m.subscriptionModal.lifecycleCursor + delta
+	if next < subscriptionLifecycleConfirm {
+		next = subscriptionLifecycleCancel
+	}
+	if next > subscriptionLifecycleCancel {
+		next = subscriptionLifecycleConfirm
+	}
+	m.subscriptionModal.lifecycleCursor = next
+}
+
 func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.subscriptionModal.mode == subscriptionEditKey {
 		return m.updateSubscriptionKeyInput(msg)
@@ -181,8 +203,16 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 	}
 	if m.subscriptionModal.mode == subscriptionDeleteConfirm {
 		switch msg.Type {
+		case tea.KeyLeft:
+			m.moveSubscriptionLifecycleAction(-1)
+		case tea.KeyRight:
+			m.moveSubscriptionLifecycleAction(1)
 		case tea.KeyEnter:
-			m.deleteSubscriptionProfile()
+			if m.subscriptionModal.lifecycleCursor == subscriptionLifecycleCancel {
+				m.subscriptionModal.mode = subscriptionBrowse
+			} else {
+				m.deleteSubscriptionProfile()
+			}
 		case tea.KeyEsc, tea.KeyCtrlC:
 			m.subscriptionModal.mode = subscriptionBrowse
 		}
@@ -190,7 +220,18 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 	}
 	if m.subscriptionModal.mode == subscriptionDiscardConfirm {
 		switch msg.Type {
+		case tea.KeyLeft:
+			m.moveSubscriptionLifecycleAction(-1)
+		case tea.KeyRight:
+			m.moveSubscriptionLifecycleAction(1)
 		case tea.KeyEnter:
+			if m.subscriptionModal.lifecycleCursor == subscriptionLifecycleCancel {
+				m.subscriptionModal.mode = subscriptionBrowse
+				m.subscriptionModal.pendingProfile = -1
+				m.subscriptionModal.pendingMode = subscriptionBrowse
+				m.subscriptionModal.pendingClose = false
+				return m, nil
+			}
 			if m.subscriptionModal.pendingClose {
 				m.subscriptionModal.open = false
 				return m, nil
@@ -231,14 +272,14 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 			return m, nil
 		}
 		if m.subscriptionModal.draft.dirty {
-			m.subscriptionModal.mode = subscriptionDiscardConfirm
+			m.enterSubscriptionLifecycle(subscriptionDiscardConfirm)
 			m.subscriptionModal.pendingClose = true
 			return m, nil
 		}
 		m.subscriptionModal.open = false
 	case tea.KeyCtrlC:
 		if m.subscriptionModal.draft.dirty {
-			m.subscriptionModal.mode = subscriptionDiscardConfirm
+			m.enterSubscriptionLifecycle(subscriptionDiscardConfirm)
 			m.subscriptionModal.pendingClose = true
 			return m, nil
 		}
@@ -349,7 +390,7 @@ func (m *MainMenuModel) selectSubscriptionProfile(next int) {
 		return
 	}
 	if m.subscriptionModal.draft.dirty {
-		m.subscriptionModal.mode = subscriptionDiscardConfirm
+		m.enterSubscriptionLifecycle(subscriptionDiscardConfirm)
 		m.subscriptionModal.pendingProfile = next
 		m.subscriptionModal.pendingMode = subscriptionBrowse
 		m.subscriptionModal.pendingClose = false
@@ -560,18 +601,29 @@ func (m *MainMenuModel) beginSubscriptionKeyEdit() tea.Cmd {
 	input.SetValue(m.subscriptionModal.draft.apiKey)
 	input.Focus()
 	m.subscriptionModal.input = input
-	m.subscriptionModal.mode = subscriptionEditKey
+	m.enterSubscriptionLifecycle(subscriptionEditKey)
 	m.subscriptionModal.err = nil
 	return textinput.Blink
 }
 
 func (m *MainMenuModel) updateSubscriptionKeyInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
+	case tea.KeyLeft:
+		m.moveSubscriptionLifecycleAction(-1)
+		return m, nil
+	case tea.KeyRight:
+		m.moveSubscriptionLifecycleAction(1)
+		return m, nil
 	case tea.KeyEsc, tea.KeyCtrlC:
 		m.subscriptionModal.mode = subscriptionBrowse
 		m.subscriptionModal.input.Blur()
 		return m, nil
 	case tea.KeyEnter:
+		if m.subscriptionModal.lifecycleCursor == subscriptionLifecycleCancel {
+			m.subscriptionModal.mode = subscriptionBrowse
+			m.subscriptionModal.input.Blur()
+			return m, nil
+		}
 		key := strings.TrimSpace(m.subscriptionModal.input.Value())
 		if key != m.subscriptionModal.draft.apiKey {
 			m.subscriptionModal.draft.apiKey = key
@@ -607,7 +659,7 @@ func (m *MainMenuModel) activateSubscriptionDetail() (tea.Model, tea.Cmd) {
 
 func (m *MainMenuModel) startSubscriptionAdd() {
 	if m.subscriptionModal.draft.dirty {
-		m.subscriptionModal.mode = subscriptionDiscardConfirm
+		m.enterSubscriptionLifecycle(subscriptionDiscardConfirm)
 		m.subscriptionModal.pendingProfile = -1
 		m.subscriptionModal.pendingMode = subscriptionAddProvider
 		m.subscriptionModal.pendingClose = false
@@ -668,7 +720,7 @@ func (m *MainMenuModel) beginSubscriptionAddName() tea.Cmd {
 	provider := claudeconfig.Providers[m.subscriptionModal.providerCursor]
 	m.subscriptionModal.providerKey = provider.Key
 	m.subscriptionModal.input = m.newSubscriptionNameInput(provider.Name)
-	m.subscriptionModal.mode = subscriptionAddName
+	m.enterSubscriptionLifecycle(subscriptionAddName)
 	m.subscriptionModal.err = nil
 	return textinput.Blink
 }
@@ -680,25 +732,36 @@ func (m *MainMenuModel) startSubscriptionRename() {
 		return
 	}
 	if m.subscriptionModal.draft.dirty {
-		m.subscriptionModal.mode = subscriptionDiscardConfirm
+		m.enterSubscriptionLifecycle(subscriptionDiscardConfirm)
 		m.subscriptionModal.pendingProfile = -1
 		m.subscriptionModal.pendingMode = subscriptionRename
 		m.subscriptionModal.pendingClose = false
 		return
 	}
 	m.subscriptionModal.input = m.newSubscriptionNameInput(profile.Name)
-	m.subscriptionModal.mode = subscriptionRename
+	m.enterSubscriptionLifecycle(subscriptionRename)
 	m.subscriptionModal.pane = subscriptionDetailsPane
 	m.subscriptionModal.err = nil
 }
 
 func (m *MainMenuModel) updateSubscriptionNameInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
+	case tea.KeyLeft:
+		m.moveSubscriptionLifecycleAction(-1)
+		return m, nil
+	case tea.KeyRight:
+		m.moveSubscriptionLifecycleAction(1)
+		return m, nil
 	case tea.KeyEsc, tea.KeyCtrlC:
 		m.subscriptionModal.mode = subscriptionBrowse
 		m.subscriptionModal.input.Blur()
 		return m, nil
 	case tea.KeyEnter:
+		if m.subscriptionModal.lifecycleCursor == subscriptionLifecycleCancel {
+			m.subscriptionModal.mode = subscriptionBrowse
+			m.subscriptionModal.input.Blur()
+			return m, nil
+		}
 		name := strings.TrimSpace(m.subscriptionModal.input.Value())
 		if name == "" {
 			m.subscriptionModal.err = fmt.Errorf("profile name cannot be empty")
@@ -788,13 +851,13 @@ func (m *MainMenuModel) startSubscriptionDelete() {
 		return
 	}
 	if m.subscriptionModal.draft.dirty {
-		m.subscriptionModal.mode = subscriptionDiscardConfirm
+		m.enterSubscriptionLifecycle(subscriptionDiscardConfirm)
 		m.subscriptionModal.pendingProfile = -1
 		m.subscriptionModal.pendingMode = subscriptionDeleteConfirm
 		m.subscriptionModal.pendingClose = false
 		return
 	}
-	m.subscriptionModal.mode = subscriptionDeleteConfirm
+	m.enterSubscriptionLifecycle(subscriptionDeleteConfirm)
 	m.subscriptionModal.pane = subscriptionDetailsPane
 	m.subscriptionModal.err = nil
 }
@@ -838,7 +901,14 @@ func (m *MainMenuModel) subscriptionLifecycleLines(width, height int) []string {
 	accent := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
 	danger := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
 	action := func(kind subscriptionHitKind, text string, style lipgloss.Style) string {
-		if m.subscriptionModal.hover.kind == kind {
+		actionHovered := m.subscriptionModal.hover.kind == subscriptionHitConfirm ||
+			m.subscriptionModal.hover.kind == subscriptionHitCancel
+		selected := m.subscriptionModal.mode != subscriptionAddProvider &&
+			((kind == subscriptionHitConfirm &&
+				m.subscriptionModal.lifecycleCursor == subscriptionLifecycleConfirm) ||
+				(kind == subscriptionHitCancel &&
+					m.subscriptionModal.lifecycleCursor == subscriptionLifecycleCancel))
+		if m.subscriptionModal.hover.kind == kind || (!actionHovered && selected) {
 			return style.Reverse(true).Render(text)
 		}
 		return style.Render(text)
@@ -1165,6 +1235,10 @@ func (m *MainMenuModel) subscriptionProfileLines(width, height int) []string {
 	amber := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
 	selectionColor := lipgloss.Color("236")
 	selectionWash := lipgloss.NewStyle().Background(selectionColor)
+	rowWidth := width - 1
+	if rowWidth < 1 {
+		rowWidth = 1
+	}
 
 	headingStyle := dim.Bold(true)
 	if m.subscriptionModal.mode == subscriptionBrowse &&
@@ -1193,12 +1267,12 @@ func (m *MainMenuModel) subscriptionProfileLines(width, height int) []string {
 			statusText = "Needs key"
 			status = amber.Render(statusText)
 		}
-		nameWidth := width - lipgloss.Width(cursor) - lipgloss.Width(active) - lipgloss.Width(statusText) - 1
+		nameWidth := rowWidth - lipgloss.Width(cursor) - lipgloss.Width(active) - lipgloss.Width(statusText) - 1
 		if nameWidth < 1 {
 			nameWidth = 1
 		}
 		name := modalTruncate(profile.Name, nameWidth)
-		gap := width - lipgloss.Width(cursor) - lipgloss.Width(active) - lipgloss.Width(name) - lipgloss.Width(status)
+		gap := rowWidth - lipgloss.Width(cursor) - lipgloss.Width(active) - lipgloss.Width(name) - lipgloss.Width(status)
 		if gap < 1 {
 			gap = 1
 		}
@@ -1223,7 +1297,7 @@ func (m *MainMenuModel) subscriptionProfileLines(width, height int) []string {
 	add := "  + Add profile"
 	if m.subscriptionModal.profileCursor == len(profiles) {
 		label := "+ Add profile"
-		padding := width - lipgloss.Width("▌ ") - lipgloss.Width(label)
+		padding := rowWidth - lipgloss.Width("▌ ") - lipgloss.Width(label)
 		if padding < 0 {
 			padding = 0
 		}
@@ -1588,7 +1662,7 @@ func (m *MainMenuModel) handleSubscriptionModalMouse(msg tea.MouseMsg) (tea.Mode
 				return m, nil
 			}
 			if m.subscriptionModal.draft.dirty {
-				m.subscriptionModal.mode = subscriptionDiscardConfirm
+				m.enterSubscriptionLifecycle(subscriptionDiscardConfirm)
 				m.subscriptionModal.pendingClose = true
 			} else {
 				m.subscriptionModal.open = false
@@ -1610,9 +1684,11 @@ func (m *MainMenuModel) handleSubscriptionModalMouse(msg tea.MouseMsg) (tea.Mode
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 			switch target.kind {
 			case subscriptionHitConfirm:
+				m.subscriptionModal.lifecycleCursor = subscriptionLifecycleConfirm
 				return m.updateSubscriptionModal(tea.KeyMsg{Type: tea.KeyEnter})
 			case subscriptionHitCancel:
-				return m.updateSubscriptionModal(tea.KeyMsg{Type: tea.KeyEsc})
+				m.subscriptionModal.lifecycleCursor = subscriptionLifecycleCancel
+				return m.updateSubscriptionModal(tea.KeyMsg{Type: tea.KeyEnter})
 			}
 		}
 		return m, nil
@@ -1750,8 +1826,10 @@ func (m *MainMenuModel) renderSubscriptionModalCard() string {
 	}
 
 	help := "↑↓ profile · → details · Tab pane · Enter action · Esc close"
-	if m.subscriptionModal.mode != subscriptionBrowse {
-		help = "Enter confirm · Esc cancel"
+	if m.subscriptionModal.mode == subscriptionAddProvider {
+		help = "↑↓ provider · Enter choose · Esc cancel"
+	} else if m.subscriptionModal.mode != subscriptionBrowse {
+		help = "←→ action · Enter choose · Esc cancel"
 	} else if compact && m.subscriptionModal.pane == subscriptionDetailsPane {
 		help = "↑↓ setting · Enter action · ←/Esc profiles"
 	} else if compact {

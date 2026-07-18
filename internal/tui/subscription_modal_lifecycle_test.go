@@ -117,6 +117,85 @@ func TestSubscriptionModal_renameProfilePreservesProvider(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModal_renameArrowSelectsCancel(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2) // Xiaomi MiMo
+	m = subscriptionRune(t, m, 'r')
+	m.subscriptionModal.input.SetValue("Should Not Apply")
+
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.subscriptionModal.mode != subscriptionBrowse || !m.subscriptionModal.open {
+		t.Fatalf("cancel mode/open = %v/%v, want browse/open", m.subscriptionModal.mode, m.subscriptionModal.open)
+	}
+	if cfg := findSubscriptionConfig(m.claudeConfigs, "Xiaomi MiMo"); cfg.File != "xiaomi-mimo.json" {
+		t.Fatalf("cancel removed the original profile: %+v", cfg)
+	}
+	if cfg := findSubscriptionConfig(m.claudeConfigs, "Should Not Apply"); cfg.File != "" {
+		t.Fatalf("cancel applied the rename: %+v", cfg)
+	}
+}
+
+func TestSubscriptionModal_renameArrowReturnsToConfirm(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2) // Xiaomi MiMo
+	m = subscriptionRune(t, m, 'r')
+	m.subscriptionModal.input.SetValue("Research MiMo")
+
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyLeft})
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if cfg := findSubscriptionConfig(m.claudeConfigs, "Research MiMo"); cfg.File != "xiaomi-mimo.json" {
+		t.Fatalf("Left did not return to Rename before Enter: %+v", cfg)
+	}
+}
+
+func TestSubscriptionModal_inputLifecycleArrowsSelectCancel(t *testing.T) {
+	t.Run("add name", func(t *testing.T) {
+		m := newSubscriptionModalMenu(t)
+		m.openSubscriptionModal()
+		m = subscriptionRune(t, m, 'a')
+		m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+		m.subscriptionModal.input.SetValue("Should Not Be Created")
+
+		m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRight})
+		m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+		if cfg := findSubscriptionConfig(m.claudeConfigs, "Should Not Be Created"); cfg.File != "" {
+			t.Fatalf("Cancel created the profile: %+v", cfg)
+		}
+		if m.subscriptionModal.mode != subscriptionBrowse {
+			t.Fatalf("Cancel mode = %v, want browse", m.subscriptionModal.mode)
+		}
+	})
+
+	t.Run("API key", func(t *testing.T) {
+		m := newSubscriptionModalMenu(t)
+		m.openSubscriptionModal()
+		m.moveSubscriptionProfile(2) // Xiaomi MiMo
+		originalKey := m.subscriptionModal.draft.apiKey
+		m.beginSubscriptionKeyEdit()
+		m.subscriptionModal.input.SetValue("sk-should-not-apply")
+
+		m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRight})
+		m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+		if got := m.subscriptionModal.draft.apiKey; got != originalKey {
+			t.Fatalf("Cancel changed API key draft to %q, want %q", got, originalKey)
+		}
+		if m.subscriptionModal.draft.keyEdited {
+			t.Fatal("Cancel marked the API key draft as edited")
+		}
+		if m.subscriptionModal.mode != subscriptionBrowse {
+			t.Fatalf("Cancel mode = %v, want browse", m.subscriptionModal.mode)
+		}
+	})
+}
+
 func TestSubscriptionModal_renameLegacyProfileBackfillsProviderMarker(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	legacyPath := filepath.Join(m.claudeConfigsDir, "xiaomi-mimo.json")
@@ -191,6 +270,23 @@ func TestSubscriptionModal_deleteActiveProfileResetsStandard(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModal_deleteArrowSelectsCancel(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2) // Xiaomi MiMo
+	m = subscriptionRune(t, m, 'd')
+
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.subscriptionModal.mode != subscriptionBrowse || !m.subscriptionModal.open {
+		t.Fatalf("cancel mode/open = %v/%v, want browse/open", m.subscriptionModal.mode, m.subscriptionModal.open)
+	}
+	if cfg := findSubscriptionConfig(m.claudeConfigs, "Xiaomi MiMo"); cfg.File != "xiaomi-mimo.json" {
+		t.Fatalf("Cancel deleted the profile: %+v", cfg)
+	}
+}
+
 func TestSubscriptionModal_EscCancelsLifecycleMode(t *testing.T) {
 	for _, key := range []rune{'a', 'r', 'd'} {
 		t.Run(string(key), func(t *testing.T) {
@@ -229,6 +325,29 @@ func TestSubscriptionModal_dirtyAddContinuesAfterDiscard(t *testing.T) {
 	}
 	if m.subscriptionModal.draft.dirty {
 		t.Fatal("confirmed Add kept the old draft dirty")
+	}
+}
+
+func TestSubscriptionModal_discardArrowSelectsKeepEditing(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+	m.subscriptionModal.detailCursor = subscriptionDetailOpus
+	m.cycleSubscriptionMapping("next")
+	wantMappings := m.subscriptionModal.draft.mappings
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.subscriptionModal.mode != subscriptionBrowse || !m.subscriptionModal.open {
+		t.Fatalf("Keep editing mode/open = %v/%v, want browse/open", m.subscriptionModal.mode, m.subscriptionModal.open)
+	}
+	if !m.subscriptionModal.draft.dirty {
+		t.Fatal("Keep editing discarded the dirty draft")
+	}
+	if got := m.subscriptionModal.draft.mappings; got != wantMappings {
+		t.Fatalf("Keep editing mappings = %v, want %v", got, wantMappings)
 	}
 }
 
