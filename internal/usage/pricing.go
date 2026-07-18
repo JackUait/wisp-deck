@@ -116,6 +116,13 @@ var modelRates = map[string]modelRate{
 // place and can never drift between the catalog and the Stats cost calculator.
 func init() {
 	for _, m := range claudeconfig.CatalogModels() {
+		// Some subscription-only models intentionally carry no API price:
+		// ChatGPT access is not metered through Wisp Deck. Do not let that
+		// display metadata overwrite an explicit Stats pricing entry or create
+		// a false $0 rate for a model family with separate published pricing.
+		if m.InPerM == 0 && m.OutPerM == 0 {
+			continue
+		}
 		modelRates[m.ID] = modelRate{m.InPerM, m.OutPerM}
 	}
 }
