@@ -26,6 +26,8 @@ const (
 	subscriptionDetailFable
 	subscriptionDetailAuth
 	subscriptionDetailUse
+	subscriptionDetailRename
+	subscriptionDetailDelete
 	subscriptionDetailSave
 )
 
@@ -261,12 +263,18 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 		}
 	case tea.KeyRight:
 		if m.subscriptionModal.pane == subscriptionDetailsPane {
-			m.cycleSubscriptionMapping("next")
+			if !m.moveSubscriptionAction(1) {
+				m.cycleSubscriptionMapping("next")
+			}
 		} else {
 			m.subscriptionModal.pane = subscriptionDetailsPane
 			m.ensureSubscriptionDetailVisible()
 		}
 	case tea.KeyLeft:
+		if m.subscriptionModal.pane == subscriptionDetailsPane &&
+			m.moveSubscriptionAction(-1) {
+			break
+		}
 		if m.subscriptionModalCompact() &&
 			m.subscriptionModal.pane == subscriptionDetailsPane {
 			m.subscriptionModal.pane = subscriptionProfilesPane
@@ -378,13 +386,20 @@ func (m *MainMenuModel) subscriptionDetailRows() []int {
 	if profile.Provider.Auth == claudeconfig.AuthAPIKey {
 		rows = append(rows, subscriptionDetailAuth)
 	}
-	return append(rows, subscriptionDetailUse, subscriptionDetailSave)
+	return append(rows, subscriptionDetailUse)
 }
 
 func (m *MainMenuModel) moveSubscriptionDetail(delta int) {
 	rows := m.subscriptionDetailRows()
 	if len(rows) == 0 {
 		return
+	}
+	if m.subscriptionModal.detailCursor >= subscriptionDetailRename &&
+		m.subscriptionModal.detailCursor <= subscriptionDetailSave {
+		if delta >= 0 {
+			return
+		}
+		m.subscriptionModal.detailCursor = subscriptionDetailUse
 	}
 	position := 0
 	for i, row := range rows {
@@ -402,6 +417,35 @@ func (m *MainMenuModel) moveSubscriptionDetail(delta int) {
 	}
 	m.subscriptionModal.detailCursor = rows[position]
 	m.ensureSubscriptionDetailVisible()
+}
+
+func (m *MainMenuModel) moveSubscriptionAction(delta int) bool {
+	if m.subscriptionModalOnAddRow() || m.subscriptionModalProfile().Standard {
+		return false
+	}
+	actions := [...]int{
+		subscriptionDetailUse,
+		subscriptionDetailRename,
+		subscriptionDetailDelete,
+		subscriptionDetailSave,
+	}
+	position := -1
+	for i, action := range actions {
+		if action == m.subscriptionModal.detailCursor {
+			position = i
+			break
+		}
+	}
+	if position < 0 {
+		return false
+	}
+	next := position + delta
+	if next < 0 || next >= len(actions) {
+		return false
+	}
+	m.subscriptionModal.detailCursor = actions[next]
+	m.ensureSubscriptionDetailVisible()
+	return true
 }
 
 func (m *MainMenuModel) loadSubscriptionDraft(profile subscriptionProfile) {
@@ -554,6 +598,10 @@ func (m *MainMenuModel) activateSubscriptionDetail() (tea.Model, tea.Cmd) {
 		return m, m.beginSubscriptionKeyEdit()
 	case subscriptionDetailUse:
 		m.useSubscriptionProfile()
+	case subscriptionDetailRename:
+		m.startSubscriptionRename()
+	case subscriptionDetailDelete:
+		m.startSubscriptionDelete()
 	case subscriptionDetailSave:
 		m.saveSubscriptionDraft()
 	}
@@ -985,13 +1033,17 @@ func (m *MainMenuModel) subscriptionDetailCursorLine() int {
 		line++
 	}
 	line++ // blank line before actions
-	if cursor == subscriptionDetailSave {
-		if subscriptionActionsFitOneLine(m.subscriptionDetailPaneWidth()) {
-			return line
+	if subscriptionActionsFitOneLine(m.subscriptionDetailPaneWidth()) {
+		return line
+	}
+	if m.subscriptionModalCompact() {
+		if cursor == subscriptionDetailRename || cursor == subscriptionDetailDelete {
+			return line + 1
 		}
-		if m.subscriptionModalCompact() {
+		if cursor == subscriptionDetailSave {
 			return line + 2
 		}
+	} else if cursor == subscriptionDetailSave {
 		return line + 1
 	}
 	return line
@@ -1229,8 +1281,8 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 	}
 	lines = append(lines, "")
 	use := m.subscriptionActionLabel(subscriptionHitUse, subscriptionDetailUse, "[ Use profile ]", accent, label)
-	rename := m.subscriptionActionLabel(subscriptionHitRename, -1, "[ Rename ]", accent, label)
-	deleteAction := m.subscriptionActionLabel(subscriptionHitDelete, -1, "[ Delete ]", accent, label)
+	rename := m.subscriptionActionLabel(subscriptionHitRename, subscriptionDetailRename, "[ Rename ]", accent, label)
+	deleteAction := m.subscriptionActionLabel(subscriptionHitDelete, subscriptionDetailDelete, "[ Delete ]", accent, label)
 	save := m.subscriptionActionLabel(subscriptionHitSave, subscriptionDetailSave, "[ Save changes ]", accent, label)
 	if subscriptionActionsFitOneLine(width) {
 		lines = append(lines, use+"  "+rename+"  "+deleteAction+"  "+save)
@@ -1545,7 +1597,7 @@ func (m *MainMenuModel) renderSubscriptionModalCard() string {
 	} else if compact {
 		help = "↑↓ navigate · → details · Esc close"
 	} else if m.subscriptionModal.pane == subscriptionDetailsPane {
-		help = "↑↓ setting · Tab pane · ←→ value · Enter action · Esc close"
+		help = "↑↓ setting · Tab pane · ←→ value/action · Enter action · Esc close"
 	}
 	help = modalTruncate(help, innerWidth)
 	lines = append(lines,

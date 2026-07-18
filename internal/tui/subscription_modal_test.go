@@ -349,6 +349,52 @@ func TestSubscriptionModal_wideRightEntersAndNavigatesProfileDetails(t *testing.
 	}
 }
 
+func TestSubscriptionModal_actionRowUsesHorizontalKeyboardNavigation(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		rights   int
+		wantMode subscriptionModalMode
+	}{
+		{name: "Rename", rights: 1, wantMode: subscriptionRename},
+		{name: "Delete", rights: 2, wantMode: subscriptionDeleteConfirm},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newSubscriptionModalMenu(t)
+			m.openSubscriptionModal()
+			m.moveSubscriptionProfile(2)
+			m.subscriptionModal.pane = subscriptionDetailsPane
+			m.subscriptionModal.detailCursor = subscriptionDetailUse
+
+			for range tc.rights {
+				m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRight})
+			}
+			m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+			if m.subscriptionModal.mode != tc.wantMode {
+				t.Fatalf("mode = %v, want %v after %d Right presses", m.subscriptionModal.mode, tc.wantMode, tc.rights)
+			}
+		})
+	}
+}
+
+func TestSubscriptionModal_actionRowCanReachSaveWithKeyboard(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(2)
+	m.subscriptionModal.pane = subscriptionDetailsPane
+	m.subscriptionModal.detailCursor = subscriptionDetailUse
+	m.subscriptionModal.draft.dirty = true
+
+	for range 3 {
+		m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	}
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.subscriptionModal.draft.dirty {
+		t.Fatal("three Right presses from Use did not focus and activate Save")
+	}
+}
+
 func TestSubscriptionModal_addRowCannotActivateLastProfile(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.openSubscriptionModal()
