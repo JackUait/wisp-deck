@@ -109,10 +109,13 @@ Wisp Deck can keep Claude Code as the interface and tool runner while using GPT 
 
 1. Install or update Wisp Deck with `npx wisp-deck`; its setup can install Codex for you.
 2. In Wisp Deck, open **Settings → Subscription**, press **Enter**, and use **OpenAI GPT**.
-3. Open a new session. If Codex is signed out, Wisp Deck opens ChatGPT sign-in in your browser automatically, waits for it to finish, and then starts Claude Code. If the browser cannot open, copy the printed URL from the session pane.
-4. After updating Wisp Deck, relaunch any existing ledger panes or sessions so they load the new binary and provider environment.
+3. The connection panel shows whether Codex is **Signed in**, **Signed out**, still checking, or unavailable. Choose **Sign in / switch account** at any time to open Codex-managed ChatGPT authentication in your browser, including when you want to change accounts.
+4. When you activate OpenAI GPT while Codex is signed out, Wisp Deck opens ChatGPT sign-in in your browser automatically and waits for it to finish. If the browser cannot open, open the fallback URL shown in the subscription modal.
+5. Open a new session. After updating Wisp Deck, relaunch any existing ledger panes or sessions so they load the new binary and provider environment.
 
 This path accepts only Codex-managed ChatGPT authentication. An OpenAI Platform API-key login is rejected so Wisp Deck cannot silently switch to metered API billing. The local adapter never reads or stores your ChatGPT token; Codex owns authentication and refresh, while Claude Code continues to execute tools and enforce permissions.
+
+Deleting an OpenAI profile does not log Codex out: profiles contain Wisp Deck's local model-routing settings, while Codex owns the separate cached ChatGPT login. Use **Sign in / switch account** to change that login, or `codex logout` to clear it.
 
 OpenAI GPT requires a compatible Codex version with app-server dynamic-tool support. It is intentionally not mirrored into OpenCode. If launch reports that Codex is missing, update Wisp Deck/Codex and relaunch the session. If Codex is currently authenticated with an API key, run `codex logout` first; the next OpenAI GPT launch will offer ChatGPT sign-in without falling back to metered API usage.
 

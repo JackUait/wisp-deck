@@ -21,8 +21,12 @@ func TestChatGPTSubscriptionDocumentationCoversSetupAndSafety(t *testing.T) {
 	for _, want := range []string{
 		"OpenAI GPT",
 		"ChatGPT",
+		"Sign in / switch account",
+		"Signed in",
+		"Signed out",
+		"Deleting an OpenAI profile does not log Codex out",
 		"opens ChatGPT sign-in in your browser automatically",
-		"copy the printed URL",
+		"open the fallback URL shown in the subscription modal",
 		"OpenAI Platform API-key",
 		"never reads or stores",
 		"not mirrored into OpenCode",
@@ -36,6 +40,7 @@ func TestChatGPTSubscriptionDocumentationCoversSetupAndSafety(t *testing.T) {
 		"Unreleased",
 		"OpenAI GPT",
 		"opens the ChatGPT browser login automatically",
+		"Sign in / switch account",
 	} {
 		if !strings.Contains(string(changelog), want) {
 			t.Errorf("CHANGELOG is missing %q", want)
