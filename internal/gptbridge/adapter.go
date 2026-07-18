@@ -169,7 +169,7 @@ func RunAdapter(ctx context.Context, options AdapterOptions) (AdapterResult, err
 		}
 		openURL := options.OpenURL
 		if openURL == nil {
-			openURL = openChatGPTAuthURL
+			openURL = OpenChatGPTAuthURL
 		}
 		loginContext, cancelLogin := context.WithTimeout(ctx, loginTimeout)
 		err := appServer.LoginChatGPT(loginContext, func(authURL string) {
@@ -294,7 +294,8 @@ func RunAdapter(ctx context.Context, options AdapterOptions) (AdapterResult, err
 	}
 }
 
-func openChatGPTAuthURL(authURL string) error {
+// OpenChatGPTAuthURL opens a validated managed-login URL in the default browser.
+func OpenChatGPTAuthURL(authURL string) error {
 	if err := exec.Command("open", authURL).Run(); err != nil {
 		return fmt.Errorf("open ChatGPT sign-in URL: %w", err)
 	}

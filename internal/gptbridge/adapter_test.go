@@ -259,7 +259,7 @@ printf '%s' "$1" > "$OPEN_URL_LOG"
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("OPEN_URL_LOG", logPath)
 
-	if err := openChatGPTAuthURL("https://chatgpt.com/auth/wisp"); err != nil {
+	if err := OpenChatGPTAuthURL("https://chatgpt.com/auth/wisp"); err != nil {
 		t.Fatal(err)
 	}
 	opened, err := os.ReadFile(logPath)
