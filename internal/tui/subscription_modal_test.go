@@ -447,7 +447,7 @@ func TestSubscriptionModal_addRowCannotActivateLastProfile(t *testing.T) {
 		t.Fatalf("Use on Add row activated %q", got)
 	}
 	card := stripAnsi(m.renderSubscriptionModalCard())
-	if !strings.Contains(card, "Add a provider profile") {
+	if !strings.Contains(card, "Connect another provider") {
 		t.Fatalf("Add row renders another profile's details:\n%s", card)
 	}
 }

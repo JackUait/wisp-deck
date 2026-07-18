@@ -100,6 +100,22 @@ func TestSubscriptionModalMouse_clickProfilePreviewsWithoutActivating(t *testing
 	}
 }
 
+func TestSubscriptionModalMouse_clickChooseProviderPreview(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(len(m.subscriptionProfiles()))
+	x, y := subscriptionCardCell(t, m, "[ Choose provider ]")
+
+	if target := m.subscriptionModalTarget(x, y); target.kind != subscriptionHitAdd {
+		t.Fatalf("choose-provider target = %+v, want add", target)
+	}
+	updated, _ := m.Update(subscriptionScreenMouse(m, x, y, tea.MouseActionPress, tea.MouseButtonLeft))
+	got := updated.(*MainMenuModel)
+	if got.subscriptionModal.mode != subscriptionAddProvider {
+		t.Fatalf("choose-provider click mode = %v, want add provider", got.subscriptionModal.mode)
+	}
+}
+
 func TestSubscriptionModalMouse_clickMappingCyclesDraft(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.SetActiveClaudeConfig("openai-gpt.json")

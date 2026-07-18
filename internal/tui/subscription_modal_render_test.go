@@ -23,7 +23,7 @@ func TestSubscriptionModal_wideRenderShowsInventoryAndDetails(t *testing.T) {
 		"Zhipu GLM",
 		"Xiaomi MiMo",
 		"OpenAI GPT",
-		"Provider",
+		"PROVIDER",
 		"OpenAI / ChatGPT",
 		"Authentication",
 		"codex login",
@@ -134,6 +134,86 @@ func TestSubscriptionModal_focusedProfileHasFullRowSelectionWash(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModal_detailRenderUsesStructuredSections(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.SetActiveClaudeConfig("openai-gpt.json")
+	m.openSubscriptionModal()
+
+	details := stripAnsi(strings.Join(
+		m.subscriptionDetailLines(m.subscriptionDetailPaneWidth(), 18),
+		"\n",
+	))
+	for _, want := range []string{
+		"OpenAI GPT",
+		"● READY",
+		"OpenAI / ChatGPT",
+		"CONNECTION",
+		"MODEL ROUTING",
+		"ACTIONS",
+	} {
+		if !strings.Contains(details, want) {
+			t.Errorf("details missing %q:\n%s", want, details)
+		}
+	}
+	if strings.Contains(details, "PROFILE DETAILS") {
+		t.Errorf("details kept duplicate generic heading:\n%s", details)
+	}
+}
+
+func TestSubscriptionModal_addPreviewShowsProvidersAndAuth(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.moveSubscriptionProfile(len(m.subscriptionProfiles()))
+
+	preview := stripAnsi(strings.Join(
+		m.subscriptionDetailLines(m.subscriptionDetailPaneWidth(), 18),
+		"\n",
+	))
+	for _, want := range []string{
+		"ADD PROFILE",
+		"AVAILABLE PROVIDERS",
+		"Zhipu / GLM",
+		"Xiaomi MiMo",
+		"OpenAI / ChatGPT",
+		"API KEY",
+		"CODEX LOGIN",
+		"[ Choose provider ]",
+	} {
+		if !strings.Contains(preview, want) {
+			t.Errorf("add preview missing %q:\n%s", want, preview)
+		}
+	}
+}
+
+func TestSubscriptionModal_providerChooserUsesFullRowFocus(t *testing.T) {
+	withTrueColor(t)
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	m.startSubscriptionAdd()
+	m.subscriptionModal.providerCursor = 1 // Xiaomi MiMo
+
+	var focusedLine, idleLine string
+	for _, line := range m.subscriptionLifecycleLines(m.subscriptionDetailPaneWidth(), 18) {
+		switch {
+		case strings.Contains(line, "Xiaomi MiMo"):
+			focusedLine = line
+		case strings.Contains(line, "Zhipu / GLM"):
+			idleLine = line
+		}
+	}
+	if focusedLine == "" {
+		t.Fatal("focused provider row is missing")
+	}
+	for _, target := range []string{"▌", "Xiaomi MiMo", "API KEY"} {
+		if !ledgerSGRActiveAt(focusedLine, target, "48;5;236") {
+			t.Errorf("selection wash is not active at %q in provider row: %q", target, focusedLine)
+		}
+	}
+	if strings.Contains(idleLine, "48;5;236") {
+		t.Errorf("unfocused provider incorrectly has selection wash: %q", idleLine)
+	}
+}
+
 func TestSubscriptionModal_compactRenderDrillsIntoDetails(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.width = 60
@@ -149,7 +229,10 @@ func TestSubscriptionModal_compactRenderDrillsIntoDetails(t *testing.T) {
 
 	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRight})
 	details := stripAnsi(m.renderSubscriptionModalCard())
-	if !strings.Contains(details, "PROFILE DETAILS") {
+	for _, want := range []string{"Standard Claude", "CONNECTION", "ACTIONS"} {
+		if strings.Contains(details, want) {
+			continue
+		}
 		t.Fatalf("Right did not drill into compact details:\n%s", details)
 	}
 	if strings.Contains(details, "PROFILES") {

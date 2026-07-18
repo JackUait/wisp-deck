@@ -862,15 +862,20 @@ func (m *MainMenuModel) subscriptionLifecycleLines(width, height int) []string {
 			buttons("[ Keep changes ]", accent, "[ Cancel ]"),
 		)
 	case subscriptionAddProvider:
-		lines = append(lines, dim.Bold(true).Render("CHOOSE PROVIDER"), "")
+		lines = append(lines,
+			accent.Render("CHOOSE PROVIDER"),
+			dim.Render("Select how this profile authenticates."),
+			"",
+			subscriptionSectionLine("AVAILABLE PROVIDERS", width, dim.Bold(true), dim),
+		)
 		for i, provider := range claudeconfig.Providers {
-			marker := "  "
-			style := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-			if i == m.subscriptionModal.providerCursor {
-				marker = accent.Render("▌") + " "
-				style = accent
-			}
-			lines = append(lines, marker+style.Render(provider.Name))
+			lines = append(lines, m.subscriptionProviderLine(
+				provider,
+				width,
+				i == m.subscriptionModal.providerCursor,
+				m.subscriptionModal.hover.kind == subscriptionHitProvider &&
+					m.subscriptionModal.hover.index == i,
+			))
 		}
 		lines = append(lines, "", action(subscriptionHitCancel, "[ Cancel ]", dim))
 	case subscriptionAddName:
@@ -1076,6 +1081,83 @@ func modalPad(s string, width int) string {
 	return s + strings.Repeat(" ", gap)
 }
 
+func subscriptionSectionLine(title string, width int, style, rule lipgloss.Style) string {
+	label := style.Render(title)
+	gap := width - lipgloss.Width(label) - 1
+	if gap <= 0 {
+		return modalPad(label, width)
+	}
+	return label + " " + rule.Render(strings.Repeat("─", gap))
+}
+
+func subscriptionAuthLabel(provider claudeconfig.Provider) string {
+	if provider.Auth == claudeconfig.AuthCodexChatGPT {
+		return "CODEX LOGIN"
+	}
+	return "API KEY"
+}
+
+func subscriptionIdentityLine(
+	name,
+	status string,
+	width int,
+	nameStyle,
+	statusStyle lipgloss.Style,
+) string {
+	badgeText := "● " + strings.ToUpper(status)
+	badgeWidth := lipgloss.Width(badgeText)
+	nameWidth := width - badgeWidth - 2
+	if nameWidth < 1 {
+		return nameStyle.Render(modalTruncate(name, width))
+	}
+	nameText := modalTruncate(name, nameWidth)
+	gap := width - lipgloss.Width(nameText) - badgeWidth
+	if gap < 1 {
+		gap = 1
+	}
+	return nameStyle.Render(nameText) +
+		strings.Repeat(" ", gap) +
+		statusStyle.Bold(true).Render(badgeText)
+}
+
+func (m *MainMenuModel) subscriptionProviderLine(
+	provider claudeconfig.Provider,
+	width int,
+	focused,
+	hovered bool,
+) string {
+	accent := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
+	text := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	auth := subscriptionAuthLabel(provider)
+	nameWidth := width - lipgloss.Width(auth) - 3
+	if nameWidth < 1 {
+		nameWidth = 1
+	}
+	name := modalTruncate(provider.Name, nameWidth)
+	gap := width - lipgloss.Width("  ") - lipgloss.Width(name) - lipgloss.Width(auth)
+	if gap < 1 {
+		gap = 1
+	}
+
+	if focused || hovered {
+		selectionColor := lipgloss.Color("236")
+		wash := lipgloss.NewStyle().Background(selectionColor)
+		markerStyle := dim
+		nameStyle := text
+		if focused {
+			markerStyle = accent
+			nameStyle = accent
+		}
+		return markerStyle.Background(selectionColor).Render("▌") +
+			wash.Render(" ") +
+			nameStyle.Background(selectionColor).Render(name) +
+			wash.Render(strings.Repeat(" ", gap)) +
+			dim.Background(selectionColor).Bold(true).Render(auth)
+	}
+	return "  " + text.Render(name) + strings.Repeat(" ", gap) + dim.Bold(true).Render(auth)
+}
+
 func (m *MainMenuModel) subscriptionProfileLines(width, height int) []string {
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	accent := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
@@ -1084,7 +1166,12 @@ func (m *MainMenuModel) subscriptionProfileLines(width, height int) []string {
 	selectionColor := lipgloss.Color("236")
 	selectionWash := lipgloss.NewStyle().Background(selectionColor)
 
-	heading := modalPad(dim.Bold(true).Render("PROFILES"), width)
+	headingStyle := dim.Bold(true)
+	if m.subscriptionModal.mode == subscriptionBrowse &&
+		m.subscriptionModal.pane == subscriptionProfilesPane {
+		headingStyle = accent
+	}
+	heading := modalPad(headingStyle.Render("PROFILES"), width)
 	var items []string
 	profiles := m.subscriptionProfiles()
 	for i, profile := range profiles {
@@ -1197,19 +1284,38 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 
 	if m.subscriptionModalOnAddRow() {
 		lines := []string{
-			dim.Bold(true).Render("ADD A PROFILE"),
+			accent.Render("ADD PROFILE"),
+			dim.Render("Connect another provider to Claude-compatible routes."),
 			"",
-			"Add a provider profile",
-			dim.Render("Choose from every available provider and configure"),
-			dim.Render("its authentication and model routes in this overlay."),
-			"",
-			accent.Render("[ Press Enter to choose provider ]"),
+			subscriptionSectionLine("AVAILABLE PROVIDERS", width, dim.Bold(true), dim),
 		}
+		for _, provider := range claudeconfig.Providers {
+			lines = append(lines, m.subscriptionProviderLine(provider, width, false, false))
+		}
+		lines = append(lines,
+			"",
+			accent.Render("[ Choose provider ]"),
+			dim.Render("Name it, configure routes, then make it active."),
+		)
 		return modalWindow(lines, 0, height, width)
 	}
 
 	profile := m.subscriptionModalProfile()
-	lines := []string{dim.Bold(true).Render("PROFILE DETAILS")}
+	status := "Ready"
+	statusStyle := green
+	if !profile.Ready {
+		status = "Needs key"
+		statusStyle = amber
+	}
+	providerLabel := dim.Bold(true).Render("PROVIDER  ")
+	providerWidth := width - lipgloss.Width(providerLabel)
+	if providerWidth < 1 {
+		providerWidth = 1
+	}
+	lines := []string{
+		subscriptionIdentityLine(profile.Name, status, width, accent, statusStyle),
+		providerLabel + green.Render(modalTruncate(profile.Provider.Name, providerWidth)),
+	}
 	valueRow := func(row int, name, value string, style lipgloss.Style) string {
 		const labelWidth = 15
 		marker := "  "
@@ -1227,14 +1333,13 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 			style.Render(modalTruncate(value, valueWidth))
 	}
 
-	lines = append(lines, valueRow(-1, "Profile", profile.Name, accent))
 	if profile.Standard {
 		lines = append(lines,
-			valueRow(-1, "Provider", "Anthropic / Claude", green),
+			"",
+			subscriptionSectionLine("CONNECTION", width, dim.Bold(true), dim),
 			valueRow(-1, "Authentication", "Claude Code login", green),
-			"",
 			dim.Render("Uses Claude Code's native models and account."),
-			"",
+			subscriptionSectionLine("ACTIONS", width, dim.Bold(true), dim),
 		)
 		use := m.subscriptionActionLabel(
 			subscriptionHitUse,
@@ -1256,7 +1361,6 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 
 	auth := "API key"
 	authStyle := amber
-	authState := "Needs key"
 	endpoint := profile.Provider.BaseURL
 	if configured := claudeconfig.ReadBaseURL(m.claudeConfigsDir, profile.File); configured != "" {
 		endpoint = configured
@@ -1264,19 +1368,17 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 	if profile.Provider.Auth == claudeconfig.AuthCodexChatGPT {
 		auth = "codex login"
 		authStyle = green
-		authState = "Ready"
 		endpoint = "Local Codex bridge"
 	} else if profile.Ready {
 		authStyle = green
-		authState = "Ready · API key"
 	}
 	lines = append(lines,
-		valueRow(-1, "Provider", profile.Provider.Name, green),
+		"",
+		subscriptionSectionLine("CONNECTION", width, dim.Bold(true), dim),
 		valueRow(-1, "Authentication", auth, authStyle),
-		valueRow(-1, "Status", authState, authStyle),
 		valueRow(-1, "Endpoint", endpoint, dim),
 		"",
-		dim.Bold(true).Render("MODEL ROUTING"),
+		subscriptionSectionLine("MODEL ROUTING", width, dim.Bold(true), dim),
 	)
 
 	models := claudeconfig.ProviderModels[profile.Provider.Key]
@@ -1310,7 +1412,7 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("196")).
 			Render(modalTruncate(m.subscriptionModal.err.Error(), width)))
 	}
-	lines = append(lines, "")
+	lines = append(lines, subscriptionSectionLine("ACTIONS", width, dim.Bold(true), dim))
 	use := m.subscriptionActionLabel(subscriptionHitUse, subscriptionDetailUse, "[ Use profile ]", accent, label)
 	rename := m.subscriptionActionLabel(subscriptionHitRename, subscriptionDetailRename, "[ Rename ]", accent, label)
 	deleteAction := m.subscriptionActionLabel(subscriptionHitDelete, subscriptionDetailDelete, "[ Delete ]", accent, label)
@@ -1408,6 +1510,9 @@ func (m *MainMenuModel) subscriptionModalTarget(cardX, cardY int) subscriptionHi
 	}
 	if m.subscriptionModal.mode != subscriptionBrowse {
 		return subscriptionHitTarget{}
+	}
+	if m.subscriptionModalOnAddRow() && hitText("[ Choose provider ]") {
+		return subscriptionHitTarget{kind: subscriptionHitAdd}
 	}
 	if m.subscriptionModal.pane == subscriptionDetailsPane {
 		for _, text := range []string{"← back/previous", "←/Esc profiles"} {
@@ -1643,13 +1748,29 @@ func (m *MainMenuModel) renderSubscriptionModalCard() string {
 	} else if m.subscriptionModal.pane == subscriptionDetailsPane {
 		help = "↑↓ setting · Tab pane · ← back/previous · → value/next · Enter action · Esc close"
 	}
-	help = modalTruncate(help, innerWidth)
 	lines = append(lines,
 		border.Render("├"+strings.Repeat("─", innerWidth)+"┤"),
-		border.Render("│")+lipgloss.NewStyle().Foreground(lipgloss.Color("247")).Render(modalPad(help, innerWidth))+border.Render("│"),
+		border.Render("│")+subscriptionHelpLine(help, innerWidth)+border.Render("│"),
 		border.Render("╰"+strings.Repeat("─", innerWidth)+"╯"),
 	)
 	return strings.Join(lines, "\n")
+}
+
+func subscriptionHelpLine(help string, width int) string {
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("247"))
+	separatorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+	segments := strings.Split(help, " · ")
+	rendered := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		key, label, ok := strings.Cut(segment, " ")
+		if !ok {
+			rendered = append(rendered, keyStyle.Render(segment))
+			continue
+		}
+		rendered = append(rendered, keyStyle.Render(key)+" "+labelStyle.Render(label))
+	}
+	return modalPad(strings.Join(rendered, separatorStyle.Render(" · ")), width)
 }
 
 func (m *MainMenuModel) overlaySubscriptionModal(placed string) string {
