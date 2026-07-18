@@ -984,7 +984,7 @@ func subscriptionActionsFitOneLine(width int) bool {
 }
 
 func (m *MainMenuModel) ensureSubscriptionProfileVisible() {
-	viewport := m.subscriptionModalBodyHeight() - 1 // fixed PROFILES heading
+	viewport := m.subscriptionModalBodyHeight() - 2 // fixed PROFILES heading and breathing room
 	if viewport < 1 {
 		viewport = 1
 	}
@@ -1014,14 +1014,14 @@ func (m *MainMenuModel) subscriptionDetailCursorLine() int {
 	}
 	profile := m.subscriptionModalProfile()
 	if profile.Standard {
-		return 7
+		return 8
 	}
 	cursor := m.subscriptionModal.detailCursor
 	if cursor >= subscriptionDetailOpus && cursor <= subscriptionDetailFable {
-		return 8 + cursor
+		return 9 + cursor
 	}
 
-	line := 12 // first line after the four model mappings
+	line := 13 // first line after the four model mappings
 	if profile.Provider.Auth == claudeconfig.AuthAPIKey {
 		if cursor == subscriptionDetailAuth {
 			return line
@@ -1034,7 +1034,7 @@ func (m *MainMenuModel) subscriptionDetailCursorLine() int {
 	if m.subscriptionModal.err != nil {
 		line++
 	}
-	line++ // blank line before actions
+	line += 2 // blank line and heading before actions
 	if subscriptionActionsFitOneLine(m.subscriptionDetailPaneWidth()) {
 		return line
 	}
@@ -1238,7 +1238,13 @@ func (m *MainMenuModel) subscriptionProfileLines(width, height int) []string {
 	if height <= 0 {
 		return nil
 	}
-	return append([]string{heading}, modalWindow(items, m.subscriptionModal.profileOffset, height-1, width)...)
+	if height == 1 {
+		return []string{heading}
+	}
+	return append(
+		[]string{heading, strings.Repeat(" ", width)},
+		modalWindow(items, m.subscriptionModal.profileOffset, height-2, width)...,
+	)
 }
 
 func modalWindow(lines []string, offset, height, width int) []string {
@@ -1339,6 +1345,7 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 			subscriptionSectionLine("CONNECTION", width, dim.Bold(true), dim),
 			valueRow(-1, "Authentication", "Claude Code login", green),
 			dim.Render("Uses Claude Code's native models and account."),
+			"",
 			subscriptionSectionLine("ACTIONS", width, dim.Bold(true), dim),
 		)
 		use := m.subscriptionActionLabel(
@@ -1379,6 +1386,7 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 		valueRow(-1, "Endpoint", endpoint, dim),
 		"",
 		subscriptionSectionLine("MODEL ROUTING", width, dim.Bold(true), dim),
+		"",
 	)
 
 	models := claudeconfig.ProviderModels[profile.Provider.Key]
@@ -1412,7 +1420,10 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("196")).
 			Render(modalTruncate(m.subscriptionModal.err.Error(), width)))
 	}
-	lines = append(lines, subscriptionSectionLine("ACTIONS", width, dim.Bold(true), dim))
+	lines = append(lines,
+		"",
+		subscriptionSectionLine("ACTIONS", width, dim.Bold(true), dim),
+	)
 	use := m.subscriptionActionLabel(subscriptionHitUse, subscriptionDetailUse, "[ Use profile ]", accent, label)
 	rename := m.subscriptionActionLabel(subscriptionHitRename, subscriptionDetailRename, "[ Rename ]", accent, label)
 	deleteAction := m.subscriptionActionLabel(subscriptionHitDelete, subscriptionDetailDelete, "[ Delete ]", accent, label)
@@ -1530,7 +1541,7 @@ func (m *MainMenuModel) subscriptionModalTarget(cardX, cardY int) subscriptionHi
 		listEnd = width - 1
 	}
 	if listVisible && cardX < listEnd {
-		item := cardY - 2 + m.subscriptionModal.profileOffset
+		item := cardY - 3 + m.subscriptionModal.profileOffset
 		profiles := m.subscriptionProfiles()
 		if item >= 0 && item < len(profiles) && hitText(profiles[item].Name) {
 			return subscriptionHitTarget{kind: subscriptionHitProfile, index: item}

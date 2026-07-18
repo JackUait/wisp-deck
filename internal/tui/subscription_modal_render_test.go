@@ -10,6 +10,15 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+func subscriptionLineIndex(lines []string, text string) int {
+	for i, line := range lines {
+		if strings.Contains(stripAnsi(line), text) {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestSubscriptionModal_wideRenderShowsInventoryAndDetails(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.SetActiveClaudeConfig("openai-gpt.json")
@@ -214,6 +223,54 @@ func TestSubscriptionModal_providerChooserUsesFullRowFocus(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModal_profileListHasHeadingBreathingRoom(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+
+	lines := m.subscriptionProfileLines(subscriptionListWidth, 8)
+	if got := strings.TrimSpace(stripAnsi(lines[1])); got != "" {
+		t.Fatalf("row below PROFILES = %q, want blank breathing room", got)
+	}
+	if got := stripAnsi(lines[2]); !strings.Contains(got, "Standard Claude") {
+		t.Fatalf("first profile row = %q, want Standard Claude after gap", got)
+	}
+}
+
+func TestSubscriptionModal_detailSectionsHaveVerticalRhythm(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.SetActiveClaudeConfig("openai-gpt.json")
+	m.openSubscriptionModal()
+
+	lines := m.subscriptionDetailLines(m.subscriptionDetailPaneWidth(), 18)
+	routing := subscriptionLineIndex(lines, "MODEL ROUTING")
+	opus := subscriptionLineIndex(lines, "Opus")
+	fable := subscriptionLineIndex(lines, "Fable")
+	actions := subscriptionLineIndex(lines, "ACTIONS")
+	if routing < 0 || opus < 0 || fable < 0 || actions < 0 {
+		t.Fatalf("structured detail rows are missing:\n%s", stripAnsi(strings.Join(lines, "\n")))
+	}
+	if opus != routing+2 {
+		t.Errorf("Opus row = %d, want blank row after routing heading %d", opus, routing)
+	}
+	if actions != fable+2 {
+		t.Errorf("Actions row = %d, want blank row after final mapping %d", actions, fable)
+	}
+}
+
+func TestSubscriptionModal_standardActionsHaveVerticalRhythm(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+
+	lines := m.subscriptionDetailLines(m.subscriptionDetailPaneWidth(), 18)
+	actions := subscriptionLineIndex(lines, "ACTIONS")
+	if actions <= 0 {
+		t.Fatalf("standard action heading is missing:\n%s", stripAnsi(strings.Join(lines, "\n")))
+	}
+	if got := strings.TrimSpace(stripAnsi(lines[actions-1])); got != "" {
+		t.Fatalf("row before Standard actions = %q, want blank breathing room", got)
+	}
+}
+
 func TestSubscriptionModal_compactRenderDrillsIntoDetails(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.width = 60
@@ -365,7 +422,7 @@ func TestSubscriptionModal_wideInlineSaveScrollTargetsSharedActionRow(t *testing
 
 	m.ensureSubscriptionDetailVisible()
 
-	if got, want := m.subscriptionModal.detailOffset, 11; got != want {
+	if got, want := m.subscriptionModal.detailOffset, 13; got != want {
 		t.Fatalf("detail offset = %d, want %d for inline action row", got, want)
 	}
 }
