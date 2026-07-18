@@ -47,6 +47,7 @@ type CodexSupervisorOptions struct {
 	ProjectCWD     string
 	ClientVersion  string
 	ResumeSession  string
+	IdentityFile   string
 	FallbackWindow time.Duration
 	Prompt         string
 	ErrorLog       string
@@ -313,6 +314,19 @@ func (s *CodexSupervisor) Run(ctx context.Context, options CodexSupervisorOption
 			stopServer()
 		}
 	}
+	if options.IdentityFile != "" && !remote {
+		if initial != nil {
+			initial.Close()
+		}
+		switch {
+		case privateSetupErr != nil:
+			return CodexExitResult{}, fmt.Errorf("initialize observable Codex session identity: %w", privateSetupErr)
+		case serverErr != nil:
+			return CodexExitResult{}, fmt.Errorf("initialize observable Codex session identity: %w", serverErr)
+		default:
+			return CodexExitResult{}, errors.New("initialize observable Codex session identity: observer unavailable")
+		}
+	}
 	if result, signaled := signalOutcome(); signaled {
 		return result, nil
 	}
@@ -345,6 +359,27 @@ func (s *CodexSupervisor) Run(ctx context.Context, options CodexSupervisorOption
 		reducer, err = newReducer(options.ResumeSession, nil, false)
 	}
 	if err != nil {
+		if initial != nil {
+			initial.Close()
+		}
+		return CodexExitResult{}, err
+	}
+	persistedRoot := ""
+	persistIdentity := func() error {
+		if options.IdentityFile == "" {
+			return nil
+		}
+		root := reducer.RootThreadID()
+		if root == "" || root == persistedRoot {
+			return nil
+		}
+		if err := writeCodexIdentity(options.IdentityFile, root); err != nil {
+			return fmt.Errorf("%w: %v", errCodexIdentityPersistence, err)
+		}
+		persistedRoot = root
+		return nil
+	}
+	if err := persistIdentity(); err != nil {
 		if initial != nil {
 			initial.Close()
 		}
@@ -415,7 +450,12 @@ func (s *CodexSupervisor) Run(ctx context.Context, options CodexSupervisorOption
 			return result, nil
 		}
 		argv := buildCodexTUIArgv(options.CodexPath, socketPath, remote, resume, options.Prompt)
-		result, runErr := s.runAttempt(ctx, argv, runPTY, messages, managerEpoch, reducer, publish, &oscCounter)
+		result, runErr := s.runAttempt(
+			ctx, argv, runPTY, messages, managerEpoch, reducer, publish, persistIdentity, &oscCounter,
+		)
+		if errors.Is(runErr, errCodexIdentityPersistence) {
+			return result, runErr
+		}
 		if signalResult, signaled := signalOutcome(); signaled {
 			if result.Signaled && result.Signal == signalResult.Signal {
 				return result, runErr
@@ -516,6 +556,9 @@ func validateCodexSupervisorOptions(options CodexSupervisorOptions) error {
 			return err
 		}
 	}
+	if options.IdentityFile != "" && !filepath.IsAbs(options.IdentityFile) {
+		return errors.New("Codex session identity file must be absolute")
+	}
 	if options.FallbackWindow <= 0 {
 		return errors.New("fallback window must be positive")
 	}
@@ -614,14 +657,17 @@ func (s *CodexSupervisor) runAttempt(
 	epoch uint64,
 	reducer *Reducer,
 	publish func(attention.State),
+	persistIdentity func() error,
 	oscCounter *uint64,
 ) (CodexExitResult, error) {
+	attemptContext, cancelAttempt := context.WithCancel(ctx)
+	defer cancelAttempt()
 	resultCh := make(chan struct {
 		result CodexExitResult
 		err    error
 	}, 1)
 	go func() {
-		result, err := runPTY(ctx, argv, func(event OSC9Event) {
+		result, err := runPTY(attemptContext, argv, func(event OSC9Event) {
 			// The exact launch overrides admit only agent-turn-complete, while Codex
 			// puts its dynamic display text (usually a response preview) in OSC9.
 			// The parser already bounds the payload, so provenance—not its text—is
@@ -632,9 +678,9 @@ func (s *CodexSupervisor) runAttempt(
 			case messages <- observation:
 				select {
 				case <-observation.ack:
-				case <-ctx.Done():
+				case <-attemptContext.Done():
 				}
-			case <-ctx.Done():
+			case <-attemptContext.Done():
 			}
 		})
 		resultCh <- struct {
@@ -663,15 +709,27 @@ func (s *CodexSupervisor) runAttempt(
 				(*oscCounter)++
 				identity := fmt.Sprintf("osc:%d", *oscCounter)
 				publish(reducer.Reduce(ReducerEvent{Kind: EventOSC9Completion, Identity: identity}))
-				close(message.ack)
 			default:
 				publish(reducer.Reduce(ReducerEvent{}))
+			}
+			if persistIdentity != nil {
+				if err := persistIdentity(); err != nil {
+					if message.ack != nil {
+						close(message.ack)
+					}
+					cancelAttempt()
+					outcome := <-resultCh
+					return outcome.result, err
+				}
+			}
+			if message.ack != nil {
+				close(message.ack)
 			}
 
 		case outcome := <-resultCh:
 			return outcome.result, outcome.err
 
-		case <-ctx.Done():
+		case <-attemptContext.Done():
 			outcome := <-resultCh
 			return outcome.result, outcome.err
 		}

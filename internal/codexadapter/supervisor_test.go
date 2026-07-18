@@ -1066,6 +1066,7 @@ func TestCodexRunAttemptPreservesAdmittedLossAsUnknownAfterLaterOSC(t *testing.T
 					<-releasePublish
 				})
 			},
+			nil,
 			&counter,
 		)
 		if err != nil {
