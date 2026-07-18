@@ -38,10 +38,11 @@ Use five independent, fail-closed layers.
 
 Repository automation uses a versioned, two-part exec-time contract:
 `WISP_DECK_TESTING=1` plus the exact argv0 sentinel
-`__WISP_DECK_REPOSITORY_TEST_V1__.test`. The `.test` suffix preserves the
-existing defense-in-depth executable-name behavior, while exact equality
-prevents prefixes, suffixes, or later arguments from impersonating the
-contract.
+`__WISP_DECK_REPOSITORY_TEST_V1__.test`. The `.test` suffix preserves
+conventional test-process argv0 behavior and compatibility; the separate
+defense-in-depth fallback checks the full `Executable` basename. Exact
+sentinel equality prevents prefixes, suffixes, or later arguments from
+impersonating the contract.
 
 - Every repository-owned executable `go test` entrypoint routes through
   `scripts/go-test.sh`. The driver exports the marker and uses `exec -a` to

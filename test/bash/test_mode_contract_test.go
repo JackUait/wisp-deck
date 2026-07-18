@@ -3,6 +3,7 @@ package bash_test
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +17,42 @@ func repositorySource(t *testing.T, parts ...string) string {
 		t.Fatalf("read %s: %v", filepath.Join(parts...), err)
 	}
 	return string(data)
+}
+
+func repositoryGoTestEntrypointSources(t *testing.T) map[string]string {
+	t.Helper()
+	root := projectRoot(t)
+	output, err := exec.Command(
+		"git",
+		"-C",
+		root,
+		"ls-files",
+		"-z",
+		"--",
+		"Makefile",
+		"run-tests.sh",
+		"scripts/",
+		".github/workflows/",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("discover repository test entrypoints: %v\n%s", err, output)
+	}
+
+	sources := make(map[string]string)
+	for _, file := range strings.Split(string(output), "\x00") {
+		if file == "" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))
+		if err != nil {
+			t.Fatalf("read tracked test entrypoint %s: %v", file, err)
+		}
+		sources[file] = string(data)
+	}
+	if _, ok := sources["scripts/go-test.sh"]; !ok {
+		t.Fatal("tracked test entrypoints are missing scripts/go-test.sh")
+	}
+	return sources
 }
 
 func requireSourceText(t *testing.T, file, source, want string) {
@@ -67,12 +104,14 @@ func requireWorkflowJobsMarked(t *testing.T, file, source string) {
 }
 
 func TestRepositoryTestEntrypointsPropagateMode(t *testing.T) {
-	runTests := repositorySource(t, "run-tests.sh")
+	entrypoints := repositoryGoTestEntrypointSources(t)
+
+	runTests := entrypoints["run-tests.sh"]
 	requireSourceText(t, "run-tests.sh", runTests, "export WISP_DECK_TESTING=1")
 	requireSourceText(t, "run-tests.sh", runTests,
 		`exec "$SCRIPT_DIR/scripts/go-test.sh" ./test/bash/... ./test/internal/... ./test/npx/... ./internal/... "$@"`)
 
-	makefile := repositorySource(t, "Makefile")
+	makefile := entrypoints["Makefile"]
 	requireSourceText(t, "Makefile", makefile,
 		"\tWISP_DECK_TESTING=1 ./scripts/go-test.sh ./...")
 	requireSourceText(t, "Makefile", makefile,
@@ -81,8 +120,8 @@ func TestRepositoryTestEntrypointsPropagateMode(t *testing.T) {
 		t.Errorf("Makefile marked run-tests.sh commands = %d, want 2", got)
 	}
 
-	testsWorkflow := repositorySource(t, ".github", "workflows", "tests.yml")
-	installWorkflow := repositorySource(t, ".github", "workflows", "install.yml")
+	testsWorkflow := entrypoints[".github/workflows/tests.yml"]
+	installWorkflow := entrypoints[".github/workflows/install.yml"]
 	requireWorkflowJobsMarked(t, ".github/workflows/tests.yml", testsWorkflow)
 	requireWorkflowJobsMarked(t, ".github/workflows/install.yml", installWorkflow)
 
@@ -125,14 +164,6 @@ func TestRepositoryTestEntrypointsPropagateMode(t *testing.T) {
 	requireSourceText(t, "test/npx/install_e2e_test.go", installE2E,
 		"cmd.Env = repositoryTestEnvironment(append(append([]string{}, s.env...), extraEnv...))")
 
-	entrypoints := map[string]string{
-		"scripts/go-test.sh":            repositorySource(t, "scripts", "go-test.sh"),
-		"run-tests.sh":                  runTests,
-		"Makefile":                      makefile,
-		".github/workflows/tests.yml":   testsWorkflow,
-		".github/workflows/install.yml": installWorkflow,
-		"scripts/release.sh":            repositorySource(t, "scripts", "release.sh"),
-	}
 	driverInfo, err := os.Stat(filepath.Join(projectRoot(t), "scripts", "go-test.sh"))
 	if err != nil {
 		t.Fatal(err)
@@ -142,6 +173,14 @@ func TestRepositoryTestEntrypointsPropagateMode(t *testing.T) {
 	}
 	if err := validateRepositoryGoTestEntrypoints(entrypoints); err != nil {
 		t.Fatal(err)
+	}
+	commentOnly := addRepositoryEntrypoint(
+		entrypoints,
+		"scripts/future-check.sh",
+		"#!/bin/bash\n# go test must run through the repository driver\n",
+	)
+	if err := validateRepositoryGoTestEntrypoints(commentOnly); err != nil {
+		t.Fatalf("comment-only go test mention failed inventory validation: %v", err)
 	}
 
 	mutations := map[string]map[string]string{
@@ -187,6 +226,11 @@ func TestRepositoryTestEntrypointsPropagateMode(t *testing.T) {
 			"./scripts/go-test.sh ./test/npx/...",
 			"go test ./test/npx/...",
 		),
+		"raw future script go test": addRepositoryEntrypoint(
+			entrypoints,
+			"scripts/future-check.sh",
+			"#!/bin/bash\ngo test ./...\n",
+		),
 	}
 	for name, sources := range mutations {
 		t.Run(name, func(t *testing.T) {
@@ -195,6 +239,19 @@ func TestRepositoryTestEntrypointsPropagateMode(t *testing.T) {
 			}
 		})
 	}
+}
+
+func addRepositoryEntrypoint(
+	sources map[string]string,
+	file string,
+	source string,
+) map[string]string {
+	added := make(map[string]string, len(sources)+1)
+	for name, existingSource := range sources {
+		added[name] = existingSource
+	}
+	added[file] = source
+	return added
 }
 
 func mutateRepositoryEntrypoint(
@@ -222,7 +279,10 @@ func mutateRepositoryEntrypoint(
 }
 
 func validateRepositoryGoTestEntrypoints(sources map[string]string) error {
-	driver := sources["scripts/go-test.sh"]
+	driver, ok := sources["scripts/go-test.sh"]
+	if !ok {
+		return fmt.Errorf("repository test entrypoints are missing scripts/go-test.sh")
+	}
 	for _, required := range []string{
 		"#!/usr/bin/env bash",
 		"set -euo pipefail",
@@ -250,6 +310,12 @@ func validateRepositoryGoTestEntrypoints(sources map[string]string) error {
 				got,
 				want,
 			)
+		}
+	}
+
+	for file, source := range sources {
+		if file == "scripts/go-test.sh" {
+			continue
 		}
 		for lineNumber, line := range strings.Split(source, "\n") {
 			trimmed := strings.TrimSpace(line)
