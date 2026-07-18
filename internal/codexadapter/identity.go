@@ -56,6 +56,23 @@ func writeCodexIdentity(path, identity string) error {
 	return nil
 }
 
+func clearCodexIdentity(path string) error {
+	if path == "" || !filepath.IsAbs(path) {
+		return fmt.Errorf("Codex session identity file must be absolute")
+	}
+	parent := filepath.Dir(path)
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("remove Codex session identity: %w", err)
+	}
+	if err := syncCodexIdentityDirectory(parent); err != nil {
+		return fmt.Errorf("sync Codex session identity directory: %w", err)
+	}
+	return nil
+}
+
 func syncCodexIdentityDirectory(path string) error {
 	directory, err := os.Open(path)
 	if err != nil {

@@ -53,11 +53,12 @@ func TestCodexArgvIsExactAndAppliesAllNotificationOverrides(t *testing.T) {
 	}
 
 	tests := []struct {
-		name   string
-		remote bool
-		resume string
-		prompt string
-		want   []string
+		name         string
+		remote       bool
+		resume       string
+		resumePicker bool
+		prompt       string
+		want         []string
 	}{
 		{
 			name: "remote fresh hostile prompt", remote: true, prompt: "--hostile prompt with spaces",
@@ -78,10 +79,16 @@ func TestCodexArgvIsExactAndAppliesAllNotificationOverrides(t *testing.T) {
 			resume: supervisorResumeID, prompt: "-not-a-flag",
 			want: append(withConfigs([]string{"/opt/codex", "resume"}), "--", supervisorResumeID, "-not-a-flag"),
 		},
+		{
+			name: "remote resume picker", remote: true, resumePicker: true, prompt: "must not become a session id",
+			want: withConfigs([]string{"/opt/codex", "resume", "--remote", uri}),
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := buildCodexTUIArgv("/opt/codex", socket, test.remote, test.resume, test.prompt)
+			got := buildCodexTUIArgv(
+				"/opt/codex", socket, test.remote, test.resume, test.resumePicker, test.prompt,
+			)
 			if !reflect.DeepEqual(got, test.want) {
 				t.Fatalf("argv = %#v, want %#v", got, test.want)
 			}
@@ -216,7 +223,7 @@ func supervisorOptions(t *testing.T, resume, prompt string) CodexSupervisorOptio
 	}
 }
 
-func TestCodexSupervisorRemoteResumeQuickFailureTakesNewSnapshotThenRemoteFresh(t *testing.T) {
+func TestCodexSupervisorRemoteResumeQuickFailureClearsIdentityThenUsesPicker(t *testing.T) {
 	firstObserver := newFakeObserverSession()
 	secondObserver := newFakeObserverSession(testSupervisorThread(supervisorResumeID, "session", "", ThreadStatusActive))
 	observers := []ObserverConnection{firstObserver, secondObserver}
@@ -225,6 +232,7 @@ func TestCodexSupervisorRemoteResumeQuickFailureTakesNewSnapshotThenRemoteFresh(
 	var launches [][]string
 	rawBegins, rawRestores := 0, 0
 	options := supervisorOptions(t, supervisorResumeID, "--handoff")
+	options.IdentityFile = filepath.Join(t.TempDir(), "session-identities", "resume.codex")
 
 	supervisor := CodexSupervisor{
 		TempBase: t.TempDir(),
@@ -253,8 +261,11 @@ func TestCodexSupervisorRemoteResumeQuickFailureTakesNewSnapshotThenRemoteFresh(
 			if len(launches) == 1 {
 				return CodexExitResult{ExitCode: 9, Elapsed: time.Second}, nil
 			}
+			if _, err := os.Stat(options.IdentityFile); !os.IsNotExist(err) {
+				t.Fatalf("stale identity still exists before resume picker: %v", err)
+			}
 			if server.isStopped() {
-				t.Fatal("server stopped before remote fresh attempt")
+				t.Fatal("server stopped before remote resume picker")
 			}
 			if state := readSupervisorState(t, options.StateFile); state.Phase != attention.PhaseUnknown {
 				t.Fatalf("fresh barrier state = %+v, want old active resume thread frozen in baseline", state)
@@ -286,11 +297,20 @@ func TestCodexSupervisorRemoteResumeQuickFailureTakesNewSnapshotThenRemoteFresh(
 	if !server.isStopped() {
 		t.Fatal("server was not cleaned up after final remote attempt")
 	}
-	if !containsArgSequence(launches[0], "resume", "--remote") || containsArg(launches[1], "resume") || !containsArg(launches[1], "--remote") {
+	if !containsArgSequence(launches[0], "resume", "--remote") ||
+		!containsArgSequence(launches[1], "resume", "--remote") ||
+		containsArg(launches[1], supervisorResumeID) {
 		t.Fatalf("fallback launches = %#v", launches)
 	}
 	if rawBegins != 1 || rawRestores != 1 {
 		t.Fatalf("raw lifecycle = begin %d restore %d, want once/once", rawBegins, rawRestores)
+	}
+	data, err := os.ReadFile(options.IdentityFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), supervisorFreshID+"\n"; got != want {
+		t.Fatalf("picker-selected identity = %q, want %q", got, want)
 	}
 }
 
@@ -643,7 +663,7 @@ func TestCodexSupervisorRuntimeDirFailureRunsEmbeddedWithOSCTracking(t *testing.
 	}
 }
 
-func TestCodexSupervisorSetupFailureUsesEmbeddedResumeThenQuickFresh(t *testing.T) {
+func TestCodexSupervisorSetupFailureUsesEmbeddedResumeThenQuickPicker(t *testing.T) {
 	var launches [][]string
 	supervisor := CodexSupervisor{
 		TempBase: t.TempDir(),
@@ -663,7 +683,10 @@ func TestCodexSupervisorSetupFailureUsesEmbeddedResumeThenQuickFresh(t *testing.
 	if err != nil || result.ExitCode != 0 {
 		t.Fatalf("Run() = (%+v, %v)", result, err)
 	}
-	if len(launches) != 2 || !containsArg(launches[0], "resume") || containsArg(launches[1], "resume") {
+	if len(launches) != 2 ||
+		!containsArg(launches[0], "resume") ||
+		!containsArg(launches[1], "resume") ||
+		containsArg(launches[1], supervisorResumeID) {
 		t.Fatalf("embedded resume fallback = %#v", launches)
 	}
 	for _, argv := range launches {

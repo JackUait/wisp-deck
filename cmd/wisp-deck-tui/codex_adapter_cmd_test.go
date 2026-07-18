@@ -31,6 +31,7 @@ func TestCodexAdapterCommandValidatesFlagsAndPreservesOneRawPrompt(t *testing.T)
 		"--codex", "/opt/codex bin/codex",
 		"--state-file", "/private/root/generation.Abc123/state",
 		"--generation", "generation.Abc123",
+		"--session-file", "/private/root/session-identities/dev-app-1.codex",
 		"--resume-session", "11111111-1111-4111-8111-111111111111",
 		"--fallback-window", "7.5s",
 		"--", "--hostile prompt; $(must-not-run)",
@@ -45,6 +46,7 @@ func TestCodexAdapterCommandValidatesFlagsAndPreservesOneRawPrompt(t *testing.T)
 		ProjectCWD:     physicalCWD,
 		ClientVersion:  Version,
 		ResumeSession:  "11111111-1111-4111-8111-111111111111",
+		SessionFile:    "/private/root/session-identities/dev-app-1.codex",
 		FallbackWindow: 7500 * time.Millisecond,
 		Prompt:         "--hostile prompt; $(must-not-run)",
 	}
@@ -86,6 +88,7 @@ func TestCodexAdapterCommandRejectsInvalidRuntimeIdentityAndArguments(t *testing
 		"--codex", "/opt/codex",
 		"--state-file", "/tmp/generation.Abc/state",
 		"--generation", "generation.Abc",
+		"--session-file", "/tmp/session-identities/dev.codex",
 		"--fallback-window", "10s",
 	}
 	tests := []struct {
@@ -100,10 +103,13 @@ func TestCodexAdapterCommandRejectsInvalidRuntimeIdentityAndArguments(t *testing
 		{"wrong state basename", replaceCLIArg(valid, "--state-file", "/tmp/generation.Abc/other"), nil},
 		{"wrong state generation", replaceCLIArg(valid, "--state-file", "/tmp/generation.Other/state"), nil},
 		{"malformed generation", replaceCLIArg(valid, "--generation", "generation.bad-name"), nil},
+		{"missing session file", removeCLIArg(valid, "--session-file"), nil},
+		{"relative session file", replaceCLIArg(valid, "--session-file", "session-identities/dev.codex"), nil},
 		{"zero fallback", replaceCLIArg(valid, "--fallback-window", "0s"), nil},
 		{"negative fallback", replaceCLIArg(valid, "--fallback-window", "-1s"), nil},
 		{"malformed resume UUID", append(append([]string(nil), valid...), "--resume-session", "ABC"), nil},
 		{"uppercase resume UUID", append(append([]string(nil), valid...), "--resume-session", "11111111-1111-4111-8111-AAAAAAAAAAAA"), nil},
+		{"resume UUID and picker", append(append([]string(nil), valid...), "--resume-session", "11111111-1111-4111-8111-111111111111", "--resume-picker"), nil},
 		{"two prompts", append(append([]string(nil), valid...), "--", "one", "two"), nil},
 		{"cwd error", valid, func() (string, error) { return "", errors.New("cwd unavailable") }},
 		{"relative cwd", valid, func() (string, error) { return "repo", nil }},
@@ -180,7 +186,28 @@ func validCodexAdapterArgs() []string {
 		"--codex", "/opt/codex",
 		"--state-file", filepath.Join("/tmp", "generation.Abc", "state"),
 		"--generation", "generation.Abc",
+		"--session-file", filepath.Join("/tmp", "session-identities", "dev.codex"),
 		"--fallback-window", "10s",
+	}
+}
+
+func TestCodexAdapterCommandPassesResumePicker(t *testing.T) {
+	var got codexAdapterOptions
+	cmd := newCodexAdapterCommand(
+		func(_ context.Context, options codexAdapterOptions) (codexadapter.CodexExitResult, error) {
+			got = options
+			return codexadapter.CodexExitResult{}, nil
+		},
+		func(int) {},
+		func() (string, error) { return t.TempDir(), nil },
+	)
+	args := append(validCodexAdapterArgs(), "--resume-picker")
+	cmd.SetArgs(args)
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !got.ResumePicker {
+		t.Fatal("--resume-picker did not reach adapter options")
 	}
 }
 

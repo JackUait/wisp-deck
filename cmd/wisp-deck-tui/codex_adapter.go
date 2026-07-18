@@ -23,6 +23,8 @@ type codexAdapterOptions struct {
 	ProjectCWD     string
 	ClientVersion  string
 	ResumeSession  string
+	ResumePicker   bool
+	SessionFile    string
 	FallbackWindow time.Duration
 	Prompt         string
 }
@@ -40,7 +42,7 @@ func newCodexAdapterCommand(
 ) *cobra.Command {
 	var options codexAdapterOptions
 	cmd := &cobra.Command{
-		Use:          "codex-adapter --codex PATH --state-file FILE --generation GEN [--resume-session UUID] [--fallback-window 10s] [-- PROMPT]",
+		Use:          "codex-adapter --codex PATH --state-file FILE --generation GEN --session-file FILE [--resume-session UUID | --resume-picker] [--fallback-window 10s] [-- PROMPT]",
 		Short:        "Publish semantic attention for one Codex TUI launch",
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
@@ -89,7 +91,9 @@ func newCodexAdapterCommand(
 	cmd.Flags().StringVar(&options.CodexPath, "codex", "", "absolute Codex executable path")
 	cmd.Flags().StringVar(&options.StateFile, "state-file", "", "generation-fenced attention state file")
 	cmd.Flags().StringVar(&options.Generation, "generation", "", "attention generation identity")
+	cmd.Flags().StringVar(&options.SessionFile, "session-file", "", "durable Codex session identity file")
 	cmd.Flags().StringVar(&options.ResumeSession, "resume-session", "", "exact Codex thread UUID to resume")
+	cmd.Flags().BoolVar(&options.ResumePicker, "resume-picker", false, "open the Codex resume selector")
 	cmd.Flags().DurationVar(&options.FallbackWindow, "fallback-window", 10*time.Second, "strict startup fallback window")
 	return cmd
 }
@@ -111,6 +115,12 @@ func validateCodexAdapterOptions(options codexAdapterOptions) error {
 	if options.ResumeSession != "" && !canonicalCodexUUID.MatchString(options.ResumeSession) {
 		return fmt.Errorf("--resume-session must be a canonical lowercase UUID")
 	}
+	if options.ResumeSession != "" && options.ResumePicker {
+		return errors.New("--resume-session and --resume-picker are mutually exclusive")
+	}
+	if options.SessionFile == "" || !filepath.IsAbs(options.SessionFile) {
+		return errors.New("--session-file must be absolute")
+	}
 	if options.FallbackWindow <= 0 {
 		return errors.New("--fallback-window must be positive")
 	}
@@ -126,6 +136,8 @@ func runCodexAdapter(ctx context.Context, options codexAdapterOptions) (codexada
 		ProjectCWD:     options.ProjectCWD,
 		ClientVersion:  options.ClientVersion,
 		ResumeSession:  options.ResumeSession,
+		ResumePicker:   options.ResumePicker,
+		IdentityFile:   options.SessionFile,
 		FallbackWindow: options.FallbackWindow,
 		Prompt:         options.Prompt,
 	})

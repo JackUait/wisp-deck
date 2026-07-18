@@ -47,6 +47,7 @@ type CodexSupervisorOptions struct {
 	ProjectCWD     string
 	ClientVersion  string
 	ResumeSession  string
+	ResumePicker   bool
 	IdentityFile   string
 	FallbackWindow time.Duration
 	Prompt         string
@@ -157,9 +158,15 @@ func buildCodexServerArgv(codexPath, socketPath string) []string {
 	}
 }
 
-func buildCodexTUIArgv(codexPath, socketPath string, remote bool, resumeSession, prompt string) []string {
+func buildCodexTUIArgv(
+	codexPath, socketPath string,
+	remote bool,
+	resumeSession string,
+	resumePicker bool,
+	prompt string,
+) []string {
 	argv := []string{codexPath}
-	if resumeSession != "" {
+	if resumeSession != "" || resumePicker {
 		argv = append(argv, "resume")
 	}
 	if remote {
@@ -168,7 +175,7 @@ func buildCodexTUIArgv(codexPath, socketPath string, remote bool, resumeSession,
 	for _, config := range codexNotificationConfigs {
 		argv = append(argv, "-c", config)
 	}
-	if resumeSession != "" || prompt != "" {
+	if !resumePicker && (resumeSession != "" || prompt != "") {
 		argv = append(argv, "--")
 		if resumeSession != "" {
 			argv = append(argv, resumeSession)
@@ -186,6 +193,11 @@ func (s *CodexSupervisor) Run(ctx context.Context, options CodexSupervisorOption
 	}
 	if err := ctx.Err(); err != nil {
 		return CodexExitResult{}, err
+	}
+	if options.ResumePicker && options.IdentityFile != "" {
+		if err := clearCodexIdentity(options.IdentityFile); err != nil {
+			return CodexExitResult{}, fmt.Errorf("%w: %v", errCodexIdentityPersistence, err)
+		}
 	}
 	runStartedAt := time.Now()
 	runContext, cancelRun := context.WithCancel(ctx)
@@ -443,13 +455,16 @@ func (s *CodexSupervisor) Run(ctx context.Context, options CodexSupervisorOption
 		}
 	}
 	resume := options.ResumeSession
+	resumePicker := options.ResumePicker
 	oscCounter := uint64(0)
 
 	for {
 		if result, signaled := signalOutcome(); signaled {
 			return result, nil
 		}
-		argv := buildCodexTUIArgv(options.CodexPath, socketPath, remote, resume, options.Prompt)
+		argv := buildCodexTUIArgv(
+			options.CodexPath, socketPath, remote, resume, resumePicker, options.Prompt,
+		)
 		result, runErr := s.runAttempt(
 			ctx, argv, runPTY, messages, managerEpoch, reducer, publish, persistIdentity, &oscCounter,
 		)
@@ -476,6 +491,12 @@ func (s *CodexSupervisor) Run(ctx context.Context, options CodexSupervisorOption
 			// the current reader, take a new coherent barrier, and construct a
 			// new fresh reducer whose immutable baseline includes that set.
 			stopManager()
+			if options.IdentityFile != "" {
+				if err := clearCodexIdentity(options.IdentityFile); err != nil {
+					return result, fmt.Errorf("%w: %v", errCodexIdentityPersistence, err)
+				}
+				persistedRoot = ""
+			}
 			barrierContext, cancel := context.WithTimeout(ctx, setupTimeout)
 			barrier, barrierErr := openObserverUntil(barrierContext, openObserver, observerConfig, defaultCodexSocketPoll, server.Done())
 			cancel()
@@ -486,6 +507,7 @@ func (s *CodexSupervisor) Run(ctx context.Context, options CodexSupervisorOption
 				return signalResult, nil
 			}
 			resume = ""
+			resumePicker = true
 			if barrierErr == nil && barrier != nil {
 				reducer, err = newReducer("", barrier.Snapshot(), true)
 				if err != nil {
@@ -495,6 +517,12 @@ func (s *CodexSupervisor) Run(ctx context.Context, options CodexSupervisorOption
 				startManager(barrier)
 				continue
 			}
+			if options.IdentityFile != "" {
+				if barrierErr == nil {
+					barrierErr = errors.New("resume-picker observer barrier unavailable")
+				}
+				return result, fmt.Errorf("initialize observable Codex resume picker: %w", barrierErr)
+			}
 			remote = false
 			stopServer()
 			reducer, err = newReducer("", nil, false)
@@ -503,6 +531,12 @@ func (s *CodexSupervisor) Run(ctx context.Context, options CodexSupervisorOption
 			}
 
 		case remote:
+			if options.IdentityFile != "" {
+				if runErr != nil {
+					return result, fmt.Errorf("observable Codex launch failed: %w", runErr)
+				}
+				return result, fmt.Errorf("observable Codex launch exited with status %d", result.ExitCode)
+			}
 			stopManager()
 			publish(reducer.Reduce(ReducerEvent{Kind: EventObserverLost}))
 			remote = false
@@ -514,7 +548,14 @@ func (s *CodexSupervisor) Run(ctx context.Context, options CodexSupervisorOption
 			}
 
 		case resume != "":
+			if options.IdentityFile != "" {
+				if err := clearCodexIdentity(options.IdentityFile); err != nil {
+					return result, fmt.Errorf("%w: %v", errCodexIdentityPersistence, err)
+				}
+				persistedRoot = ""
+			}
 			resume = ""
+			resumePicker = true
 			reducer, err = newReducer("", nil, false)
 			if err != nil {
 				return result, err
@@ -555,6 +596,9 @@ func validateCodexSupervisorOptions(options CodexSupervisorOptions) error {
 		if err := validateCanonicalUUID("resume session", options.ResumeSession); err != nil {
 			return err
 		}
+	}
+	if options.ResumeSession != "" && options.ResumePicker {
+		return errors.New("resume session and resume picker are mutually exclusive")
 	}
 	if options.IdentityFile != "" && !filepath.IsAbs(options.IdentityFile) {
 		return errors.New("Codex session identity file must be absolute")
