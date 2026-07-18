@@ -88,6 +88,25 @@ their existing cursor and reverse-video focus treatment.
 The footer keeps its current words and hit-testable back labels, but renders key
 names brighter than their descriptions to improve scanning.
 
+## Vertical Rhythm
+
+Use targeted blank rows at the boundaries that otherwise read as collisions:
+
+- one row between the `PROFILES` heading and the first profile;
+- one row between `MODEL ROUTING` and the first model mapping;
+- one row between the last editable/detail row and `ACTIONS`; and
+- one row before Standard Claude's action section.
+
+Do not add a blank row after every heading. A uniform spacing system would push
+API-key and dirty profiles into unnecessary scrolling at normal modal height.
+Do not widen pane padding because endpoint and model identifiers benefit more
+from the available horizontal space.
+
+Profile hit geometry and the list viewport must account for the new fixed
+heading gap. Detail cursor-to-line calculations must account for the two new
+right-pane rows so keyboard focus and automatic scrolling stay aligned with the
+rendered setting or action.
+
 ## Responsive and Interaction Constraints
 
 - The wide modal remains two-pane and the compact modal remains single-pane.
@@ -108,4 +127,3 @@ Rendering tests will require:
 - a clickable choose-provider preview action;
 - unchanged active-versus-focused profile semantics; and
 - unchanged card geometry at wide, compact, and short terminal sizes.
-
