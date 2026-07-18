@@ -233,6 +233,32 @@ touch "$CLAUDE_LAUNCHED"
 	}
 }
 
+func TestOpenChatGPTAuthURLWaitsForBrowserOpener(t *testing.T) {
+	dir := t.TempDir()
+	opener := filepath.Join(dir, "open")
+	logPath := filepath.Join(dir, "opened-url")
+	script := `#!/bin/sh
+sleep 0.05
+printf '%s' "$1" > "$OPEN_URL_LOG"
+`
+	if err := os.WriteFile(opener, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("OPEN_URL_LOG", logPath)
+
+	if err := openChatGPTAuthURL("https://chatgpt.com/auth/wisp"); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("browser opener was not reaped after completion: %v", err)
+	}
+	if string(opened) != "https://chatgpt.com/auth/wisp" {
+		t.Fatalf("browser opener URL = %q", opened)
+	}
+}
+
 func TestRunAdapterRejectsAPIKeyAuthBeforeLaunchingClaude(t *testing.T) {
 	dir := t.TempDir()
 	codex := filepath.Join(dir, "codex")

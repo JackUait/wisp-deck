@@ -295,7 +295,7 @@ func RunAdapter(ctx context.Context, options AdapterOptions) (AdapterResult, err
 }
 
 func openChatGPTAuthURL(authURL string) error {
-	if err := exec.Command("open", authURL).Start(); err != nil {
+	if err := exec.Command("open", authURL).Run(); err != nil {
 		return fmt.Errorf("open ChatGPT sign-in URL: %w", err)
 	}
 	return nil
