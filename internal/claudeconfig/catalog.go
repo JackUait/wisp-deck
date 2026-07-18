@@ -30,9 +30,11 @@ type Model struct {
 // the first provider in Providers is the default when a name matches none.
 type Provider struct {
 	Key            string
+	Name           string
 	Aliases        []string
 	BaseURL        string
 	Models         []Model
+	DefaultModels  [4]string
 	Auth           AuthKind
 	MirrorOpenCode bool
 }
@@ -45,10 +47,12 @@ type Provider struct {
 var Providers = []Provider{
 	{
 		Key:            "zhipu",
+		Name:           "Zhipu / GLM",
 		Aliases:        []string{"zhipu", "glm", "z.ai", "zai"},
 		BaseURL:        "https://api.z.ai/api/anthropic",
 		Auth:           AuthAPIKey,
 		MirrorOpenCode: true,
+		DefaultModels:  [4]string{"glm-4.7", "glm-4.7", "glm-4.5-air", "glm-4.5-air"},
 		Models: []Model{
 			{"glm-5.2", 1.40, 4.40, 1000000, 128000},
 			{"glm-5.1", 1.40, 4.40, 202752, 128000},
@@ -60,10 +64,12 @@ var Providers = []Provider{
 	},
 	{
 		Key:            "mimo",
+		Name:           "Xiaomi MiMo",
 		Aliases:        []string{"mimo", "xiaomi"},
 		BaseURL:        "https://api.xiaomimimo.com/anthropic",
 		Auth:           AuthAPIKey,
 		MirrorOpenCode: true,
+		DefaultModels:  [4]string{"mimo-v2.5-pro", "mimo-v2.5-pro", "mimo-v2.5", "mimo-v2.5"},
 		Models: []Model{
 			{"mimo-v2.5-pro", 0.435, 0.87, 1048576, 131072},
 			{"mimo-v2.5", 0.14, 0.28, 1048576, 131072},
@@ -71,9 +77,11 @@ var Providers = []Provider{
 	},
 	{
 		Key:            "openai-chatgpt",
+		Name:           "OpenAI / ChatGPT",
 		Aliases:        []string{"openai gpt", "chatgpt"},
 		Auth:           AuthCodexChatGPT,
 		MirrorOpenCode: false,
+		DefaultModels:  [4]string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-luna"},
 		Models: []Model{
 			{"gpt-5.6-sol", 0, 0, 272000, 0},
 			{"gpt-5.6-terra", 0, 0, 272000, 0},
@@ -115,6 +123,11 @@ func providerByKey(key string) (Provider, bool) {
 		}
 	}
 	return Provider{}, false
+}
+
+// ProviderByKey returns the provider with the exact catalog key.
+func ProviderByKey(key string) (Provider, bool) {
+	return providerByKey(key)
 }
 
 // modelByID returns the catalog Model with the given id, across all providers.

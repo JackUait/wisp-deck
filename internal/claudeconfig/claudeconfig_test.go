@@ -1,8 +1,10 @@
 package claudeconfig
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -674,5 +676,101 @@ func TestProviderBaseURL(t *testing.T) {
 		if got := ProviderBaseURL(name); got != want {
 			t.Errorf("ProviderBaseURL(%q) = %q, want %q", name, got, want)
 		}
+	}
+}
+
+func TestProviders_haveDisplayNamesAndValidDefaults(t *testing.T) {
+	for _, provider := range Providers {
+		if provider.Name == "" {
+			t.Errorf("provider %q has no display name", provider.Key)
+		}
+		models := make(map[string]bool, len(provider.Models))
+		for _, model := range provider.Models {
+			models[model.ID] = true
+		}
+		for i, id := range provider.DefaultModels {
+			if id == "" || !models[id] {
+				t.Errorf("provider %q default %s = %q, want catalog model",
+					provider.Key, AnthropicAliases[i], id)
+			}
+		}
+	}
+}
+
+func TestProviderByKey_returnsCatalogProvider(t *testing.T) {
+	got, ok := ProviderByKey("openai-chatgpt")
+	if !ok || got.Name != "OpenAI / ChatGPT" {
+		t.Fatalf("ProviderByKey = (%+v, %v)", got, ok)
+	}
+}
+
+func TestAddForProvider_writesInitializedProfile(t *testing.T) {
+	for _, key := range []string{"zhipu", "mimo", "openai-chatgpt"} {
+		t.Run(key, func(t *testing.T) {
+			dir := t.TempDir()
+			list := filepath.Join(dir, "claude-configs.list")
+			configsDir := filepath.Join(dir, "claude-configs")
+
+			file, err := AddForProvider(list, configsDir, "My profile", key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider, _ := ProviderByKey(key)
+			cfg := Config{Name: "My profile", File: file}
+			if got := ProviderForConfig(configsDir, cfg).Key; got != key {
+				t.Errorf("provider = %q, want %q", got, key)
+			}
+			got := ReadModelMappings(configsDir, file, ProviderModels[key])
+			for i, modelID := range provider.DefaultModels {
+				want := slices.Index(ProviderModels[key], modelID)
+				if got[i] != want {
+					t.Errorf("mapping[%d] = %d, want %d", i, got[i], want)
+				}
+			}
+			if provider.Auth == AuthAPIKey && ConfigReady(configsDir, cfg) {
+				t.Error("new API-key profile must need a key")
+			}
+
+			path := filepath.Join(configsDir, file)
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Mode().Perm(); got != 0600 {
+				t.Errorf("config mode = %o, want 600", got)
+			}
+
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var settings struct {
+				Model string            `json:"model"`
+				Env   map[string]string `json:"env"`
+			}
+			if err := json.Unmarshal(data, &settings); err != nil {
+				t.Fatal(err)
+			}
+			if got := settings.Env["WISP_DECK_SUBSCRIPTION_PROVIDER"]; got != key {
+				t.Errorf("provider marker = %q, want %q", got, key)
+			}
+			if provider.BaseURL != "" && settings.Env["ANTHROPIC_BASE_URL"] != provider.BaseURL {
+				t.Errorf("base URL = %q, want %q", settings.Env["ANTHROPIC_BASE_URL"], provider.BaseURL)
+			}
+			if provider.Auth == AuthCodexChatGPT && settings.Model != provider.DefaultModels[1] {
+				t.Errorf("ChatGPT model = %q, want %q", settings.Model, provider.DefaultModels[1])
+			}
+		})
+	}
+}
+
+func TestAddForProvider_rejectsUnknownProviderWithoutFiles(t *testing.T) {
+	dir := t.TempDir()
+	_, err := AddForProvider(filepath.Join(dir, "list"), filepath.Join(dir, "cfg"), "Bad", "missing")
+	if err == nil {
+		t.Fatal("unknown provider accepted")
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("unknown provider left artifacts: %v", entries)
 	}
 }

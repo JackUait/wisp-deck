@@ -106,6 +106,20 @@ func ResolvePath(configsDir, pointerFile string) string {
 // "name:file" to the list file, and returns the chosen filename. A name that
 // slugifies to empty falls back to "config".
 func Add(listFile, configsDir, name string) (string, error) {
+	file := nextConfigFilename(configsDir, name)
+	if err := os.MkdirAll(configsDir, 0755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(configsDir, file), []byte("{}\n"), 0644); err != nil {
+		return "", err
+	}
+	if err := appendConfig(listFile, name, file); err != nil {
+		return "", err
+	}
+	return file, nil
+}
+
+func nextConfigFilename(configsDir, name string) string {
 	slug := Slugify(name)
 	if slug == "" {
 		slug = "config"
@@ -117,21 +131,63 @@ func Add(listFile, configsDir, name string) (string, error) {
 		}
 		file = fmt.Sprintf("%s-%d.json", slug, n)
 	}
-	if err := os.MkdirAll(configsDir, 0755); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(filepath.Join(configsDir, file), []byte("{}\n"), 0644); err != nil {
-		return "", err
-	}
+	return file
+}
+
+func appendConfig(listFile, name, file string) error {
 	if err := os.MkdirAll(filepath.Dir(listFile), 0755); err != nil {
-		return "", err
+		return err
 	}
 	f, err := os.OpenFile(listFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer f.Close()
 	if _, err := fmt.Fprintf(f, "%s:%s\n", name, file); err != nil {
+		return err
+	}
+	return nil
+}
+
+// AddForProvider creates a securely initialized config for a catalog provider.
+// The explicit marker keeps provider identity stable if the profile is renamed.
+func AddForProvider(listFile, configsDir, name, providerKey string) (string, error) {
+	provider, ok := providerByKey(providerKey)
+	if !ok {
+		return "", fmt.Errorf("claudeconfig: unknown provider %q", providerKey)
+	}
+
+	file := nextConfigFilename(configsDir, name)
+	if err := os.MkdirAll(configsDir, 0755); err != nil {
+		return "", err
+	}
+
+	env := map[string]string{
+		"WISP_DECK_SUBSCRIPTION_PROVIDER": provider.Key,
+	}
+	if provider.BaseURL != "" {
+		env["ANTHROPIC_BASE_URL"] = provider.BaseURL
+	}
+	for i, key := range envKeys {
+		env[key] = provider.DefaultModels[i]
+	}
+	settings := map[string]any{
+		"$schema": "https://json.schemastore.org/claude-code-settings.json",
+		"env":     env,
+	}
+	if provider.Auth == AuthCodexChatGPT {
+		settings["model"] = provider.DefaultModels[1]
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(configsDir, file)
+	if err := writeSecure(path, append(data, '\n')); err != nil {
+		return "", err
+	}
+	if err := appendConfig(listFile, name, file); err != nil {
+		_ = os.Remove(path)
 		return "", err
 	}
 	return file, nil
