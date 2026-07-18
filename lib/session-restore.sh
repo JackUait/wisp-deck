@@ -153,6 +153,49 @@ codex_identity_read() {
   echo "$value"
 }
 
+# True iff a durable Codex identity is still named by a recovery artifact or
+# a live Wisp tmux session. Failure to inspect tmux is treated conservatively:
+# pruning waits for a later launch instead of risking a live identity.
+# Usage: codex_identity_referenced <tmux_cmd> <config_dir> <key>
+codex_identity_referenced() {
+  local tmux_cmd="$1" config_dir="$2" key="$3" artifact sessions session env
+  codex_identity_key_valid "$key" || return 1
+  for artifact in last-session last-session.prev restore-queue; do
+    if [ -f "$config_dir/$artifact" ] \
+      && grep -Fq -- "|$key" "$config_dir/$artifact" 2>/dev/null; then
+      return 0
+    fi
+  done
+  sessions="$("$tmux_cmd" list-sessions -F '#{session_name}' 2>/dev/null)" || return 0
+  while IFS= read -r session; do
+    [ -n "$session" ] || continue
+    env="$("$tmux_cmd" show-environment -t "$session" 2>/dev/null)" || return 0
+    if printf '%s\n' "$env" \
+      | grep -Fqx -- "WISP_DECK_CODEX_SESSION_FILE=$config_dir/session-identities/$key"; then
+      return 0
+    fi
+  done <<< "$sessions"
+  return 1
+}
+
+# Remove only old sidecars that no frozen snapshot, restore queue, backup, or
+# live Wisp session can still use. The age threshold makes this opportunistic
+# housekeeping and keeps launch-time races conservative.
+# Usage: prune_codex_session_identities <tmux_cmd> <config_dir> [age_days]
+prune_codex_session_identities() {
+  local tmux_cmd="$1" config_dir="$2" age_days="${3:-30}" identity_dir filepath key
+  case "$age_days" in "" | *[!0-9]*) return 1 ;; esac
+  identity_dir="$config_dir/session-identities"
+  [ -d "$identity_dir" ] && [ ! -L "$identity_dir" ] || return 0
+  while IFS= read -r filepath; do
+    [ "${filepath%/*}" = "$identity_dir" ] || continue
+    key="${filepath##*/}"
+    codex_identity_key_valid "$key" || continue
+    codex_identity_referenced "$tmux_cmd" "$config_dir" "$key" && continue
+    rm -f -- "$filepath" 2>/dev/null || true
+  done < <(find "$identity_dir" -type f -name '*.codex' -mtime "+$age_days" -print 2>/dev/null)
+}
+
 # Re-derive the live snapshot from alive Wisp Deck tmux sessions.
 # Usage: write_session_snapshot <tmux_cmd> <snapshot_file>
 # A session is "ours" iff its session environment contains WISP_DECK=1.

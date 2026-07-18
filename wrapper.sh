@@ -299,6 +299,7 @@ if ! (umask 077; mkdir -p "$WISP_DECK_CODEX_SESSION_DIR") \
   printf '\033[31mError:\033[0m Could not initialize durable Codex session identities.\n' >&2
   exit 1
 fi
+prune_codex_session_identities "$TMUX_CMD" "$SHARE_DIR" 30 >/dev/null 2>&1 || true
 WISP_DECK_CODEX_SESSION_FILE="$WISP_DECK_CODEX_SESSION_DIR/${SESSION_NAME}.codex"
 # PIDs are eventually reused, while sidecars intentionally survive crashes.
 # A newly allocated Wisp session must never inherit an old same-name UUID.

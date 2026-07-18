@@ -20,6 +20,95 @@ const (
 	codexSessionB = "22222222-2222-4222-8222-222222222222"
 )
 
+func TestPruneCodexSessionIdentitiesRemovesOnlyOldUnreferencedFiles(t *testing.T) {
+	dir := t.TempDir()
+	identityDir := filepath.Join(dir, "session-identities")
+	if err := os.Mkdir(identityDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	keys := []string{
+		"stale.codex",
+		"recent.codex",
+		"snapshot.codex",
+		"previous.codex",
+		"queued.codex",
+		"live.codex",
+	}
+	old := time.Now().Add(-45 * 24 * time.Hour)
+	for _, key := range keys {
+		path := filepath.Join(identityDir, key)
+		if err := os.WriteFile(path, []byte(codexSessionA+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if key != "recent.codex" {
+			if err := os.Chtimes(path, old, old); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	writeTempFile(t, dir, "last-session",
+		"old|app|/p/app|codex|ghostty|"+codexSessionA+"|||snapshot.codex\n")
+	writeTempFile(t, dir, "last-session.prev",
+		"old|app|/p/app|codex|ghostty|"+codexSessionA+"|||previous.codex\n")
+	writeTempFile(t, dir, "restore-queue",
+		"/p/app|codex|"+codexSessionA+"|||queued.codex\n")
+
+	tmuxBody := `
+case "$1" in
+  list-sessions) echo "dev-live-1" ;;
+  show-environment)
+    printf 'WISP_DECK=1\nWISP_DECK_CODEX_SESSION_FILE=` + filepath.Join(identityDir, "live.codex") + `\n' ;;
+esac
+`
+	binDir := mockCommand(t, dir, "tmux", tmuxBody)
+	_, code := runBashFunc(
+		t,
+		"lib/session-restore.sh",
+		"prune_codex_session_identities",
+		[]string{"tmux", dir, "30"},
+		buildEnv(t, []string{binDir}),
+	)
+	assertExitCode(t, code, 0)
+
+	if _, err := os.Stat(filepath.Join(identityDir, "stale.codex")); !os.IsNotExist(err) {
+		t.Fatalf("old unreferenced identity survived pruning: %v", err)
+	}
+	for _, key := range keys[1:] {
+		if _, err := os.Stat(filepath.Join(identityDir, key)); err != nil {
+			t.Fatalf("protected identity %q was pruned: %v", key, err)
+		}
+	}
+}
+
+func TestPruneCodexSessionIdentitiesDefersWhenTmuxInspectionFails(t *testing.T) {
+	dir := t.TempDir()
+	identityDir := filepath.Join(dir, "session-identities")
+	if err := os.Mkdir(identityDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	identityFile := filepath.Join(identityDir, "possibly-live.codex")
+	if err := os.WriteFile(identityFile, []byte(codexSessionA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-45 * 24 * time.Hour)
+	if err := os.Chtimes(identityFile, old, old); err != nil {
+		t.Fatal(err)
+	}
+	binDir := mockCommand(t, dir, "tmux", "exit 1")
+
+	_, code := runBashFunc(
+		t,
+		"lib/session-restore.sh",
+		"prune_codex_session_identities",
+		[]string{"tmux", dir, "30"},
+		buildEnv(t, []string{binDir}),
+	)
+	assertExitCode(t, code, 0)
+	if _, err := os.Stat(identityFile); err != nil {
+		t.Fatalf("identity was pruned while tmux inspection failed: %v", err)
+	}
+}
+
 func TestWriteSessionSnapshot_captures_window_layout(t *testing.T) {
 	// The snapshot must record each session's exact pane geometry (tmux's
 	// #{window_layout}) as a 7th field so restore can reproduce the panes at
