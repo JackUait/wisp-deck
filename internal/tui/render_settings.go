@@ -262,11 +262,7 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	var cycleOrEdit string
 	switch {
 	case m.settingsSelected == rowSubscription && m.ClaudeConfigVisible():
-		if m.selectedConfig > 0 {
-			cycleOrEdit = helpStyle.Render("←→ cycle") + sep + helpStyle.Render("⏎ map models")
-		} else {
-			cycleOrEdit = helpStyle.Render("←→ cycle")
-		}
+		cycleOrEdit = helpStyle.Render("⏎ manage")
 	case m.settingsSelected == rowAITools:
 		cycleOrEdit = helpStyle.Render("⏎ manage")
 	case m.settingsSelected == rowAccount:

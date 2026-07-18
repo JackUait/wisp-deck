@@ -46,23 +46,23 @@ func key(t *testing.T, m *MainMenuModel, msg tea.KeyMsg) *MainMenuModel {
 	return got
 }
 
-func TestModelMap_EnterOnNonStandardOpensPanel(t *testing.T) {
+func TestSubscriptionModal_EnterOnNonStandardOpensModal(t *testing.T) {
 	m, _, _ := newPanelMenu(t)
 	m.CycleClaudeConfig("next")
 	if m.CurrentClaudeConfigName() != "Work" {
 		t.Fatalf("expected Work, got %q", m.CurrentClaudeConfigName())
 	}
 	m = key(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if !m.APIKeyInputOpen() {
-		t.Fatal("Enter on non-Standard config should open model mapping panel")
+	if !m.subscriptionModal.open {
+		t.Fatal("Enter on non-Standard config should open subscription modal")
 	}
 }
 
-func TestModelMap_EnterOnStandardDoesNothing(t *testing.T) {
+func TestSubscriptionModal_EnterOnStandardOpensModal(t *testing.T) {
 	m, _, _ := newPanelMenu(t)
 	m = key(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.APIKeyInputOpen() {
-		t.Fatal("Enter on Standard should NOT open model mapping panel")
+	if !m.subscriptionModal.open {
+		t.Fatal("Enter on Standard should open subscription modal")
 	}
 	if !m.InSettingsMode() {
 		t.Fatal("Enter on Standard should stay in settings")

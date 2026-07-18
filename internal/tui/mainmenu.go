@@ -396,6 +396,10 @@ type MainMenuModel struct {
 	modelMapKeyMode  bool // true when entering API key
 	modelMapKeyInput textinput.Model
 
+	// Subscription management overlay. It replaces Settings-row cycling and the
+	// appended model-map panel with one profile inventory and detail surface.
+	subscriptionModal subscriptionModalState
+
 	// Worktree expand/collapse state (project index -> expanded)
 	expandedWorktrees map[int]bool
 
@@ -2370,6 +2374,9 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Wake()
 
 		// Modal sub-screens intercept all key handling regardless of focus.
+		if m.subscriptionModal.open {
+			return m.updateSubscriptionModal(msg)
+		}
 		if m.aboutOpen {
 			return m.updateAbout(msg)
 		}
@@ -2616,11 +2623,7 @@ func (m *MainMenuModel) focusEnter() (tea.Model, tea.Cmd) {
 	case FocusAI:
 		return m, nil
 	case FocusSubscription:
-		// Enter opens the model-map panel for a custom subscription (Standard
-		// has nothing to configure).
-		if m.selectedConfig > 0 {
-			m.openModelMap()
-		}
+		m.openSubscriptionModal()
 		return m, nil
 	case FocusTabs:
 		m.focus = FocusBody
@@ -2840,9 +2843,7 @@ func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 	case rowUsageBars:
 		m.CycleUsageBars()
 	case rowSubscription:
-		if m.selectedConfig > 0 {
-			m.openModelMap()
-		}
+		m.openSubscriptionModal()
 	case rowAccount:
 		// Open the login-management panel (switch / add / remove logins).
 		m.openAccountMenu()
@@ -2871,8 +2872,6 @@ func (m *MainMenuModel) settingsValueRight() {
 		m.CycleTheme()
 	case rowUsageBars:
 		m.CycleUsageBars()
-	case rowSubscription:
-		m.CycleClaudeConfig("next")
 	case rowAccount:
 		m.CycleAccount("next")
 	case m.autoSwitchRowIndex():
@@ -2895,8 +2894,6 @@ func (m *MainMenuModel) settingsValueLeft() {
 		m.CycleThemeReverse()
 	case rowUsageBars:
 		m.CycleUsageBarsReverse()
-	case rowSubscription:
-		m.CycleClaudeConfig("prev")
 	case rowAccount:
 		m.CycleAccount("prev")
 	case m.autoSwitchRowIndex():
