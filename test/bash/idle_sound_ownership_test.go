@@ -252,18 +252,19 @@ func TestShellProductionHostEffectOwnershipGuardRejectsBypasses(t *testing.T) {
 		t.Fatalf("current shell production host-effect inventory rejected: %v", err)
 	}
 	mutations := map[string]string{
-		"afplay":             "afplay /tmp/chime.aiff\n",
-		"system sound path":  "printf '%s\\n' /System/Library/Sounds/Glass.aiff\n",
-		"NSSound":            "printf '%s\\n' NSSound\n",
-		"AudioServices":      "printf '%s\\n' AudioServicesPlaySystemSound\n",
-		"speech":             "say audit\n",
-		"notification sound": "osascript -e 'display notification \"audit\" with sound name \"Glass\"'\n",
-		"OSC 9":              "printf '\\033]9;audit\\007'\n",
-		"escaped BEL":        "printf '\\a'\n",
-		"short octal BEL":    "printf '\\07'\n",
-		"long octal BEL":     "printf '\\0007'\n",
-		"short hex BEL":      "printf '\\x7'\n",
-		"raw BEL":            "printf 'audit\a'\n",
+		"afplay":              "afplay /tmp/chime.aiff\n",
+		"system sound path":   "printf '%s\\n' /System/Library/Sounds/Glass.aiff\n",
+		"NSSound":             "printf '%s\\n' NSSound\n",
+		"AudioServices":       "printf '%s\\n' AudioServicesPlaySystemSound\n",
+		"speech":              "say audit\n",
+		"notification sound":  "osascript -e 'display notification \"audit\" with sound name \"Glass\"'\n",
+		"OSC 9":               "printf '\\033]9;audit\\007'\n",
+		"escaped BEL":         "printf '\\a'\n",
+		"single octal BEL":    "printf '\\7'\n",
+		"short octal BEL":     "printf '\\07'\n",
+		"percent-b octal BEL": "printf '%b' '\\0007'\n",
+		"short hex BEL":       "printf '\\x7'\n",
+		"raw BEL":             "printf 'audit\a'\n",
 	}
 	for name, source := range mutations {
 		t.Run(name, func(t *testing.T) {
@@ -274,6 +275,24 @@ func TestShellProductionHostEffectOwnershipGuardRejectsBypasses(t *testing.T) {
 			)
 			if err := validateShellProductionHostEffectOwnership(mutated); err == nil {
 				t.Fatal("shell host-effect mutation escaped production ownership validation")
+			}
+		})
+	}
+
+	for name, source := range map[string]string{
+		"octal seventy":  "printf '\\70'\n",
+		"hex seventy":    "printf '\\x70'\n",
+		"escaped slash":  "printf '\\\\7'\n",
+		"NUL then seven": "printf '\\0007'\n",
+	} {
+		t.Run("allows "+name, func(t *testing.T) {
+			mutated := addShellProductionSource(
+				sources,
+				"lib/future-terminal-output.sh",
+				source,
+			)
+			if err := validateShellProductionHostEffectOwnership(mutated); err != nil {
+				t.Fatalf("harmless shell escape rejected: %v", err)
 			}
 		})
 	}
@@ -413,10 +432,8 @@ func shellProductionLineHasHostEffect(line string) bool {
 		strings.ContainsRune(line, '\a') {
 		return true
 	}
-	for _, bell := range []string{`\07`, `\007`, `\0007`, `\a`, `\x7`, `\x07`} {
-		if strings.Contains(line, bell) {
-			return true
-		}
+	if shellLineHasBellEscape(line) {
+		return true
 	}
 	for _, field := range strings.Fields(strings.ToLower(line)) {
 		if strings.Trim(field, `"'(){}[];,`) == "say" {
@@ -424,6 +441,90 @@ func shellProductionLineHasHostEffect(line string) bool {
 		}
 	}
 	return false
+}
+
+func shellLineHasBellEscape(line string) bool {
+	for index := 0; index < len(line); {
+		if line[index] != '\\' {
+			index++
+			continue
+		}
+		runEnd := index
+		for runEnd < len(line) && line[runEnd] == '\\' {
+			runEnd++
+		}
+		if (runEnd-index)%2 == 0 || runEnd == len(line) {
+			index = runEnd
+			continue
+		}
+		escape := runEnd
+		switch line[escape] {
+		case 'a':
+			return true
+		case 'x':
+			value, digits := shellEscapeValue(line, escape+1, 2, 16)
+			if digits > 0 && value == 7 {
+				return true
+			}
+		default:
+			if line[escape] < '0' || line[escape] > '7' {
+				index = runEnd + 1
+				continue
+			}
+			value, _ := shellEscapeValue(line, escape, 3, 8)
+			if value == 7 {
+				return true
+			}
+			// printf %b and echo -e accept \0ooo in addition to the format
+			// string's \ooo form. Apply that interpretation only when the
+			// relevant mode is explicit, so harmless \0007 (NUL then "7") in
+			// a printf format is not mistaken for BEL.
+			if line[escape] == '0' && shellLineUsesZeroPrefixedOctal(line) {
+				value, digits := shellEscapeValue(line, escape+1, 3, 8)
+				if digits > 0 && value == 7 {
+					return true
+				}
+			}
+		}
+		index = runEnd + 1
+	}
+	return false
+}
+
+func shellLineUsesZeroPrefixedOctal(line string) bool {
+	return strings.Contains(line, `printf '%b'`) ||
+		strings.Contains(line, `printf "%b"`) ||
+		strings.Contains(line, "echo -e ") ||
+		strings.Contains(line, "echo -ne ") ||
+		strings.Contains(line, "echo -en ")
+}
+
+func shellEscapeValue(
+	line string,
+	start int,
+	limit int,
+	base int,
+) (int, int) {
+	value := 0
+	digits := 0
+	for start+digits < len(line) && digits < limit {
+		character := line[start+digits]
+		digit := -1
+		switch {
+		case character >= '0' && character <= '9':
+			digit = int(character - '0')
+		case character >= 'a' && character <= 'f':
+			digit = int(character-'a') + 10
+		case character >= 'A' && character <= 'F':
+			digit = int(character-'A') + 10
+		}
+		if digit < 0 || digit >= base {
+			break
+		}
+		value = value*base + digit
+		digits++
+	}
+	return value, digits
 }
 
 func TestMainMenuSoundPreviewOwnershipGuardRejectsBypasses(t *testing.T) {
