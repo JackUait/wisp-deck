@@ -56,6 +56,29 @@ func TestTranslateSimpleMessagesRequest(t *testing.T) {
 	}
 }
 
+func TestTranslateInlineSystemMessageIntoDeveloperInstructions(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"system":"Top-level instructions.",
+		"messages":[
+			{"role":"user","content":"test"},
+			{"role":"system","content":[
+				{"type":"text","text":"SessionStart hook context."}
+			]}
+		]
+	}`)
+	if got.System != "Top-level instructions.\n\nSessionStart hook context." {
+		t.Fatalf("system = %q", got.System)
+	}
+	if len(got.History) != 0 {
+		t.Fatalf("history = %#v, want no inline system item", got.History)
+	}
+	if len(got.Input) != 1 || got.Input[0].Text != "test" {
+		t.Fatalf("input = %#v", got.Input)
+	}
+}
+
 func TestTranslateToolsPreservesSchemaAndChoice(t *testing.T) {
 	got := parseAndTranslate(t, `{
 		"model":"gpt-5.6-sol",
@@ -253,6 +276,35 @@ func TestParseMessagesRequestRejectsUnknownContentBlock(t *testing.T) {
 		"messages":[{"role":"user","content":[{"type":"document","source":{}}]}]
 	}`))
 	if err == nil || !strings.Contains(err.Error(), `unsupported content block "document"`) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestParseMessagesRequestRejectsNonTextInlineSystem(t *testing.T) {
+	_, err := ParseMessagesRequest([]byte(`{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"messages":[
+			{"role":"user","content":"test"},
+			{"role":"system","content":[{
+				"type":"image",
+				"source":{"type":"base64","media_type":"image/png","data":"aGVsbG8="}
+			}]}
+		]
+	}`))
+	if err == nil ||
+		!strings.Contains(err.Error(), `messages[1]: system message has unsupported content block "image"`) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestParseMessagesRequestRejectsSystemOnlyMessages(t *testing.T) {
+	_, err := ParseMessagesRequest([]byte(`{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"messages":[{"role":"system","content":"No user input."}]
+	}`))
+	if err == nil || !strings.Contains(err.Error(), "messages must contain a user or assistant message") {
 		t.Fatalf("error = %v", err)
 	}
 }

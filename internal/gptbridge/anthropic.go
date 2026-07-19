@@ -152,6 +152,22 @@ func ParseMessagesRequest(payload []byte) (MessagesRequest, error) {
 		request.System = system
 	}
 	for index, message := range wire.Messages {
+		if message.Role == "system" {
+			content, err := parseContent(message.Content, message.Role)
+			if err != nil {
+				return MessagesRequest{}, fmt.Errorf("messages[%d]: %w", index, err)
+			}
+			for _, block := range content {
+				if block.Type != "text" {
+					return MessagesRequest{}, fmt.Errorf(
+						"messages[%d]: system message has unsupported content block %q",
+						index, block.Type,
+					)
+				}
+			}
+			request.System = append(request.System, content...)
+			continue
+		}
 		if message.Role != "user" && message.Role != "assistant" {
 			return MessagesRequest{}, fmt.Errorf("messages[%d]: unsupported role %q", index, message.Role)
 		}
@@ -163,6 +179,9 @@ func ParseMessagesRequest(payload []byte) (MessagesRequest, error) {
 			return MessagesRequest{}, fmt.Errorf("messages[%d]: content must not be empty", index)
 		}
 		request.Messages = append(request.Messages, Message{Role: message.Role, Content: content})
+	}
+	if len(request.Messages) == 0 {
+		return MessagesRequest{}, errors.New("messages must contain a user or assistant message")
 	}
 	return request, nil
 }
