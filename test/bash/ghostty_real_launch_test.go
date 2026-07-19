@@ -70,15 +70,15 @@ func launchRealGhosttyAndAwaitMarker(t *testing.T, sandboxHome, markerPath strin
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, ghosttyBinaryPath, "--quit-after-last-window-closed=true")
-	cmd.Env = append(os.Environ(), "HOME="+sandboxHome)
-	filtered := cmd.Env[:0]
-	for _, kv := range cmd.Env {
+	environment := append(os.Environ(), "HOME="+sandboxHome)
+	filtered := environment[:0]
+	for _, kv := range environment {
 		if len(kv) >= len("XDG_CONFIG_HOME=") && kv[:len("XDG_CONFIG_HOME=")] == "XDG_CONFIG_HOME=" {
 			continue
 		}
 		filtered = append(filtered, kv)
 	}
-	cmd.Env = filtered
+	cmd.Env = repositoryTestEnvironment(filtered)
 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start real Ghostty: %v", err)

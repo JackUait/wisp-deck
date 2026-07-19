@@ -2,6 +2,7 @@ package bash_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -16,60 +17,37 @@ import (
 	"testing"
 )
 
+type repositoryAuditFile struct {
+	mode   string
+	source []byte
+}
+
 // Runtime sound sites are deliberately few. Go process construction belongs
 // to one typed owner, while preference playback stays under the shared lock.
 func TestIdleSoundRuntimeSitesUseSharedLiveGate(t *testing.T) {
 	root := projectRoot(t)
-	allowed := map[string]bool{
-		filepath.Join(root, "cmd", "wisp-deck-tui", "host_effects.go"): true,
-	}
-	paths := []string{
-		filepath.Join(root, "lib"),
-		filepath.Join(root, "templates"),
-		filepath.Join(root, "bin"),
-		filepath.Join(root, "internal"),
-		filepath.Join(root, "cmd"),
-		filepath.Join(root, "wrapper.sh"),
-	}
+	const allowed = "cmd/wisp-deck-tui/host_effects.go"
 	markers := []string{"afplay", "/System/Library/Sounds", "NSSound", "AudioServicesPlaySystemSound"}
 	var violations []string
-	for _, path := range paths {
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
+	shipped := repositoryShippedAssignments()
+	for path, file := range trackedRepositoryAuditFiles(t) {
+		if path == allowed || isTrackedTestSource(path) ||
+			bytes.IndexByte(file.source, 0) >= 0 {
+			continue
 		}
-		visit := func(candidate string, entry os.FileInfo, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if entry.IsDir() || strings.HasSuffix(candidate, "_test.go") || allowed[candidate] {
-				return nil
-			}
-			data, err := os.ReadFile(candidate)
-			if err != nil {
-				return err
-			}
-			// Local builds can leave ignored executables under bin/. Only text
-			// source can introduce a new playback owner for this source guard.
-			if bytes.IndexByte(data, 0) >= 0 {
-				return nil
-			}
-			for _, marker := range markers {
-				if strings.Contains(string(data), marker) {
-					violations = append(violations, candidate)
-					break
-				}
-			}
-			return nil
+		compiled := strings.HasSuffix(path, ".go") &&
+			(strings.HasPrefix(path, "cmd/") || strings.HasPrefix(path, "internal/"))
+		if !compiled && !isProductionAuditTextPath(path, shipped) {
+			continue
 		}
-		if info.IsDir() {
-			if err := filepath.Walk(path, visit); err != nil {
-				t.Fatal(err)
+		for _, marker := range markers {
+			if strings.Contains(string(file.source), marker) {
+				violations = append(violations, path)
+				break
 			}
-		} else if err := visit(path, info, nil); err != nil {
-			t.Fatal(err)
 		}
 	}
+	sort.Strings(violations)
 	if len(violations) != 0 {
 		t.Fatalf("new runtime audio sites bypass the live preference gate: %s", strings.Join(violations, ", "))
 	}
@@ -246,25 +224,3100 @@ func validateShellNotificationOwnership(source string) error {
 	return nil
 }
 
+func TestHostEffectOwnershipInventoryRejectsBypasses(t *testing.T) {
+	files := trackedRepositoryAuditFiles(t)
+	if err := validateRepositoryHostEffectInventory(files); err != nil {
+		t.Fatalf("current repository host-effect inventory rejected: %v", err)
+	}
+
+	productionMutations := map[string]string{
+		"compiled command": `package future
+import "os/exec"
+func run() { _ = exec.Command("/usr/bin/afplay", "/tmp/chime.aiff") }
+`,
+		"compiled internal": `package future
+import "os/exec"
+func run() { _ = exec.Command("/usr/bin/say", "audit") }
+`,
+		"compiled direct BEL": `package future
+import "fmt"
+func run() { fmt.Print("\a") }
+`,
+		"compiled direct OSC": `package future
+import "os"
+func run() { _, _ = os.Stdout.Write([]byte("\x1b]9;audit\x07")) }
+`,
+		"command helper text": "afplay /tmp/chime.aiff\n",
+		"shipped bin": `#!/usr/bin/env node
+require("child_process").execFileSync("/usr/bin/afplay", ["/tmp/chime.aiff"]);
+`,
+		"shipped library":  "say audit\n",
+		"shipped template": "printf '\\033]9;audit\\007'\n",
+		"shipped defaults": "osascript -e 'display notification \"audit\" with sound name \"Glass\"'\n",
+		"shipped ghostty":  "printf '\\a'\n",
+		"shipped terminal": "printf '\\x07'\n",
+		"build script":     "afplay /tmp/chime.aiff\n",
+		"test driver":      "say audit\n",
+		"workflow":         "run: osascript -e 'display notification \"audit\"'\n",
+	}
+	productionPaths := map[string]string{
+		"compiled command":    "cmd/future/future.go",
+		"compiled internal":   "internal/future/future.go",
+		"compiled direct BEL": "cmd/ci-report/future_bell.go",
+		"compiled direct OSC": "internal/future/output.go",
+		"command helper text": "cmd/future/player.sh",
+		"shipped bin":         "bin/npx-wisp-deck.js",
+		"shipped library":     "lib/future-player.sh",
+		"shipped template":    "templates/future-player.sh",
+		"shipped defaults":    "defaults/future-player.sh",
+		"shipped ghostty":     "ghostty/future-player.sh",
+		"shipped terminal":    "terminals/future-player.sh",
+		"build script":        "scripts/future-player.sh",
+		"test driver":         "run-tests.sh",
+		"workflow":            ".github/workflows/tests.yml",
+	}
+	for name, source := range productionMutations {
+		t.Run(name, func(t *testing.T) {
+			mutated := cloneRepositoryAuditFiles(files)
+			path := productionPaths[name]
+			if existing, ok := mutated[path]; ok {
+				existing.source = append(append([]byte(nil), existing.source...), []byte(source)...)
+				mutated[path] = existing
+			} else {
+				mutated[path] = repositoryAuditFile{
+					mode:   "100755",
+					source: []byte(source),
+				}
+			}
+			if err := validateRepositoryHostEffectInventory(mutated); err == nil {
+				t.Fatal("production host-effect mutation escaped the repository inventory")
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		name   string
+		path   string
+		source string
+	}{
+		{
+			name: "Go test",
+			path: "test/future_audio_test.go",
+			source: `package future
+import "os/exec"
+func TestFuture() { _ = exec.Command("/usr/bin/afplay", "/tmp/chime.aiff") }
+`,
+		},
+		{
+			name:   "JavaScript spec",
+			path:   "future.spec.js",
+			source: `require("child_process").execFileSync("/usr/bin/afplay", ["/tmp/chime.aiff"]);`,
+		},
+		{
+			name:   "JSX test",
+			path:   "future.test.jsx",
+			source: `require("child_process").spawnSync("/usr/bin/say", ["audit"]);`,
+		},
+		{
+			name:   "TypeScript spec",
+			path:   "future.spec.ts",
+			source: `Bun.spawn(["/usr/bin/afplay", "/tmp/chime.aiff"]);`,
+		},
+		{
+			name:   "TSX test",
+			path:   "future.test.tsx",
+			source: `Deno.Command("/usr/bin/say", { args: ["audit"] });`,
+		},
+		{
+			name:   "MJS spec",
+			path:   "future.spec.mjs",
+			source: `process.stdout.write("\\x1b]9;audit\\x07");`,
+		},
+		{
+			name:   "CJS test",
+			path:   "future.test.cjs",
+			source: `require("node:child_process").execSync("afplay /tmp/chime.aiff");`,
+		},
+		{
+			name:   "relative speech",
+			path:   "future.test.js",
+			source: `require("child_process").execFileSync("say", ["audit"]);`,
+		},
+		{
+			name:   "constructed player",
+			path:   "future.spec.ts",
+			source: `require("child_process").spawnSync("af" + "play", ["/tmp/chime.aiff"]);`,
+		},
+		{
+			name:   "direct fs output",
+			path:   "future.test.js",
+			source: `require("fs").writeSync(1, "\x07");`,
+		},
+		{
+			name:   "bracket stdout output",
+			path:   "future.test.js",
+			source: `process["stdout"].write("\x1b]9;audit\x07");`,
+		},
+		{
+			name:   "console terminal output",
+			path:   "future.test.js",
+			source: `console.log("\x07");`,
+		},
+		{
+			name:   "shell test",
+			path:   "test/future_audio_test.sh",
+			source: "afplay /tmp/chime.aiff\n",
+		},
+		{
+			name:   "extensionless shell test",
+			path:   "test/future-audio",
+			source: "#!/bin/bash\nsay audit\n",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			mutated := cloneRepositoryAuditFiles(files)
+			mutated[test.path] = repositoryAuditFile{
+				mode:   "100644",
+				source: []byte(test.source),
+			}
+			if err := validateRepositoryHostEffectInventory(mutated); err == nil {
+				t.Fatal("test host-effect launch escaped the repository inventory")
+			}
+		})
+	}
+
+	t.Run("JavaScript comments and unrelated processes are harmless", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["cmd/future/safe.js"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`// afplay is a forbidden fixture
+const fixture = "afplay";
+require("child_process").spawnSync("git", ["-C", "/tmp/wisp-deck-tui", "status"]);
+`),
+		}
+		if err := validateRepositoryHostEffectInventory(mutated); err != nil {
+			t.Fatalf("harmless JavaScript audit fixture rejected: %v", err)
+		}
+	})
+
+	t.Run("new shipped root", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		var manifest map[string]any
+		if err := json.Unmarshal(mutated["package.json"].source, &manifest); err != nil {
+			t.Fatal(err)
+		}
+		filesValue, ok := manifest["files"].([]any)
+		if !ok {
+			t.Fatal("package.json files mutation prerequisite missing")
+		}
+		manifest["files"] = append(filesValue, "future/")
+		source, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		packageFile := mutated["package.json"]
+		packageFile.source = source
+		mutated["package.json"] = packageFile
+		mutated["future/safe.txt"] = repositoryAuditFile{
+			mode:   "100644",
+			source: []byte("safe\n"),
+		}
+		if err := validateRepositoryHostEffectInventory(mutated); err == nil {
+			t.Fatal("new package.json shipped root escaped inventory assignment")
+		}
+	})
+
+	t.Run("npm lifecycle host effect", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		var manifest map[string]any
+		if err := json.Unmarshal(mutated["package.json"].source, &manifest); err != nil {
+			t.Fatal(err)
+		}
+		manifest["scripts"] = map[string]string{
+			"postinstall": "afplay /tmp/chime.aiff",
+		}
+		source, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		packageFile := mutated["package.json"]
+		packageFile.source = source
+		mutated["package.json"] = packageFile
+		if err := validateRepositoryHostEffectInventory(mutated); err == nil {
+			t.Fatal("npm lifecycle host effect escaped the repository inventory")
+		}
+	})
+
+	for name, mutation := range map[string]repositoryAuditFile{
+		"thin Mach-O": {
+			mode:   "100755",
+			source: append([]byte{0xcf, 0xfa, 0xed, 0xfe}, make([]byte, 32)...),
+		},
+		"non-executable fat Mach-O": {
+			mode:   "100644",
+			source: append([]byte{0xca, 0xfe, 0xba, 0xbe}, make([]byte, 32)...),
+		},
+		"executable binary": {
+			mode:   "100755",
+			source: []byte{0x01, 0x00, 0x02, 0x00},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutated := cloneRepositoryAuditFiles(files)
+			mutated["future-binary"] = mutation
+			if err := validateRepositoryHostEffectInventory(mutated); err == nil {
+				t.Fatal("tracked binary artifact escaped the repository inventory")
+			}
+		})
+	}
+}
+
+func trackedRepositoryAuditFiles(t *testing.T) map[string]repositoryAuditFile {
+	t.Helper()
+	root := projectRoot(t)
+	files, err := loadTrackedRepositoryAuditFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
+
+func loadTrackedRepositoryAuditFiles(
+	root string,
+) (map[string]repositoryAuditFile, error) {
+	output, err := exec.Command(
+		"git",
+		"-C",
+		root,
+		"ls-files",
+		"-s",
+		"-z",
+	).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf(
+			"discover tracked repository inventory: %w\n%s",
+			err,
+			output,
+		)
+	}
+	files := make(map[string]repositoryAuditFile)
+	for _, record := range bytes.Split(output, []byte{0}) {
+		if len(record) == 0 {
+			continue
+		}
+		header, pathBytes, ok := bytes.Cut(record, []byte{'\t'})
+		fields := bytes.Fields(header)
+		if !ok || len(fields) != 3 {
+			return nil, fmt.Errorf(
+				"malformed git ls-files inventory record %q",
+				record,
+			)
+		}
+		path := string(pathBytes)
+		source, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+		if err != nil {
+			return nil, fmt.Errorf(
+				"read tracked inventory file %s: %w",
+				path,
+				err,
+			)
+		}
+		files[path] = repositoryAuditFile{
+			mode:   string(fields[0]),
+			source: source,
+		}
+	}
+	return files, nil
+}
+
+func cloneRepositoryAuditFiles(
+	files map[string]repositoryAuditFile,
+) map[string]repositoryAuditFile {
+	cloned := make(map[string]repositoryAuditFile, len(files))
+	for path, file := range files {
+		cloned[path] = repositoryAuditFile{
+			mode:   file.mode,
+			source: append([]byte(nil), file.source...),
+		}
+	}
+	return cloned
+}
+
+func validateRepositoryHostEffectInventory(
+	files map[string]repositoryAuditFile,
+) error {
+	for path, file := range files {
+		if isMachO(file.source) {
+			return fmt.Errorf("%s is a tracked Mach-O", path)
+		}
+		if file.mode == "100755" && bytes.IndexByte(file.source, 0) >= 0 {
+			return fmt.Errorf("%s is a tracked executable binary artifact", path)
+		}
+	}
+
+	packageFile, ok := files["package.json"]
+	if !ok {
+		return fmt.Errorf("tracked inventory is missing package.json")
+	}
+	var manifest struct {
+		Files   []string          `json:"files"`
+		Scripts map[string]string `json:"scripts"`
+	}
+	if err := json.Unmarshal(packageFile.source, &manifest); err != nil {
+		return fmt.Errorf("parse package.json audit inventory: %w", err)
+	}
+	versionFile, ok := files["VERSION"]
+	if !ok {
+		return fmt.Errorf("tracked inventory is missing VERSION")
+	}
+	var packageMetadata struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(packageFile.source, &packageMetadata); err != nil {
+		return fmt.Errorf("parse package.json version: %w", err)
+	}
+	if version := strings.TrimSpace(string(versionFile.source)); version == "" || version != packageMetadata.Version {
+		return fmt.Errorf(
+			"VERSION metadata %q does not equal package version %q",
+			version,
+			packageMetadata.Version,
+		)
+	}
+	shippedAssignments := repositoryShippedAssignments()
+	seenShipped := make(map[string]bool, len(manifest.Files))
+	for _, shipped := range manifest.Files {
+		if _, assigned := shippedAssignments[shipped]; !assigned {
+			return fmt.Errorf("package.json ships unassigned inventory root %q", shipped)
+		}
+		if seenShipped[shipped] {
+			return fmt.Errorf("package.json repeats shipped inventory root %q", shipped)
+		}
+		seenShipped[shipped] = true
+	}
+	for shipped := range shippedAssignments {
+		if !seenShipped[shipped] {
+			return fmt.Errorf("package.json omitted audited shipped root %q", shipped)
+		}
+	}
+	for name, command := range manifest.Scripts {
+		if shellProductionLineHasHostEffect(command) {
+			return fmt.Errorf("package.json lifecycle script %q owns a host effect", name)
+		}
+	}
+
+	productionText := make(map[string]string)
+	for path, file := range files {
+		if isTrackedTestSource(path) {
+			if trackedTestSourceLaunchesHostEffect(path, file.source) {
+				return fmt.Errorf("%s can launch a host effect from test source", path)
+			}
+			continue
+		}
+		if strings.HasSuffix(path, ".go") &&
+			(strings.HasPrefix(path, "cmd/") || strings.HasPrefix(path, "internal/")) {
+			if path == "cmd/wisp-deck-tui/host_effects.go" {
+				continue
+			}
+			if productionSourceLaunchesHostEffect(path, file.source) ||
+				sourceHasHostEffectLiteral(path, file.source) {
+				return fmt.Errorf("%s owns an unaudited compiled host effect", path)
+			}
+			continue
+		}
+		if isJavaScriptAuditPath(path) &&
+			isProductionAuditTextPath(path, shippedAssignments) {
+			if javascriptSourceLaunchesHostEffect(file.source) {
+				return fmt.Errorf("%s owns an unaudited JavaScript host effect", path)
+			}
+			continue
+		}
+		if path == "VERSION" || !isProductionAuditTextPath(path, shippedAssignments) ||
+			path == "package.json" ||
+			bytes.IndexByte(file.source, 0) >= 0 {
+			continue
+		}
+		productionText[path] = string(file.source)
+	}
+	if err := validateShellProductionHostEffectOwnership(productionText); err != nil {
+		return err
+	}
+	return nil
+}
+
+func repositoryShippedAssignments() map[string]string {
+	return map[string]string{
+		"bin/wisp-deck":        "shipped-text",
+		"bin/wisp-deck-config": "shipped-text",
+		"bin/npx-wisp-deck.js": "shipped-text",
+		"lib/":                 "shipped-text",
+		"templates/":           "shipped-text",
+		"defaults/":            "shipped-text",
+		"ghostty/":             "shipped-text",
+		"terminals/":           "shipped-text",
+		"wrapper.sh":           "shipped-text",
+		"VERSION":              "metadata-only",
+	}
+}
+
+func isProductionAuditTextPath(
+	path string,
+	shippedAssignments map[string]string,
+) bool {
+	if strings.HasPrefix(path, "cmd/") ||
+		strings.HasPrefix(path, "internal/") ||
+		path == "package.json" || path == "Makefile" || path == "run-tests.sh" ||
+		path == ".github/workflows/tests.yml" ||
+		path == ".github/workflows/install.yml" ||
+		strings.HasPrefix(path, "scripts/") {
+		return true
+	}
+	for shipped, classification := range shippedAssignments {
+		if classification == "metadata-only" {
+			continue
+		}
+		if strings.HasSuffix(shipped, "/") {
+			if strings.HasPrefix(path, shipped) {
+				return true
+			}
+			continue
+		}
+		if path == shipped {
+			return true
+		}
+	}
+	return false
+}
+
+func isTrackedTestSource(path string) bool {
+	base := filepath.Base(path)
+	if strings.HasSuffix(base, "_test.go") {
+		return true
+	}
+	for _, extension := range []string{".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"} {
+		if strings.HasSuffix(base, ".spec"+extension) ||
+			strings.HasSuffix(base, ".test"+extension) {
+			return true
+		}
+	}
+	shellTest := strings.HasSuffix(base, ".sh") ||
+		strings.HasSuffix(base, ".bash") ||
+		strings.HasSuffix(base, ".zsh") ||
+		strings.HasSuffix(base, ".bats") ||
+		!strings.Contains(base, ".")
+	return shellTest &&
+		(strings.HasPrefix(filepath.ToSlash(path), "test/") ||
+			strings.HasSuffix(base, "_test.sh") ||
+			strings.HasSuffix(base, ".test.sh") ||
+			strings.HasSuffix(base, ".spec.sh"))
+}
+
+func trackedTestSourceLaunchesHostEffect(path string, source []byte) bool {
+	if strings.HasSuffix(path, "_test.go") {
+		return testSourceLaunchesHostAudio(path, source)
+	}
+	if !isJavaScriptAuditPath(path) {
+		for _, line := range strings.Split(string(source), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed != "" && !strings.HasPrefix(trimmed, "#") &&
+				shellProductionLineHasHostEffect(trimmed) {
+				return true
+			}
+		}
+		return false
+	}
+	return javascriptSourceLaunchesHostEffect(source)
+}
+
+type javascriptAuditToken struct {
+	kind  byte
+	value string
+}
+
+func isJavaScriptAuditPath(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs":
+		return true
+	default:
+		return false
+	}
+}
+
+func javascriptSourceLaunchesHostEffect(source []byte) bool {
+	tokens, ok := lexJavaScriptAudit(string(source))
+	if !ok {
+		return true
+	}
+	constants := javascriptStringConstants(tokens)
+	for index, token := range tokens {
+		if token.kind != '(' {
+			continue
+		}
+		end := matchingJavaScriptToken(tokens, index, '(', ')')
+		if end < 0 {
+			return true
+		}
+		method := javascriptCallMethod(tokens, index)
+		arguments := splitJavaScriptArguments(tokens[index+1 : end])
+		switch strings.ToLower(method) {
+		case "exec", "execsync":
+			if len(arguments) > 0 &&
+				javascriptExpressionHasHostEffect(arguments[0], constants) {
+				return true
+			}
+		case "execfile", "execfilesync", "spawn", "spawnsync", "command":
+			if javascriptProcessArgumentsHaveHostEffect(arguments, constants) {
+				return true
+			}
+		case "write", "writestring", "writeline":
+			if javascriptCallTargetsTerminal(tokens, index) &&
+				javascriptArgumentsHaveTerminalEffect(arguments, constants) {
+				return true
+			}
+		case "writesync":
+			if javascriptWriteSyncTargetsTerminal(tokens, index, arguments) &&
+				javascriptArgumentsHaveTerminalEffect(arguments, constants) {
+				return true
+			}
+		case "log", "error", "warn", "info":
+			if javascriptCallHasReceiver(tokens, index, "console") &&
+				javascriptArgumentsHaveTerminalEffect(arguments, constants) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func lexJavaScriptAudit(source string) ([]javascriptAuditToken, bool) {
+	tokens := make([]javascriptAuditToken, 0, len(source)/3)
+	for index := 0; index < len(source); {
+		character := source[index]
+		if character == ' ' || character == '\t' ||
+			character == '\r' || character == '\n' {
+			index++
+			continue
+		}
+		if character == '/' && index+1 < len(source) {
+			switch source[index+1] {
+			case '/':
+				index += 2
+				for index < len(source) && source[index] != '\n' {
+					index++
+				}
+				continue
+			case '*':
+				end := strings.Index(source[index+2:], "*/")
+				if end < 0 {
+					return nil, false
+				}
+				index += end + 4
+				continue
+			}
+		}
+		if character == '\'' || character == '"' || character == '`' {
+			value, next, ok := readJavaScriptString(source, index, character)
+			if !ok {
+				return nil, false
+			}
+			tokens = append(tokens, javascriptAuditToken{kind: 's', value: value})
+			index = next
+			continue
+		}
+		if isJavaScriptIdentifierStart(character) {
+			start := index
+			index++
+			for index < len(source) && isJavaScriptIdentifierPart(source[index]) {
+				index++
+			}
+			tokens = append(tokens, javascriptAuditToken{
+				kind:  'i',
+				value: source[start:index],
+			})
+			continue
+		}
+		if character >= '0' && character <= '9' {
+			start := index
+			index++
+			for index < len(source) &&
+				((source[index] >= '0' && source[index] <= '9') ||
+					source[index] == 'x' || source[index] == 'X' ||
+					(source[index] >= 'a' && source[index] <= 'f') ||
+					(source[index] >= 'A' && source[index] <= 'F')) {
+				index++
+			}
+			tokens = append(tokens, javascriptAuditToken{
+				kind:  'n',
+				value: source[start:index],
+			})
+			continue
+		}
+		tokens = append(tokens, javascriptAuditToken{
+			kind:  character,
+			value: string(character),
+		})
+		index++
+	}
+	return tokens, true
+}
+
+func isJavaScriptIdentifierStart(character byte) bool {
+	return character == '_' || character == '$' ||
+		(character >= 'a' && character <= 'z') ||
+		(character >= 'A' && character <= 'Z')
+}
+
+func isJavaScriptIdentifierPart(character byte) bool {
+	return isJavaScriptIdentifierStart(character) ||
+		(character >= '0' && character <= '9')
+}
+
+func readJavaScriptString(
+	source string,
+	start int,
+	quote byte,
+) (string, int, bool) {
+	var value strings.Builder
+	for index := start + 1; index < len(source); index++ {
+		character := source[index]
+		if character == quote {
+			return value.String(), index + 1, true
+		}
+		if character != '\\' {
+			value.WriteByte(character)
+			continue
+		}
+		index++
+		if index >= len(source) {
+			return "", 0, false
+		}
+		escaped := source[index]
+		switch escaped {
+		case '\n':
+			continue
+		case '\r':
+			if index+1 < len(source) && source[index+1] == '\n' {
+				index++
+			}
+			continue
+		case 'b':
+			value.WriteByte('\b')
+		case 'f':
+			value.WriteByte('\f')
+		case 'n':
+			value.WriteByte('\n')
+		case 'r':
+			value.WriteByte('\r')
+		case 't':
+			value.WriteByte('\t')
+		case 'v':
+			value.WriteByte('\v')
+		case 'x':
+			decoded, next, ok := decodeJavaScriptHex(source, index+1, 2)
+			if !ok {
+				return "", 0, false
+			}
+			value.WriteRune(decoded)
+			index = next - 1
+		case 'u':
+			decoded, next, ok := decodeJavaScriptHex(source, index+1, 4)
+			if !ok {
+				return "", 0, false
+			}
+			value.WriteRune(decoded)
+			index = next - 1
+		default:
+			if escaped >= '0' && escaped <= '7' {
+				end := index + 1
+				for end < len(source) && end < index+3 &&
+					source[end] >= '0' && source[end] <= '7' {
+					end++
+				}
+				decoded, err := strconv.ParseInt(source[index:end], 8, 32)
+				if err != nil {
+					return "", 0, false
+				}
+				value.WriteRune(rune(decoded))
+				index = end - 1
+			} else {
+				value.WriteByte(escaped)
+			}
+		}
+	}
+	return "", 0, false
+}
+
+func decodeJavaScriptHex(
+	source string,
+	start int,
+	width int,
+) (rune, int, bool) {
+	if start+width > len(source) {
+		return 0, 0, false
+	}
+	decoded, err := strconv.ParseInt(source[start:start+width], 16, 32)
+	if err != nil {
+		return 0, 0, false
+	}
+	return rune(decoded), start + width, true
+}
+
+func javascriptStringConstants(
+	tokens []javascriptAuditToken,
+) map[string]string {
+	constants := make(map[string]string)
+	for index := 0; index+3 < len(tokens); index++ {
+		if tokens[index].kind != 'i' ||
+			(tokens[index].value != "const" &&
+				tokens[index].value != "let" &&
+				tokens[index].value != "var") ||
+			tokens[index+1].kind != 'i' ||
+			tokens[index+2].kind != '=' {
+			continue
+		}
+		end := index + 3
+		depth := 0
+		for end < len(tokens) {
+			if tokens[end].kind == '(' || tokens[end].kind == '[' ||
+				tokens[end].kind == '{' {
+				depth++
+			}
+			if tokens[end].kind == ')' || tokens[end].kind == ']' ||
+				tokens[end].kind == '}' {
+				depth--
+			}
+			if depth == 0 && (tokens[end].kind == ';' || tokens[end].kind == ',') {
+				break
+			}
+			end++
+		}
+		if value, ok := javascriptConstantString(
+			tokens[index+3:end],
+			constants,
+		); ok {
+			constants[tokens[index+1].value] = value
+		}
+	}
+	return constants
+}
+
+func javascriptConstantString(
+	tokens []javascriptAuditToken,
+	constants map[string]string,
+) (string, bool) {
+	var value strings.Builder
+	expectValue := true
+	values := 0
+	for _, token := range tokens {
+		switch token.kind {
+		case '(', ')':
+			continue
+		case '+':
+			if expectValue || values == 0 {
+				return "", false
+			}
+			expectValue = true
+		case 's':
+			if !expectValue {
+				return "", false
+			}
+			value.WriteString(token.value)
+			expectValue = false
+			values++
+		case 'i':
+			if !expectValue {
+				return "", false
+			}
+			resolved, ok := constants[token.value]
+			if !ok {
+				return "", false
+			}
+			value.WriteString(resolved)
+			expectValue = false
+			values++
+		default:
+			return "", false
+		}
+	}
+	return value.String(), values > 0 && !expectValue
+}
+
+func matchingJavaScriptToken(
+	tokens []javascriptAuditToken,
+	start int,
+	open byte,
+	close byte,
+) int {
+	depth := 0
+	for index := start; index < len(tokens); index++ {
+		switch tokens[index].kind {
+		case open:
+			depth++
+		case close:
+			depth--
+			if depth == 0 {
+				return index
+			}
+		}
+	}
+	return -1
+}
+
+func javascriptCallMethod(
+	tokens []javascriptAuditToken,
+	open int,
+) string {
+	if open == 0 || tokens[open-1].kind != 'i' {
+		return ""
+	}
+	return tokens[open-1].value
+}
+
+func splitJavaScriptArguments(
+	tokens []javascriptAuditToken,
+) [][]javascriptAuditToken {
+	var arguments [][]javascriptAuditToken
+	start := 0
+	depth := 0
+	for index, token := range tokens {
+		switch token.kind {
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			depth--
+		case ',':
+			if depth == 0 {
+				arguments = append(arguments, tokens[start:index])
+				start = index + 1
+			}
+		}
+	}
+	if start < len(tokens) {
+		arguments = append(arguments, tokens[start:])
+	}
+	return arguments
+}
+
+func javascriptExpressionStrings(
+	tokens []javascriptAuditToken,
+	constants map[string]string,
+) []string {
+	values := make([]string, 0)
+	if value, ok := javascriptConstantString(tokens, constants); ok {
+		values = append(values, value)
+	}
+	for _, token := range tokens {
+		switch token.kind {
+		case 's':
+			values = append(values, token.value)
+		case 'i':
+			if value, ok := constants[token.value]; ok {
+				values = append(values, value)
+			}
+		}
+	}
+	return values
+}
+
+func javascriptExpressionHasHostEffect(
+	tokens []javascriptAuditToken,
+	constants map[string]string,
+) bool {
+	for _, value := range javascriptExpressionStrings(tokens, constants) {
+		if stringHasHostEffectMarker(value) ||
+			strings.ContainsRune(value, '\a') ||
+			shellLineHasBellEscape(value) {
+			return true
+		}
+	}
+	return false
+}
+
+func javascriptProcessArgumentsHaveHostEffect(
+	arguments [][]javascriptAuditToken,
+	constants map[string]string,
+) bool {
+	if len(arguments) == 0 {
+		return false
+	}
+	values := javascriptExpressionStrings(arguments[0], constants)
+	if len(values) == 0 {
+		return false
+	}
+	executable := strings.ToLower(filepath.Base(values[0]))
+	if stringHasHostEffectMarker(values[0]) ||
+		executable == "afplay" || executable == "say" ||
+		executable == "osascript" {
+		return true
+	}
+	switch executable {
+	case "sh", "bash", "zsh", "env":
+		for _, argument := range arguments {
+			if javascriptExpressionHasHostEffect(argument, constants) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func javascriptArgumentsHaveTerminalEffect(
+	arguments [][]javascriptAuditToken,
+	constants map[string]string,
+) bool {
+	for _, argument := range arguments {
+		for _, value := range javascriptExpressionStrings(argument, constants) {
+			if strings.ContainsRune(value, '\a') ||
+				strings.Contains(value, "]9;") ||
+				shellLineHasBellEscape(value) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func javascriptCallHasReceiver(
+	tokens []javascriptAuditToken,
+	open int,
+	receiver string,
+) bool {
+	start := 0
+	depth := 0
+	for index := open - 2; index >= 0; index-- {
+		switch tokens[index].kind {
+		case ')', ']':
+			depth++
+		case '(', '[':
+			if depth > 0 {
+				depth--
+			}
+		case ';', ',', '{', '}', '=':
+			if depth == 0 {
+				start = index + 1
+				index = -1
+			}
+		}
+	}
+	for _, token := range tokens[start:open] {
+		if token.kind == 'i' && token.value == receiver {
+			return true
+		}
+		if token.kind == 's' && token.value == receiver {
+			return true
+		}
+	}
+	return false
+}
+
+func javascriptCallTargetsTerminal(
+	tokens []javascriptAuditToken,
+	open int,
+) bool {
+	return javascriptCallHasReceiver(tokens, open, "process") &&
+		(javascriptCallHasReceiver(tokens, open, "stdout") ||
+			javascriptCallHasReceiver(tokens, open, "stderr"))
+}
+
+func javascriptWriteSyncTargetsTerminal(
+	tokens []javascriptAuditToken,
+	open int,
+	arguments [][]javascriptAuditToken,
+) bool {
+	if javascriptCallHasReceiver(tokens, open, "fs") {
+		if len(arguments) == 0 || len(arguments[0]) != 1 {
+			return false
+		}
+		target := arguments[0][0]
+		return target.kind == 'n' &&
+			(target.value == "1" || target.value == "2")
+	}
+	return javascriptCallTargetsTerminal(tokens, open)
+}
+
+func isMachO(source []byte) bool {
+	if len(source) < 4 {
+		return false
+	}
+	switch string(source[:4]) {
+	case "\xfe\xed\xfa\xce", "\xce\xfa\xed\xfe",
+		"\xfe\xed\xfa\xcf", "\xcf\xfa\xed\xfe",
+		"\xca\xfe\xba\xbe", "\xbe\xba\xfe\xca",
+		"\xca\xfe\xba\xbf", "\xbf\xba\xfe\xca":
+		return true
+	default:
+		return false
+	}
+}
+
+func TestApplicationTestChildrenRetainRepositoryMode(t *testing.T) {
+	files := trackedRepositoryAuditFiles(t)
+	if err := validateRepositoryApplicationTestEnvironments(files); err != nil {
+		t.Fatalf("current application-child test environment rejected: %v", err)
+	}
+
+	for name, source := range map[string]string{
+		"marker overridden": `package future
+import "os/exec"
+func TestFuture() {
+	cmd := exec.Command("/tmp/wisp-deck-tui", "main-menu")
+	cmd.Env = []string{"HOME=/tmp", "WISP_DECK_TESTING=0"}
+	_ = cmd.Run()
+}`,
+		"complete environment replaced": `package future
+import "os/exec"
+func TestFuture() {
+	cmd := exec.Command("node", "/repo/bin/npx-wisp-deck.js")
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}`,
+		"marker explicitly unset": `package future
+import "os/exec"
+func TestFuture() {
+	cmd := exec.Command("env", "-u", "WISP_DECK_TESTING", "/tmp/wisp-deck-tui")
+	_ = cmd.Run()
+}`,
+		"wrapper shell environment replaced": `package future
+import "os/exec"
+func TestFuture() {
+	cmd := exec.Command("bash", "/repo/wrapper.sh")
+	cmd.Env = append([]string{}, "HOME=/tmp")
+	_ = cmd.Run()
+}`,
+		"aliased process package": `package future
+import process "os/exec"
+func TestFuture() {
+	cmd := process.Command("/tmp/wisp-deck-tui", "main-menu")
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}`,
+		"dot-imported process package": `package future
+import . "os/exec"
+func TestFuture() {
+	cmd := Command("/tmp/wisp-deck-tui", "main-menu")
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}`,
+		"application parameter environment": `package future
+import "os/exec"
+func runBinary(binary string) {
+	cmd := exec.Command(binary, "capabilities")
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}`,
+		"normalized variable later poisoned": `package future
+import "os/exec"
+func TestFuture() {
+	env := repositoryTestEnvironment([]string{"HOME=/tmp"})
+	env = append(env, "WISP_DECK_TESTING=0")
+	cmd := exec.Command("/tmp/wisp-deck-tui", "main-menu")
+	cmd.Env = env
+	_ = cmd.Run()
+}`,
+		"unsafe conditional environment": `package future
+import "os/exec"
+func TestFuture(unsafe bool) {
+	cmd := exec.Command("/tmp/wisp-deck-tui", "main-menu")
+	if unsafe {
+		cmd.Env = []string{"HOME=/tmp"}
+	} else {
+		cmd.Env = repositoryTestEnvironment([]string{"HOME=/tmp"})
+	}
+	_ = cmd.Run()
+}`,
+		"application command alias": `package future
+import "os/exec"
+func TestFuture() {
+	cmd := exec.Command("/tmp/wisp-deck-tui", "main-menu")
+	alias := cmd
+	alias.Env = []string{"HOME=/tmp"}
+	_ = alias.Run()
+}`,
+		"exec Cmd composite environment": `package future
+import "os/exec"
+func TestFuture() {
+	cmd := &exec.Cmd{
+		Path: "/tmp/wisp-deck-tui",
+		Args: []string{"/tmp/wisp-deck-tui", "main-menu"},
+		Env:  []string{"HOME=/tmp"},
+	}
+	_ = cmd.Run()
+}`,
+		"os StartProcess environment": `package future
+import "os"
+func TestFuture() {
+	_, _ = os.StartProcess(
+		"/tmp/wisp-deck-tui",
+		[]string{"/tmp/wisp-deck-tui", "main-menu"},
+		&os.ProcAttr{Env: []string{"HOME=/tmp"}},
+	)
+}`,
+		"syscall Exec environment": `package future
+import "syscall"
+func TestFuture() {
+	_ = syscall.Exec(
+		"/tmp/wisp-deck-tui",
+		[]string{"/tmp/wisp-deck-tui", "main-menu"},
+		[]string{"HOME=/tmp"},
+	)
+}`,
+		"env ignore environment": `package future
+import "os/exec"
+func TestFuture() {
+	_ = exec.Command(
+		"env",
+		"-i",
+		"HOME=/tmp",
+		"/tmp/wisp-deck-tui",
+		"main-menu",
+	).Run()
+}`,
+		"constructor alias environment": `package future
+import "os/exec"
+func TestFuture() {
+	command := exec.Command
+	cmd := command("/tmp/wisp-deck-tui", "main-menu")
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}`,
+		"go run application environment": `package future
+import "os/exec"
+func TestFuture() {
+	cmd := exec.Command("go", "run", "./cmd/wisp-deck-tui", "main-menu")
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}`,
+		"Make application environment": `package future
+import "os/exec"
+func TestFuture() {
+	cmd := exec.Command("make", "build")
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}`,
+		"application subcommand parameter": `package future
+import "os/exec"
+func run(path string) {
+	cmd := exec.Command(path, "capabilities")
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutated := cloneRepositoryAuditFiles(files)
+			mutated["test/future_application_test.go"] = repositoryAuditFile{
+				mode:   "100644",
+				source: []byte(source),
+			}
+			if err := validateRepositoryApplicationTestEnvironments(mutated); err == nil {
+				t.Fatal("unsafe application child environment escaped validation")
+			}
+		})
+	}
+
+	t.Run("allows normalized application child", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["test/future_application_test.go"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`package future
+import "os/exec"
+func TestFuture() {
+	cmd := exec.Command("/tmp/wisp-deck-tui", "main-menu")
+	cmd.Env = repositoryTestEnvironment([]string{"HOME=/tmp", "WISP_DECK_TESTING=0"})
+	_ = cmd.Run()
+}`),
+		}
+		if err := validateRepositoryApplicationTestEnvironments(mutated); err != nil {
+			t.Fatalf("normalized application child rejected: %v", err)
+		}
+	})
+
+	t.Run("allows unrelated process environment", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["test/future_git_test.go"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`package future
+import "os/exec"
+func TestFuture() {
+	cmd := exec.Command("git", "status")
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}`),
+		}
+		if err := validateRepositoryApplicationTestEnvironments(mutated); err != nil {
+			t.Fatalf("unrelated process environment rejected: %v", err)
+		}
+	})
+
+	t.Run("allows unrelated generic process parameter", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["test/future_generic_test.go"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`package future
+import "os/exec"
+func run(path string) {
+	cmd := exec.Command(path, "status")
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}`),
+		}
+		if err := validateRepositoryApplicationTestEnvironments(mutated); err != nil {
+			t.Fatalf("unrelated generic process environment rejected: %v", err)
+		}
+	})
+
+	t.Run("allows unrelated exec Cmd environment", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["test/future_git_test.go"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`package future
+import "os/exec"
+func TestFuture() {
+	cmd := &exec.Cmd{Path: "git", Args: []string{"git", "status"}, Env: []string{"HOME=/tmp"}}
+	_ = cmd.Run()
+}`),
+		}
+		if err := validateRepositoryApplicationTestEnvironments(mutated); err != nil {
+			t.Fatalf("unrelated exec Cmd environment rejected: %v", err)
+		}
+	})
+
+	small := string(files["test/bash/small_test.go"].source)
+	exceptionMutations := map[string]string{
+		"renamed exception": strings.Replace(
+			small,
+			"func TestEnabledChildDetectsExactTestAncestorSentinel",
+			"func TestRenamedEnabledChild",
+			1,
+		),
+		"changed sentinel": strings.Replace(
+			small,
+			`helper.Args[0] = "__WISP_DECK_REPOSITORY_TEST_V1__.test"`,
+			`helper.Args[0] = "__WISP_DECK_REPOSITORY_TEST_V2__.test"`,
+			1,
+		),
+		"direct child": strings.Replace(
+			small,
+			`"$1" capabilities & child_pid=$!; wait "$child_pid"`,
+			`exec "$1" capabilities`,
+			1,
+		),
+		"changed denial reason": strings.Replace(
+			small,
+			`HostEffectsDenialReason: "test_ancestor_sentinel"`,
+			`HostEffectsDenialReason: "test_ancestor_marker"`,
+			1,
+		),
+		"child marker override": strings.Replace(
+			small,
+			"helper.Env = environmentWithoutTestMarker(os.Environ())",
+			`helper.Env = append(environmentWithoutTestMarker(os.Environ()), "WISP_DECK_TESTING=0")`,
+			1,
+		),
+		"child environment restored later": strings.Replace(
+			small,
+			"helper.Env = environmentWithoutTestMarker(os.Environ())",
+			"helper.Env = environmentWithoutTestMarker(os.Environ())\n\thelper.Env = os.Environ()",
+			1,
+		),
+		"child sentinel overwritten later": strings.Replace(
+			small,
+			`helper.Args[0] = "__WISP_DECK_REPOSITORY_TEST_V1__.test"`,
+			"helper.Args[0] = \"__WISP_DECK_REPOSITORY_TEST_V1__.test\"\n\thelper.Args[0] = \"ordinary-helper\"",
+			1,
+		),
+		"changed compiled expectation": strings.Replace(
+			small,
+			"HostEffectsCompiled:     true,",
+			"HostEffectsCompiled:     false,",
+			1,
+		),
+		"second application child": strings.Replace(
+			small,
+			"if capabilities != want {",
+			`_ = exec.Command("/tmp/wisp-deck-tui", "main-menu").Run()
+	if capabilities != want {`,
+			1,
+		),
+	}
+	for name, source := range exceptionMutations {
+		t.Run(name, func(t *testing.T) {
+			if source == small {
+				t.Fatal("enabled-child exception mutation prerequisite missing")
+			}
+			mutated := cloneRepositoryAuditFiles(files)
+			file := mutated["test/bash/small_test.go"]
+			file.source = []byte(source)
+			mutated["test/bash/small_test.go"] = file
+			if err := validateRepositoryApplicationTestEnvironments(mutated); err == nil {
+				t.Fatal("broadened enabled-child marker exception escaped validation")
+			}
+		})
+	}
+
+	for name, replacement := range map[string]string{
+		"changed Make marker": "WISP_DECK_TESTING=stale",
+		"environment unset":   "env -u WISP_DECK_TESTING make",
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := strings.Replace(
+				small,
+				"make WISP_DECK_TESTING=0",
+				replacement,
+				1,
+			)
+			if source == small {
+				t.Fatal("Make marker exception mutation prerequisite missing")
+			}
+			mutated := cloneRepositoryAuditFiles(files)
+			file := mutated["test/bash/small_test.go"]
+			file.source = []byte(source)
+			mutated["test/bash/small_test.go"] = file
+			if err := validateRepositoryApplicationTestEnvironments(mutated); err == nil {
+				t.Fatal("broadened Make marker exception escaped validation")
+			}
+		})
+	}
+
+	t.Run("Make marker override outside named regression", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["test/future_make_test.go"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`package future
+import "os/exec"
+func TestFuture() {
+	_ = exec.Command("make", "WISP_DECK_TESTING=0", "build").Run()
+}`),
+		}
+		if err := validateRepositoryApplicationTestEnvironments(mutated); err == nil {
+			t.Fatal("Make marker override escaped its named regression")
+		}
+	})
+
+	t.Run("constructed Make marker override outside named regression", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["test/future_make_test.go"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`package future
+import "os/exec"
+func TestFuture() {
+	marker := "WISP_DECK_TESTING=" + "0"
+	_ = exec.Command("make", marker, "build").Run()
+}`),
+		}
+		if err := validateRepositoryApplicationTestEnvironments(mutated); err == nil {
+			t.Fatal("constructed Make marker override escaped its named regression")
+		}
+	})
+
+	t.Run("Make regression strips complete environment", func(t *testing.T) {
+		source := strings.Replace(
+			small,
+			"out, code := runBashSnippet(t, command, nil)",
+			"out, code := runBashSnippet(t, command, environmentWithoutTestMarker(os.Environ()))",
+			1,
+		)
+		if source == small {
+			t.Fatal("Make environment mutation prerequisite missing")
+		}
+		mutated := cloneRepositoryAuditFiles(files)
+		file := mutated["test/bash/small_test.go"]
+		file.source = []byte(source)
+		mutated["test/bash/small_test.go"] = file
+		if err := validateRepositoryApplicationTestEnvironments(mutated); err == nil {
+			t.Fatal("Make marker exception stripped its complete environment")
+		}
+	})
+
+	t.Run("Make regression adds application child", func(t *testing.T) {
+		source := strings.Replace(
+			small,
+			"out, code := runBashSnippet(t, command, nil)",
+			`_ = exec.Command("/tmp/wisp-deck-tui", "main-menu").Run()
+	out, code := runBashSnippet(t, command, nil)`,
+			1,
+		)
+		if source == small {
+			t.Fatal("Make application mutation prerequisite missing")
+		}
+		mutated := cloneRepositoryAuditFiles(files)
+		file := mutated["test/bash/small_test.go"]
+		file.source = []byte(source)
+		mutated["test/bash/small_test.go"] = file
+		if err := validateRepositoryApplicationTestEnvironments(mutated); err == nil {
+			t.Fatal("Make marker exception authorized an application child")
+		}
+	})
+}
+
+func validateRepositoryApplicationTestEnvironments(
+	files map[string]repositoryAuditFile,
+) error {
+	for path, file := range files {
+		if !strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		if err := validateApplicationTestEnvironment(path, file.source); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateApplicationTestEnvironment(path string, source []byte) error {
+	file, err := parser.ParseFile(token.NewFileSet(), path, source, 0)
+	if err != nil {
+		return fmt.Errorf("parse application-child audit %s: %w", path, err)
+	}
+	aliases, dotImports := processImportAliases(file)
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Body == nil {
+			continue
+		}
+		functionAliases := make(map[string]string, len(aliases))
+		for name, importPath := range aliases {
+			functionAliases[name] = importPath
+		}
+		collectApplicationAuditProcessAliases(
+			function,
+			functionAliases,
+			dotImports,
+		)
+		staticStrings := collectApplicationAuditStaticStrings(function)
+		if functionUsesMakeMarkerOverride(
+			function,
+			functionAliases,
+			dotImports,
+			staticStrings,
+		) &&
+			(path != "test/bash/small_test.go" ||
+				function.Name.Name != "TestMakefile_buildTestSelectorsCannotBeOverridden") {
+			return fmt.Errorf(
+				"%s:%s uses the reserved Make marker override outside its named regression",
+				path,
+				function.Name.Name,
+			)
+		}
+		if function.Name.Name == "TestEnabledChildDetectsExactTestAncestorSentinel" {
+			if path != "test/bash/small_test.go" {
+				return fmt.Errorf("%s moved the enabled-child marker exception", path)
+			}
+			if err := validateEnabledChildMarkerException(
+				function,
+				functionAliases,
+				dotImports,
+			); err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			if err := validateApplicationChildrenInFunction(
+				path,
+				function,
+				functionAliases,
+				dotImports,
+				staticStrings,
+				map[string]bool{"helper": true},
+			); err != nil {
+				return err
+			}
+			continue
+		}
+		if function.Name.Name == "TestMakefile_buildTestSelectorsCannotBeOverridden" {
+			if path != "test/bash/small_test.go" {
+				return fmt.Errorf("%s moved the Make marker exception", path)
+			}
+			if err := validateMakeMarkerException(
+				function,
+				functionAliases,
+				dotImports,
+			); err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+		}
+		if err := validateApplicationChildrenInFunction(
+			path,
+			function,
+			functionAliases,
+			dotImports,
+			staticStrings,
+			nil,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateEnabledChildMarkerException(
+	function *ast.FuncDecl,
+	aliases map[string]string,
+	dotImports map[string]bool,
+) error {
+	var rendered bytes.Buffer
+	if err := format.Node(&rendered, token.NewFileSet(), function); err != nil {
+		return fmt.Errorf("render enabled-child marker exception: %w", err)
+	}
+	source := rendered.String()
+	required := map[string]int{
+		`build.Env = environmentWithoutTestMarker(os.Environ())`:   1,
+		`helper.Env = environmentWithoutTestMarker(os.Environ())`:  1,
+		`helper.Args[0] = "__WISP_DECK_REPOSITORY_TEST_V1__.test"`: 1,
+		`"/bin/bash"`: 1,
+		`"$1" capabilities & child_pid=$!; wait "$child_pid"`:                          1,
+		`HostEffectsDenialReason: "test_ancestor_sentinel"`:                            1,
+		`-X main.HostEffectsCapability=enabled -X main.SoundPreviewCapability=enabled`: 1,
+	}
+	for shape, want := range required {
+		if got := strings.Count(source, shape); got != want {
+			return fmt.Errorf(
+				"enabled-child marker exception contains %d %q shapes, want %d",
+				got,
+				shape,
+				want,
+			)
+		}
+	}
+	if !applicationAuditHasExactCompositeFields(
+		function,
+		"testBinaryCapabilities",
+		map[string]string{
+			"HostEffectsCompiled":     "true",
+			"SoundPreviewCompiled":    "true",
+			"HostEffectsBoundary":     "1",
+			"HostEffectsAllowed":      "false",
+			"HostEffectsDenialReason": `"test_ancestor_sentinel"`,
+		},
+	) {
+		return fmt.Errorf("enabled-child marker exception changed its capability expectation")
+	}
+	for target, want := range map[string]int{
+		"build.Env":      1,
+		"helper.Env":     1,
+		"helper.Args[0]": 1,
+	} {
+		if got := countApplicationAuditAssignmentTarget(function, target); got != want {
+			return fmt.Errorf(
+				"enabled-child marker exception assigns %s %d times, want %d",
+				target,
+				got,
+				want,
+			)
+		}
+	}
+	if countApplicationAuditProcessCalls(function, aliases, dotImports) != 2 {
+		return fmt.Errorf("enabled-child marker exception changed its two-process shape")
+	}
+	for _, forbidden := range []string{
+		"WISP_DECK_TESTING=0",
+		"WISP_DECK_TESTING=stale",
+		"env -u WISP_DECK_TESTING",
+		"helper.Start(",
+		"exec \"$1\"",
+	} {
+		if strings.Contains(source, forbidden) {
+			return fmt.Errorf("enabled-child marker exception contains %q", forbidden)
+		}
+	}
+	return nil
+}
+
+func validateMakeMarkerException(
+	function *ast.FuncDecl,
+	aliases map[string]string,
+	dotImports map[string]bool,
+) error {
+	var rendered bytes.Buffer
+	if err := format.Node(&rendered, token.NewFileSet(), function); err != nil {
+		return fmt.Errorf("render Make marker exception: %w", err)
+	}
+	source := rendered.String()
+	const allowed = "make WISP_DECK_TESTING=0 HOST_EFFECTS_CAPABILITY=enabled SOUND_PREVIEW_CAPABILITY=enabled build"
+	if strings.Count(source, allowed) != 1 {
+		return fmt.Errorf("Make marker regression must contain one literal %q", allowed)
+	}
+	if countCalls(function, "runBashSnippet") != 2 ||
+		countApplicationAuditRenderedCalls(
+			function,
+			`runBashSnippet(t, command, nil)`,
+		) != 1 {
+		return fmt.Errorf("Make marker regression changed its exact nil-environment invocation")
+	}
+	if countApplicationAuditProcessCalls(function, aliases, dotImports) != 0 {
+		return fmt.Errorf("Make marker regression launches a process directly")
+	}
+	for _, forbidden := range []string{
+		"cmd.Env",
+		".Env =",
+		"env -u",
+		"WISP_DECK_TESTING=stale",
+		"exec.Command(",
+		"exec.CommandContext(",
+		"os.StartProcess(",
+		"syscall.Exec(",
+		"environmentWithoutTestMarker(",
+		"repositoryTestEnvironment(",
+		"buildEnv(",
+	} {
+		if strings.Contains(source, forbidden) {
+			return fmt.Errorf("Make marker regression contains %q", forbidden)
+		}
+	}
+	return nil
+}
+
+func countApplicationAuditAssignmentTarget(
+	node ast.Node,
+	target string,
+) int {
+	count := 0
+	ast.Inspect(node, func(node ast.Node) bool {
+		assignment, ok := node.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		for _, candidate := range assignment.Lhs {
+			if rendered, ok := renderApplicationAuditNode(candidate); ok &&
+				rendered == target {
+				count++
+			}
+		}
+		return true
+	})
+	return count
+}
+
+func applicationAuditHasExactCompositeFields(
+	node ast.Node,
+	typeName string,
+	want map[string]string,
+) bool {
+	matches := 0
+	ast.Inspect(node, func(node ast.Node) bool {
+		composite, ok := node.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		typeIdentifier, typeOK := composite.Type.(*ast.Ident)
+		if !typeOK || typeIdentifier.Name != typeName {
+			return true
+		}
+		got := make(map[string]string, len(composite.Elts))
+		for _, element := range composite.Elts {
+			field, ok := element.(*ast.KeyValueExpr)
+			key, keyOK := field.Key.(*ast.Ident)
+			if !ok || !keyOK {
+				return true
+			}
+			rendered, valueOK := renderApplicationAuditNode(field.Value)
+			if !valueOK {
+				return true
+			}
+			got[key.Name] = rendered
+		}
+		if len(got) != len(want) {
+			return true
+		}
+		for name, value := range want {
+			if got[name] != value {
+				return true
+			}
+		}
+		matches++
+		return true
+	})
+	return matches == 1
+}
+
+func countApplicationAuditRenderedCalls(
+	node ast.Node,
+	exact string,
+) int {
+	count := 0
+	ast.Inspect(node, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if rendered, ok := renderApplicationAuditNode(call); ok &&
+			rendered == exact {
+			count++
+		}
+		return true
+	})
+	return count
+}
+
+func countApplicationAuditProcessCalls(
+	node ast.Node,
+	aliases map[string]string,
+	dotImports map[string]bool,
+) int {
+	count := 0
+	ast.Inspect(node, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if _, process := processExecutableArgument(
+			call,
+			aliases,
+			dotImports,
+		); process {
+			count++
+		}
+		return true
+	})
+	return count
+}
+
+func renderApplicationAuditNode(node ast.Node) (string, bool) {
+	var rendered bytes.Buffer
+	if err := format.Node(&rendered, token.NewFileSet(), node); err != nil {
+		return "", false
+	}
+	return rendered.String(), true
+}
+
+func functionUsesMakeMarkerOverride(
+	function *ast.FuncDecl,
+	aliases map[string]string,
+	dotImports map[string]bool,
+	staticStrings map[string]map[string]bool,
+) bool {
+	usesOverride := false
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok || !applicationAuditCallInvokesMake(
+			call,
+			aliases,
+			dotImports,
+			staticStrings,
+		) {
+			return true
+		}
+		for _, argument := range call.Args {
+			for _, value := range resolvedStrings(argument, staticStrings) {
+				if strings.Contains(value, "WISP_DECK_TESTING=0") {
+					usesOverride = true
+					return false
+				}
+			}
+		}
+		return true
+	})
+	return usesOverride
+}
+
+func applicationAuditCallInvokesMake(
+	call *ast.CallExpr,
+	aliases map[string]string,
+	dotImports map[string]bool,
+	staticStrings map[string]map[string]bool,
+) bool {
+	if expressionName(call.Fun) == "runBashSnippet" && len(call.Args) > 1 {
+		for _, value := range resolvedStrings(call.Args[1], staticStrings) {
+			for _, field := range strings.Fields(value) {
+				if filepath.Base(strings.Trim(field, `"';&|()`)) == "make" {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if _, process := processExecutableArgument(call, aliases, dotImports); !process {
+		return false
+	}
+	for _, argument := range call.Args {
+		for _, value := range resolvedStrings(argument, staticStrings) {
+			if filepath.Base(value) == "make" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func collectApplicationAuditStaticStrings(
+	function *ast.FuncDecl,
+) map[string]map[string]bool {
+	values := map[string]map[string]bool{}
+	for range 16 {
+		changed := false
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			var names []*ast.Ident
+			var expressions []ast.Expr
+			switch node := node.(type) {
+			case *ast.ValueSpec:
+				names = node.Names
+				expressions = node.Values
+			case *ast.AssignStmt:
+				for _, target := range node.Lhs {
+					name, _ := target.(*ast.Ident)
+					names = append(names, name)
+				}
+				expressions = node.Rhs
+			default:
+				return true
+			}
+			for index, expression := range expressions {
+				if index >= len(names) || names[index] == nil {
+					continue
+				}
+				changed = addResolvedStrings(
+					values,
+					names[index].Name,
+					resolvedStrings(expression, values),
+				) || changed
+			}
+			return true
+		})
+		if !changed {
+			break
+		}
+	}
+	return values
+}
+
+func collectApplicationAuditProcessAliases(
+	function *ast.FuncDecl,
+	aliases map[string]string,
+	dotImports map[string]bool,
+) {
+	for range 16 {
+		changed := false
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			var names []*ast.Ident
+			var values []ast.Expr
+			switch node := node.(type) {
+			case *ast.ValueSpec:
+				names = node.Names
+				values = node.Values
+			case *ast.AssignStmt:
+				for _, target := range node.Lhs {
+					name, _ := target.(*ast.Ident)
+					names = append(names, name)
+				}
+				values = node.Rhs
+			default:
+				return true
+			}
+			for index, value := range values {
+				if index >= len(names) || names[index] == nil {
+					continue
+				}
+				importPath, constructor := calledPackageFunction(
+					value,
+					aliases,
+					dotImports,
+				)
+				if _, process := processConstructorExecutableIndex(
+					importPath,
+					constructor,
+				); !process {
+					continue
+				}
+				target := importPath +
+					processConstructorAliasSeparator +
+					constructor
+				if aliases[names[index].Name] != target {
+					aliases[names[index].Name] = target
+					changed = true
+				}
+			}
+			return true
+		})
+		if !changed {
+			return
+		}
+	}
+}
+
+func validateApplicationChildrenInFunction(
+	path string,
+	function *ast.FuncDecl,
+	aliases map[string]string,
+	dotImports map[string]bool,
+	staticStrings map[string]map[string]bool,
+	allowedUnnormalized map[string]bool,
+) error {
+	applicationValues := applicationValueVariables(
+		function,
+		aliases,
+		dotImports,
+		staticStrings,
+	)
+	applicationCommands := applicationCommandVariables(
+		function,
+		applicationValues,
+		aliases,
+		dotImports,
+		staticStrings,
+	)
+	environmentAssignments := make(map[string][]ast.Expr)
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		assignment, ok := node.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		for index, target := range assignment.Lhs {
+			selector, ok := target.(*ast.SelectorExpr)
+			if !ok {
+				continue
+			}
+			command, commandOK := selector.X.(*ast.Ident)
+			if !commandOK || selector.Sel.Name != "Env" ||
+				index >= len(assignment.Rhs) {
+				continue
+			}
+			environmentAssignments[command.Name] = append(
+				environmentAssignments[command.Name],
+				assignment.Rhs[index],
+			)
+		}
+		return true
+	})
+	for command := range applicationCommands {
+		if allowedUnnormalized[command] {
+			continue
+		}
+		for _, environment := range environmentAssignments[command] {
+			if err := validateApplicationAuditEnvironment(
+				path,
+				function.Name.Name,
+				environment,
+			); err != nil {
+				return err
+			}
+		}
+	}
+	var auditErr error
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		if auditErr != nil {
+			return false
+		}
+		composite, compositeOK := node.(*ast.CompositeLit)
+		if compositeOK && applicationExecCmdComposite(
+			composite,
+			applicationValues,
+			aliases,
+			dotImports,
+			staticStrings,
+		) {
+			if environment, exists := applicationAuditCompositeField(
+				composite,
+				"Env",
+			); exists {
+				auditErr = validateApplicationAuditEnvironment(
+					path,
+					function.Name.Name,
+					environment,
+				)
+				if auditErr != nil {
+					return false
+				}
+			}
+		}
+		call, ok := node.(*ast.CallExpr)
+		if !ok || !testCommandIsApplication(
+			call,
+			applicationValues,
+			aliases,
+			dotImports,
+			staticStrings,
+		) {
+			return true
+		}
+		if callRemovesRepositoryTestMarker(
+			call,
+			aliases,
+			dotImports,
+			staticStrings,
+		) {
+			auditErr = fmt.Errorf(
+				"%s:%s explicitly removes the repository marker from an application child",
+				path,
+				function.Name.Name,
+			)
+			return false
+		}
+		for _, environment := range applicationAuditCallEnvironments(
+			call,
+			aliases,
+			dotImports,
+		) {
+			if err := validateApplicationAuditEnvironment(
+				path,
+				function.Name.Name,
+				environment,
+			); err != nil {
+				auditErr = err
+				return false
+			}
+		}
+		return true
+	})
+	return auditErr
+}
+
+func applicationValueVariables(
+	function *ast.FuncDecl,
+	aliases map[string]string,
+	dotImports map[string]bool,
+	staticStrings map[string]map[string]bool,
+) map[string]bool {
+	values := make(map[string]bool)
+	for range 16 {
+		changed := false
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			assignment, ok := node.(*ast.AssignStmt)
+			if !ok {
+				return true
+			}
+			for index, value := range assignment.Rhs {
+				if index >= len(assignment.Lhs) ||
+					!expressionIsApplicationValue(
+						value,
+						values,
+						staticStrings,
+					) {
+					continue
+				}
+				name, ok := assignment.Lhs[index].(*ast.Ident)
+				if ok && !values[name.Name] {
+					values[name.Name] = true
+					changed = true
+				}
+			}
+			call, ok := assignmentCall(assignment)
+			if !ok || !goBuildsWispDeck(
+				call,
+				aliases,
+				dotImports,
+				staticStrings,
+			) {
+				return true
+			}
+			for index, argument := range call.Args {
+				if !hasStringLiteral(argument, "-o") || index+1 >= len(call.Args) {
+					continue
+				}
+				if name, ok := call.Args[index+1].(*ast.Ident); ok && !values[name.Name] {
+					values[name.Name] = true
+					changed = true
+				}
+			}
+			return true
+		})
+		if !changed {
+			break
+		}
+	}
+	return values
+}
+
+func assignmentCall(assignment *ast.AssignStmt) (*ast.CallExpr, bool) {
+	if len(assignment.Rhs) != 1 {
+		return nil, false
+	}
+	call, ok := assignment.Rhs[0].(*ast.CallExpr)
+	return call, ok
+}
+
+func expressionIsApplicationValue(
+	expression ast.Expr,
+	known map[string]bool,
+	staticStrings map[string]map[string]bool,
+) bool {
+	for _, value := range resolvedStrings(expression, staticStrings) {
+		if stringNamesRepositoryApplication(value) {
+			return true
+		}
+	}
+	found := false
+	ast.Inspect(expression, func(node ast.Node) bool {
+		switch node := node.(type) {
+		case *ast.Ident:
+			if known[node.Name] ||
+				node.Name == "ghosttyBinaryPath" ||
+				node.Name == "nativeLedgerBinary" ||
+				node.Name == "buildTUI" {
+				found = true
+				return false
+			}
+		case *ast.BasicLit:
+			if node.Kind != token.STRING {
+				return true
+			}
+			value, err := strconv.Unquote(node.Value)
+			if err == nil && stringNamesRepositoryApplication(value) {
+				found = true
+				return false
+			}
+		}
+		return true
+	})
+	return found
+}
+
+func applicationCommandVariables(
+	function *ast.FuncDecl,
+	applicationValues map[string]bool,
+	aliases map[string]string,
+	dotImports map[string]bool,
+	staticStrings map[string]map[string]bool,
+) map[string]bool {
+	execCommands := applicationExecCmdVariables(function, aliases, dotImports)
+	applications := map[string]bool{}
+	for range 16 {
+		changed := false
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			var names []*ast.Ident
+			var values []ast.Expr
+			switch node := node.(type) {
+			case *ast.ValueSpec:
+				names = node.Names
+				values = node.Values
+			case *ast.AssignStmt:
+				for _, target := range node.Lhs {
+					name, _ := target.(*ast.Ident)
+					names = append(names, name)
+				}
+				values = node.Rhs
+				for index, target := range node.Lhs {
+					if index >= len(node.Rhs) {
+						continue
+					}
+					selector, ok := target.(*ast.SelectorExpr)
+					if !ok ||
+						(selector.Sel.Name != "Path" && selector.Sel.Name != "Args") {
+						continue
+					}
+					command, ok := selector.X.(*ast.Ident)
+					if !ok || !execCommands[command.Name] {
+						continue
+					}
+					if expressionIsApplicationValue(
+						node.Rhs[index],
+						applicationValues,
+						staticStrings,
+					) || (selector.Sel.Name == "Args" &&
+						applicationAuditExpressionHasSubcommand(node.Rhs[index])) {
+						if !applications[command.Name] {
+							applications[command.Name] = true
+							changed = true
+						}
+					}
+				}
+			default:
+				return true
+			}
+			for index, value := range values {
+				if index >= len(names) || names[index] == nil ||
+					!applicationAuditCommandExpression(
+						value,
+						applications,
+						applicationValues,
+						aliases,
+						dotImports,
+						staticStrings,
+					) {
+					continue
+				}
+				if !applications[names[index].Name] {
+					applications[names[index].Name] = true
+					changed = true
+				}
+			}
+			return true
+		})
+		if !changed {
+			break
+		}
+	}
+	return applications
+}
+
+func applicationExecCmdVariables(
+	function *ast.FuncDecl,
+	aliases map[string]string,
+	dotImports map[string]bool,
+) map[string]bool {
+	commands := map[string]bool{}
+	for range 16 {
+		changed := false
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			var names []*ast.Ident
+			var values []ast.Expr
+			switch node := node.(type) {
+			case *ast.ValueSpec:
+				if isExecCmdType(node.Type, aliases, dotImports) {
+					for _, name := range node.Names {
+						if !commands[name.Name] {
+							commands[name.Name] = true
+							changed = true
+						}
+					}
+				}
+				names = node.Names
+				values = node.Values
+			case *ast.AssignStmt:
+				for _, target := range node.Lhs {
+					name, _ := target.(*ast.Ident)
+					names = append(names, name)
+				}
+				values = node.Rhs
+			default:
+				return true
+			}
+			for index, value := range values {
+				if index >= len(names) || names[index] == nil ||
+					!isExecCmdExpression(value, aliases, dotImports, commands) {
+					continue
+				}
+				if !commands[names[index].Name] {
+					commands[names[index].Name] = true
+					changed = true
+				}
+			}
+			return true
+		})
+		if !changed {
+			break
+		}
+	}
+	return commands
+}
+
+func applicationAuditCommandExpression(
+	expression ast.Expr,
+	applicationCommands map[string]bool,
+	applicationValues map[string]bool,
+	aliases map[string]string,
+	dotImports map[string]bool,
+	staticStrings map[string]map[string]bool,
+) bool {
+	switch expression := expression.(type) {
+	case *ast.Ident:
+		return applicationCommands[expression.Name]
+	case *ast.ParenExpr:
+		return applicationAuditCommandExpression(
+			expression.X,
+			applicationCommands,
+			applicationValues,
+			aliases,
+			dotImports,
+			staticStrings,
+		)
+	case *ast.UnaryExpr:
+		return expression.Op == token.AND &&
+			applicationAuditCommandExpression(
+				expression.X,
+				applicationCommands,
+				applicationValues,
+				aliases,
+				dotImports,
+				staticStrings,
+			)
+	case *ast.CallExpr:
+		return testCommandIsApplication(
+			expression,
+			applicationValues,
+			aliases,
+			dotImports,
+			staticStrings,
+		)
+	case *ast.CompositeLit:
+		return applicationExecCmdComposite(
+			expression,
+			applicationValues,
+			aliases,
+			dotImports,
+			staticStrings,
+		)
+	default:
+		return false
+	}
+}
+
+func applicationExecCmdComposite(
+	composite *ast.CompositeLit,
+	applicationValues map[string]bool,
+	aliases map[string]string,
+	dotImports map[string]bool,
+	staticStrings map[string]map[string]bool,
+) bool {
+	if !isExecCmdType(composite.Type, aliases, dotImports) {
+		return false
+	}
+	for _, fieldName := range []string{"Path", "Args"} {
+		value, exists := applicationAuditCompositeField(composite, fieldName)
+		if !exists {
+			continue
+		}
+		if expressionIsApplicationValue(
+			value,
+			applicationValues,
+			staticStrings,
+		) || (fieldName == "Args" &&
+			applicationAuditExpressionHasSubcommand(value)) {
+			return true
+		}
+	}
+	return false
+}
+
+func applicationAuditCompositeField(
+	composite *ast.CompositeLit,
+	name string,
+) (ast.Expr, bool) {
+	for _, element := range composite.Elts {
+		field, ok := element.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		key, ok := field.Key.(*ast.Ident)
+		value, valueOK := field.Value.(ast.Expr)
+		if ok && valueOK && key.Name == name {
+			return value, true
+		}
+	}
+	return nil, false
+}
+
+func applicationAuditExpressionHasSubcommand(expression ast.Expr) bool {
+	for _, subcommand := range []string{
+		"capabilities",
+		"main-menu",
+		"notification-sound",
+	} {
+		if hasStringLiteral(expression, subcommand) {
+			return true
+		}
+	}
+	return false
+}
+
+func stringNamesRepositoryApplication(value string) bool {
+	lower := strings.ToLower(filepath.ToSlash(value))
+	for _, marker := range []string{
+		"wisp-deck-tui",
+		"npx-wisp-deck.js",
+		"/wrapper.sh",
+		"/scripts/release.sh",
+		"/lib/install.sh",
+		"ghosttybinarypath",
+		"nativeledgerbinary",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func goBuildsWispDeck(
+	call *ast.CallExpr,
+	aliases map[string]string,
+	dotImports map[string]bool,
+	staticStrings map[string]map[string]bool,
+) bool {
+	importPath, function := calledPackageFunction(
+		call.Fun,
+		aliases,
+		dotImports,
+	)
+	if importPath != "os/exec" ||
+		(function != "Command" && function != "CommandContext") {
+		return false
+	}
+	for _, argument := range call.Args {
+		if expressionContainsResolvedString(
+			argument,
+			"./cmd/wisp-deck-tui",
+			staticStrings,
+		) {
+			return true
+		}
+	}
+	return false
+}
+
+func testCommandIsApplication(
+	call *ast.CallExpr,
+	applicationValues map[string]bool,
+	aliases map[string]string,
+	dotImports map[string]bool,
+	staticStrings map[string]map[string]bool,
+) bool {
+	executableIndex, process := processExecutableArgument(
+		call,
+		aliases,
+		dotImports,
+	)
+	if !process || executableIndex >= len(call.Args) {
+		return false
+	}
+	executable := call.Args[executableIndex]
+	if applicationAuditExpressionNamesExecutable(
+		executable,
+		"go",
+		staticStrings,
+	) {
+		if !applicationAuditCallHasStringArgument(
+			call,
+			executableIndex+1,
+			"run",
+			staticStrings,
+		) {
+			return false
+		}
+	}
+	if applicationAuditExpressionNamesExecutable(
+		executable,
+		"make",
+		staticStrings,
+	) {
+		return true
+	}
+	for _, argument := range call.Args[executableIndex:] {
+		if expressionIsApplicationValue(
+			argument,
+			applicationValues,
+			staticStrings,
+		) {
+			return true
+		}
+	}
+	if len(resolvedStrings(executable, staticStrings)) == 0 {
+		for _, subcommand := range []string{
+			"capabilities",
+			"main-menu",
+			"notification-sound",
+		} {
+			if applicationAuditCallHasStringArgument(
+				call,
+				executableIndex+1,
+				subcommand,
+				staticStrings,
+			) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func applicationAuditExpressionNamesExecutable(
+	expression ast.Expr,
+	name string,
+	staticStrings map[string]map[string]bool,
+) bool {
+	for _, value := range resolvedStrings(expression, staticStrings) {
+		if filepath.Base(value) == name {
+			return true
+		}
+	}
+	return false
+}
+
+func applicationAuditCallHasStringArgument(
+	call *ast.CallExpr,
+	start int,
+	want string,
+	staticStrings map[string]map[string]bool,
+) bool {
+	for _, argument := range call.Args[start:] {
+		for _, value := range resolvedStrings(argument, staticStrings) {
+			if value == want {
+				return true
+			}
+		}
+		if hasStringLiteral(argument, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func expressionUsesNormalizedEnvironment(expression ast.Expr) bool {
+	switch expression := expression.(type) {
+	case *ast.ParenExpr:
+		return expressionUsesNormalizedEnvironment(expression.X)
+	case *ast.CallExpr:
+		switch expressionName(expression.Fun) {
+		case "repositoryTestEnvironment", "buildEnv":
+			return true
+		}
+	}
+	return false
+}
+
+func expressionHasNonRepositoryTestMarker(expression ast.Expr) bool {
+	found := false
+	ast.Inspect(expression, func(node ast.Node) bool {
+		literal, ok := node.(*ast.BasicLit)
+		if !ok || literal.Kind != token.STRING {
+			return true
+		}
+		value, err := strconv.Unquote(literal.Value)
+		if err == nil && strings.HasPrefix(value, "WISP_DECK_TESTING=") &&
+			value != "WISP_DECK_TESTING=1" {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func validateApplicationAuditEnvironment(
+	path string,
+	function string,
+	environment ast.Expr,
+) error {
+	if expressionUsesNormalizedEnvironment(environment) {
+		return nil
+	}
+	if expressionHasNonRepositoryTestMarker(environment) {
+		return fmt.Errorf(
+			"%s:%s overrides the repository test marker",
+			path,
+			function,
+		)
+	}
+	return fmt.Errorf(
+		"%s:%s replaces an application child environment without propagation",
+		path,
+		function,
+	)
+}
+
+func applicationAuditCallEnvironments(
+	call *ast.CallExpr,
+	aliases map[string]string,
+	dotImports map[string]bool,
+) []ast.Expr {
+	importPath, function := calledPackageFunction(call.Fun, aliases, dotImports)
+	switch {
+	case (importPath == "syscall" ||
+		strings.HasSuffix(importPath, "/unix")) &&
+		function == "Exec":
+		if len(call.Args) > 2 {
+			return []ast.Expr{call.Args[2]}
+		}
+	case (importPath == "os" && function == "StartProcess") ||
+		(importPath == "syscall" &&
+			(function == "ForkExec" || function == "StartProcess")) ||
+		(strings.HasSuffix(importPath, "/unix") && function == "ForkExec"):
+		if len(call.Args) > 2 {
+			if environment, exists := applicationAuditProcAttrEnvironment(
+				call.Args[2],
+			); exists {
+				return []ast.Expr{environment}
+			}
+		}
+	}
+	return nil
+}
+
+func applicationAuditProcAttrEnvironment(
+	expression ast.Expr,
+) (ast.Expr, bool) {
+	switch expression := expression.(type) {
+	case *ast.ParenExpr:
+		return applicationAuditProcAttrEnvironment(expression.X)
+	case *ast.UnaryExpr:
+		if expression.Op == token.AND {
+			return applicationAuditProcAttrEnvironment(expression.X)
+		}
+	case *ast.CompositeLit:
+		return applicationAuditCompositeField(expression, "Env")
+	}
+	return nil, false
+}
+
+func callRemovesRepositoryTestMarker(
+	call *ast.CallExpr,
+	aliases map[string]string,
+	dotImports map[string]bool,
+	staticStrings map[string]map[string]bool,
+) bool {
+	executableIndex, process := processExecutableArgument(
+		call,
+		aliases,
+		dotImports,
+	)
+	if !process || executableIndex >= len(call.Args) ||
+		!applicationAuditExpressionNamesExecutable(
+			call.Args[executableIndex],
+			"env",
+			staticStrings,
+		) {
+		return false
+	}
+	var values []string
+	for _, argument := range call.Args[executableIndex+1:] {
+		resolved := resolvedStrings(argument, staticStrings)
+		if len(resolved) == 0 {
+			ast.Inspect(argument, func(node ast.Node) bool {
+				literal, ok := node.(*ast.BasicLit)
+				if !ok || literal.Kind != token.STRING {
+					return true
+				}
+				value, err := strconv.Unquote(literal.Value)
+				if err == nil {
+					values = append(values, value)
+				}
+				return true
+			})
+			continue
+		}
+		values = append(values, resolved...)
+	}
+	for index, value := range values {
+		switch {
+		case value == "-i" || value == "--ignore-environment":
+			return true
+		case value == "-u" || value == "--unset":
+			if index+1 < len(values) &&
+				values[index+1] == "WISP_DECK_TESTING" {
+				return true
+			}
+		case value == "-uWISP_DECK_TESTING" ||
+			value == "--unset=WISP_DECK_TESTING":
+			return true
+		case strings.HasPrefix(value, "WISP_DECK_TESTING=") &&
+			value != "WISP_DECK_TESTING=1":
+			return true
+		}
+	}
+	return false
+}
+
+func TestInstallerAndReleaseHostEffectBoundaryRejectsBypasses(t *testing.T) {
+	sources := map[string]string{
+		"bash":    repositorySource(t, "lib", "install.sh"),
+		"node":    repositorySource(t, "bin", "npx-wisp-deck.js"),
+		"release": repositorySource(t, "scripts", "release.sh"),
+	}
+	if err := validateInstallerAndReleaseHostEffectBoundary(sources); err != nil {
+		t.Fatalf("current installer/release host-effect boundary rejected: %v", err)
+	}
+
+	mutations := map[string]map[string]string{
+		"Bash existing artifact bypass": mutateBoundarySource(
+			t,
+			sources,
+			"bash",
+			`if verify_wisp_deck_tui_artifact "$version" "$installed_bin"; then`,
+			`if "$installed_bin" --version >/dev/null; then`,
+		),
+		"Bash downloaded artifact bypass": mutateBoundarySource(
+			t,
+			sources,
+			"bash",
+			`verify_wisp_deck_tui_artifact "$version" || return 1`,
+			`verify_binary_runs || return 1`,
+		),
+		"Bash replacement before verification": mutateBoundarySource(
+			t,
+			sources,
+			"bash",
+			`if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then`,
+			"mv -f \"$tmp\" \"$dest\"\n"+
+				`  if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then`,
+		),
+		"Bash copy before verification": mutateBoundarySource(
+			t,
+			sources,
+			"bash",
+			`if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then`,
+			"cp -f \"$tmp\" \"$dest\"\n"+
+				`  if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then`,
+		),
+		"Bash install before verification": mutateBoundarySource(
+			t,
+			sources,
+			"bash",
+			`if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then`,
+			"install -m 0755 \"$tmp\" \"$dest\"\n"+
+				`  if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then`,
+		),
+		"Node existing artifact bypass": mutateBoundarySource(
+			t,
+			sources,
+			"node",
+			`const existing = verifyTuiBinary(tuiBinPath, version);`,
+			`const existing = { valid: true, reported: "" };`,
+		),
+		"Node downloaded artifact bypass": mutateBoundarySource(
+			t,
+			sources,
+			"node",
+			`const downloaded = verifyTuiBinary(tmpPath, version);`,
+			`const downloaded = { valid: true, reported: "" };`,
+		),
+		"Node replacement before verification": mutateBoundarySource(
+			t,
+			sources,
+			"node",
+			`const downloaded = verifyTuiBinary(tmpPath, version);`,
+			"fs.renameSync(tmpPath, tuiBinPath);\n"+
+				`  const downloaded = verifyTuiBinary(tmpPath, version);`,
+		),
+		"Node copy before verification": mutateBoundarySource(
+			t,
+			sources,
+			"node",
+			`const downloaded = verifyTuiBinary(tmpPath, version);`,
+			"fs.copyFileSync(tmpPath, tuiBinPath);\n"+
+				`  const downloaded = verifyTuiBinary(tmpPath, version);`,
+		),
+		"Node write before verification": mutateBoundarySource(
+			t,
+			sources,
+			"node",
+			`const downloaded = verifyTuiBinary(tmpPath, version);`,
+			"fs.writeFileSync(tuiBinPath, fs.readFileSync(tmpPath));\n"+
+				`  const downloaded = verifyTuiBinary(tmpPath, version);`,
+		),
+		"release amd64 metadata bypass": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`if ! verify_release_tui_metadata "$amd64_asset" "$expected_ldflags"; then`,
+			`if false; then`,
+		),
+		"release host probe bypass": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`if ! "$host_asset" capabilities --require-production >/dev/null; then`,
+			`if false; then`,
+		),
+		"release mutation before verification": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then
+    echo "Error: release TUI artifact preflight failed; refusing to mutate release state" >&2
+    exit 1
+  fi
+  codesign --sign - --force "$build_dir/wisp-deck-tui-darwin-arm64"`,
+			`  codesign --sign - --force "$build_dir/wisp-deck-tui-darwin-arm64"
+  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then
+    echo "Error: release TUI artifact preflight failed; refusing to mutate release state" >&2
+	    exit 1
+	  fi`,
+		),
+		"release alternate tag before verification": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+			`  git -C "$project_dir" tag -a "$tag" -m "Release $tag"
+  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+		),
+		"release alternate push before verification": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+			`  git -C "$project_dir" push origin main --tags
+  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+		),
+		"release alternate publish before verification": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+			`  npm --prefix "$project_dir" publish
+  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+		),
+		"release copy local binary before verification": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+			`  cp "$build_dir/wisp-deck-tui-darwin-arm64" "$HOME/.local/bin/wisp-deck-tui"
+  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+		),
+		"release install local binary before verification": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+			`  install -m 0755 "$build_dir/wisp-deck-tui-darwin-arm64" "$HOME/.local/bin/wisp-deck-tui"
+  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+		),
+	}
+	for name, mutated := range mutations {
+		t.Run(name, func(t *testing.T) {
+			if err := validateInstallerAndReleaseHostEffectBoundary(mutated); err == nil {
+				t.Fatal("installer/release host-effect boundary mutation escaped validation")
+			}
+		})
+	}
+
+}
+
+func validateInstallerAndReleaseHostEffectBoundary(
+	sources map[string]string,
+) error {
+	bash := sources["bash"]
+	for _, required := range []string{
+		`reported="$("$bin" --version 2>/dev/null)" || return 1`,
+		`[[ "$reported" == "wisp-deck-tui version $expected" ]] || return 1`,
+		`capabilities="$("$bin" capabilities --require-production 2>/dev/null)" || return 1`,
+		`(.host_effects_compiled | type == "boolean")`,
+		`.host_effects_compiled == true`,
+		`(.sound_preview_compiled | type == "boolean")`,
+		`.sound_preview_compiled == true`,
+		`(.host_effects_boundary | type == "number")`,
+		`(.host_effects_boundary | floor == .)`,
+		`.host_effects_boundary == 1`,
+		`if verify_wisp_deck_tui_artifact "$version" "$installed_bin"; then`,
+		`verify_wisp_deck_tui_artifact "$version" || return 1`,
+	} {
+		if strings.Count(bash, required) != 1 {
+			return fmt.Errorf("Bash installer must contain exactly one %q", required)
+		}
+	}
+	verification := strings.Index(
+		bash,
+		`if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then`,
+	)
+	replacement := strings.Index(bash, `mv -f "$tmp" "$dest"`)
+	if verification < 0 || replacement <= verification {
+		return fmt.Errorf("Bash installer replaces an artifact before verification")
+	}
+	bashBeforeVerification := bash[:verification]
+	for _, command := range []string{"cp", "install"} {
+		if shellSourceHasCommandWithArguments(
+			bashBeforeVerification,
+			command,
+			"$dest",
+		) {
+			return fmt.Errorf(
+				"Bash installer %s writes an artifact before verification",
+				command,
+			)
+		}
+	}
+
+	node := sources["node"]
+	for _, required := range []string{
+		`reported !== ` + "`wisp-deck-tui version ${expectedVersion}`",
+		`['capabilities', '--require-production']`,
+		`capabilities.host_effects_compiled === true`,
+		`capabilities.sound_preview_compiled === true`,
+		`Number.isInteger(capabilities.host_effects_boundary)`,
+		`capabilities.host_effects_boundary === 1`,
+		`const existing = verifyTuiBinary(tuiBinPath, version);`,
+		`const downloaded = verifyTuiBinary(tmpPath, version);`,
+	} {
+		if strings.Count(node, required) != 1 {
+			return fmt.Errorf("Node installer must contain exactly one %q", required)
+		}
+	}
+	nodeVerification := strings.Index(
+		node,
+		`const downloaded = verifyTuiBinary(tmpPath, version);`,
+	)
+	nodeReplacement := strings.Index(node, `fs.renameSync(tmpPath, tuiBinPath);`)
+	if nodeVerification < 0 || nodeReplacement <= nodeVerification {
+		return fmt.Errorf("Node installer replaces an artifact before verification")
+	}
+	nodeBeforeVerification := node[:nodeVerification]
+	for _, method := range []string{
+		"fs.copyFileSync",
+		"fs.writeFileSync",
+		"fs.renameSync",
+	} {
+		if javascriptSourceCallsWithTarget(
+			nodeBeforeVerification,
+			method,
+			"tuiBinPath",
+		) {
+			return fmt.Errorf(
+				"Node installer %s writes an artifact before verification",
+				method,
+			)
+		}
+	}
+
+	release := sources["release"]
+	for _, required := range []string{
+		`if ! verify_release_tui_metadata "$arm64_asset" "$expected_ldflags"; then`,
+		`if ! verify_release_tui_metadata "$amd64_asset" "$expected_ldflags"; then`,
+		`if ! "$host_asset" capabilities --require-production >/dev/null; then`,
+		`if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+	} {
+		if strings.Count(release, required) != 1 {
+			return fmt.Errorf("release preflight must contain exactly one %q", required)
+		}
+	}
+	armBuild := strings.Index(
+		release,
+		`GOOS=darwin GOARCH=arm64 go build -ldflags "$ldflags"`,
+	)
+	amdBuild := strings.Index(
+		release,
+		`GOOS=darwin GOARCH=amd64 go build -ldflags "$ldflags"`,
+	)
+	preflight := strings.Index(
+		release,
+		`if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+	)
+	if armBuild < 0 || amdBuild <= armBuild || preflight <= amdBuild {
+		return fmt.Errorf("release artifact verification does not follow both builds")
+	}
+	releaseBeforePreflight := release[:preflight]
+	for _, mutation := range []struct {
+		command   string
+		arguments []string
+	}{
+		{command: "git", arguments: []string{"-C", "tag"}},
+		{command: "git", arguments: []string{"-C", "push"}},
+		{command: "npm", arguments: []string{"--prefix", "publish"}},
+		{command: "cp", arguments: []string{".local/bin/wisp-deck-tui"}},
+		{command: "install", arguments: []string{".local/bin/wisp-deck-tui"}},
+	} {
+		if shellSourceHasCommandWithArguments(
+			releaseBeforePreflight,
+			mutation.command,
+			mutation.arguments...,
+		) {
+			return fmt.Errorf(
+				"release mutation %s %s precedes artifact verification",
+				mutation.command,
+				strings.Join(mutation.arguments, " "),
+			)
+		}
+	}
+	for _, mutation := range []string{
+		`codesign --sign - --force "$build_dir/wisp-deck-tui-darwin-arm64"`,
+		`git tag -a "$tag"`,
+		`git push origin main --tags`,
+		`gh release create "$tag"`,
+		`local publish_cmd="npm publish"`,
+		`go build -ldflags "$ldflags" -o "$local_bin"`,
+	} {
+		position := strings.Index(release, mutation)
+		if position < 0 || position <= preflight {
+			return fmt.Errorf("release mutation %q precedes artifact verification", mutation)
+		}
+	}
+	return nil
+}
+
+func shellSourceHasCommandWithArguments(
+	source string,
+	command string,
+	required ...string,
+) bool {
+	for _, line := range strings.Split(source, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		commandIndex := -1
+		for index, field := range fields {
+			token := strings.Trim(field, `"'(){}[];,|&`)
+			if filepath.Base(token) == command {
+				commandIndex = index
+				break
+			}
+		}
+		if commandIndex < 0 {
+			continue
+		}
+		matches := true
+		for _, want := range required {
+			found := false
+			for _, field := range fields[commandIndex+1:] {
+				token := strings.Trim(field, `"'(){}[];,|&`)
+				if strings.Contains(token, want) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return true
+		}
+	}
+	return false
+}
+
+func javascriptSourceCallsWithTarget(
+	source string,
+	method string,
+	target string,
+) bool {
+	marker := method + "("
+	for offset := 0; offset < len(source); {
+		relative := strings.Index(source[offset:], marker)
+		if relative < 0 {
+			return false
+		}
+		start := offset + relative
+		end := strings.Index(source[start:], ";")
+		if end < 0 {
+			end = len(source) - start
+		}
+		if strings.Contains(source[start:start+end], target) {
+			return true
+		}
+		offset = start + len(marker)
+	}
+	return false
+}
+
 func TestShellProductionHostEffectOwnershipGuardRejectsBypasses(t *testing.T) {
 	sources := trackedShellProductionSources(t)
 	if err := validateShellProductionHostEffectOwnership(sources); err != nil {
 		t.Fatalf("current shell production host-effect inventory rejected: %v", err)
 	}
+	t.Run("relocated wrapper OSC0 title", func(t *testing.T) {
+		const title = `  printf '\033]0;󰊠  Wisp Deck\007'`
+		wrapper := sources["wrapper.sh"]
+		if strings.Count(wrapper, title) != 1 {
+			t.Fatal("wrapper OSC0 relocation prerequisite missing")
+		}
+		mutated := addShellProductionSource(
+			sources,
+			"wrapper.sh",
+			strings.Replace(wrapper, title, "", 1)+"\n"+title+"\n",
+		)
+		if err := validateShellProductionHostEffectOwnership(mutated); err == nil {
+			t.Fatal("relocated wrapper OSC0 title escaped exact context audit")
+		}
+	})
 	mutations := map[string]string{
-		"afplay":              "afplay /tmp/chime.aiff\n",
-		"system sound path":   "printf '%s\\n' /System/Library/Sounds/Glass.aiff\n",
-		"NSSound":             "printf '%s\\n' NSSound\n",
-		"AudioServices":       "printf '%s\\n' AudioServicesPlaySystemSound\n",
-		"speech":              "say audit\n",
-		"notification sound":  "osascript -e 'display notification \"audit\" with sound name \"Glass\"'\n",
-		"OSC 9":               "printf '\\033]9;audit\\007'\n",
-		"escaped BEL":         "printf '\\a'\n",
-		"single octal BEL":    "printf '\\7'\n",
-		"short octal BEL":     "printf '\\07'\n",
-		"percent-b octal BEL": "printf '%b' '\\0007'\n",
-		"short hex BEL":       "printf '\\x7'\n",
-		"raw BEL":             "printf 'audit\a'\n",
+		"afplay":                      "afplay /tmp/chime.aiff\n",
+		"system sound path":           "printf '%s\\n' /System/Library/Sounds/Glass.aiff\n",
+		"NSSound":                     "printf '%s\\n' NSSound\n",
+		"AudioServices":               "printf '%s\\n' AudioServicesPlaySystemSound\n",
+		"speech":                      "say audit\n",
+		"notification sound":          "osascript -e 'display notification \"audit\" with sound name \"Glass\"'\n",
+		"OSC 9":                       "printf '\\033]9;audit\\007'\n",
+		"escaped BEL":                 "printf '\\a'\n",
+		"single octal BEL":            "printf '\\7'\n",
+		"short octal BEL":             "printf '\\07'\n",
+		"percent-b octal BEL":         "printf '%b' '\\0007'\n",
+		"unquoted percent-b":          "printf %b '\\0007'\n",
+		"option percent-b":            "printf -- %b '\\0007'\n",
+		"reordered echo flags":        "echo -n -e '\\0007'\n",
+		"ANSI-C control BEL":          "printf %s $'\\cG'\n",
+		"double-quoted escaped octal": "printf \"\\\\7\"\n",
+		"unquoted escaped octal":      "printf \\\\7\n",
+		"double-quoted escaped BEL":   "printf \"\\\\a\"\n",
+		"short hex BEL":               "printf '\\x7'\n",
+		"raw BEL":                     "printf 'audit\a'\n",
 	}
 	for name, source := range mutations {
 		t.Run(name, func(t *testing.T) {
@@ -280,10 +3333,10 @@ func TestShellProductionHostEffectOwnershipGuardRejectsBypasses(t *testing.T) {
 	}
 
 	for name, source := range map[string]string{
-		"octal seventy":  "printf '\\70'\n",
-		"hex seventy":    "printf '\\x70'\n",
-		"escaped slash":  "printf '\\\\7'\n",
-		"NUL then seven": "printf '\\0007'\n",
+		"octal seventy": "printf '\\70'\n",
+		"hex seventy":   "printf '\\x70'\n",
+		"escaped slash": "printf '\\\\7'\n",
+		"control-H":     "printf %s $'\\cH'\n",
 	} {
 		t.Run("allows "+name, func(t *testing.T) {
 			mutated := addShellProductionSource(
@@ -300,35 +3353,18 @@ func TestShellProductionHostEffectOwnershipGuardRejectsBypasses(t *testing.T) {
 
 func trackedShellProductionSources(t *testing.T) map[string]string {
 	t.Helper()
-	root := projectRoot(t)
-	output, err := exec.Command(
-		"git",
-		"-C",
-		root,
-		"ls-files",
-		"-z",
-		"--",
-		"lib/",
-		"templates/",
-		"bin/",
-		"wrapper.sh",
-	).CombinedOutput()
-	if err != nil {
-		t.Fatalf("discover shell production sources: %v\n%s", err, output)
-	}
+	files := trackedRepositoryAuditFiles(t)
+	shipped := repositoryShippedAssignments()
 	sources := make(map[string]string)
-	for _, relative := range strings.Split(string(output), "\x00") {
-		if relative == "" {
+	for path, file := range files {
+		if path == "VERSION" || isTrackedTestSource(path) ||
+			path == "package.json" || strings.HasSuffix(path, ".go") ||
+			isJavaScriptAuditPath(path) ||
+			!isProductionAuditTextPath(path, shipped) ||
+			bytes.IndexByte(file.source, 0) >= 0 {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
-		if err != nil {
-			t.Fatalf("read shell production source %s: %v", relative, err)
-		}
-		if bytes.IndexByte(data, 0) >= 0 {
-			continue
-		}
-		sources[relative] = string(data)
+		sources[path] = string(file.source)
 	}
 	return sources
 }
@@ -381,7 +3417,13 @@ func validateShellProductionHostEffectOwnership(
 }`,
 		},
 		"wrapper.sh": {
-			`printf '\033]0;󰊠  Wisp Deck\007'`,
+			`  fi
+
+  # Use TUI for project selection
+  printf '\033]0;󰊠  Wisp Deck\007'
+
+  # Stop loading animation before TUI takes over
+  type stop_loading_screen &>/dev/null && stop_loading_screen`,
 		},
 	}
 	for path, allowedShapes := range allowlist {
@@ -444,7 +3486,44 @@ func shellProductionLineHasHostEffect(line string) bool {
 }
 
 func shellLineHasBellEscape(line string) bool {
+	const (
+		shellUnquoted = iota
+		shellSingleQuoted
+		shellDoubleQuoted
+		shellANSIQuoted
+	)
+	quote := shellUnquoted
 	for index := 0; index < len(line); {
+		switch quote {
+		case shellUnquoted:
+			if line[index] == '$' && index+1 < len(line) && line[index+1] == '\'' {
+				quote = shellANSIQuoted
+				index += 2
+				continue
+			}
+			if line[index] == '\'' {
+				quote = shellSingleQuoted
+				index++
+				continue
+			}
+			if line[index] == '"' {
+				quote = shellDoubleQuoted
+				index++
+				continue
+			}
+		case shellSingleQuoted, shellANSIQuoted:
+			if line[index] == '\'' {
+				quote = shellUnquoted
+				index++
+				continue
+			}
+		case shellDoubleQuoted:
+			if line[index] == '"' {
+				quote = shellUnquoted
+				index++
+				continue
+			}
+		}
 		if line[index] != '\\' {
 			index++
 			continue
@@ -453,7 +3532,13 @@ func shellLineHasBellEscape(line string) bool {
 		for runEnd < len(line) && line[runEnd] == '\\' {
 			runEnd++
 		}
-		if (runEnd-index)%2 == 0 || runEnd == len(line) {
+		// Inside ordinary single quotes Bash preserves the run verbatim, so
+		// printf sees an escape only after an odd number of backslashes.
+		// Everywhere else shell processing can collapse a pair first (for
+		// example "\\7" or unquoted \\7), so conservatively audit the
+		// resulting escape regardless of raw parity.
+		if (quote == shellSingleQuoted && (runEnd-index)%2 == 0) ||
+			runEnd == len(line) {
 			index = runEnd
 			continue
 		}
@@ -461,6 +3546,11 @@ func shellLineHasBellEscape(line string) bool {
 		switch line[escape] {
 		case 'a':
 			return true
+		case 'c':
+			if escape+1 < len(line) &&
+				(line[escape+1] == 'g' || line[escape+1] == 'G') {
+				return true
+			}
 		case 'x':
 			value, digits := shellEscapeValue(line, escape+1, 2, 16)
 			if digits > 0 && value == 7 {
@@ -468,35 +3558,26 @@ func shellLineHasBellEscape(line string) bool {
 			}
 		default:
 			if line[escape] < '0' || line[escape] > '7' {
-				index = runEnd + 1
+				index = runEnd
 				continue
 			}
 			value, _ := shellEscapeValue(line, escape, 3, 8)
 			if value == 7 {
 				return true
 			}
-			// printf %b and echo -e accept \0ooo in addition to the format
-			// string's \ooo form. Apply that interpretation only when the
-			// relevant mode is explicit, so harmless \0007 (NUL then "7") in
-			// a printf format is not mistaken for BEL.
-			if line[escape] == '0' && shellLineUsesZeroPrefixedOctal(line) {
+			// printf %b and echo -e accept \0ooo. Audit that interpretation
+			// regardless of option/quoting layout; a conservative source
+			// rejection is safer than trying to emulate Bash parsing.
+			if line[escape] == '0' {
 				value, digits := shellEscapeValue(line, escape+1, 3, 8)
 				if digits > 0 && value == 7 {
 					return true
 				}
 			}
 		}
-		index = runEnd + 1
+		index = runEnd
 	}
 	return false
-}
-
-func shellLineUsesZeroPrefixedOctal(line string) bool {
-	return strings.Contains(line, `printf '%b'`) ||
-		strings.Contains(line, `printf "%b"`) ||
-		strings.Contains(line, "echo -e ") ||
-		strings.Contains(line, "echo -ne ") ||
-		strings.Contains(line, "echo -en ")
 }
 
 func shellEscapeValue(
@@ -976,33 +4057,16 @@ func validateGlobalHostEffectsBoundary(sources map[string]string) error {
 }
 
 func TestTestSourcesCannotDirectlyLaunchHostAudio(t *testing.T) {
-	root := projectRoot(t)
 	var violations []string
-	for _, dir := range []string{
-		filepath.Join(root, "internal"),
-		filepath.Join(root, "cmd"),
-		filepath.Join(root, "test"),
-	} {
-		err := filepath.Walk(dir, func(path string, info os.FileInfo, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if info.IsDir() || !strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			if testSourceLaunchesHostAudio(path, data) {
-				violations = append(violations, path)
-			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
+	for path, file := range trackedRepositoryAuditFiles(t) {
+		if !isTrackedTestSource(path) {
+			continue
+		}
+		if trackedTestSourceLaunchesHostEffect(path, file.source) {
+			violations = append(violations, path)
 		}
 	}
+	sort.Strings(violations)
 	if len(violations) != 0 {
 		t.Fatalf("test sources can launch host audio directly: %s", strings.Join(violations, ", "))
 	}
@@ -1143,6 +4207,14 @@ func TestTestSourceAudioLaunchGuardRejectsBypasses(t *testing.T) {
 		"invalid typed effect runner": {
 			source: `package p; func test() { _ = runHostEffect(context.Background(), hostEffect{}) }`,
 		},
+		"direct stdout BEL": {
+			source: `package p; import "os"; func test() { _, _ = os.Stdout.Write([]byte("\a")) }`,
+			want:   true,
+		},
+		"direct stderr OSC notification": {
+			source: `package p; import "fmt"; func test() { fmt.Fprint(os.Stderr, "\x1b]9;audit\x07") }`,
+			want:   true,
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -1177,6 +4249,77 @@ func TestPumpTerminalOutputFiltersRealPTY() {
 	if !testSourceLaunchesHostAudio(fixturePath, []byte(mutatedFixture)) {
 		t.Fatal("changed filtered PTY process shape escaped the test-source guard")
 	}
+	relocatedFixture := strings.Replace(
+		filteredPTYFixture,
+		"TestPumpTerminalOutputFiltersRealPTY",
+		"TestRelocatedPTY",
+		1,
+	)
+	if !testSourceLaunchesHostAudio(fixturePath, []byte(relocatedFixture)) {
+		t.Fatal("relocated filtered PTY process escaped the test-source guard")
+	}
+
+	const openCodePTYFixture = `package opencodeadapter
+import (
+	"bytes"
+	"context"
+	"os"
+	"testing"
+)
+func TestRunDefaultPTYPreservesExitAndFiltersTerminalNotifications(t *testing.T) {
+	var output bytes.Buffer
+	supervisor := Supervisor{}
+	_, _ = supervisor.runDefaultPTY(context.Background(), ptySpec{
+		Argv: []string{"/bin/sh", "-c", "printf 'left\\007middle\\033]9;native\\007right'; exit 7"},
+		Env: os.Environ(), CWD: t.TempDir(), Stdin: bytes.NewReader(nil), Stdout: &output,
+	}, func() {})
+}`
+	const openCodeFixturePath = "internal/opencodeadapter/supervisor_test.go"
+	if testSourceLaunchesHostAudio(
+		openCodeFixturePath,
+		[]byte(openCodePTYFixture),
+	) {
+		t.Fatal("exact OpenCode filtered PTY fixture was classified as a host effect")
+	}
+	relocatedOpenCodeFixture := strings.Replace(
+		openCodePTYFixture,
+		"TestRunDefaultPTYPreservesExitAndFiltersTerminalNotifications",
+		"TestRelocatedOpenCodePTY",
+		1,
+	)
+	if !testSourceLaunchesHostAudio(
+		openCodeFixturePath,
+		[]byte(relocatedOpenCodeFixture),
+	) {
+		t.Fatal("relocated OpenCode filtered PTY fixture escaped the test-source guard")
+	}
+
+	const codexOutputFixture = `package codexadapter
+import "os"
+func TestCodexPTYConsumesFragmentedOSCAndForwardsOrdinaryBytes() {
+	_, _ = os.Stdout.Write([]byte("\x1b]9;dynamic"))
+	_, _ = os.Stdout.Write([]byte(" preview\x07\x1b\\"))
+}`
+	codexFixturePath := filepath.Join(
+		"internal",
+		"codexadapter",
+		"supervisor_test.go",
+	)
+	if testSourceLaunchesHostAudio(codexFixturePath, []byte(codexOutputFixture)) {
+		t.Fatal("exact filtered Codex PTY output fixture was classified as a host effect")
+	}
+	relocatedCodexFixture := strings.Replace(
+		codexOutputFixture,
+		"TestCodexPTYConsumesFragmentedOSCAndForwardsOrdinaryBytes",
+		"TestRelocatedOutput",
+		1,
+	)
+	if !testSourceLaunchesHostAudio(
+		codexFixturePath,
+		[]byte(relocatedCodexFixture),
+	) {
+		t.Fatal("relocated Codex PTY output fixture escaped the test-source guard")
+	}
 }
 
 func testSourceLaunchesHostAudio(path string, source []byte) bool {
@@ -1188,9 +4331,36 @@ func testSourceLaunchesHostAudio(path string, source []byte) bool {
 	collectProcessConstructorAliases(file, aliases, dotImports)
 	staticStrings := collectStaticStrings(file)
 	execCmdVariables := collectExecCmdVariables(file, aliases, dotImports)
+	callOwners := make(map[token.Pos]string)
+	nodeOwners := make(map[token.Pos]string)
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Body == nil {
+			continue
+		}
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			if node != nil {
+				nodeOwners[node.Pos()] = function.Name.Name
+			}
+			if call, ok := node.(*ast.CallExpr); ok {
+				callOwners[call.Pos()] = function.Name.Name
+			}
+			return true
+		})
+	}
 	launchesAudio := false
 	ast.Inspect(file, func(node ast.Node) bool {
 		composite, ok := node.(*ast.CompositeLit)
+		if ok && testProcessSpecLaunchesHostEffect(composite, staticStrings) {
+			if !auditedOpenCodeFilterPTYFixture(
+				path,
+				nodeOwners[composite.Pos()],
+				composite,
+			) {
+				launchesAudio = true
+				return false
+			}
+		}
 		if ok && execCmdLiteralLaunchesHostEffect(
 			composite,
 			aliases,
@@ -1217,6 +4387,15 @@ func testSourceLaunchesHostAudio(path string, source []byte) bool {
 			}
 			return true
 		}
+		if testCallWritesHostEffect(
+			path,
+			callOwners[call.Pos()],
+			call,
+			staticStrings,
+		) {
+			launchesAudio = true
+			return false
+		}
 		switch expressionName(call.Fun) {
 		case "runHostEffect":
 			if len(call.Args) != 2 || !isZeroHostEffect(call.Args[1]) {
@@ -1235,7 +4414,11 @@ func testSourceLaunchesHostAudio(path string, source []byte) bool {
 				}
 			}
 		}
-		if auditedFilteredPTYHostEffectFixture(path, call) {
+		if auditedFilteredPTYHostEffectFixture(
+			path,
+			callOwners[call.Pos()],
+			call,
+		) {
 			return true
 		}
 		executableIndex, ok := processExecutableArgument(call, aliases, dotImports)
@@ -1260,9 +4443,122 @@ func testSourceLaunchesHostAudio(path string, source []byte) bool {
 	return launchesAudio
 }
 
-func auditedFilteredPTYHostEffectFixture(path string, call *ast.CallExpr) bool {
+func testCallWritesHostEffect(
+	path string,
+	owner string,
+	call *ast.CallExpr,
+	staticStrings map[string]map[string]bool,
+) bool {
+	name := expressionName(call.Fun)
+	arguments := call.Args
+	switch name {
+	case "os.Stdout.Write", "os.Stdout.WriteString",
+		"os.Stderr.Write", "os.Stderr.WriteString",
+		"fmt.Print", "fmt.Printf", "fmt.Println",
+		"print", "println":
+	case "fmt.Fprint", "fmt.Fprintf", "fmt.Fprintln", "io.WriteString":
+		if len(arguments) == 0 {
+			return false
+		}
+		target := expressionName(arguments[0])
+		if target != "os.Stdout" && target != "os.Stderr" {
+			return false
+		}
+		arguments = arguments[1:]
+	case "syscall.Write":
+		if len(arguments) < 2 ||
+			(!hasIntegerLiteral(arguments[0], "1") &&
+				!hasIntegerLiteral(arguments[0], "2")) {
+			return false
+		}
+		arguments = arguments[1:]
+	default:
+		return false
+	}
+	for _, argument := range arguments {
+		if expressionContainsTerminalHostEffect(argument, staticStrings) {
+			if auditedCodexFilterOutputFixture(path, owner, call) {
+				continue
+			}
+			return true
+		}
+	}
+	return false
+}
+
+func hasIntegerLiteral(node ast.Node, want string) bool {
+	found := false
+	ast.Inspect(node, func(node ast.Node) bool {
+		literal, ok := node.(*ast.BasicLit)
+		if ok && literal.Kind == token.INT && literal.Value == want {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func expressionContainsTerminalHostEffect(
+	expression ast.Expr,
+	staticStrings map[string]map[string]bool,
+) bool {
+	for _, value := range resolvedStrings(expression, staticStrings) {
+		if stringHasHostEffectMarker(value) ||
+			strings.ContainsRune(value, '\a') ||
+			shellLineHasBellEscape(value) {
+			return true
+		}
+	}
+	found := false
+	ast.Inspect(expression, func(node ast.Node) bool {
+		literal, ok := node.(*ast.BasicLit)
+		if !ok || literal.Kind != token.STRING {
+			return true
+		}
+		value, err := strconv.Unquote(literal.Value)
+		if err == nil &&
+			(stringHasHostEffectMarker(value) ||
+				strings.ContainsRune(value, '\a') ||
+				shellLineHasBellEscape(value)) {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func auditedCodexFilterOutputFixture(
+	path string,
+	owner string,
+	call *ast.CallExpr,
+) bool {
+	if filepath.ToSlash(path) != "internal/codexadapter/supervisor_test.go" ||
+		owner != "TestCodexPTYConsumesFragmentedOSCAndForwardsOrdinaryBytes" {
+		return false
+	}
+	var rendered bytes.Buffer
+	if err := format.Node(&rendered, token.NewFileSet(), call); err != nil {
+		return false
+	}
+	switch rendered.String() {
+	case `os.Stdout.Write([]byte("\x1b]9;dynamic"))`,
+		`os.Stdout.Write([]byte(" preview\x07\x1b\\"))`:
+		return true
+	default:
+		return false
+	}
+}
+
+func auditedFilteredPTYHostEffectFixture(
+	path string,
+	owner string,
+	call *ast.CallExpr,
+) bool {
 	const fixturePath = "cmd/wisp-deck-tui/screenshot_filter_test.go"
-	if !strings.HasSuffix(filepath.ToSlash(path), fixturePath) {
+	if filepath.ToSlash(path) != fixturePath ||
+		owner != "TestPumpTerminalOutputFiltersRealPTY" {
 		return false
 	}
 	var rendered bytes.Buffer
@@ -1271,6 +4567,74 @@ func auditedFilteredPTYHostEffectFixture(path string, call *ast.CallExpr) bool {
 	}
 	const exact = "exec.Command(\"/bin/sh\", \"-c\", `printf 'before\\007\\033]9;plain\\007\\033Ptmux;\\033\\033]9;wrapped\\007\\033\\\\after'`)"
 	return rendered.String() == exact
+}
+
+func testProcessSpecLaunchesHostEffect(
+	literal *ast.CompositeLit,
+	staticStrings map[string]map[string]bool,
+) bool {
+	name := expressionName(literal.Type)
+	if name != "ptySpec" && name != "processSpec" {
+		return false
+	}
+	for _, element := range literal.Elts {
+		field, ok := element.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		key, ok := field.Key.(*ast.Ident)
+		if !ok || key.Name != "Argv" {
+			continue
+		}
+		value, ok := field.Value.(ast.Expr)
+		return ok && expressionContainsTerminalHostEffect(value, staticStrings)
+	}
+	return false
+}
+
+func auditedOpenCodeFilterPTYFixture(
+	path string,
+	owner string,
+	literal *ast.CompositeLit,
+) bool {
+	if filepath.ToSlash(path) != "internal/opencodeadapter/supervisor_test.go" ||
+		owner != "TestRunDefaultPTYPreservesExitAndFiltersTerminalNotifications" {
+		return false
+	}
+	if expressionName(literal.Type) != "ptySpec" || len(literal.Elts) != 5 {
+		return false
+	}
+	required := map[string]string{
+		"Argv":   `[]string{"/bin/sh", "-c", "printf 'left\\007middle\\033]9;native\\007right'; exit 7"}`,
+		"Env":    "os.Environ()",
+		"CWD":    "t.TempDir()",
+		"Stdin":  "bytes.NewReader(nil)",
+		"Stdout": "&output",
+	}
+	for _, element := range literal.Elts {
+		field, ok := element.(*ast.KeyValueExpr)
+		if !ok {
+			return false
+		}
+		key, ok := field.Key.(*ast.Ident)
+		if !ok {
+			return false
+		}
+		want, ok := required[key.Name]
+		if !ok {
+			return false
+		}
+		var rendered bytes.Buffer
+		if err := format.Node(
+			&rendered,
+			token.NewFileSet(),
+			field.Value,
+		); err != nil || rendered.String() != want {
+			return false
+		}
+		delete(required, key.Name)
+	}
+	return len(required) == 0
 }
 
 func expressionReferencesProductionHostEffectRunner(node ast.Node) bool {
@@ -1957,37 +5321,33 @@ func validateGoHostEffectOwnership(root string, overrides map[string][]byte) err
 		return fmt.Errorf("notification command constructed a process outside the typed owner")
 	}
 
-	for _, directory := range []string{
-		filepath.Join(root, "cmd"),
-		filepath.Join(root, "internal"),
-	} {
-		err := filepath.Walk(directory, func(path string, info os.FileInfo, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if info.IsDir() || strings.HasSuffix(path, "_test.go") || !strings.HasSuffix(path, ".go") {
-				return nil
-			}
-			source, err := read(path)
-			if err != nil {
-				return err
-			}
-			if path != hostPath && productionSourceLaunchesHostEffect(path, source) {
-				return fmt.Errorf("host-effect process construction escaped typed owner: %s", path)
-			}
-			if path != hostPath && sourceHasHostEffectLiteral(path, source) {
-				return fmt.Errorf("host-effect process literal escaped typed owner: %s", path)
-			}
-			if unaudited := unauditedProductionProcessCalls(root, path, source); len(unaudited) != 0 {
-				return fmt.Errorf(
-					"production process site is not exact-audited: %s",
-					strings.Join(unaudited, ", "),
-				)
-			}
-			return nil
-		})
-		if err != nil {
-			return err
+	tracked, err := loadTrackedRepositoryAuditFiles(root)
+	if err != nil {
+		return err
+	}
+	for relative, file := range tracked {
+		if (!strings.HasPrefix(relative, "cmd/") &&
+			!strings.HasPrefix(relative, "internal/")) ||
+			strings.HasSuffix(relative, "_test.go") ||
+			!strings.HasSuffix(relative, ".go") {
+			continue
+		}
+		path := filepath.Join(root, filepath.FromSlash(relative))
+		source := file.source
+		if override, ok := overrides[path]; ok {
+			source = override
+		}
+		if path != hostPath && productionSourceLaunchesHostEffect(path, source) {
+			return fmt.Errorf("host-effect process construction escaped typed owner: %s", path)
+		}
+		if path != hostPath && sourceHasHostEffectLiteral(path, source) {
+			return fmt.Errorf("host-effect process literal escaped typed owner: %s", path)
+		}
+		if unaudited := unauditedProductionProcessCalls(root, path, source); len(unaudited) != 0 {
+			return fmt.Errorf(
+				"production process site is not exact-audited: %s",
+				strings.Join(unaudited, ", "),
+			)
 		}
 	}
 	return nil
@@ -2224,6 +5584,19 @@ func productionSourceLaunchesHostEffect(path string, source []byte) bool {
 	collectProcessConstructorAliases(file, aliases, dotImports)
 	staticStrings := collectStaticStrings(file)
 	execCmdVariables := collectExecCmdVariables(file, aliases, dotImports)
+	callOwners := make(map[token.Pos]string)
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Body == nil {
+			continue
+		}
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			if call, ok := node.(*ast.CallExpr); ok {
+				callOwners[call.Pos()] = function.Name.Name
+			}
+			return true
+		})
+	}
 	launchesEffect := false
 	ast.Inspect(file, func(node ast.Node) bool {
 		switch node := node.(type) {
@@ -2243,6 +5616,15 @@ func productionSourceLaunchesHostEffect(path string, source []byte) bool {
 				return false
 			}
 		case *ast.CallExpr:
+			if testCallWritesHostEffect(
+				path,
+				callOwners[node.Pos()],
+				node,
+				staticStrings,
+			) {
+				launchesEffect = true
+				return false
+			}
 			executableIndex, ok := processExecutableArgument(node, aliases, dotImports)
 			if !ok || executableIndex >= len(node.Args) {
 				return true

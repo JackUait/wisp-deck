@@ -60,27 +60,58 @@ func TestMakefile_buildTestSelectorsCannotBeOverridden(t *testing.T) {
 		runBashSnippet(t, "cd "+root+" && make clean 2>/dev/null || true", nil)
 	})
 
-	for _, selector := range []string{"1", "0", ""} {
-		t.Run(fmt.Sprintf("selector_%q", selector), func(t *testing.T) {
+	command := fmt.Sprintf(
+		"cd %q && make clean >/dev/null && make WISP_DECK_TESTING=0 HOST_EFFECTS_CAPABILITY=enabled SOUND_PREVIEW_CAPABILITY=enabled build",
+		root,
+	)
+	out, code := runBashSnippet(t, command, nil)
+	if code != 0 {
+		t.Fatalf("marked Make build failed (%d): %s", code, out)
+	}
+	capabilities := readBinaryCapabilities(t, binPath)
+	if capabilities.HostEffectsCompiled || capabilities.SoundPreviewCompiled {
+		t.Fatalf(
+			"marked Make selector capabilities = %#v, want both disabled",
+			capabilities,
+		)
+	}
+	if capabilities.HostEffectsBoundary != 1 {
+		t.Fatalf("marked Make boundary = %d, want 1", capabilities.HostEffectsBoundary)
+	}
+	requireProductionCapabilities(t, binPath, false)
+}
+
+func TestMakefile_anyDefinedTestSelectorDisablesEffects(t *testing.T) {
+	root := projectRoot(t)
+	binPath := filepath.Join(root, "bin", "wisp-deck-tui")
+	t.Cleanup(func() {
+		runBashSnippet(t, "cd "+root+" && make clean 2>/dev/null || true", nil)
+	})
+
+	for _, test := range []struct {
+		name     string
+		selector string
+	}{
+		{name: "inherited one"},
+		{name: "explicit empty", selector: "WISP_DECK_TESTING= "},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			command := fmt.Sprintf(
-				"cd %q && make clean >/dev/null && make WISP_DECK_TESTING=%q HOST_EFFECTS_CAPABILITY=enabled SOUND_PREVIEW_CAPABILITY=enabled build",
+				"cd %q && make clean >/dev/null && make %sbuild",
 				root,
-				selector,
+				test.selector,
 			)
 			out, code := runBashSnippet(t, command, nil)
 			if code != 0 {
-				t.Fatalf("marked Make build failed (%d): %s", code, out)
+				t.Fatalf("defined-selector Make build failed (%d): %s", code, out)
 			}
 			capabilities := readBinaryCapabilities(t, binPath)
-			if capabilities.HostEffectsCompiled || capabilities.SoundPreviewCompiled {
+			if capabilities.HostEffectsCompiled ||
+				capabilities.SoundPreviewCompiled {
 				t.Fatalf(
-					"marked Make selector %q capabilities = %#v, want both disabled",
-					selector,
+					"defined-selector Make capabilities = %#v, want both disabled",
 					capabilities,
 				)
-			}
-			if capabilities.HostEffectsBoundary != 1 {
-				t.Fatalf("marked Make boundary = %d, want 1", capabilities.HostEffectsBoundary)
 			}
 			requireProductionCapabilities(t, binPath, false)
 		})
@@ -177,7 +208,6 @@ type testBinaryCapabilities struct {
 func readBinaryCapabilities(t *testing.T, binary string) testBinaryCapabilities {
 	t.Helper()
 	command := exec.Command(binary, "capabilities")
-	command.Env = environmentWithoutTestMarker(os.Environ())
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s capabilities: %v\n%s", binary, err, output)
@@ -192,7 +222,6 @@ func readBinaryCapabilities(t *testing.T, binary string) testBinaryCapabilities 
 func requireProductionCapabilities(t *testing.T, binary string, wantSuccess bool) {
 	t.Helper()
 	command := exec.Command(binary, "capabilities", "--require-production")
-	command.Env = environmentWithoutTestMarker(os.Environ())
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	command.Stdout = &stdout

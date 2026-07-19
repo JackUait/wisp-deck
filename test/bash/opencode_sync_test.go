@@ -51,7 +51,7 @@ func TestCLIAdd_then_key_mirrors_into_opencode(t *testing.T) {
 	// add a zhipu-named config (so base URL resolves), make it active, give it a key+mapping.
 	run := func(args ...string) {
 		c := exec.Command(bin, args...)
-		c.Env = env
+		c.Env = repositoryTestEnvironment(env)
 		if out, err := c.CombinedOutput(); err != nil {
 			t.Fatalf("%v: %v\n%s", args, err, out)
 		}

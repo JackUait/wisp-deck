@@ -22,7 +22,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Run Go tests
-        run: ./scripts/go-test.sh -json ./internal/... ./test/internal/... ./test/npx/... 2>&1 | tee go-test-output.json
+        run: ./scripts/go-test.sh -json ./cmd/wisp-deck-tui/... ./internal/... ./test/internal/... ./test/npx/... 2>&1 | tee go-test-output.json
         continue-on-error: true
 
       # Names every failing test, replays its output, annotates the source line,

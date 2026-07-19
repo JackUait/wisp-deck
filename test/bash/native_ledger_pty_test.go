@@ -165,13 +165,14 @@ func startNativeLedgerPTY(t *testing.T, project, snapshot string, size *pty.Wins
 	args = append(args, extraArgs...)
 	cmd := exec.Command(nativeLedgerBinary(t), args...)
 	configDir := t.TempDir()
-	cmd.Env = append(os.Environ(),
+	environment := append(os.Environ(),
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
 		"XDG_CONFIG_HOME="+configDir,
 		"TMUX_PANE=%1",
 	)
-	cmd.Env = append(cmd.Env, extraEnv...)
+	environment = append(environment, extraEnv...)
+	cmd.Env = repositoryTestEnvironment(environment)
 	ptmx, err := pty.StartWithSize(cmd, size)
 	if err != nil {
 		t.Fatalf("start native ledger pty: %v", err)

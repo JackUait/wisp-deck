@@ -6,6 +6,7 @@ package npx_test
 // files from previous versions in the install dir.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -383,28 +384,79 @@ func TestLauncher_skip_tui_download_requires_exact_repository_test_mode(t *testi
 		}
 	})
 
-	t.Run("skip is ignored outside test mode", func(t *testing.T) {
-		sb := newLauncherSandbox(t)
-		version := repoVersion(t)
-		curlCalls := filepath.Join(t.TempDir(), "curl-calls")
-		artifact := filepath.Join(t.TempDir(), "wisp-deck-tui")
-		writeLauncherTuiArtifact(t, artifact, version, validLauncherTuiCapabilities, 0)
-		sb.mockCurl(t, fmt.Sprintf(`printf 'called\n' >> %q; cp %q "$dest"; exit 0`, curlCalls, artifact))
-		root := projectRoot(t)
-		cmd := exec.Command("node", filepath.Join(root, "bin", "npx-wisp-deck.js"))
-		cmd.Env = append(append([]string{}, sb.env...),
-			"WISP_DECK_TESTING=0",
-			"WISP_DECK_SKIP_TUI_DOWNLOAD=1",
-			"WISP_DECK_MOCK_PLATFORM=darwin",
-		)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("production-mode launcher failed: %v\n%s", err, out)
-		}
-		if _, err := os.Stat(curlCalls); err != nil {
-			t.Fatal("production mode incorrectly honored WISP_DECK_SKIP_TUI_DOWNLOAD=1")
+	t.Run("pure policy requires both exact values", func(t *testing.T) {
+		for _, marker := range []string{"", "0", "stale", "1"} {
+			for _, skip := range []string{"", "0", "stale", "1"} {
+				want := marker == "1" && skip == "1"
+				if got := launcherSkipTuiDownload(t, marker, skip); got != want {
+					t.Fatalf(
+						"marker=%q skip=%q result=%t, want %t",
+						marker,
+						skip,
+						got,
+						want,
+					)
+				}
+			}
 		}
 	})
+
+	source, err := os.ReadFile(filepath.Join(
+		projectRoot(t),
+		"bin",
+		"npx-wisp-deck.js",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, exact := range []string{
+		"const skipTuiDownload = shouldSkipTuiDownload(process.env);",
+		"if (!skipTuiDownload) {\n    ensureTuiBinary(version);\n  }",
+		"if (require.main === module) {\n  main();\n}",
+	} {
+		if got := strings.Count(string(source), exact); got != 1 {
+			t.Fatalf(
+				"launcher main contains %d exact %q call-site shapes, want 1",
+				got,
+				exact,
+			)
+		}
+	}
+}
+
+func launcherSkipTuiDownload(t *testing.T, marker, skip string) bool {
+	t.Helper()
+	launcher := filepath.Join(projectRoot(t), "bin", "npx-wisp-deck.js")
+	script := `
+const launcher = require(process.argv[1]);
+const environment = JSON.parse(process.argv[2]);
+process.stdout.write(launcher.shouldSkipTuiDownload(environment) ? "true" : "false");
+`
+	environment := map[string]string{
+		"WISP_DECK_SKIP_TUI_DOWNLOAD": skip,
+	}
+	if marker != "" {
+		environment["WISP_DECK_TESTING"] = marker
+	}
+	encoded, err := json.Marshal(environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("node", "-e", script, launcher, string(encoded))
+	cmd.Env = repositoryTestEnvironment(os.Environ())
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("evaluate launcher download-skip policy: %v\n%s", err, output)
+	}
+	switch string(output) {
+	case "true":
+		return true
+	case "false":
+		return false
+	default:
+		t.Fatalf("unexpected launcher download-skip result %q", output)
+		return false
+	}
 }
 
 func TestLauncher_preserves_existing_tui_when_download_fails(t *testing.T) {

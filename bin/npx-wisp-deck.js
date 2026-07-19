@@ -48,8 +48,7 @@ function main() {
   }
 
   // Download TUI binary if needed
-  const skipTuiDownload = process.env.WISP_DECK_TESTING === '1'
-    && process.env.WISP_DECK_SKIP_TUI_DOWNLOAD === '1';
+  const skipTuiDownload = shouldSkipTuiDownload(process.env);
   if (!skipTuiDownload) {
     ensureTuiBinary(version);
   }
@@ -64,6 +63,11 @@ function main() {
       process.exit(err.status || 1);
     }
   }
+}
+
+function shouldSkipTuiDownload(environment) {
+  return environment.WISP_DECK_TESTING === '1'
+    && environment.WISP_DECK_SKIP_TUI_DOWNLOAD === '1';
 }
 
 // The .version marker says which version was installed, not that the install
@@ -226,4 +230,10 @@ function downloadFile(url, dest) {
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  shouldSkipTuiDownload,
+};
