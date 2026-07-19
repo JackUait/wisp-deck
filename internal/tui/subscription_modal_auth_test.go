@@ -260,18 +260,38 @@ func TestSubscriptionModalChatGPTAuthRendersPersistentActionAndStatus(t *testing
 	m.subscriptionModal.auth.pending = true
 	m.subscriptionModal.auth.url = "https://chatgpt.com/auth/wisp"
 	m.subscriptionModal.auth.openErr = errors.New("browser unavailable")
+	m.subscriptionModal.auth.err = errors.New("login failed")
+	lines := m.subscriptionDetailLines(m.subscriptionDetailPaneWidth(), 30)
 	details = stripAnsi(strings.Join(
-		m.subscriptionDetailLines(m.subscriptionDetailPaneWidth(), 20),
+		lines,
 		"\n",
 	))
 	for _, want := range []string{
 		"[ Waiting for browser… ]",
 		"https://chatgpt.com/auth/wisp",
 		"browser unavailable",
+		"login failed",
 	} {
 		if !strings.Contains(details, want) {
 			t.Errorf("pending details missing %q:\n%s", want, details)
 		}
+	}
+	waiting := subscriptionLineIndex(lines, "[ Waiting for browser… ]")
+	manual := subscriptionLineIndex(lines, "Open manually:")
+	openErr := subscriptionLineIndex(lines, "browser unavailable")
+	loginErr := subscriptionLineIndex(lines, "login failed")
+	rename := subscriptionLineIndex(lines, "[ Rename ]")
+	if waiting < 0 || manual < 0 || openErr < 0 || loginErr < 0 || rename < 0 {
+		t.Fatalf(
+			"pending lines are incomplete waiting=%d manual=%d openErr=%d loginErr=%d rename=%d:\n%s",
+			waiting, manual, openErr, loginErr, rename, details,
+		)
+	}
+	if !(waiting < manual && manual < openErr && openErr < loginErr && loginErr < rename) {
+		t.Fatalf(
+			"pending order waiting=%d manual=%d openErr=%d loginErr=%d rename=%d:\n%s",
+			waiting, manual, openErr, loginErr, rename, details,
+		)
 	}
 }
 

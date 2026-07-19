@@ -506,3 +506,36 @@ func TestSubscriptionModal_chatGPTNavigationIncludesLoginAction(t *testing.T) {
 		t.Fatalf("Down from login selected %d, want Rename", m.subscriptionModal.detailCursor)
 	}
 }
+
+func TestSubscriptionModal_chatGPTActionCursorLinesMatchRenderedRows(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.SetActiveClaudeConfig("openai-gpt.json")
+	m.openSubscriptionModal()
+	m.subscriptionModal.pane = subscriptionDetailsPane
+	m.subscriptionModal.auth.status = subscriptionAuthSignedOut
+	m.subscriptionModal.detailCursor = subscriptionDetailAuth
+
+	lines := m.subscriptionDetailLines(m.subscriptionDetailPaneWidth(), 30)
+	signIn := subscriptionLineIndex(lines, "[ Sign in / switch account ]")
+	if signIn < 0 {
+		t.Fatalf("rendered details have no sign-in action:\n%s",
+			stripAnsi(strings.Join(lines, "\n")))
+	}
+	if got := m.subscriptionDetailCursorLine(); got != signIn {
+		t.Fatalf("auth cursor line = %d, want rendered sign-in line %d", got, signIn)
+	}
+
+	m.subscriptionModal.auth.url = "https://chatgpt.com/auth/wisp"
+	m.subscriptionModal.auth.openErr = fmt.Errorf("browser unavailable")
+	m.subscriptionModal.auth.err = fmt.Errorf("login failed")
+	m.subscriptionModal.detailCursor = subscriptionDetailRename
+	lines = m.subscriptionDetailLines(m.subscriptionDetailPaneWidth(), 30)
+	rename := subscriptionLineIndex(lines, "[ Rename ]")
+	if rename < 0 {
+		t.Fatalf("rendered details have no Rename action:\n%s",
+			stripAnsi(strings.Join(lines, "\n")))
+	}
+	if got := m.subscriptionDetailCursorLine(); got != rename {
+		t.Fatalf("Rename cursor line = %d, want rendered Rename line %d", got, rename)
+	}
+}

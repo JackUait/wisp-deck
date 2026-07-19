@@ -48,6 +48,37 @@ func TestSubscriptionModal_wideRenderShowsInventoryAndDetails(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModal_signInActionFollowsModelRouting(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.SetActiveClaudeConfig("openai-gpt.json")
+	m.openSubscriptionModal()
+	m.subscriptionModal.auth.status = subscriptionAuthSignedOut
+
+	lines := m.subscriptionDetailLines(m.subscriptionDetailPaneWidth(), 30)
+	connection := subscriptionLineIndex(lines, "CONNECTION")
+	modelRouting := subscriptionLineIndex(lines, "MODEL ROUTING")
+	actions := subscriptionLineIndex(lines, "ACTIONS")
+	signIn := subscriptionLineIndex(lines, "[ Sign in / switch account ]")
+	rename := subscriptionLineIndex(lines, "[ Rename ]")
+	if connection < 0 || modelRouting < 0 || actions < 0 || signIn < 0 || rename < 0 {
+		t.Fatalf(
+			"detail lines are incomplete connection=%d model=%d actions=%d sign-in=%d rename=%d:\n%s",
+			connection, modelRouting, actions, signIn, rename,
+			stripAnsi(strings.Join(lines, "\n")),
+		)
+	}
+	if !(connection < modelRouting &&
+		modelRouting < actions &&
+		actions < signIn &&
+		signIn < rename) {
+		t.Fatalf(
+			"detail order connection=%d model=%d actions=%d sign-in=%d rename=%d:\n%s",
+			connection, modelRouting, actions, signIn, rename,
+			stripAnsi(strings.Join(lines, "\n")),
+		)
+	}
+}
+
 func TestSubscriptionModal_overlayDimsSettingsBackdrop(t *testing.T) {
 	withTrueColor(t)
 	m := newSubscriptionModalMenu(t)

@@ -1384,6 +1384,21 @@ func (m *MainMenuModel) subscriptionDetailCursorLine() int {
 		line++
 	}
 	line += 2 // blank line and heading before actions
+	if profile.Provider.Auth == claudeconfig.AuthCodexChatGPT {
+		if cursor == subscriptionDetailAuth {
+			return line
+		}
+		line++ // dedicated sign-in row
+		if m.subscriptionModal.auth.url != "" {
+			line++
+		}
+		if m.subscriptionModal.auth.openErr != nil {
+			line++
+		}
+		if m.subscriptionModal.auth.err != nil {
+			line++
+		}
+	}
 	if subscriptionActionsFitOneLine(m.subscriptionDetailPaneWidth()) {
 		return line
 	}
@@ -1688,37 +1703,6 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 		valueRow(-1, "Authentication", auth, authStyle),
 		valueRow(-1, "Endpoint", endpoint, dim),
 	)
-	if profile.Provider.Auth == claudeconfig.AuthCodexChatGPT {
-		loginLabel := "[ Sign in / switch account ]"
-		if m.subscriptionModal.auth.pending {
-			loginLabel = "[ Waiting for browser… ]"
-		}
-		lines = append(lines, m.subscriptionActionLabel(
-			subscriptionHitAuth,
-			subscriptionDetailAuth,
-			loginLabel,
-			accent,
-			label,
-		))
-		if m.subscriptionModal.auth.url != "" {
-			const prefix = "Open manually: "
-			lines = append(lines, dim.Render(prefix)+accent.Render(modalTruncate(
-				m.subscriptionModal.auth.url,
-				width-lipgloss.Width(prefix),
-			)))
-		}
-		if m.subscriptionModal.auth.openErr != nil {
-			lines = append(lines, amber.Render(modalTruncate(
-				m.subscriptionModal.auth.openErr.Error(),
-				width,
-			)))
-		}
-		if m.subscriptionModal.auth.err != nil {
-			lines = append(lines, lipgloss.NewStyle().
-				Foreground(lipgloss.Color("196")).
-				Render(modalTruncate(m.subscriptionModal.auth.err.Error(), width)))
-		}
-	}
 	lines = append(lines,
 		"",
 		subscriptionSectionLine("MODEL ROUTING", width, dim.Bold(true), dim),
@@ -1760,6 +1744,37 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 		"",
 		subscriptionSectionLine("ACTIONS", width, dim.Bold(true), dim),
 	)
+	if profile.Provider.Auth == claudeconfig.AuthCodexChatGPT {
+		loginLabel := "[ Sign in / switch account ]"
+		if m.subscriptionModal.auth.pending {
+			loginLabel = "[ Waiting for browser… ]"
+		}
+		lines = append(lines, m.subscriptionActionLabel(
+			subscriptionHitAuth,
+			subscriptionDetailAuth,
+			loginLabel,
+			accent,
+			label,
+		))
+		if m.subscriptionModal.auth.url != "" {
+			const prefix = "Open manually: "
+			lines = append(lines, dim.Render(prefix)+accent.Render(modalTruncate(
+				m.subscriptionModal.auth.url,
+				width-lipgloss.Width(prefix),
+			)))
+		}
+		if m.subscriptionModal.auth.openErr != nil {
+			lines = append(lines, amber.Render(modalTruncate(
+				m.subscriptionModal.auth.openErr.Error(),
+				width,
+			)))
+		}
+		if m.subscriptionModal.auth.err != nil {
+			lines = append(lines, lipgloss.NewStyle().
+				Foreground(lipgloss.Color("196")).
+				Render(modalTruncate(m.subscriptionModal.auth.err.Error(), width)))
+		}
+	}
 	rename := m.subscriptionActionLabel(subscriptionHitRename, subscriptionDetailRename, "[ Rename ]", accent, label)
 	deleteAction := m.subscriptionActionLabel(subscriptionHitDelete, subscriptionDetailDelete, "[ Delete ]", accent, label)
 	save := m.subscriptionActionLabel(subscriptionHitSave, subscriptionDetailSave, "[ Save changes ]", accent, label)
