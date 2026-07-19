@@ -6,13 +6,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/jackuait/wisp-deck/internal/attention"
-	"github.com/jackuait/wisp-deck/internal/tui"
+	"github.com/jackuait/wisp-deck/internal/soundpref"
 )
 
 type hostEffectKind uint8
@@ -45,7 +44,7 @@ type hostEffectPlan struct {
 }
 
 func newSystemSoundHostEffect(name string) (hostEffect, bool) {
-	if !slices.Contains(tui.SystemSounds, name) {
+	if !soundpref.IsAllowedName(name) {
 		return hostEffect{}, false
 	}
 	return hostEffect{
@@ -77,7 +76,7 @@ func newClaudeBackgroundNotificationHostEffect(
 func planHostEffect(effect hostEffect, inherited []string) (hostEffectPlan, bool) {
 	switch effect.kind {
 	case hostEffectSystemSound:
-		if !slices.Contains(tui.SystemSounds, effect.soundName) {
+		if !soundpref.IsAllowedName(effect.soundName) {
 			return hostEffectPlan{}, false
 		}
 		return hostEffectPlan{

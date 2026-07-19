@@ -12,13 +12,19 @@ import (
 	"unicode/utf8"
 )
 
-var allowedNames = map[string]struct{}{
-	"Basso": {}, "Blow": {}, "Bottle": {}, "Frog": {}, "Funk": {},
-	"Glass": {}, "Hero": {}, "Morse": {}, "Ping": {}, "Pop": {},
-	"Purr": {}, "Sosumi": {}, "Submarine": {}, "Tink": {},
-}
-
 const maximumDocumentBytes = 64 * 1024
+
+// IsAllowedName reports whether name is one of the fixed macOS system sounds
+// Wisp Deck may play. A switch keeps this security boundary immutable.
+func IsAllowedName(name string) bool {
+	switch name {
+	case "Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero",
+		"Morse", "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink":
+		return true
+	default:
+		return false
+	}
+}
 
 // LoadDocument reads a small, regular preference file without following a
 // blocking special-file read and applies the same strict JSON rules used by
@@ -88,7 +94,7 @@ func Read(path string) string {
 	if name == "" {
 		return "Bottle"
 	}
-	if _, allowed := allowedNames[name]; !allowed {
+	if !IsAllowedName(name) {
 		return "Bottle"
 	}
 	return name

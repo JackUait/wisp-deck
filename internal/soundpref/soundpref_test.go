@@ -9,6 +9,24 @@ import (
 	"time"
 )
 
+func TestIsAllowedNameUsesClosedSystemSoundSet(t *testing.T) {
+	for _, name := range []string{
+		"Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero",
+		"Morse", "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink",
+	} {
+		if !IsAllowedName(name) {
+			t.Errorf("IsAllowedName(%q) = false", name)
+		}
+	}
+	for _, name := range []string{
+		"", "glass", "Glass.aiff", "../../tmp/private", "NotASystemSound",
+	} {
+		if IsAllowedName(name) {
+			t.Errorf("IsAllowedName(%q) = true", name)
+		}
+	}
+}
+
 func TestReadRequiresExplicitValidOptIn(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "features.json")

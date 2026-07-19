@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jackuait/wisp-deck/internal/attention"
+	"github.com/jackuait/wisp-deck/internal/tui"
 )
 
 func TestHostEffectSystemSoundPlannerUsesAuditedPath(t *testing.T) {
@@ -52,6 +53,33 @@ func TestHostEffectSystemSoundPlannerRejectsEveryUnsafeName(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHostEffectSystemSoundValidationIgnoresMutableMenuList(t *testing.T) {
+	original := append([]string(nil), tui.SystemSounds...)
+	t.Cleanup(func() {
+		tui.SystemSounds = append([]string(nil), original...)
+	})
+	unsafe := "../../tmp/private"
+	assertRejected := func(layout string) {
+		t.Helper()
+		if _, ok := newSystemSoundHostEffect(unsafe); ok {
+			t.Fatalf("%s menu list admitted unsafe constructor name", layout)
+		}
+		forged := hostEffect{
+			kind:      hostEffectSystemSound,
+			soundName: unsafe,
+		}
+		if plan, ok := planHostEffect(forged, nil); ok {
+			t.Fatalf("%s menu list admitted forged plan %#v", layout, plan)
+		}
+	}
+
+	tui.SystemSounds[0] = unsafe
+	assertRejected("mutated")
+
+	tui.SystemSounds = []string{unsafe}
+	assertRejected("replaced")
 }
 
 func TestHostEffectClaudeBackgroundPlannerIsFixedAndPrivacyPreserving(t *testing.T) {

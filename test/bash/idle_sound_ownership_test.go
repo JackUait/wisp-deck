@@ -232,6 +232,19 @@ func TestMainMenuSoundPreviewOwnershipGuardRejectsBypasses(t *testing.T) {
 			"func runHostEffect(ctx context.Context, effect hostEffect) error {",
 			"func runHostEffect(ctx context.Context, effect hostEffect, run func(string, ...string) error) error {",
 		),
+		"constructor alias bypass": mutateBoundarySource(
+			t, sources, "host",
+			"\tcmd := exec.CommandContext(ctx, plan.executable, plan.arguments...)",
+			"\trunner := exec.Command\n"+
+				"\t_ = runner(\"/usr/bin/say\", \"audit\")\n"+
+				"\tcmd := exec.CommandContext(ctx, plan.executable, plan.arguments...)",
+		),
+		"second exec Cmd path": mutateBoundarySource(
+			t, sources, "host",
+			"\tcmd := exec.CommandContext(ctx, plan.executable, plan.arguments...)",
+			"\t_ = exec.Cmd{Path: \"/usr/bin/say\"}\n"+
+				"\tcmd := exec.CommandContext(ctx, plan.executable, plan.arguments...)",
+		),
 		"missing process group": mutateBoundarySource(
 			t, sources, "host",
 			"cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}",
@@ -340,10 +353,18 @@ func TestIdleSoundProductionHostEffectGuardRejectsBypasses(t *testing.T) {
 		"sound AppleScript":      `package p; import "os/exec"; func f() { _ = exec.Command("/usr/bin/osascript", "-e", "display notification \"x\"") }`,
 		"OSC notification shell": `package p; import "os/exec"; func f() { _ = exec.Command("/bin/sh", "-c", "printf '\\033]9;x\\007'") }`,
 		"aliased player":         `package p; import process "os/exec"; func f() { _ = process.Command("afplay", "x") }`,
-		"dot imported player":    `package p; import . "os/exec"; func f() { _ = Command("afplay", "x") }`,
-		"start process":          `package p; import "os"; func f() { _, _ = os.StartProcess("/usr/bin/afplay", nil, nil) }`,
-		"syscall exec":           `package p; import "syscall"; func f() { _ = syscall.Exec("/usr/bin/afplay", nil, nil) }`,
-		"exec cmd path":          `package p; import "os/exec"; func f() { _ = exec.Cmd{Path: "/usr/bin/afplay"} }`,
+		"constructor alias":      `package p; import "os/exec"; func f() { runner := exec.Command; _ = runner("/usr/bin/say", "x") }`,
+		"constructor alias chain": `package p; import "os/exec"; func f() {
+			runner := exec.Command
+			alias := runner
+			_ = alias("/usr/bin/osascript", "-e", "display notification \"x\"")
+		}`,
+		"dot imported player":            `package p; import . "os/exec"; func f() { _ = Command("afplay", "x") }`,
+		"dot imported constructor alias": `package p; import . "os/exec"; func f() { runner := Command; _ = runner("/usr/bin/say", "x") }`,
+		"start process":                  `package p; import "os"; func f() { _, _ = os.StartProcess("/usr/bin/afplay", nil, nil) }`,
+		"syscall exec":                   `package p; import "syscall"; func f() { _ = syscall.Exec("/usr/bin/afplay", nil, nil) }`,
+		"exec cmd path":                  `package p; import "os/exec"; func f() { _ = exec.Cmd{Path: "/usr/bin/afplay"} }`,
+		"exec cmd later path":            `package p; import "os/exec"; func f() { cmd := exec.Cmd{}; cmd.Path = "/usr/bin/say" }`,
 	}
 	for name, source := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -632,6 +653,14 @@ func TestTestSourceAudioLaunchGuardRejectsBypasses(t *testing.T) {
 		"quoted production symbols": {
 			source: `package p; const example = "exec.Command(\"/usr/bin/afplay\"); runMainMenuSound("`,
 		},
+		"quoted host-effect fixtures": {
+			source: `package p; const (
+				notification = "exec.Command(\"/usr/bin/osascript\", \"display notification\")"
+				speech = "/usr/bin/say"
+				osc = "\\033]9;fixture\\007"
+				frameworks = "NSSound AudioServicesPlaySystemSound"
+			)`,
+		},
 		"unrelated process": {
 			source: `package p; import "os/exec"; func test() { _ = exec.Command("git", "status") }`,
 		},
@@ -668,6 +697,41 @@ func TestTestSourceAudioLaunchGuardRejectsBypasses(t *testing.T) {
 		},
 		"shell script player": {
 			source: `package p; import "os/exec"; func test() { _ = exec.Command("/bin/sh", "-c", "afplay x") }`,
+			want:   true,
+		},
+		"notification AppleScript": {
+			source: `package p; import "os/exec"; func test() { _ = exec.Command("/usr/bin/osascript", "-e", "display notification \"x\"") }`,
+			want:   true,
+		},
+		"speech executable": {
+			source: `package p; import "os/exec"; func test() { _ = exec.Command("/usr/bin/say", "x") }`,
+			want:   true,
+		},
+		"OSC 9 shell": {
+			source: `package p; import "os/exec"; func test() { _ = exec.Command("/bin/sh", "-c", "printf '\\033]9;x\\007'") }`,
+			want:   true,
+		},
+		"NSSound shell": {
+			source: `package p; import "os/exec"; func test() { _ = exec.Command("/bin/sh", "-c", "use NSSound to play x") }`,
+			want:   true,
+		},
+		"AudioServices shell": {
+			source: `package p; import "os/exec"; func test() { _ = exec.Command("/bin/sh", "-c", "AudioServicesPlaySystemSound 1") }`,
+			want:   true,
+		},
+		"host marker as benign non-shell argument": {
+			source: `package p; import "os/exec"; func test() { _ = exec.Command("echo", "NSSound", "]9;") }`,
+		},
+		"constructor alias": {
+			source: `package p; import "os/exec"; func test() { runner := exec.Command; _ = runner("/usr/bin/say", "x") }`,
+			want:   true,
+		},
+		"constructor alias chain": {
+			source: `package p; import "os/exec"; func test() { runner := exec.Command; alias := runner; _ = alias("/usr/bin/osascript", "-e", "display notification \"x\"") }`,
+			want:   true,
+		},
+		"dot-imported constructor alias": {
+			source: `package p; import . "os/exec"; func test() { runner := Command; _ = runner("/usr/bin/say", "x") }`,
 			want:   true,
 		},
 		"os start process": {
@@ -709,6 +773,32 @@ func TestTestSourceAudioLaunchGuardRejectsBypasses(t *testing.T) {
 			}
 		})
 	}
+
+	const filteredPTYFixture = `package main
+import "os/exec"
+func TestPumpTerminalOutputFiltersRealPTY() {
+	cmd := exec.Command("/bin/sh", "-c", ` +
+		"`printf 'before\\007\\033]9;plain\\007\\033Ptmux;\\033\\033]9;wrapped\\007\\033\\\\after'`" +
+		`)
+	_ = cmd
+}`
+	fixturePath := filepath.Join(
+		"cmd",
+		"wisp-deck-tui",
+		"screenshot_filter_test.go",
+	)
+	if testSourceLaunchesHostAudio(fixturePath, []byte(filteredPTYFixture)) {
+		t.Fatal("exact filtered PTY fixture was classified as a host effect")
+	}
+	mutatedFixture := strings.Replace(
+		filteredPTYFixture,
+		"before",
+		"changed",
+		1,
+	)
+	if !testSourceLaunchesHostAudio(fixturePath, []byte(mutatedFixture)) {
+		t.Fatal("changed filtered PTY process shape escaped the test-source guard")
+	}
 }
 
 func testSourceLaunchesHostAudio(path string, source []byte) bool {
@@ -716,34 +806,24 @@ func testSourceLaunchesHostAudio(path string, source []byte) bool {
 	if err != nil {
 		return true
 	}
-	aliases := map[string]string{}
-	dotImports := map[string]bool{}
-	for _, imported := range file.Imports {
-		importPath, err := strconv.Unquote(imported.Path.Value)
-		if err != nil {
-			continue
-		}
-		switch {
-		case imported.Name == nil:
-			slash := strings.LastIndex(importPath, "/")
-			aliases[importPath[slash+1:]] = importPath
-		case imported.Name.Name == ".":
-			dotImports[importPath] = true
-		case imported.Name.Name != "_":
-			aliases[imported.Name.Name] = importPath
-		}
-	}
+	aliases, dotImports := processImportAliases(file)
+	collectProcessConstructorAliases(file, aliases, dotImports)
 	staticStrings := collectStaticStrings(file)
 	execCmdVariables := collectExecCmdVariables(file, aliases, dotImports)
 	launchesAudio := false
 	ast.Inspect(file, func(node ast.Node) bool {
 		composite, ok := node.(*ast.CompositeLit)
-		if ok && execCmdLiteralLaunchesAudio(composite, aliases, staticStrings) {
+		if ok && execCmdLiteralLaunchesHostEffect(
+			composite,
+			aliases,
+			dotImports,
+			staticStrings,
+		) {
 			launchesAudio = true
 			return false
 		}
 		assignment, ok := node.(*ast.AssignStmt)
-		if ok && execCmdPathAssignmentLaunchesAudio(
+		if ok && execCmdPathAssignmentLaunchesHostEffect(
 			assignment,
 			execCmdVariables,
 			staticStrings,
@@ -777,18 +857,21 @@ func testSourceLaunchesHostAudio(path string, source []byte) bool {
 				}
 			}
 		}
+		if auditedFilteredPTYHostEffectFixture(path, call) {
+			return true
+		}
 		executableIndex, ok := processExecutableArgument(call, aliases, dotImports)
 		if !ok || executableIndex >= len(call.Args) {
 			return true
 		}
 		executable := call.Args[executableIndex]
-		if expressionContainsResolvedString(executable, "afplay", staticStrings) {
+		if expressionContainsHostEffectMarker(executable, staticStrings) {
 			launchesAudio = true
 			return false
 		}
 		if isShellExecutable(executable, staticStrings) {
 			for _, arg := range call.Args[executableIndex+1:] {
-				if expressionContainsResolvedString(arg, "afplay", staticStrings) {
+				if expressionContainsHostEffectMarker(arg, staticStrings) {
 					launchesAudio = true
 					return false
 				}
@@ -797,6 +880,19 @@ func testSourceLaunchesHostAudio(path string, source []byte) bool {
 		return true
 	})
 	return launchesAudio
+}
+
+func auditedFilteredPTYHostEffectFixture(path string, call *ast.CallExpr) bool {
+	const fixturePath = "cmd/wisp-deck-tui/screenshot_filter_test.go"
+	if !strings.HasSuffix(filepath.ToSlash(path), fixturePath) {
+		return false
+	}
+	var rendered bytes.Buffer
+	if err := format.Node(&rendered, token.NewFileSet(), call); err != nil {
+		return false
+	}
+	const exact = "exec.Command(\"/bin/sh\", \"-c\", `printf 'before\\007\\033]9;plain\\007\\033Ptmux;\\033\\033]9;wrapped\\007\\033\\\\after'`)"
+	return rendered.String() == exact
 }
 
 func expressionReferencesProductionHostEffectRunner(node ast.Node) bool {
@@ -834,32 +930,7 @@ func processExecutableArgument(
 	dotImports map[string]bool,
 ) (int, bool) {
 	importPath, function := calledPackageFunction(call.Fun, aliases, dotImports)
-	switch importPath {
-	case "os/exec":
-		switch function {
-		case "Command":
-			return 0, true
-		case "CommandContext":
-			return 1, true
-		}
-	case "os":
-		if function == "StartProcess" {
-			return 0, true
-		}
-	case "syscall":
-		switch function {
-		case "Exec", "ForkExec", "StartProcess":
-			return 0, true
-		}
-	default:
-		if strings.HasSuffix(importPath, "/unix") {
-			switch function {
-			case "Exec", "ForkExec":
-				return 0, true
-			}
-		}
-	}
-	return 0, false
+	return processConstructorExecutableIndex(importPath, function)
 }
 
 func calledPackageFunction(
@@ -868,13 +939,24 @@ func calledPackageFunction(
 	dotImports map[string]bool,
 ) (string, string) {
 	switch function := function.(type) {
+	case *ast.ParenExpr:
+		return calledPackageFunction(function.X, aliases, dotImports)
 	case *ast.SelectorExpr:
 		pkg, ok := function.X.(*ast.Ident)
 		if !ok {
 			return "", ""
 		}
-		return aliases[pkg.Name], function.Sel.Name
+		importPath := aliases[pkg.Name]
+		if strings.Contains(importPath, processConstructorAliasSeparator) {
+			return "", ""
+		}
+		return importPath, function.Sel.Name
 	case *ast.Ident:
+		if importPath, name, ok := decodeProcessConstructorAlias(
+			aliases[function.Name],
+		); ok {
+			return importPath, name
+		}
 		for importPath := range dotImports {
 			switch importPath {
 			case "os/exec":
@@ -901,58 +983,100 @@ func calledPackageFunction(
 	return "", ""
 }
 
-func execCmdLiteralLaunchesAudio(
-	literal *ast.CompositeLit,
+const processConstructorAliasSeparator = "\x00"
+
+func collectProcessConstructorAliases(
+	file *ast.File,
 	aliases map[string]string,
-	staticStrings map[string]map[string]bool,
-) bool {
-	selected, ok := literal.Type.(*ast.SelectorExpr)
-	if !ok || selected.Sel.Name != "Cmd" {
-		return false
-	}
-	pkg, ok := selected.X.(*ast.Ident)
-	if !ok || aliases[pkg.Name] != "os/exec" {
-		return false
-	}
-	for _, element := range literal.Elts {
-		field, ok := element.(*ast.KeyValueExpr)
-		if !ok {
-			continue
-		}
-		key, ok := field.Key.(*ast.Ident)
-		value, valueOK := field.Value.(ast.Expr)
-		if ok && valueOK && key.Name == "Path" &&
-			expressionContainsResolvedString(value, "afplay", staticStrings) {
+	dotImports map[string]bool,
+) {
+	for range 16 {
+		changed := false
+		ast.Inspect(file, func(node ast.Node) bool {
+			var names []*ast.Ident
+			var values []ast.Expr
+			switch node := node.(type) {
+			case *ast.ValueSpec:
+				names = node.Names
+				values = node.Values
+			case *ast.AssignStmt:
+				for _, expression := range node.Lhs {
+					name, ok := expression.(*ast.Ident)
+					if !ok {
+						names = append(names, nil)
+						continue
+					}
+					names = append(names, name)
+				}
+				values = node.Rhs
+			default:
+				return true
+			}
+			for index, value := range values {
+				if index >= len(names) || names[index] == nil {
+					continue
+				}
+				importPath, function := calledPackageFunction(
+					value,
+					aliases,
+					dotImports,
+				)
+				if _, ok := processConstructorExecutableIndex(
+					importPath,
+					function,
+				); !ok {
+					continue
+				}
+				target := importPath + processConstructorAliasSeparator + function
+				if aliases[names[index].Name] != target {
+					aliases[names[index].Name] = target
+					changed = true
+				}
+			}
 			return true
+		})
+		if !changed {
+			return
 		}
 	}
-	return false
 }
 
-func execCmdPathAssignmentLaunchesAudio(
-	assignment *ast.AssignStmt,
-	execCmdVariables map[string]bool,
-	staticStrings map[string]map[string]bool,
-) bool {
-	for index, left := range assignment.Lhs {
-		if index >= len(assignment.Rhs) {
-			continue
+func decodeProcessConstructorAlias(target string) (string, string, bool) {
+	importPath, function, ok := strings.Cut(
+		target,
+		processConstructorAliasSeparator,
+	)
+	return importPath, function, ok && importPath != "" && function != ""
+}
+
+func processConstructorExecutableIndex(
+	importPath string,
+	function string,
+) (int, bool) {
+	switch importPath {
+	case "os/exec":
+		switch function {
+		case "Command":
+			return 0, true
+		case "CommandContext":
+			return 1, true
 		}
-		selected, ok := left.(*ast.SelectorExpr)
-		if !ok || selected.Sel.Name != "Path" {
-			continue
+	case "os":
+		if function == "StartProcess" {
+			return 0, true
 		}
-		receiver, ok := selected.X.(*ast.Ident)
-		if ok && execCmdVariables[receiver.Name] &&
-			expressionContainsResolvedString(
-				assignment.Rhs[index],
-				"afplay",
-				staticStrings,
-			) {
-			return true
+	case "syscall":
+		switch function {
+		case "Exec", "ForkExec", "StartProcess":
+			return 0, true
+		}
+	default:
+		if strings.HasSuffix(importPath, "/unix") &&
+			(function == "Exec" || function == "ForkExec") {
+			return 0, true
 		}
 	}
-	return false
+	return 0, false
 }
 
 func collectExecCmdVariables(
@@ -1470,13 +1594,11 @@ func validateGoHostEffectOwnership(root string, overrides map[string][]byte) err
 			if path != hostPath && sourceHasHostEffectLiteral(path, source) {
 				return fmt.Errorf("host-effect process literal escaped typed owner: %s", path)
 			}
-			if path != hostPath {
-				if unaudited := unauditedProductionProcessCalls(root, path, source); len(unaudited) != 0 {
-					return fmt.Errorf(
-						"production process site is not exact-audited: %s",
-						strings.Join(unaudited, ", "),
-					)
-				}
+			if unaudited := unauditedProductionProcessCalls(root, path, source); len(unaudited) != 0 {
+				return fmt.Errorf(
+					"production process site is not exact-audited: %s",
+					strings.Join(unaudited, ", "),
+				)
 			}
 			return nil
 		})
@@ -1715,13 +1837,19 @@ func productionSourceLaunchesHostEffect(path string, source []byte) bool {
 		return true
 	}
 	aliases, dotImports := processImportAliases(file)
+	collectProcessConstructorAliases(file, aliases, dotImports)
 	staticStrings := collectStaticStrings(file)
 	execCmdVariables := collectExecCmdVariables(file, aliases, dotImports)
 	launchesEffect := false
 	ast.Inspect(file, func(node ast.Node) bool {
 		switch node := node.(type) {
 		case *ast.CompositeLit:
-			if execCmdLiteralLaunchesHostEffect(node, aliases, staticStrings) {
+			if execCmdLiteralLaunchesHostEffect(
+				node,
+				aliases,
+				dotImports,
+				staticStrings,
+			) {
 				launchesEffect = true
 				return false
 			}
@@ -1760,6 +1888,8 @@ func unauditedProductionProcessCalls(root, path string, source []byte) []string 
 		return []string{path + ":parse-error"}
 	}
 	aliases, dotImports := processImportAliases(file)
+	collectProcessConstructorAliases(file, aliases, dotImports)
+	execCmdVariables := collectExecCmdVariables(file, aliases, dotImports)
 	relative, err := filepath.Rel(root, path)
 	if err != nil {
 		return []string{path + ":relative-path-error"}
@@ -1811,16 +1941,35 @@ func unauditedProductionProcessCalls(root, path string, source []byte) []string 
 	}
 	for _, owner := range owners {
 		ast.Inspect(owner.node, func(node ast.Node) bool {
-			call, ok := node.(*ast.CallExpr)
-			if !ok {
-				return true
+			var processNode ast.Node
+			switch node := node.(type) {
+			case *ast.CallExpr:
+				executableIndex, process := processExecutableArgument(
+					node,
+					aliases,
+					dotImports,
+				)
+				if process && executableIndex < len(node.Args) {
+					processNode = node
+				}
+			case *ast.CompositeLit:
+				if execCmdLiteralHasPath(node, aliases, dotImports) {
+					processNode = node
+				}
+			case *ast.AssignStmt:
+				if execCmdPathAssignmentIsOwner(node, execCmdVariables) {
+					processNode = node
+				}
 			}
-			executableIndex, process := processExecutableArgument(call, aliases, dotImports)
-			if !process || executableIndex >= len(call.Args) {
+			if processNode == nil {
 				return true
 			}
 			var rendered bytes.Buffer
-			if err := format.Node(&rendered, token.NewFileSet(), call); err != nil {
+			if err := format.Node(
+				&rendered,
+				token.NewFileSet(),
+				processNode,
+			); err != nil {
 				seen[relative+":"+owner.identity+":render-error"]++
 				return true
 			}
@@ -1853,6 +2002,7 @@ func auditedProductionProcessCalls() map[string]int {
 	return map[string]int{
 		`cmd/wisp-deck-tui/claude_background.go:runClaudeBackgroundAgents:exec.CommandContext(ctx, claude, "agents", "--json", "--all")`:                    1,
 		`cmd/wisp-deck-tui/claude_background.go:claudeBackgroundProcessStart:exec.CommandContext(ctx, "/bin/ps", "-p", strconv.Itoa(pid), "-o", "lstart=")`: 1,
+		`cmd/wisp-deck-tui/host_effects.go:runHostEffect:exec.CommandContext(ctx, plan.executable, plan.arguments...)`:                                      1,
 		`cmd/wisp-deck-tui/select_branch.go:runSelectBranch:exec.Command("git", "-C", projectPathFlag, "worktree", "list", "--porcelain")`:                  1,
 		`cmd/wisp-deck-tui/screenshot_filter.go:runScreenshotFilter:exec.Command(args[0], args[1:]...)`:                                                     2,
 		`internal/attention/claude_registry.go:commandOutput:exec.CommandContext(ctx, name, args...)`:                                                       1,
@@ -1905,14 +2055,10 @@ func processImportAliases(file *ast.File) (map[string]string, map[string]bool) {
 func execCmdLiteralLaunchesHostEffect(
 	literal *ast.CompositeLit,
 	aliases map[string]string,
+	dotImports map[string]bool,
 	staticStrings map[string]map[string]bool,
 ) bool {
-	selected, ok := literal.Type.(*ast.SelectorExpr)
-	if !ok || selected.Sel.Name != "Cmd" {
-		return false
-	}
-	pkg, ok := selected.X.(*ast.Ident)
-	if !ok || aliases[pkg.Name] != "os/exec" {
+	if !isExecCmdType(literal.Type, aliases, dotImports) {
 		return false
 	}
 	for _, element := range literal.Elts {
@@ -1924,6 +2070,27 @@ func execCmdLiteralLaunchesHostEffect(
 		value, valueOK := field.Value.(ast.Expr)
 		if keyOK && valueOK && key.Name == "Path" &&
 			expressionContainsHostEffectMarker(value, staticStrings) {
+			return true
+		}
+	}
+	return false
+}
+
+func execCmdLiteralHasPath(
+	literal *ast.CompositeLit,
+	aliases map[string]string,
+	dotImports map[string]bool,
+) bool {
+	if !isExecCmdType(literal.Type, aliases, dotImports) {
+		return false
+	}
+	for _, element := range literal.Elts {
+		field, ok := element.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		key, ok := field.Key.(*ast.Ident)
+		if ok && key.Name == "Path" {
 			return true
 		}
 	}
@@ -1946,6 +2113,23 @@ func execCmdPathAssignmentLaunchesHostEffect(
 		receiver, ok := selected.X.(*ast.Ident)
 		if ok && execCmdVariables[receiver.Name] &&
 			expressionContainsHostEffectMarker(assignment.Rhs[index], staticStrings) {
+			return true
+		}
+	}
+	return false
+}
+
+func execCmdPathAssignmentIsOwner(
+	assignment *ast.AssignStmt,
+	execCmdVariables map[string]bool,
+) bool {
+	for _, left := range assignment.Lhs {
+		selected, ok := left.(*ast.SelectorExpr)
+		if !ok || selected.Sel.Name != "Path" {
+			continue
+		}
+		receiver, ok := selected.X.(*ast.Ident)
+		if ok && execCmdVariables[receiver.Name] {
 			return true
 		}
 	}
