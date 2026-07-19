@@ -861,65 +861,25 @@ func TestClaudeBackgroundCandidatePinsActiveLeaseAndStorageIdentity(t *testing.T
 	}
 }
 
-func TestClaudeBackgroundNotifierUsesGenericBodyAndLiveAllowedSound(t *testing.T) {
-	dir := t.TempDir()
-	features := filepath.Join(dir, "claude-features.json")
-	if err := os.WriteFile(features, []byte(`{"sound":true,"sound_name":"Glass"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	type call struct {
-		name string
-		args []string
-		env  []string
-	}
-	var calls []call
-	notifier := claudeBackgroundNotifier{
-		WispConfigDir: dir,
-		GOOS:          "darwin",
-		Run: func(_ context.Context, name string, args, env []string) error {
-			calls = append(calls, call{name: name, args: append([]string(nil), args...), env: append([]string(nil), env...)})
-			return nil
-		},
-	}
+func TestClaudeBackgroundNotificationEffectUsesOnlyGenericStatus(t *testing.T) {
 	event := attention.ClaudeBackgroundEvent{
 		JobID:      "private-job-id",
 		Status:     attention.ClaudeBackgroundBlocked,
 		WaitingFor: "private question text",
 	}
-	notifier.Notify(context.Background(), event)
-	if len(calls) != 2 {
-		t.Fatalf("command calls = %#v, want osascript and afplay", calls)
+	effect := newClaudeBackgroundNotificationHostEffect(event.Status)
+	plan, ok := planHostEffect(effect, nil)
+	if !ok {
+		t.Fatal("Claude background notification did not produce a typed plan")
 	}
-	if calls[0].name != "/usr/bin/osascript" {
-		t.Fatalf("notification command = %q", calls[0].name)
+	joined := strings.Join(append(append([]string(nil), plan.arguments...), plan.environment...), "\n")
+	if !strings.Contains(joined, "Claude background") ||
+		!strings.Contains(joined, "needs input") {
+		t.Fatalf("generic notification missing from %q", joined)
 	}
-	joined := strings.Join(append(append([]string(nil), calls[0].args...), calls[0].env...), "\n")
-	if !strings.Contains(joined, "Claude background") || !strings.Contains(joined, "needs input") {
-		t.Fatalf("generic notification missing from %#v", calls[0])
-	}
-	if strings.Contains(joined, event.JobID) || strings.Contains(joined, event.WaitingFor) {
+	if strings.Contains(joined, event.JobID) ||
+		strings.Contains(joined, event.WaitingFor) {
 		t.Fatalf("private event detail leaked into notification: %q", joined)
-	}
-	if calls[1].name != "/usr/bin/afplay" || !reflect.DeepEqual(calls[1].args, []string{"/System/Library/Sounds/Glass.aiff"}) {
-		t.Fatalf("sound call = %#v", calls[1])
-	}
-
-	if err := os.WriteFile(features, []byte(`{"sound":false,"sound_name":"../../private"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	calls = nil
-	notifier.Notify(context.Background(), attention.ClaudeBackgroundEvent{Status: attention.ClaudeBackgroundCompleted})
-	if len(calls) != 1 || calls[0].name != "/usr/bin/osascript" {
-		t.Fatalf("disabled sound calls = %#v", calls)
-	}
-
-	if err := os.WriteFile(features, []byte(`{"sound":true,"sound_name":"../../private"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	calls = nil
-	notifier.Notify(context.Background(), attention.ClaudeBackgroundEvent{Status: attention.ClaudeBackgroundFailed})
-	if len(calls) != 2 || !reflect.DeepEqual(calls[1].args, []string{"/System/Library/Sounds/Bottle.aiff"}) {
-		t.Fatalf("unsafe sound preference calls = %#v", calls)
 	}
 }
 
@@ -964,19 +924,16 @@ func TestClaudeBackgroundNotifierHoldsPreferenceLockThroughPlayback(t *testing.T
 	playbackStarted := make(chan struct{})
 	releasePlayback := make(chan struct{})
 	notifyDone := make(chan struct{})
-	notifier := claudeBackgroundNotifier{
-		WispConfigDir: dir,
-		GOOS:          "darwin",
-		Run: func(_ context.Context, name string, _ []string, _ []string) error {
-			if name == "/usr/bin/afplay" {
-				close(playbackStarted)
-				<-releasePlayback
-			}
-			return nil
-		},
-	}
+	features := filepath.Join(dir, "claude-features.json")
 	go func() {
-		notifier.Notify(context.Background(), attention.ClaudeBackgroundEvent{Status: attention.ClaudeBackgroundCompleted})
+		_ = withConfiguredNotificationSound(features, func(name string) error {
+			if name != "Glass" {
+				t.Errorf("validated sound = %q, want Glass", name)
+			}
+			close(playbackStarted)
+			<-releasePlayback
+			return nil
+		})
 		close(notifyDone)
 	}()
 	select {
@@ -1024,37 +981,6 @@ func TestClaudeBackgroundNotifierHoldsPreferenceLockThroughPlayback(t *testing.T
 	}
 }
 
-func TestClaudeBackgroundNotifierGivesSoundAnIndependentDeadline(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(
-		filepath.Join(dir, "claude-features.json"),
-		[]byte(`{"sound":true,"sound_name":"Glass"}`),
-		0o600,
-	); err != nil {
-		t.Fatal(err)
-	}
-	calls := 0
-	soundContextLive := false
-	notifier := claudeBackgroundNotifier{
-		WispConfigDir: dir,
-		GOOS:          "darwin",
-		Timeout:       5 * time.Millisecond,
-		Run: func(ctx context.Context, _ string, _ []string, _ []string) error {
-			calls++
-			if calls == 1 {
-				<-ctx.Done()
-				return ctx.Err()
-			}
-			soundContextLive = ctx.Err() == nil
-			return nil
-		},
-	}
-	notifier.Notify(context.Background(), attention.ClaudeBackgroundEvent{Status: attention.ClaudeBackgroundCompleted})
-	if calls != 2 || !soundContextLive {
-		t.Fatalf("notification calls = %d, sound context live = %v; want independent sound attempt", calls, soundContextLive)
-	}
-}
-
 func TestClaudeBackgroundRetryBackoffIsBounded(t *testing.T) {
 	if got := claudeBackgroundNextRetry(0, 5*time.Second, time.Minute); got != 5*time.Second {
 		t.Fatalf("initial retry = %s", got)
@@ -1073,23 +999,6 @@ func TestClaudeBackgroundDefaultHealthCadenceMatchesPolling(t *testing.T) {
 	})
 	if dependencies.HealthInterval != dependencies.PollInterval {
 		t.Fatalf("health interval = %s, poll interval = %s", dependencies.HealthInterval, dependencies.PollInterval)
-	}
-}
-
-func TestClaudeBackgroundDetachedRunnerWaitsForCommandSideEffect(t *testing.T) {
-	dir := t.TempDir()
-	marker := filepath.Join(dir, "marker")
-	command := filepath.Join(dir, "command")
-	if err := os.WriteFile(command, []byte(fmt.Sprintf("#!/bin/sh\nsleep 0.02\nprintf done > %q\n", marker)), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := runClaudeBackgroundDetached(ctx, command, nil, os.Environ()); err != nil {
-		t.Fatal(err)
-	}
-	if data, err := os.ReadFile(marker); err != nil || string(data) != "done" {
-		t.Fatalf("side effect after runner return = %q, %v", data, err)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/ast"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"os"
@@ -13,14 +14,13 @@ import (
 	"testing"
 )
 
-// Runtime sound sites are deliberately few and every non-preview owner must
-// make its read-plus-play transaction under the shared preference lock.
+// Runtime sound sites are deliberately few. Go process construction belongs
+// to one typed owner, while preference playback stays under the shared lock.
 func TestIdleSoundRuntimeSitesUseSharedLiveGate(t *testing.T) {
 	root := projectRoot(t)
 	allowed := map[string]bool{
-		filepath.Join(root, "lib", "notification-setup.sh"):                 true,
-		filepath.Join(root, "cmd", "wisp-deck-tui", "claude_background.go"): true,
-		filepath.Join(root, "cmd", "wisp-deck-tui", "main_menu.go"):         true,
+		filepath.Join(root, "lib", "notification-setup.sh"):            true,
+		filepath.Join(root, "cmd", "wisp-deck-tui", "host_effects.go"): true,
 	}
 	paths := []string{
 		filepath.Join(root, "lib"),
@@ -77,10 +77,7 @@ func TestIdleSoundRuntimeSitesUseSharedLiveGate(t *testing.T) {
 		filepath.Join(root, "lib", "notification-setup.sh"): {
 			"afplay": 2, "/System/Library/Sounds": 1, "NSSound": 0, "AudioServicesPlaySystemSound": 0,
 		},
-		filepath.Join(root, "cmd", "wisp-deck-tui", "claude_background.go"): {
-			"afplay": 1, "/System/Library/Sounds": 1, "NSSound": 0, "AudioServicesPlaySystemSound": 0,
-		},
-		filepath.Join(root, "cmd", "wisp-deck-tui", "main_menu.go"): {
+		filepath.Join(root, "cmd", "wisp-deck-tui", "host_effects.go"): {
 			"afplay": 1, "/System/Library/Sounds": 1, "NSSound": 0, "AudioServicesPlaySystemSound": 0,
 		},
 	}
@@ -108,9 +105,17 @@ func TestIdleSoundRuntimeSitesUseSharedLiveGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(background), "soundpref.WithExclusiveLock(features") ||
-		!strings.Contains(string(background), "claudeBackgroundSoundPreference(features)") {
-		t.Fatal("background playback must use the same live preference transaction")
+	if !strings.Contains(string(background), "withConfiguredNotificationSound(features") ||
+		!strings.Contains(string(background), "runHostEffect(soundContext, effect)") {
+		t.Fatal("background playback must use the shared locked typed adapter")
+	}
+	notification, err := os.ReadFile(filepath.Join(root, "cmd", "wisp-deck-tui", "notification_sound.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(notification), "soundpref.WithExclusiveLock(features") ||
+		!strings.Contains(string(notification), "sound := soundpref.Read(features)") {
+		t.Fatal("notification playback must lock around the canonical live preference")
 	}
 	menu, err := os.ReadFile(filepath.Join(root, "cmd", "wisp-deck-tui", "main_menu.go"))
 	if err != nil {
@@ -122,8 +127,14 @@ func TestIdleSoundRuntimeSitesUseSharedLiveGate(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(background), `"/usr/bin/afplay"`) != 1 {
-		t.Fatal("background notifier must have exactly one locked afplay site")
+	hostEffects, err := os.ReadFile(filepath.Join(root, "cmd", "wisp-deck-tui", "host_effects.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateGoHostEffectOwnership(root, map[string][]byte{
+		filepath.Join(root, "cmd", "wisp-deck-tui", "host_effects.go"): hostEffects,
+	}); err != nil {
+		t.Fatal(err)
 	}
 	productionBuildCapabilities := map[string]string{
 		filepath.Join(root, "Makefile"):              "-X main.SoundPreviewCapability=$(HOST_EFFECTS_CAPABILITY)",
@@ -161,148 +172,185 @@ func TestIdleSoundRuntimeSitesUseSharedLiveGate(t *testing.T) {
 
 func TestMainMenuSoundPreviewOwnershipGuardRejectsBypasses(t *testing.T) {
 	root := projectRoot(t)
-	path := filepath.Join(root, "cmd", "wisp-deck-tui", "main_menu.go")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	paths := map[string]string{
+		"host":         filepath.Join(root, "cmd", "wisp-deck-tui", "host_effects.go"),
+		"menu":         filepath.Join(root, "cmd", "wisp-deck-tui", "main_menu.go"),
+		"background":   filepath.Join(root, "cmd", "wisp-deck-tui", "claude_background.go"),
+		"notification": filepath.Join(root, "cmd", "wisp-deck-tui", "notification_sound.go"),
 	}
-	safe := string(data)
-	if err := validateMainMenuSoundPreviewOwnership(path, data); err != nil {
+	sources := make(map[string]string, len(paths))
+	overrides := make(map[string][]byte, len(paths))
+	for name, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sources[name] = string(data)
+		overrides[path] = data
+	}
+	if err := validateMainMenuSoundPreviewOwnership(paths["menu"], overrides[paths["menu"]]); err != nil {
 		t.Fatalf("current preview adapter rejected: %v", err)
 	}
+	if err := validateGoHostEffectOwnership(root, overrides); err != nil {
+		t.Fatalf("current typed host-effect owner rejected: %v", err)
+	}
 
-	previewInjection := "\tif mainMenuSoundProcessAllowed(\n" +
-		"\t\tSoundPreviewCapability,\n" +
-		"\t\tcurrentHostEffectsDecision(),\n" +
-		"\t) {\n" +
-		"\t\tmodel.SetSoundPreview(mainMenuSoundPreview)\n" +
-		"\t}\n"
-	movedBeforeTTY := strings.Replace(
-		safe,
-		previewInjection,
-		"",
-		1,
-	)
-	movedBeforeTTY = strings.Replace(
-		movedBeforeTTY,
-		"\tttyOpts, cleanup, err := util.TUITeaOptions()\n",
-		previewInjection+"\n"+
-			"\tttyOpts, cleanup, err := util.TUITeaOptions()\n",
-		1,
-	)
-	helperBuilderInjection := strings.Replace(
-		safe,
-		"\t\tmodel.SetSoundPreview(mainMenuSoundPreview)\n",
-		"\t\twireMainMenuSoundPreview(model)\n",
-		1,
-	)
-	helperBuilderInjection = strings.Replace(
-		helperBuilderInjection,
-		"func buildMainMenuModel() (*tui.MainMenuModel, error) {",
-		"func wireMainMenuSoundPreview(model *tui.MainMenuModel) {\n"+
-			"\tmodel.SetSoundPreview(mainMenuSoundPreview)\n"+
-			"}\n\n"+
-			"func buildMainMenuModel() (*tui.MainMenuModel, error) {",
-		1,
-	)
-	helperBuilderInjection = strings.Replace(
-		helperBuilderInjection,
-		"\tmodel := tui.NewMainMenu(projects, aiTools, mainMenuAITool, mainMenuGhostDisplay)\n",
-		"\tmodel := tui.NewMainMenu(projects, aiTools, mainMenuAITool, mainMenuGhostDisplay)\n"+
-			"\twireMainMenuSoundPreview(model)\n",
-		1,
-	)
-
-	mutations := map[string]string{
-		"missing allowlist": strings.Replace(
-			safe,
-			"!slices.Contains(tui.SystemSounds, name)",
-			"false",
-			1,
-		),
-		"relative player": strings.Replace(
-			safe,
-			`return "/usr/bin/afplay", []string{`,
-			`return "afplay", []string{`,
-			1,
-		),
-		"eager callback": strings.Replace(
-			safe,
-			"\treturn func() tea.Msg {\n",
-			"\t_ = runMainMenuSound(name)\n\treturn func() tea.Msg {\n",
-			1,
-		),
-		"unwaited player": strings.Replace(
-			safe,
-			"exec.Command(executable, args...).Run()",
-			"exec.Command(executable, args...).Start()",
-			1,
-		),
-		"missing injection": strings.Replace(
-			safe,
-			previewInjection,
+	mutations := map[string]map[string]string{
+		"policy no longer first": mutateBoundarySource(
+			t, sources, "host",
+			"\tif !currentHostEffectsDecision().Allowed {\n\t\treturn nil\n\t}\n",
 			"",
-			1,
 		),
-		"unguarded injection": strings.Replace(
-			safe,
-			previewInjection,
-			"\tmodel.SetSoundPreview(mainMenuSoundPreview)\n",
-			1,
+		"command constructed before policy": mutateBoundarySource(
+			t, sources, "host",
+			"\tif !currentHostEffectsDecision().Allowed {",
+			"\t_ = exec.CommandContext(ctx, \"/usr/bin/afplay\")\n\tif !currentHostEffectsDecision().Allowed {",
 		),
-		"injection before TTY": movedBeforeTTY,
-		"builder has capability": strings.Replace(
-			safe,
-			"\tmodel := tui.NewMainMenu(projects, aiTools, mainMenuAITool, mainMenuGhostDisplay)\n",
-			"\tmodel := tui.NewMainMenu(projects, aiTools, mainMenuAITool, mainMenuGhostDisplay)\n"+
-				"\tmodel.SetSoundPreview(mainMenuSoundPreview)\n",
-			1,
+		"planner bypassed": mutateBoundarySource(
+			t, sources, "host",
+			"plan, ok := planHostEffect(effect, os.Environ())",
+			"plan, ok := hostEffectPlan{executable: \"/usr/bin/afplay\"}, true",
 		),
-		"builder helper has capability": helperBuilderInjection,
-		"missing global boundary": strings.Replace(
-			safe,
-			"return soundCapability == \"enabled\" && decision.Allowed",
-			"return soundCapability == \"enabled\"",
-			1,
+		"unwaited process": mutateBoundarySource(
+			t, sources, "host",
+			"return cmd.Run()",
+			"return cmd.Start()",
 		),
-		"comment-only global boundary": strings.Replace(
-			safe,
-			"return soundCapability == \"enabled\" && decision.Allowed",
-			"return soundCapability == \"enabled\" // decision.Allowed",
-			1,
+		"detached process": mutateBoundarySource(
+			t, sources, "host",
+			"return cmd.Run()",
+			"_ = cmd.Start()\n\treturn nil",
 		),
-		"negated global boundary": strings.Replace(
-			safe,
-			"return soundCapability == \"enabled\" && decision.Allowed",
-			"return soundCapability == \"enabled\" && !decision.Allowed",
-			1,
+		"generic executable runner": mutateBoundarySource(
+			t, sources, "host",
+			"func runHostEffect(ctx context.Context, effect hostEffect) error {",
+			"func runHostEffect(ctx context.Context, executable string, arguments []string) error {",
 		),
-		"runner skips capability": strings.Replace(
-			safe,
-			"if !mainMenuSoundProcessAllowed(\n"+
-				"\t\tSoundPreviewCapability,\n"+
-				"\t\tcurrentHostEffectsDecision(),\n"+
-				"\t) || run == nil {",
-			"if run == nil {",
-			1,
+		"generic executor callback": mutateBoundarySource(
+			t, sources, "host",
+			"func runHostEffect(ctx context.Context, effect hostEffect) error {",
+			"func runHostEffect(ctx context.Context, effect hostEffect, run func(string, ...string) error) error {",
 		),
-		"ordinary build enables preview": strings.Replace(
-			safe,
-			`var SoundPreviewCapability = "disabled"`,
-			`var SoundPreviewCapability = "enabled"`,
-			1,
+		"missing process group": mutateBoundarySource(
+			t, sources, "host",
+			"cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}",
+			"cmd.SysProcAttr = &syscall.SysProcAttr{}",
 		),
-		"runner parameter restored": strings.Replace(
-			safe,
+		"wrong cancellation target": mutateBoundarySource(
+			t, sources, "host",
+			"syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)",
+			"syscall.Kill(cmd.Process.Pid, syscall.SIGKILL)",
+		),
+		"weak cancellation signal": mutateBoundarySource(
+			t, sources, "host",
+			"syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)",
+			"syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)",
+		),
+		"missing ESRCH mapping": mutateBoundarySource(
+			t, sources, "host",
+			"if errors.Is(err, syscall.ESRCH) {\n\t\t\treturn os.ErrProcessDone\n\t\t}",
+			"",
+		),
+		"missing nil process mapping": mutateBoundarySource(
+			t, sources, "host",
+			"if cmd.Process == nil {\n\t\t\treturn os.ErrProcessDone\n\t\t}",
+			"",
+		),
+		"stdin inherited": mutateBoundarySource(
+			t, sources, "host",
+			"cmd.Stdin = nil",
+			"cmd.Stdin = os.Stdin",
+		),
+		"stdout inherited": mutateBoundarySource(
+			t, sources, "host",
+			"cmd.Stdout = io.Discard",
+			"cmd.Stdout = os.Stdout",
+		),
+		"stderr inherited": mutateBoundarySource(
+			t, sources, "host",
+			"cmd.Stderr = io.Discard",
+			"cmd.Stderr = os.Stderr",
+		),
+		"unbounded wait delay": mutateBoundarySource(
+			t, sources, "host",
+			"cmd.WaitDelay = 100 * time.Millisecond",
+			"cmd.WaitDelay = 0",
+		),
+		"preview-specific runner restored": mutateBoundarySource(
+			t, sources, "menu",
 			"func mainMenuSoundPreview(name string) tea.Cmd {",
-			"func mainMenuSoundPreview(run mainMenuSoundRunner, name string) tea.Cmd {",
-			1,
+			"type mainMenuSoundRunner func(string, ...string) error\n\nfunc runMainMenuSoundWith(string, mainMenuSoundRunner) error { return nil }\n\nfunc mainMenuSoundPreview(name string) tea.Cmd {",
+		),
+		"notifier runner restored": mutateBoundarySource(
+			t, sources, "background",
+			"\tTimeout       time.Duration\n",
+			"\tTimeout       time.Duration\n\tRun           func(context.Context, string, []string, []string) error\n",
+		),
+		"preference read outside lock": mutateBoundarySource(
+			t, sources, "notification",
+			"\treturn soundpref.WithExclusiveLock(features, func() error {\n\t\tsound := soundpref.Read(features)",
+			"\tsound := soundpref.Read(features)\n\treturn soundpref.WithExclusiveLock(features, func() error {",
+		),
+		"player callback outside lock": mutateBoundarySource(
+			t, sources, "notification",
+			"\t\treturn play(sound)\n\t})",
+			"\t\treturn nil\n\t})\n\treturn play(sound)",
+		),
+		"player callback detached under lock": mutateBoundarySource(
+			t, sources, "notification",
+			"\t\treturn play(sound)",
+			"\t\tgo func() { _ = play(sound) }()\n\t\treturn nil",
+		),
+		"player callback error ignored": mutateBoundarySource(
+			t, sources, "notification",
+			"\t\treturn play(sound)",
+			"\t\t_ = play(sound)\n\t\treturn nil",
 		),
 	}
-	for name, source := range mutations {
+	for name, mutated := range mutations {
 		t.Run(name, func(t *testing.T) {
-			if err := validateMainMenuSoundPreviewOwnership(path, []byte(source)); err == nil {
-				t.Fatal("unsafe preview layout passed the ownership guard")
+			mutatedOverrides := make(map[string][]byte, len(paths))
+			for key, path := range paths {
+				mutatedOverrides[path] = []byte(mutated[key])
+			}
+			if err := validateGoHostEffectOwnership(root, mutatedOverrides); err == nil {
+				t.Fatal("unsafe typed host-effect layout passed the ownership guard")
+			}
+		})
+	}
+}
+
+func TestIdleSoundProductionHostEffectGuardRejectsBypasses(t *testing.T) {
+	tests := map[string]string{
+		"absolute player":        `package p; import "os/exec"; func f() { _ = exec.Command("/usr/bin/afplay", "x") }`,
+		"relative player":        `package p; import "os/exec"; func f() { _ = exec.Command("afplay", "x") }`,
+		"speech":                 `package p; import "os/exec"; func f() { _ = exec.Command("/usr/bin/say", "x") }`,
+		"sound AppleScript":      `package p; import "os/exec"; func f() { _ = exec.Command("/usr/bin/osascript", "-e", "display notification \"x\"") }`,
+		"OSC notification shell": `package p; import "os/exec"; func f() { _ = exec.Command("/bin/sh", "-c", "printf '\\033]9;x\\007'") }`,
+		"aliased player":         `package p; import process "os/exec"; func f() { _ = process.Command("afplay", "x") }`,
+		"dot imported player":    `package p; import . "os/exec"; func f() { _ = Command("afplay", "x") }`,
+		"start process":          `package p; import "os"; func f() { _, _ = os.StartProcess("/usr/bin/afplay", nil, nil) }`,
+		"syscall exec":           `package p; import "syscall"; func f() { _ = syscall.Exec("/usr/bin/afplay", nil, nil) }`,
+		"exec cmd path":          `package p; import "os/exec"; func f() { _ = exec.Cmd{Path: "/usr/bin/afplay"} }`,
+	}
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			if !productionSourceLaunchesHostEffect(name+".go", []byte(source)) {
+				t.Fatal("host-effect process shape escaped the production scanner")
+			}
+		})
+	}
+
+	legitimate := map[string]string{
+		"git":        `package p; import "os/exec"; func f() { _ = exec.Command("git", "status") }`,
+		"agent":      `package p; import "os/exec"; func f(argv []string) { _ = exec.Command(argv[0], argv[1:]...) }`,
+		"inspection": `package p; import "os/exec"; func f() { _ = exec.Command("/bin/ps", "-p", "1") }`,
+		"screenshot": `package p; import "os/exec"; func f() { _ = exec.Command("open", "-a", "Preview", "/tmp/image.png") }`,
+	}
+	for name, source := range legitimate {
+		t.Run("allows "+name, func(t *testing.T) {
+			if productionSourceLaunchesHostEffect(name+".go", []byte(source)) {
+				t.Fatal("legitimate non-effect process was classified as a host effect")
 			}
 		})
 	}
@@ -627,8 +675,19 @@ func TestTestSourceAudioLaunchGuardRejectsBypasses(t *testing.T) {
 			want:   true,
 		},
 		"production runner argument": {
-			source: `package p; func test() { _ = mainMenuSoundPreview(runMainMenuSound) }`,
+			source: `package p; func test(effect hostEffect) { _ = runHostEffect(context.Background(), effect) }`,
 			want:   true,
+		},
+		"production runner callback": {
+			source: `package p; func test() { callback := runHostEffect; _ = callback }`,
+			want:   true,
+		},
+		"production command adapter": {
+			source: `package p; func test() { _ = newNotificationSoundCommand(playNotificationSound) }`,
+			want:   true,
+		},
+		"invalid typed effect runner": {
+			source: `package p; func test() { _ = runHostEffect(context.Background(), hostEffect{}) }`,
 		},
 	}
 	for name, test := range tests {
@@ -666,10 +725,6 @@ func testSourceLaunchesHostAudio(path string, source []byte) bool {
 	execCmdVariables := collectExecCmdVariables(file, aliases, dotImports)
 	launchesAudio := false
 	ast.Inspect(file, func(node ast.Node) bool {
-		if name, ok := node.(*ast.Ident); ok && name.Name == "runMainMenuSound" {
-			launchesAudio = true
-			return false
-		}
 		composite, ok := node.(*ast.CompositeLit)
 		if ok && execCmdLiteralLaunchesAudio(composite, aliases, staticStrings) {
 			launchesAudio = true
@@ -686,7 +741,29 @@ func testSourceLaunchesHostAudio(path string, source []byte) bool {
 		}
 		call, ok := node.(*ast.CallExpr)
 		if !ok {
+			if expressionReferencesProductionHostEffectRunner(node) {
+				launchesAudio = true
+				return false
+			}
 			return true
+		}
+		switch expressionName(call.Fun) {
+		case "runHostEffect":
+			if len(call.Args) != 2 || !isZeroHostEffect(call.Args[1]) {
+				launchesAudio = true
+				return false
+			}
+		case "playNotificationSound":
+			launchesAudio = true
+			return false
+		case "newNotificationSoundCommand":
+			if len(call.Args) > 0 {
+				adapter, ok := call.Args[0].(*ast.Ident)
+				if ok && adapter.Name == "playNotificationSound" {
+					launchesAudio = true
+					return false
+				}
+			}
 		}
 		executableIndex, ok := processExecutableArgument(call, aliases, dotImports)
 		if !ok || executableIndex >= len(call.Args) {
@@ -708,6 +785,35 @@ func testSourceLaunchesHostAudio(path string, source []byte) bool {
 		return true
 	})
 	return launchesAudio
+}
+
+func expressionReferencesProductionHostEffectRunner(node ast.Node) bool {
+	var expressions []ast.Expr
+	switch node := node.(type) {
+	case *ast.AssignStmt:
+		expressions = node.Rhs
+	case *ast.ValueSpec:
+		expressions = node.Values
+	default:
+		return false
+	}
+	for _, expression := range expressions {
+		identifier, ok := expression.(*ast.Ident)
+		if ok && (identifier.Name == "runHostEffect" ||
+			identifier.Name == "playNotificationSound") {
+			return true
+		}
+	}
+	return false
+}
+
+func isZeroHostEffect(expression ast.Expr) bool {
+	literal, ok := expression.(*ast.CompositeLit)
+	if !ok || len(literal.Elts) != 0 {
+		return false
+	}
+	effect, ok := literal.Type.(*ast.Ident)
+	return ok && effect.Name == "hostEffect"
 }
 
 func processExecutableArgument(
@@ -1081,14 +1187,17 @@ func validateMainMenuSoundPreviewOwnership(path string, source []byte) error {
 	if !isProductionCapabilityPolicy(capabilityPolicy) {
 		return fmt.Errorf("sound preview process policy is not production-only")
 	}
-	command, err := requiredFunction(functions, "mainMenuSoundCommand")
-	if err != nil {
-		return err
-	}
-	if countCalls(command, "slices.Contains") != 1 ||
-		!hasStringLiteral(command, "/usr/bin/afplay") ||
-		!hasStringLiteral(command, "/System/Library/Sounds/") {
-		return fmt.Errorf("settings preview command lost its allowlist or fixed host paths")
+	for _, forbidden := range []string{
+		"mainMenuSoundRunner",
+		"runMainMenuSoundWith",
+		"mainMenuSoundCommand",
+		"exec.Command",
+		"/usr/bin/afplay",
+		"/System/Library/Sounds/",
+	} {
+		if strings.Contains(string(source), forbidden) {
+			return fmt.Errorf("settings preview restored forbidden owner %q", forbidden)
+		}
 	}
 
 	preview, err := requiredFunction(functions, "mainMenuSoundPreview")
@@ -1097,38 +1206,12 @@ func validateMainMenuSoundPreviewOwnership(path string, source []byte) error {
 	}
 	deferred := returnedFunctionLiterals(preview)
 	if !hasOneStringParameter(preview, "name") ||
-		countCalls(preview, "mainMenuSoundCommand") != 1 ||
+		countCalls(preview, "newSystemSoundHostEffect") != 1 ||
 		len(deferred) != 1 ||
-		countCalls(preview, "runMainMenuSound") != 1 ||
-		countCalls(deferred[0], "runMainMenuSound") != 1 {
-		return fmt.Errorf("settings preview is not one validated deferred command")
-	}
-
-	runner, err := requiredFunction(functions, "runMainMenuSound")
-	if err != nil {
-		return err
-	}
-	if countCalls(runner, "runMainMenuSoundWith") != 1 ||
-		countWaitedExecCommands(runner) != 1 ||
-		countWaitedExecCommands(file) != 1 {
-		return fmt.Errorf("settings preview lost its sole waited process owner")
-	}
-
-	testSafeRunner, err := requiredFunction(functions, "runMainMenuSoundWith")
-	if err != nil {
-		return err
-	}
-	if len(testSafeRunner.Body.List) == 0 {
-		return fmt.Errorf("settings preview runner has no test boundary")
-	}
-	firstGuard, ok := testSafeRunner.Body.List[0].(*ast.IfStmt)
-	if !ok || !isProcessDeniedOrNilRunnerGuard(firstGuard.Cond) ||
-		!blockReturnsNil(firstGuard.Body) {
-		return fmt.Errorf("settings preview runner bypasses its test/build capability boundary")
-	}
-	if countCalls(testSafeRunner, "mainMenuSoundCommand") != 1 ||
-		countCalls(testSafeRunner, "run") != 1 {
-		return fmt.Errorf("settings preview runner bypasses its validated command")
+		countCalls(preview, "runHostEffect") != 1 ||
+		countCalls(deferred[0], "runHostEffect") != 1 ||
+		countCalls(preview, "context.Background") != 1 {
+		return fmt.Errorf("settings preview is not one validated deferred typed effect")
 	}
 
 	runMenu, err := requiredFunction(functions, "runMainMenu")
@@ -1149,6 +1232,717 @@ func validateMainMenuSoundPreviewOwnership(path string, source []byte) error {
 		return fmt.Errorf("non-interactive main-menu builder can reach an audio capability")
 	}
 	return nil
+}
+
+func validateGoHostEffectOwnership(root string, overrides map[string][]byte) error {
+	hostPath := filepath.Join(root, "cmd", "wisp-deck-tui", "host_effects.go")
+	menuPath := filepath.Join(root, "cmd", "wisp-deck-tui", "main_menu.go")
+	backgroundPath := filepath.Join(root, "cmd", "wisp-deck-tui", "claude_background.go")
+	notificationPath := filepath.Join(root, "cmd", "wisp-deck-tui", "notification_sound.go")
+
+	read := func(path string) ([]byte, error) {
+		if source, ok := overrides[path]; ok {
+			return source, nil
+		}
+		return os.ReadFile(path)
+	}
+	hostSource, err := read(hostPath)
+	if err != nil {
+		return fmt.Errorf("read typed host-effect owner: %w", err)
+	}
+	hostFile, hostFunctions, err := parseGoFunctions(hostPath, hostSource)
+	if err != nil {
+		return err
+	}
+	runner, err := requiredFunction(hostFunctions, "runHostEffect")
+	if err != nil {
+		return err
+	}
+	if !hasHostEffectRunnerSignature(runner) {
+		return fmt.Errorf("host-effect runner accepts anything other than context and a typed effect")
+	}
+	if len(runner.Body.List) < 4 ||
+		!isCurrentHostEffectsDenialGuard(runner.Body.List[0]) {
+		return fmt.Errorf("host-effect runner does not apply current policy first")
+	}
+	if countCalls(runner, "currentHostEffectsDecision") != 1 ||
+		countCalls(runner, "planHostEffect") != 1 ||
+		countCalls(runner, "exec.CommandContext") != 1 ||
+		countCalls(runner, "cmd.Run") != 1 ||
+		countCalls(runner, "cmd.Start") != 0 {
+		return fmt.Errorf("host-effect runner lost its single policy-plan-wait lifecycle")
+	}
+	policyPosition := firstCallPosition(runner, "currentHostEffectsDecision")
+	planPosition := firstCallPosition(runner, "planHostEffect")
+	commandPosition := firstCallPosition(runner, "exec.CommandContext")
+	runPosition := firstCallPosition(runner, "cmd.Run")
+	if policyPosition == token.NoPos || planPosition <= policyPosition ||
+		commandPosition <= planPosition || runPosition <= commandPosition {
+		return fmt.Errorf("host-effect policy, planning, construction, and wait are reordered")
+	}
+	if countCalls(hostFile, "exec.CommandContext") != 1 ||
+		countCalls(hostFile, "exec.Command") != 0 ||
+		countCalls(hostFile, "os.StartProcess") != 0 ||
+		countCalls(hostFile, "syscall.Exec") != 0 ||
+		countCalls(hostFile, "syscall.ForkExec") != 0 {
+		return fmt.Errorf("host-effect owner has more than one process construction path")
+	}
+	hostText := string(hostSource)
+	for _, required := range []string{
+		`plan, ok := planHostEffect(effect, os.Environ())`,
+		`cmd := exec.CommandContext(ctx, plan.executable, plan.arguments...)`,
+		`cmd.Env = plan.environment`,
+		`cmd.Stdin = nil`,
+		`cmd.Stdout = io.Discard`,
+		`cmd.Stderr = io.Discard`,
+		`cmd.WaitDelay = 100 * time.Millisecond`,
+		`cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}`,
+		`if cmd.Process == nil {`,
+		`syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)`,
+		`if errors.Is(err, syscall.ESRCH) {`,
+		`return cmd.Run()`,
+	} {
+		if strings.Count(hostText, required) != 1 {
+			return fmt.Errorf("host-effect owner must contain exactly one %q", required)
+		}
+	}
+	if strings.Count(hostText, `return os.ErrProcessDone`) != 2 {
+		return fmt.Errorf("host-effect cancellation must map nil Process and ESRCH")
+	}
+	if strings.Count(hostText, `"/usr/bin/afplay"`) != 1 ||
+		strings.Count(hostText, `"/usr/bin/osascript"`) != 1 ||
+		strings.Count(hostText, `"/System/Library/Sounds/"`) != 1 ||
+		strings.Count(hostText, `display notification (system attribute "WISP_DECK_NOTIFICATION_BODY") with title (system attribute "WISP_DECK_NOTIFICATION_TITLE")`) != 1 {
+		return fmt.Errorf("typed planner lost its exact audited host-effect literals")
+	}
+	if !hasClosedHostEffectStruct(hostFile) {
+		return fmt.Errorf("typed host effect can encode arbitrary process or notification data")
+	}
+	for _, functionName := range []string{
+		"newSystemSoundHostEffect",
+		"newClaudeBackgroundNotificationHostEffect",
+		"planHostEffect",
+		"configureHostEffectProcessGroup",
+	} {
+		if _, err := requiredFunction(hostFunctions, functionName); err != nil {
+			return err
+		}
+	}
+
+	menuSource, err := read(menuPath)
+	if err != nil {
+		return err
+	}
+	if err := validateMainMenuSoundPreviewOwnership(menuPath, menuSource); err != nil {
+		return err
+	}
+
+	backgroundSource, err := read(backgroundPath)
+	if err != nil {
+		return err
+	}
+	backgroundFile, _, err := parseGoFunctions(backgroundPath, backgroundSource)
+	if err != nil {
+		return err
+	}
+	backgroundText := string(backgroundSource)
+	for _, forbidden := range []string{
+		"claudeBackgroundExecFunc",
+		"runClaudeBackgroundDetached",
+		`"/usr/bin/afplay"`,
+		`"/usr/bin/osascript"`,
+		"exec.CommandContext(ctx, name, args...)",
+	} {
+		if strings.Contains(backgroundText, forbidden) {
+			return fmt.Errorf("background notifier restored process owner %q", forbidden)
+		}
+	}
+	notifierType := findStructType(backgroundFile, "claudeBackgroundNotifier")
+	if notifierType == nil || structHasField(notifierType, "Run") {
+		return fmt.Errorf("background notifier exposes a process runner")
+	}
+	notify := findMethod(backgroundFile, "claudeBackgroundNotifier", "Notify")
+	if notify == nil {
+		return fmt.Errorf("missing Claude background notifier")
+	}
+	if countCalls(notify, "runHostEffect") != 2 ||
+		countCalls(notify, "context.WithTimeout") != 2 ||
+		countCalls(notify, "withConfiguredNotificationSound") != 1 ||
+		countCalls(notify, "newClaudeBackgroundNotificationHostEffect") != 1 ||
+		countCalls(notify, "newSystemSoundHostEffect") != 1 {
+		return fmt.Errorf("background notifier lost visual/sound typed effects or separate deadlines")
+	}
+	if !notifierStartsWithDarwinGuard(notify) {
+		return fmt.Errorf("background notifier is not Darwin-only")
+	}
+	visualPosition := firstCallPosition(notify, "newClaudeBackgroundNotificationHostEffect")
+	lockPosition := firstCallPosition(notify, "withConfiguredNotificationSound")
+	if visualPosition == token.NoPos || lockPosition <= visualPosition {
+		return fmt.Errorf("background visual notification no longer precedes locked sound")
+	}
+
+	notificationSource, err := read(notificationPath)
+	if err != nil {
+		return err
+	}
+	notificationFile, notificationFunctions, err := parseGoFunctions(notificationPath, notificationSource)
+	if err != nil {
+		return err
+	}
+	notificationText := string(notificationSource)
+	for _, required := range []string{
+		`rootCmd.AddCommand(newNotificationSoundCommand(playNotificationSound))`,
+		`Use:           "notification-sound --features-file PATH"`,
+		`Hidden:        true`,
+		`Args:          cobra.NoArgs`,
+		`cmd.Flags().StringVar(&features, "features-file", "", "notification sound features file")`,
+		`_ = cmd.MarkFlagRequired("features-file")`,
+		`return soundpref.WithExclusiveLock(features, func() error {`,
+		`sound := soundpref.Read(features)`,
+		`return play(sound)`,
+	} {
+		if strings.Count(notificationText, required) != 1 {
+			return fmt.Errorf("notification command must contain exactly one %q", required)
+		}
+	}
+	factory, err := requiredFunction(notificationFunctions, "newNotificationSoundCommand")
+	if err != nil {
+		return err
+	}
+	if !hasValidatedSoundFactorySignature(factory) {
+		return fmt.Errorf("notification command factory accepts a generic or typed runner")
+	}
+	locked, err := requiredFunction(notificationFunctions, "withConfiguredNotificationSound")
+	if err != nil {
+		return err
+	}
+	if !hasConfiguredSoundSignature(locked) ||
+		countCalls(locked, "soundpref.WithExclusiveLock") != 1 ||
+		countCalls(locked, "soundpref.Read") != 1 ||
+		countCalls(locked, "play") != 1 {
+		return fmt.Errorf("notification preference is not one locked read-plus-play transaction")
+	}
+	transaction := callFunctionLiteralArgument(
+		locked,
+		"soundpref.WithExclusiveLock",
+		1,
+	)
+	if transaction == nil ||
+		countCalls(transaction, "soundpref.Read") != 1 ||
+		countCalls(transaction, "play") != 1 {
+		return fmt.Errorf("notification preference read or playback escaped the lock callback")
+	}
+	if countCalls(notificationFile, "exec.Command") != 0 ||
+		countCalls(notificationFile, "exec.CommandContext") != 0 {
+		return fmt.Errorf("notification command constructed a process outside the typed owner")
+	}
+
+	for _, directory := range []string{
+		filepath.Join(root, "cmd"),
+		filepath.Join(root, "internal"),
+	} {
+		err := filepath.Walk(directory, func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if info.IsDir() || strings.HasSuffix(path, "_test.go") || !strings.HasSuffix(path, ".go") {
+				return nil
+			}
+			source, err := read(path)
+			if err != nil {
+				return err
+			}
+			if path != hostPath && productionSourceLaunchesHostEffect(path, source) {
+				return fmt.Errorf("host-effect process construction escaped typed owner: %s", path)
+			}
+			if path != hostPath && sourceHasHostEffectLiteral(path, source) {
+				return fmt.Errorf("host-effect process literal escaped typed owner: %s", path)
+			}
+			if path != hostPath {
+				if unaudited := unauditedGenericProcessCalls(root, path, source); len(unaudited) != 0 {
+					return fmt.Errorf(
+						"generic process site is not exact-audited: %s",
+						strings.Join(unaudited, ", "),
+					)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func hasHostEffectRunnerSignature(function *ast.FuncDecl) bool {
+	if function.Type.Params == nil || len(function.Type.Params.List) != 2 ||
+		function.Type.Results == nil || len(function.Type.Results.List) != 1 {
+		return false
+	}
+	contextType, ok := function.Type.Params.List[0].Type.(*ast.SelectorExpr)
+	contextPackage, packageOK := contextType.X.(*ast.Ident)
+	effectType, effectOK := function.Type.Params.List[1].Type.(*ast.Ident)
+	resultType, resultOK := function.Type.Results.List[0].Type.(*ast.Ident)
+	return ok && packageOK && contextPackage.Name == "context" &&
+		contextType.Sel.Name == "Context" &&
+		effectOK && effectType.Name == "hostEffect" &&
+		resultOK && resultType.Name == "error"
+}
+
+func isCurrentHostEffectsDenialGuard(statement ast.Stmt) bool {
+	guard, ok := statement.(*ast.IfStmt)
+	if !ok || guard.Init != nil || guard.Else != nil || !blockReturnsNil(guard.Body) {
+		return false
+	}
+	denied, ok := guard.Cond.(*ast.UnaryExpr)
+	if !ok || denied.Op != token.NOT {
+		return false
+	}
+	allowed, ok := denied.X.(*ast.SelectorExpr)
+	if !ok || allowed.Sel.Name != "Allowed" {
+		return false
+	}
+	decision, ok := allowed.X.(*ast.CallExpr)
+	return ok && expressionName(decision.Fun) == "currentHostEffectsDecision" &&
+		len(decision.Args) == 0
+}
+
+func firstCallPosition(node ast.Node, name string) token.Pos {
+	position := token.NoPos
+	ast.Inspect(node, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if ok && expressionName(call.Fun) == name &&
+			(position == token.NoPos || call.Pos() < position) {
+			position = call.Pos()
+		}
+		return true
+	})
+	return position
+}
+
+func callFunctionLiteralArgument(
+	node ast.Node,
+	name string,
+	argument int,
+) *ast.FuncLit {
+	var found *ast.FuncLit
+	ast.Inspect(node, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok || expressionName(call.Fun) != name ||
+			argument >= len(call.Args) {
+			return true
+		}
+		literal, ok := call.Args[argument].(*ast.FuncLit)
+		if ok {
+			found = literal
+		}
+		return false
+	})
+	return found
+}
+
+func hasClosedHostEffectStruct(file *ast.File) bool {
+	effect := findStructType(file, "hostEffect")
+	if effect == nil {
+		return false
+	}
+	fields := map[string]string{}
+	for _, field := range effect.Fields.List {
+		if len(field.Names) != 1 {
+			return false
+		}
+		fields[field.Names[0].Name] = expressionName(field.Type)
+	}
+	if len(fields) != 3 ||
+		fields["kind"] != "hostEffectKind" ||
+		fields["soundName"] != "string" ||
+		fields["notificationKind"] != "claudeBackgroundNotificationKind" {
+		return false
+	}
+	for _, forbidden := range []string{
+		"title", "body", "executable", "arguments", "args", "run", "executor",
+	} {
+		if _, exists := fields[forbidden]; exists {
+			return false
+		}
+	}
+	return true
+}
+
+func findStructType(file *ast.File, name string) *ast.StructType {
+	for _, declaration := range file.Decls {
+		generic, ok := declaration.(*ast.GenDecl)
+		if !ok || generic.Tok != token.TYPE {
+			continue
+		}
+		for _, specification := range generic.Specs {
+			typeSpecification, ok := specification.(*ast.TypeSpec)
+			structure, structOK := typeSpecification.Type.(*ast.StructType)
+			if ok && structOK && typeSpecification.Name.Name == name {
+				return structure
+			}
+		}
+	}
+	return nil
+}
+
+func structHasField(structure *ast.StructType, name string) bool {
+	for _, field := range structure.Fields.List {
+		for _, candidate := range field.Names {
+			if candidate.Name == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func findMethod(file *ast.File, receiverType, name string) *ast.FuncDecl {
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Recv == nil || function.Name.Name != name ||
+			len(function.Recv.List) != 1 {
+			continue
+		}
+		receiver := function.Recv.List[0].Type
+		if pointer, ok := receiver.(*ast.StarExpr); ok {
+			receiver = pointer.X
+		}
+		identifier, ok := receiver.(*ast.Ident)
+		if ok && identifier.Name == receiverType {
+			return function
+		}
+	}
+	return nil
+}
+
+func notifierStartsWithDarwinGuard(function *ast.FuncDecl) bool {
+	if len(function.Body.List) == 0 {
+		return false
+	}
+	guard, ok := function.Body.List[0].(*ast.IfStmt)
+	if !ok || !blockReturnsBare(guard.Body) {
+		return false
+	}
+	comparison, ok := guard.Cond.(*ast.BinaryExpr)
+	if !ok || comparison.Op != token.NEQ {
+		return false
+	}
+	left, leftOK := comparison.X.(*ast.SelectorExpr)
+	right, rightOK := comparison.Y.(*ast.BasicLit)
+	if !leftOK || !rightOK || expressionName(left) != "n.GOOS" ||
+		right.Kind != token.STRING {
+		return false
+	}
+	value, err := strconv.Unquote(right.Value)
+	return err == nil && value == "darwin"
+}
+
+func blockReturnsBare(block *ast.BlockStmt) bool {
+	if block == nil || len(block.List) != 1 {
+		return false
+	}
+	statement, ok := block.List[0].(*ast.ReturnStmt)
+	return ok && len(statement.Results) == 0
+}
+
+func hasValidatedSoundFactorySignature(function *ast.FuncDecl) bool {
+	if function.Type.Params == nil || len(function.Type.Params.List) != 1 {
+		return false
+	}
+	return isValidatedSoundCallback(function.Type.Params.List[0].Type)
+}
+
+func hasConfiguredSoundSignature(function *ast.FuncDecl) bool {
+	if function.Type.Params == nil || len(function.Type.Params.List) != 2 {
+		return false
+	}
+	features, ok := function.Type.Params.List[0].Type.(*ast.Ident)
+	return ok && features.Name == "string" &&
+		isValidatedSoundCallback(function.Type.Params.List[1].Type)
+}
+
+func isValidatedSoundCallback(expression ast.Expr) bool {
+	callback, ok := expression.(*ast.FuncType)
+	if !ok || callback.Params == nil || len(callback.Params.List) != 1 ||
+		callback.Results == nil || len(callback.Results.List) != 1 {
+		return false
+	}
+	parameter, parameterOK := callback.Params.List[0].Type.(*ast.Ident)
+	result, resultOK := callback.Results.List[0].Type.(*ast.Ident)
+	return parameterOK && parameter.Name == "string" &&
+		resultOK && result.Name == "error"
+}
+
+func sourceHasHostEffectLiteral(path string, source []byte) bool {
+	file, err := parser.ParseFile(token.NewFileSet(), path, source, 0)
+	if err != nil {
+		return true
+	}
+	found := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		literal, ok := node.(*ast.BasicLit)
+		if !ok || literal.Kind != token.STRING {
+			return true
+		}
+		value, err := strconv.Unquote(literal.Value)
+		if err == nil && stringHasHostEffectMarker(value) {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func productionSourceLaunchesHostEffect(path string, source []byte) bool {
+	fileSet := token.NewFileSet()
+	file, err := parser.ParseFile(fileSet, path, source, 0)
+	if err != nil {
+		return true
+	}
+	aliases, dotImports := processImportAliases(file)
+	staticStrings := collectStaticStrings(file)
+	execCmdVariables := collectExecCmdVariables(file, aliases, dotImports)
+	launchesEffect := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch node := node.(type) {
+		case *ast.CompositeLit:
+			if execCmdLiteralLaunchesHostEffect(node, aliases, staticStrings) {
+				launchesEffect = true
+				return false
+			}
+		case *ast.AssignStmt:
+			if execCmdPathAssignmentLaunchesHostEffect(node, execCmdVariables, staticStrings) {
+				launchesEffect = true
+				return false
+			}
+		case *ast.CallExpr:
+			executableIndex, ok := processExecutableArgument(node, aliases, dotImports)
+			if !ok || executableIndex >= len(node.Args) {
+				return true
+			}
+			executable := node.Args[executableIndex]
+			if expressionContainsHostEffectMarker(executable, staticStrings) {
+				launchesEffect = true
+				return false
+			}
+			if isShellExecutable(executable, staticStrings) {
+				for _, argument := range node.Args[executableIndex+1:] {
+					if expressionContainsHostEffectMarker(argument, staticStrings) {
+						launchesEffect = true
+						return false
+					}
+				}
+			}
+		}
+		return !launchesEffect
+	})
+	return launchesEffect
+}
+
+func unauditedGenericProcessCalls(root, path string, source []byte) []string {
+	file, err := parser.ParseFile(token.NewFileSet(), path, source, 0)
+	if err != nil {
+		return []string{path + ":parse-error"}
+	}
+	aliases, dotImports := processImportAliases(file)
+	staticStrings := collectStaticStrings(file)
+	relative, err := filepath.Rel(root, path)
+	if err != nil {
+		return []string{path + ":relative-path-error"}
+	}
+	relative = filepath.ToSlash(relative)
+	allowed := auditedGenericProcessCalls()
+	seen := map[string]int{}
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Body == nil {
+			continue
+		}
+		identity := function.Name.Name
+		if function.Recv != nil && len(function.Recv.List) == 1 {
+			receiver := function.Recv.List[0].Type
+			if pointer, ok := receiver.(*ast.StarExpr); ok {
+				receiver = pointer.X
+			}
+			identity = expressionName(receiver) + "." + identity
+		}
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			executableIndex, process := processExecutableArgument(call, aliases, dotImports)
+			if !process || executableIndex >= len(call.Args) {
+				return true
+			}
+			executable := call.Args[executableIndex]
+			if len(resolvedStrings(executable, staticStrings)) != 0 &&
+				!isShellExecutable(executable, staticStrings) {
+				return true
+			}
+			var rendered bytes.Buffer
+			if err := format.Node(&rendered, token.NewFileSet(), call); err != nil {
+				seen[relative+":"+identity+":render-error"]++
+				return true
+			}
+			seen[relative+":"+identity+":"+rendered.String()]++
+			return true
+		})
+	}
+	var violations []string
+	for descriptor, count := range seen {
+		if allowed[descriptor] != count {
+			violations = append(
+				violations,
+				fmt.Sprintf("%s[%d]", descriptor, count),
+			)
+		}
+	}
+	for descriptor, count := range allowed {
+		if strings.HasPrefix(descriptor, relative+":") && seen[descriptor] != count {
+			violations = append(
+				violations,
+				fmt.Sprintf("%s[got %d want %d]", descriptor, seen[descriptor], count),
+			)
+		}
+	}
+	return violations
+}
+
+func auditedGenericProcessCalls() map[string]int {
+	return map[string]int{
+		`cmd/wisp-deck-tui/claude_background.go:runClaudeBackgroundAgents:exec.CommandContext(ctx, claude, "agents", "--json", "--all")`:              1,
+		`cmd/wisp-deck-tui/screenshot_filter.go:runScreenshotFilter:exec.Command(args[0], args[1:]...)`:                                               2,
+		`internal/attention/claude_registry.go:commandOutput:exec.CommandContext(ctx, name, args...)`:                                                 1,
+		`internal/attention/claude_supervisor.go:ClaudeSupervisor.Run:exec.Command(name, args...)`:                                                    1,
+		`internal/attention/claude_supervisor.go:claudeSupervisorSnapshot:exec.CommandContext(ctx, claudePSExecutable, "-axo", "pid=,ppid=,lstart=")`: 1,
+		`internal/codexadapter/supervisor.go:CodexSupervisor.runPTYAttemptWithRouter:exec.Command(argv[0], argv[1:]...)`:                              1,
+		`internal/codexadapter/supervisor.go:startDefaultAppServer:exec.Command(argv[0], argv[1:]...)`:                                                1,
+		`internal/gptbridge/adapter.go:RunAdapter:exec.Command(options.ClaudeArgv[0], options.ClaudeArgv[1:]...)`:                                     1,
+		`internal/gptbridge/rpc.go:StartAppServer:exec.Command(options.CodexPath, "app-server")`:                                                      1,
+		`internal/ledger/popup.go:ExecProcessRunner.Run:exec.CommandContext(ctx, name, args...)`:                                                      1,
+		`internal/opencodeadapter/supervisor.go:Supervisor.runDefaultPTY:exec.Command(spec.Argv[0], spec.Argv[1:]...)`:                                1,
+		`internal/opencodeadapter/supervisor.go:startManagedProcess:exec.Command(spec.Argv[0], spec.Argv[1:]...)`:                                     1,
+		`internal/tui/ai_tools_panel.go:bashLibCmd:exec.Command("bash", "-c", script)`:                                                                1,
+	}
+}
+
+func processImportAliases(file *ast.File) (map[string]string, map[string]bool) {
+	aliases := map[string]string{}
+	dotImports := map[string]bool{}
+	for _, imported := range file.Imports {
+		path, err := strconv.Unquote(imported.Path.Value)
+		if err != nil {
+			continue
+		}
+		if imported.Name != nil {
+			if imported.Name.Name == "." {
+				dotImports[path] = true
+			} else if imported.Name.Name != "_" {
+				aliases[imported.Name.Name] = path
+			}
+			continue
+		}
+		aliases[filepath.Base(path)] = path
+	}
+	return aliases, dotImports
+}
+
+func execCmdLiteralLaunchesHostEffect(
+	literal *ast.CompositeLit,
+	aliases map[string]string,
+	staticStrings map[string]map[string]bool,
+) bool {
+	selected, ok := literal.Type.(*ast.SelectorExpr)
+	if !ok || selected.Sel.Name != "Cmd" {
+		return false
+	}
+	pkg, ok := selected.X.(*ast.Ident)
+	if !ok || aliases[pkg.Name] != "os/exec" {
+		return false
+	}
+	for _, element := range literal.Elts {
+		field, ok := element.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		key, keyOK := field.Key.(*ast.Ident)
+		value, valueOK := field.Value.(ast.Expr)
+		if keyOK && valueOK && key.Name == "Path" &&
+			expressionContainsHostEffectMarker(value, staticStrings) {
+			return true
+		}
+	}
+	return false
+}
+
+func execCmdPathAssignmentLaunchesHostEffect(
+	assignment *ast.AssignStmt,
+	execCmdVariables map[string]bool,
+	staticStrings map[string]map[string]bool,
+) bool {
+	for index, left := range assignment.Lhs {
+		if index >= len(assignment.Rhs) {
+			continue
+		}
+		selected, ok := left.(*ast.SelectorExpr)
+		if !ok || selected.Sel.Name != "Path" {
+			continue
+		}
+		receiver, ok := selected.X.(*ast.Ident)
+		if ok && execCmdVariables[receiver.Name] &&
+			expressionContainsHostEffectMarker(assignment.Rhs[index], staticStrings) {
+			return true
+		}
+	}
+	return false
+}
+
+func expressionContainsHostEffectMarker(
+	expression ast.Expr,
+	staticStrings map[string]map[string]bool,
+) bool {
+	for _, value := range resolvedStrings(expression, staticStrings) {
+		if stringHasHostEffectMarker(value) {
+			return true
+		}
+	}
+	found := false
+	ast.Inspect(expression, func(node ast.Node) bool {
+		literal, ok := node.(*ast.BasicLit)
+		if !ok || literal.Kind != token.STRING {
+			return true
+		}
+		value, err := strconv.Unquote(literal.Value)
+		if err == nil && stringHasHostEffectMarker(value) {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func stringHasHostEffectMarker(value string) bool {
+	lower := strings.ToLower(value)
+	for _, marker := range []string{
+		"afplay",
+		"osascript",
+		"/usr/bin/say",
+		"/system/library/sounds/",
+		"nssound",
+		"audioservicesplaysystemsound",
+		"display notification",
+		"]9;",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return lower == "say"
 }
 
 func parseGoFunctions(path string, source []byte) (*ast.File, map[string]*ast.FuncDecl, error) {

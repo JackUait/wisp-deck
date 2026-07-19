@@ -389,7 +389,6 @@ func runClaudeBackground(ctx context.Context, options claudeBackgroundOptions) e
 	notifier := claudeBackgroundNotifier{
 		WispConfigDir: options.WispConfigDir,
 		GOOS:          runtime.GOOS,
-		Run:           runClaudeBackgroundDetached,
 	}
 	return runClaudeBackgroundWithDependencies(ctx, options, claudeBackgroundDependencies{
 		Notify: notifier.Notify,
@@ -836,66 +835,35 @@ func configureClaudeBackgroundProcessGroup(cmd *exec.Cmd) {
 	}
 }
 
-type claudeBackgroundExecFunc func(context.Context, string, []string, []string) error
-
 type claudeBackgroundNotifier struct {
 	WispConfigDir string
 	GOOS          string
 	Timeout       time.Duration
-	Run           claudeBackgroundExecFunc
 }
 
 func (n claudeBackgroundNotifier) Notify(ctx context.Context, event attention.ClaudeBackgroundEvent) {
 	if n.GOOS != "darwin" {
 		return
 	}
-	run := n.Run
-	if run == nil {
-		run = runClaudeBackgroundDetached
-	}
 	timeout := n.Timeout
 	if timeout <= 0 {
 		timeout = defaultClaudeBackgroundNotifyTimeout
 	}
-	body := claudeBackgroundNotificationBody(event.Status)
 	notifyContext, cancelNotify := context.WithTimeout(ctx, timeout)
-	environment := claudeBackgroundEnvironment(os.Environ(), map[string]string{
-		"WISP_DECK_NOTIFICATION_TITLE": "Claude background",
-		"WISP_DECK_NOTIFICATION_BODY":  body,
-	})
-	_ = run(notifyContext, "/usr/bin/osascript", []string{
-		"-e",
-		`display notification (system attribute "WISP_DECK_NOTIFICATION_BODY") with title (system attribute "WISP_DECK_NOTIFICATION_TITLE")`,
-	}, environment)
+	effect := newClaudeBackgroundNotificationHostEffect(event.Status)
+	_ = runHostEffect(notifyContext, effect)
 	cancelNotify()
 
 	features := filepath.Join(n.WispConfigDir, "claude-features.json")
-	_ = soundpref.WithExclusiveLock(features, func() error {
-		sound := claudeBackgroundSoundPreference(features)
-		if sound == "" {
-			return nil
-		}
+	_ = withConfiguredNotificationSound(features, func(sound string) error {
 		soundContext, cancelSound := context.WithTimeout(ctx, timeout)
 		defer cancelSound()
-		return run(soundContext, "/usr/bin/afplay", []string{
-			filepath.Join("/System/Library/Sounds", sound+".aiff"),
-		}, os.Environ())
+		effect, ok := newSystemSoundHostEffect(sound)
+		if !ok {
+			return nil
+		}
+		return runHostEffect(soundContext, effect)
 	})
-}
-
-func claudeBackgroundNotificationBody(status attention.ClaudeBackgroundStatus) string {
-	switch status {
-	case attention.ClaudeBackgroundBlocked:
-		return "Background agent needs input"
-	case attention.ClaudeBackgroundCompleted:
-		return "Background agent completed"
-	case attention.ClaudeBackgroundFailed:
-		return "Background agent failed"
-	case attention.ClaudeBackgroundStopped:
-		return "Background agent stopped"
-	default:
-		return "Background agent needs attention"
-	}
 }
 
 func claudeBackgroundSoundPreference(path string) string {
@@ -923,15 +891,4 @@ func readClaudeBackgroundSmallFile(path string, maximum int64) ([]byte, error) {
 		return nil, errors.New("Claude background preference file exceeds size limit")
 	}
 	return data, nil
-}
-
-func runClaudeBackgroundDetached(ctx context.Context, name string, args, environment []string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Env = environment
-	cmd.Stdin = nil
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	cmd.WaitDelay = 100 * time.Millisecond
-	configureClaudeBackgroundProcessGroup(cmd)
-	return cmd.Run()
 }

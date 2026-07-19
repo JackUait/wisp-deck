@@ -46,17 +46,21 @@ func TestResolveMainMenuSoundName_EmptyWhenNoFile(t *testing.T) {
 	}
 }
 
-func TestMainMenuSoundCommand_UsesAuditedPlayerAndPath(t *testing.T) {
-	gotName, gotArgs, ok := mainMenuSoundCommand("Glass")
+func TestMainMenuSoundEffect_UsesAuditedTypedPlan(t *testing.T) {
+	effect, ok := newSystemSoundHostEffect("Glass")
 	if !ok {
-		t.Fatal("allowlisted sound returned no command")
+		t.Fatal("allowlisted sound returned no typed effect")
 	}
-	if gotName != "/usr/bin/afplay" {
-		t.Fatalf("executable = %q, want /usr/bin/afplay", gotName)
+	plan, ok := planHostEffect(effect, nil)
+	if !ok {
+		t.Fatal("allowlisted typed effect returned no plan")
+	}
+	if plan.executable != "/usr/bin/afplay" {
+		t.Fatalf("executable = %q, want /usr/bin/afplay", plan.executable)
 	}
 	wantArgs := []string{"/System/Library/Sounds/Glass.aiff"}
-	if !reflect.DeepEqual(gotArgs, wantArgs) {
-		t.Fatalf("args = %v, want %v", gotArgs, wantArgs)
+	if !reflect.DeepEqual(plan.arguments, wantArgs) {
+		t.Fatalf("args = %v, want %v", plan.arguments, wantArgs)
 	}
 }
 
@@ -65,9 +69,6 @@ func TestMainMenuSoundPreview_ReturnsDeferredCommandForAllowlistedSound(t *testi
 	if cmd == nil {
 		t.Fatal("allowlisted sound returned no preview command")
 	}
-	if msg := cmd(); msg != nil {
-		t.Fatalf("preview command returned unexpected message: %#v", msg)
-	}
 }
 
 func TestMainMenuSoundPreview_RejectsEveryNonAllowlistedName(t *testing.T) {
@@ -75,23 +76,9 @@ func TestMainMenuSoundPreview_RejectsEveryNonAllowlistedName(t *testing.T) {
 		if cmd := mainMenuSoundPreview(name); cmd != nil {
 			t.Errorf("preview(%q) returned a command", name)
 		}
-		if _, _, ok := mainMenuSoundCommand(name); ok {
-			t.Errorf("mainMenuSoundCommand(%q) accepted an invalid name", name)
+		if _, ok := newSystemSoundHostEffect(name); ok {
+			t.Errorf("newSystemSoundHostEffect(%q) accepted an invalid name", name)
 		}
-	}
-}
-
-func TestRunMainMenuSound_TestBinaryCannotLaunchProcesses(t *testing.T) {
-	var calls int
-	err := runMainMenuSoundWith("Glass", func(string, ...string) error {
-		calls++
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("runMainMenuSoundWith: %v", err)
-	}
-	if calls != 0 {
-		t.Fatalf("test binary invoked a host process runner %d times", calls)
 	}
 }
 

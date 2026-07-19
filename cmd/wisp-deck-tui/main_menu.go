@@ -1,13 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"strings"
 	"syscall"
 
@@ -93,8 +92,6 @@ func resolveMainMenuSoundName(flagValue, soundFile string) string {
 	return soundpref.Read(soundFile)
 }
 
-type mainMenuSoundRunner func(string, ...string) error
-
 // SoundPreviewCapability is set to "enabled" by production build entrypoints.
 // Ordinary `go build` output remains silent, including binaries built by tests.
 var SoundPreviewCapability = "disabled"
@@ -106,45 +103,15 @@ func mainMenuSoundProcessAllowed(
 	return soundCapability == "enabled" && decision.Allowed
 }
 
-func mainMenuSoundCommand(name string) (string, []string, bool) {
-	if !slices.Contains(tui.SystemSounds, name) {
-		return "", nil, false
-	}
-	return "/usr/bin/afplay", []string{
-		"/System/Library/Sounds/" + name + ".aiff",
-	}, true
-}
-
 func mainMenuSoundPreview(name string) tea.Cmd {
-	if _, _, ok := mainMenuSoundCommand(name); !ok {
-		return nil
-	}
-	return func() tea.Msg {
-		_ = runMainMenuSound(name)
-		return nil
-	}
-}
-
-func runMainMenuSound(name string) error {
-	return runMainMenuSoundWith(name, func(executable string, args ...string) error {
-		return exec.Command(executable, args...).Run()
-	})
-}
-
-func runMainMenuSoundWith(name string, run mainMenuSoundRunner) error {
-	// The global decision includes linker-backed Go test identity, the exact
-	// current marker, and structural ancestor inspection.
-	if !mainMenuSoundProcessAllowed(
-		SoundPreviewCapability,
-		currentHostEffectsDecision(),
-	) || run == nil {
-		return nil
-	}
-	executable, args, ok := mainMenuSoundCommand(name)
+	effect, ok := newSystemSoundHostEffect(name)
 	if !ok {
 		return nil
 	}
-	return run(executable, args...)
+	return func() tea.Msg {
+		_ = runHostEffect(context.Background(), effect)
+		return nil
+	}
 }
 
 func runMainMenu(cmd *cobra.Command, args []string) error {
