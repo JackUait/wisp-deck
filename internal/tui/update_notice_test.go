@@ -7,37 +7,6 @@ import (
 
 // With the PLAN row present (wordmark host), the update notice right-aligns on
 // the AGENT/title row — directly under the "Wisp Deck" wordmark.
-func TestUpdateNotice_UnderWordmarkOnTitleRow(t *testing.T) {
-	m := newTestMenu()
-	m.SetUpdateVersion("2.24.0")
-	lines := strings.Split(m.renderMenuBox(), "\n")
-
-	planRow := stripAnsi(lines[1])
-	titleRow := stripAnsi(lines[2])
-
-	if !strings.Contains(planRow, "Wisp Deck") {
-		t.Fatalf("expected wordmark on the PLAN row, got %q", planRow)
-	}
-	if !strings.Contains(titleRow, "v2.24.0 available") {
-		t.Fatalf("expected update notice on the AGENT row, got %q", titleRow)
-	}
-	if !strings.Contains(titleRow, "U Update") {
-		t.Errorf("expected the update button on the AGENT row, got %q", titleRow)
-	}
-	// Right-aligned: only whitespace between the notice's end and the border.
-	borderChar := strings.LastIndex(titleRow, "│")
-	noticeEnd := strings.Index(titleRow, "U Update") + len("U Update")
-	trailing := titleRow[noticeEnd:borderChar]
-	if len(strings.TrimSpace(trailing)) != 0 {
-		t.Errorf("expected only whitespace between notice and border, got %q", trailing)
-	}
-	// The AGENT switcher stays on the left of the same row.
-	agentIdx := strings.Index(titleRow, "Claude Code")
-	noticeIdx := strings.Index(titleRow, "v2.24.0")
-	if agentIdx < 0 || noticeIdx < 0 || agentIdx > noticeIdx {
-		t.Errorf("expected AGENT switcher left of the notice, got %q", titleRow)
-	}
-}
 
 // Without a PLAN row the wordmark sits on the title row, so the notice drops to
 // the header spacer row below it.
@@ -151,10 +120,10 @@ func TestUpdateNotice_ClickRowFollowsWordmark(t *testing.T) {
 	if got, want := m.updateNoticeRowIndex(), m.titleRowIndex()+1; got != want {
 		t.Errorf("notice row = %d, want spacer row %d", got, want)
 	}
-	m2 := newTestMenu() // PLAN row present: notice shares the title row
+	m2 := newTestMenu() // claude: PLAN row removed, so notice sits on the spacer too
 	m2.SetUpdateVersion("2.24.0")
-	if got, want := m2.updateNoticeRowIndex(), m2.titleRowIndex(); got != want {
-		t.Errorf("notice row = %d, want title row %d", got, want)
+	if got, want := m2.updateNoticeRowIndex(), m2.titleRowIndex()+1; got != want {
+		t.Errorf("notice row = %d, want spacer row %d", got, want)
 	}
 	m3 := newTestMenu()
 	if got := m3.updateNoticeRowIndex(); got != -1 {

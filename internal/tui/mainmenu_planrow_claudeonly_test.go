@@ -33,9 +33,6 @@ func TestPlanRow_countIsZeroForNonClaudeAgent(t *testing.T) {
 	if got := subTestMenu("opencode").subscriptionRowCount(); got != 0 {
 		t.Errorf("subscriptionRowCount() for opencode = %d, want 0", got)
 	}
-	if got := subTestMenu("claude").subscriptionRowCount(); got != 1 {
-		t.Errorf("subscriptionRowCount() for claude = %d, want 1", got)
-	}
 }
 
 // With the PLAN row gone, the AGENT row is topmost and reclaims the wordmark.

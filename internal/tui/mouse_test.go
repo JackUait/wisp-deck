@@ -199,10 +199,10 @@ func TestUpdate_motionOverProject_doesNotMoveSelection(t *testing.T) {
 		{Name: "b", Path: "/tmp/b"},
 	}
 	m := mouseTestModel(t, projects, []string{"claude"})
-	// Hover the second project's name row (box row 9), selection starts at 0.
+	// Hover the second project's name row (box row 8), selection starts at 0.
 	msg := tea.MouseMsg{
 		X:      m.menuOriginX + 5,
-		Y:      m.menuOriginY + 9,
+		Y:      m.menuOriginY + 8,
 		Action: tea.MouseActionMotion,
 	}
 	updated, _ := m.Update(msg)

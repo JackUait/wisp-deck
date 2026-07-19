@@ -78,23 +78,22 @@ func TestRenderMenuBox_emptyState(t *testing.T) {
 
 func TestCalculateLayout_accountsForTabBar(t *testing.T) {
 	projects := []models.Project{{Name: "a", Path: "/tmp/a"}}
-	// Claude carries the subscription row, so this is the tallest header.
 	m := NewMainMenu(projects, []string{"claude"}, "claude", "none")
 	layout := m.CalculateLayout(120, 40)
-	// Rendered line count for 1 project = 15 (box 14 + help 1), including the
-	// subscription row and the add-project hint subtitle row. MenuHeight must equal that.
-	if layout.MenuHeight != 15 {
-		t.Errorf("MenuHeight = %d, want 15 (must match rendered lines)", layout.MenuHeight)
+	// Rendered line count for 1 project = 14 (box 13 + help 1), including the
+	// add-project hint subtitle row (no PLAN row). MenuHeight must equal that.
+	if layout.MenuHeight != 14 {
+		t.Errorf("MenuHeight = %d, want 14 (must match rendered lines)", layout.MenuHeight)
 	}
 }
 
 func TestCalculateLayout_emptyStateAddsRow(t *testing.T) {
 	// 0 projects: renderMenuBox emits empty-state row plus the add-project hint
-	// subtitle → 14 total lines, including Claude's subscription row.
+	// subtitle → 13 total lines (no PLAN row).
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	layout := m.CalculateLayout(120, 40)
-	if layout.MenuHeight != 14 {
-		t.Errorf("MenuHeight (0 proj) = %d, want 14", layout.MenuHeight)
+	if layout.MenuHeight != 13 {
+		t.Errorf("MenuHeight (0 proj) = %d, want 13", layout.MenuHeight)
 	}
 }
 
@@ -103,31 +102,30 @@ func TestMapRowToItem_matchesRenderedLayout(t *testing.T) {
 		{Name: "alpha", Path: "/tmp/a"},
 		{Name: "beta", Path: "/tmp/b"},
 	}
-	// Claude carries the subscription row, so this is the full-height header.
 	m := NewMainMenu(projects, []string{"claude"}, "claude", "none")
 	m.width = 100
 	m.height = 60
 
-	// Layout (see render_projects.go): top(0) subscription(1) title(2) switcher-gap(3)
-	// tabbar(4) sep(5) blank(6) alpha-name(7) alpha-path(8) beta-name(9) beta-path(10)
-	// blank(11) add-project(12) add-hint(13) sep(14) actionbar(15) bottom(16) help(17)
+	// Layout (see render_projects.go), PLAN row removed: top(0) title(1) switcher-gap(2)
+	// tabbar(3) sep(4) blank(5) alpha-name(6) alpha-path(7) beta-name(8) beta-path(9)
+	// blank(10) add-project(11) add-hint(12) sep(13) actionbar(14) bottom(15) help(16)
 	cases := map[int]int{
 		0:  -1, // top border
-		2:  -1, // title row
-		3:  -1, // switcher gap
-		4:  -1, // tab bar
-		5:  -1, // separator
-		6:  -1, // blank spacer
-		7:  0,  // alpha name
-		8:  0,  // alpha path
-		9:  1,  // beta name
-		10: 1,  // beta path
-		11: -1, // blank spacer before add-project
-		12: 2,  // add-project label row (TotalItems-1)
-		13: 2,  // add-project hint subtitle row
-		14: -1, // separator
-		15: -1, // action bar
-		16: -1, // bottom border
+		1:  -1, // title row
+		2:  -1, // switcher gap
+		3:  -1, // tab bar
+		4:  -1, // separator
+		5:  -1, // blank spacer
+		6:  0,  // alpha name
+		7:  0,  // alpha path
+		8:  1,  // beta name
+		9:  1,  // beta path
+		10: -1, // blank spacer before add-project
+		11: 2,  // add-project label row (TotalItems-1)
+		12: 2,  // add-project hint subtitle row
+		13: -1, // separator
+		14: -1, // action bar
+		15: -1, // bottom border
 	}
 	for clickY, want := range cases {
 		if got := m.MapRowToItem(clickY); got != want {
@@ -136,7 +134,7 @@ func TestMapRowToItem_matchesRenderedLayout(t *testing.T) {
 	}
 
 	// The add-project row must map to the final selectable index.
-	addRow := m.MapRowToItem(12)
+	addRow := m.MapRowToItem(11)
 	if addRow != m.TotalItems()-1 {
 		t.Errorf("add-project row = %d, want TotalItems-1=%d", addRow, m.TotalItems()-1)
 	}

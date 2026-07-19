@@ -129,15 +129,13 @@ func (m *MainMenuModel) renderTitleRow(leftBorder, rightBorder string) string {
 	return m.headerRow(aiPart, title, leftBorder, rightBorder)
 }
 
-// subscriptionRowCount returns 1 when the PLAN/subscription line is shown, else
-// 0. The line names a Claude subscription, so it only appears while Claude is the
-// active agent — other agents get a header without it. It renders in the header
-// chrome of every tab; layout math (height, scroll header, click mapping) all add
-// this so the body rows stay aligned.
+// subscriptionRowCount is always 0: the top-of-page PLAN/subscription switcher
+// was removed from the header. Choosing a backend now lives in Settings ›
+// Subscription and the mid-session ledger pill / account popup — so the header
+// no longer carries a PLAN row. Kept as a function (rather than deleting every
+// caller) so all the header layout math still reads a single source of truth,
+// mirroring accountRowCount.
 func (m *MainMenuModel) subscriptionRowCount() int {
-	if m.ClaudeConfigVisible() && m.CurrentAITool() == "claude" {
-		return 1
-	}
 	return 0
 }
 

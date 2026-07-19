@@ -251,20 +251,6 @@ func TestRenderSubscriptionRow_hasPlanLabel(t *testing.T) {
 
 // Each caption is a single one-cell glyph, so the switcher chevrons stay
 // vertically aligned between the AGENT and PLAN rows.
-func TestRenderSubscriptionRow_chevronAlignsWithAgentRow(t *testing.T) {
-	m := subFocusMenu(t, "claude", true)
-	agentRow := stripAnsi(m.renderTitleRow("│", "│"))
-	planRow := stripAnsi(m.renderSubscriptionRow("│", "│"))
-	agentChevron := strings.Index(agentRow, iconChevronLeft)
-	planChevron := strings.Index(planRow, iconChevronLeft)
-	if agentChevron < 0 || planChevron < 0 {
-		t.Fatalf("both rows should carry a left chevron: agent=%q plan=%q", agentRow, planRow)
-	}
-	if agentChevron != planChevron {
-		t.Errorf("PLAN chevron should align with AGENT chevron: agent col %d (%q), plan col %d (%q)",
-			agentChevron, agentRow, planChevron, planRow)
-	}
-}
 
 // captionColored reports the foreground sequence + glyph that settingsCaption
 // emits, so the highlight tests can assert the icon's color directly.

@@ -250,24 +250,23 @@ func TestMainMenu_LayoutCalculation(t *testing.T) {
 }
 
 func TestMainMenu_LayoutCalculation_MenuHeight(t *testing.T) {
-	// 3 projects (2 rows each). Chrome = 13 fixed lines (tab-bar + action-bar +
-	// add-project hint included in the constant; old 4 action-item rows removed).
-	// Claude carries the subscription row, so this is the full-height header.
+	// 3 projects (2 rows each). Chrome = 12 fixed lines (the PLAN/subscription row
+	// was removed from the header).
 	projects := testProjects()
 	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
 	layout := m.CalculateLayout(100, 40)
 
-	// MenuHeight = 13 (chrome, incl. subscription row) + 3*2 (projects) = 19
-	expectedHeight := 13 + (3 * 2)
+	// MenuHeight = 12 (chrome) + 3*2 (projects) = 18
+	expectedHeight := 12 + (3 * 2)
 	if layout.MenuHeight != expectedHeight {
 		t.Errorf("MenuHeight with 3 projects: expected %d, got %d", expectedHeight, layout.MenuHeight)
 	}
 
 	// 0 projects: empty-state row adds 1 line.
-	// MenuHeight = 13 (chrome, incl. subscription row) + 1 (empty-state row) = 14
+	// MenuHeight = 12 (chrome) + 1 (empty-state row) = 13
 	m2 := tui.NewMainMenu(nil, testAITools(), "claude", "animated")
 	layout2 := m2.CalculateLayout(100, 40)
-	expectedHeight2 := 13 + 1
+	expectedHeight2 := 12 + 1
 	if layout2.MenuHeight != expectedHeight2 {
 		t.Errorf("MenuHeight with 0 projects: expected %d, got %d", expectedHeight2, layout2.MenuHeight)
 	}
@@ -1015,24 +1014,24 @@ func TestMainMenu_MapRowToItem_Projects(t *testing.T) {
 		{Name: "p1", Path: "/p1"},
 		{Name: "p2", Path: "/p2"},
 	}
-	// Claude carries the subscription row, so projects start at row 7.
+	// The PLAN row was removed, so projects start at row 6.
 	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 
-	// Layout: row 0 border, 1 title, 2 subscription, 3 switcher gap, 4 tab bar,
-	// 5 separator, 6 empty, then first project at rows 7-8.
+	// Layout: row 0 border, 1 title, 2 switcher gap, 3 tab bar, 4 separator,
+	// 5 empty, then first project at rows 6-7.
+	if m.MapRowToItem(6) != 0 {
+		t.Errorf("click at row 6 should map to item 0, got %d", m.MapRowToItem(6))
+	}
 	if m.MapRowToItem(7) != 0 {
-		t.Errorf("click at row 7 should map to item 0, got %d", m.MapRowToItem(7))
+		t.Errorf("click at row 7 should map to item 0 (path line), got %d", m.MapRowToItem(7))
 	}
-	if m.MapRowToItem(8) != 0 {
-		t.Errorf("click at row 8 should map to item 0 (path line), got %d", m.MapRowToItem(8))
+	// Second project at rows 8-9
+	if m.MapRowToItem(8) != 1 {
+		t.Errorf("click at row 8 should map to item 1, got %d", m.MapRowToItem(8))
 	}
-	// Second project at rows 9-10
 	if m.MapRowToItem(9) != 1 {
-		t.Errorf("click at row 9 should map to item 1, got %d", m.MapRowToItem(9))
-	}
-	if m.MapRowToItem(10) != 1 {
-		t.Errorf("click at row 10 should map to item 1 (path line), got %d", m.MapRowToItem(10))
+		t.Errorf("click at row 9 should map to item 1 (path line), got %d", m.MapRowToItem(9))
 	}
 }
 
@@ -1040,31 +1039,31 @@ func TestMainMenu_MapRowToItem_AddProjectRow(t *testing.T) {
 	projects := []models.Project{
 		{Name: "p1", Path: "/p1"},
 	}
-	// Claude carries the subscription row, which shifts the body rows down by one.
+	// The PLAN row was removed, shifting the body rows up by one.
 	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 
-	// Layout: 1 project at rows 7-8, blank spacer at row 9, add-project label at
-	// row 10, add-project hint subtitle at row 11. Both add-project rows map to the
-	// same item. The old delete/open-once/plain-terminal action rows no longer exist.
+	// Layout: 1 project at rows 6-7, blank spacer at row 8, add-project label at
+	// row 9, add-project hint subtitle at row 10. Both add-project rows map to the
+	// same item.
+	if m.MapRowToItem(9) != 1 {
+		t.Errorf("click at add-project label row should map to item 1, got %d", m.MapRowToItem(9))
+	}
 	if m.MapRowToItem(10) != 1 {
-		t.Errorf("click at add-project label row should map to item 1, got %d", m.MapRowToItem(10))
+		t.Errorf("click at add-project hint row should map to item 1, got %d", m.MapRowToItem(10))
 	}
-	if m.MapRowToItem(11) != 1 {
-		t.Errorf("click at add-project hint row should map to item 1, got %d", m.MapRowToItem(11))
-	}
-	if m.MapRowToItem(10) != m.TotalItems()-1 {
-		t.Errorf("add-project row should be the final selectable item (%d), got %d", m.TotalItems()-1, m.MapRowToItem(10))
+	if m.MapRowToItem(9) != m.TotalItems()-1 {
+		t.Errorf("add-project row should be the final selectable item (%d), got %d", m.TotalItems()-1, m.MapRowToItem(9))
 	}
 	// Rows past the add-project row are not selectable items.
-	if m.MapRowToItem(12) != -1 {
-		t.Errorf("click below add-project row should return -1, got %d", m.MapRowToItem(12))
+	if m.MapRowToItem(11) != -1 {
+		t.Errorf("click below add-project row should return -1, got %d", m.MapRowToItem(11))
 	}
 }
 
 func TestMainMenu_MapRowToItem_Invalid(t *testing.T) {
 	projects := []models.Project{{Name: "p1", Path: "/p1"}}
-	// Claude carries the subscription row, which shifts the body rows down by one.
+	// The PLAN row was removed, shifting the body rows up by one.
 	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 
@@ -1076,29 +1075,25 @@ func TestMainMenu_MapRowToItem_Invalid(t *testing.T) {
 	if m.MapRowToItem(1) != -1 {
 		t.Errorf("click on title should return -1, got %d", m.MapRowToItem(1))
 	}
-	// Row 2 is the subscription row
+	// Row 2 is the switcher gap
 	if m.MapRowToItem(2) != -1 {
-		t.Errorf("click on subscription row should return -1, got %d", m.MapRowToItem(2))
+		t.Errorf("click on switcher gap should return -1, got %d", m.MapRowToItem(2))
 	}
-	// Row 3 is the switcher gap
+	// Row 3 is the tab bar
 	if m.MapRowToItem(3) != -1 {
-		t.Errorf("click on switcher gap should return -1, got %d", m.MapRowToItem(3))
+		t.Errorf("click on tab bar should return -1, got %d", m.MapRowToItem(3))
 	}
-	// Row 4 is the tab bar
+	// Row 4 is separator
 	if m.MapRowToItem(4) != -1 {
-		t.Errorf("click on tab bar should return -1, got %d", m.MapRowToItem(4))
+		t.Errorf("click on separator should return -1, got %d", m.MapRowToItem(4))
 	}
-	// Row 5 is separator
+	// Row 5 is empty
 	if m.MapRowToItem(5) != -1 {
-		t.Errorf("click on separator should return -1, got %d", m.MapRowToItem(5))
+		t.Errorf("click on empty row should return -1, got %d", m.MapRowToItem(5))
 	}
-	// Row 6 is empty
-	if m.MapRowToItem(6) != -1 {
-		t.Errorf("click on empty row should return -1, got %d", m.MapRowToItem(6))
-	}
-	// Row 9 is the blank spacer before the add-project row
-	if m.MapRowToItem(9) != -1 {
-		t.Errorf("click on blank spacer should return -1, got %d", m.MapRowToItem(9))
+	// Row 8 is the blank spacer before the add-project row (project at 6-7)
+	if m.MapRowToItem(8) != -1 {
+		t.Errorf("click on blank spacer should return -1, got %d", m.MapRowToItem(8))
 	}
 	// Row way beyond menu should return -1
 	if m.MapRowToItem(100) != -1 {
@@ -1107,36 +1102,36 @@ func TestMainMenu_MapRowToItem_Invalid(t *testing.T) {
 }
 
 func TestMainMenu_MapRowToItem_NoProjects(t *testing.T) {
-	// Claude carries the subscription row, which shifts the body rows down by one.
+	// The PLAN row was removed, shifting the body rows up by one.
 	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 
-	// No projects: row 0 border, 1 subscription, 2 title, 3 switcher gap, 4 tab bar,
-	// 5 separator, 6 empty, 7 blank spacer, 8 add-project row (the only selectable item).
-	if m.MapRowToItem(8) != 0 {
-		t.Errorf("add-project row at row 8 should map to item 0, got %d", m.MapRowToItem(8))
+	// No projects: row 0 border, 1 title, 2 switcher gap, 3 tab bar, 4 separator,
+	// 5 empty, 6 blank spacer, 7 add-project row (the only selectable item).
+	if m.MapRowToItem(7) != 0 {
+		t.Errorf("add-project row at row 7 should map to item 0, got %d", m.MapRowToItem(7))
 	}
-	if m.MapRowToItem(7) != -1 {
-		t.Errorf("blank spacer at row 7 should return -1, got %d", m.MapRowToItem(7))
+	if m.MapRowToItem(6) != -1 {
+		t.Errorf("blank spacer at row 6 should return -1, got %d", m.MapRowToItem(6))
 	}
 }
 
 func TestMainMenu_MapRowToItem_WithUpdateVersion(t *testing.T) {
 	projects := []models.Project{{Name: "p1", Path: "/p1"}}
-	// Claude carries the subscription row, which shifts the body rows down by one.
+	// The PLAN row was removed, shifting the body rows up by one.
 	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetUpdateVersion("v1.2.3")
 	m.SetSize(80, 30)
 
 	// The update notice reuses an existing header row (under the wordmark), so
 	// a pending update must NOT shift the body rows:
-	// Row 0: border, 1: subscription, 2: title, 3: switcher gap, 4: tab bar,
-	// 5: separator, 6: empty, 7-8: project.
-	if m.MapRowToItem(7) != 0 {
-		t.Errorf("with update version, project should be at row 7, got %d", m.MapRowToItem(7))
+	// Row 0: border, 1: title, 2: switcher gap, 3: tab bar, 4: separator,
+	// 5: empty, 6-7: project.
+	if m.MapRowToItem(6) != 0 {
+		t.Errorf("with update version, project should be at row 6, got %d", m.MapRowToItem(6))
 	}
-	if m.MapRowToItem(8) != 0 {
-		t.Errorf("with update version, project path at row 8 should map to 0, got %d", m.MapRowToItem(8))
+	if m.MapRowToItem(7) != 0 {
+		t.Errorf("with update version, project path at row 7 should map to 0, got %d", m.MapRowToItem(7))
 	}
 }
 
@@ -1145,16 +1140,16 @@ func TestMainMenu_MouseClickSelectsItem(t *testing.T) {
 		{Name: "p1", Path: "/p1"},
 		{Name: "p2", Path: "/p2"},
 	}
-	// Claude carries the subscription row, which shifts the body rows down by one.
+	// The PLAN row was removed, shifting the body rows up by one.
 	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 	_ = m.View() // compute the vertical centering offset
 
-	// Second project's name line is box row 9 (border, title, subscription, switcher
-	// gap, tab bar, separator, empty, p0-name, p0-path, p1-name). Account for centering.
+	// Second project's name line is box row 8 (border, title, switcher gap, tab bar,
+	// separator, empty, p0-name, p0-path, p1-name). Account for centering.
 	mouseMsg := tea.MouseMsg{
 		X:      10,
-		Y:      m.CenterOffsetY() + 9,
+		Y:      m.CenterOffsetY() + 8,
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
 	}
@@ -1174,18 +1169,18 @@ func TestMainMenu_MouseDoubleClickActivates(t *testing.T) {
 		{Name: "p1", Path: "/p1"},
 		{Name: "p2", Path: "/p2"},
 	}
-	// Claude carries the subscription row, which shifts the body rows down by one.
+	// The PLAN row was removed, shifting the body rows up by one.
 	m := tui.NewMainMenu(projects, []string{"claude"}, "claude", "animated")
 	m.SetSize(80, 30)
 	_ = m.View() // compute the vertical centering offset
 
-	// First project's name line is box row 7. Clicking the already-selected
+	// First project's name line is box row 6. Clicking the already-selected
 	// item acts as a double-click activation. Hit-testing now requires the pointer
 	// to be on a glyph, so target the project name (box col 6 of " ▌1  p1") relative
 	// to the box origin rather than a fixed absolute column in the padding.
 	mouseMsg := tea.MouseMsg{
 		X:      m.MenuOriginX() + 6,
-		Y:      m.CenterOffsetY() + 7,
+		Y:      m.CenterOffsetY() + 6,
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
 	}
@@ -3904,8 +3899,7 @@ func TestMainMenu_SelectWorktree(t *testing.T) {
 
 func TestMainMenu_MapRowToItemWithWorktrees(t *testing.T) {
 	projects := testProjectsWithWorktrees()
-	// Claude carries the subscription row, which shifts every row below the header
-	// down by one.
+	// The PLAN row was removed, shifting every row below the header up by one.
 	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
 	m.SetSize(100, 40)
 
@@ -3915,54 +3909,52 @@ func TestMainMenu_MapRowToItemWithWorktrees(t *testing.T) {
 	// Row layout (0-indexed within menu box):
 	// 0: top border
 	// 1: title
-	// 2: subscription row
-	// 3: switcher gap
-	// 4: tab bar
-	// 5: separator
-	// 6: empty
-	// 7-8: project 0 (name + path) -> item 0
-	// 9-10: worktree 0 (branch + path) -> item 1
-	// 11-12: worktree 1 (branch + path) -> item 2
-	// 13-14: project 1 (name + path) -> item 3
+	// 2: switcher gap
+	// 3: tab bar
+	// 4: separator
+	// 5: empty
+	// 6-7: project 0 (name + path) -> item 0
+	// 8-9: worktree 0 (branch + path) -> item 1
+	// 10-11: worktree 1 (branch + path) -> item 2
+	// 12: add-worktree -> item 3
 
 	// Project 0
+	if m.MapRowToItem(6) != 0 {
+		t.Errorf("row 6: expected item 0, got %d", m.MapRowToItem(6))
+	}
 	if m.MapRowToItem(7) != 0 {
 		t.Errorf("row 7: expected item 0, got %d", m.MapRowToItem(7))
 	}
-	if m.MapRowToItem(8) != 0 {
-		t.Errorf("row 8: expected item 0, got %d", m.MapRowToItem(8))
-	}
 
 	// Worktree entries (2 rows each: branch + path)
-	if m.MapRowToItem(9) != 1 {
-		t.Errorf("row 9: expected item 1 (wt0), got %d", m.MapRowToItem(9))
+	if m.MapRowToItem(8) != 1 {
+		t.Errorf("row 8: expected item 1 (wt0), got %d", m.MapRowToItem(8))
 	}
-	if m.MapRowToItem(10) != 1 {
-		t.Errorf("row 10: expected item 1 (wt0 path row), got %d", m.MapRowToItem(10))
+	if m.MapRowToItem(9) != 1 {
+		t.Errorf("row 9: expected item 1 (wt0 path row), got %d", m.MapRowToItem(9))
+	}
+	if m.MapRowToItem(10) != 2 {
+		t.Errorf("row 10: expected item 2 (wt1), got %d", m.MapRowToItem(10))
 	}
 	if m.MapRowToItem(11) != 2 {
-		t.Errorf("row 11: expected item 2 (wt1), got %d", m.MapRowToItem(11))
-	}
-	if m.MapRowToItem(12) != 2 {
-		t.Errorf("row 12: expected item 2 (wt1 path row), got %d", m.MapRowToItem(12))
+		t.Errorf("row 11: expected item 2 (wt1 path row), got %d", m.MapRowToItem(11))
 	}
 
-	// Add-worktree row (item 3); project 1 is item 4 at row 14.
-	if m.MapRowToItem(13) != 3 {
-		t.Errorf("row 13: expected item 3 (add-worktree), got %d", m.MapRowToItem(13))
+	// Add-worktree row (item 3); project 1 is item 4 at row 13.
+	if m.MapRowToItem(12) != 3 {
+		t.Errorf("row 12: expected item 3 (add-worktree), got %d", m.MapRowToItem(12))
 	}
 }
 
 func TestMainMenu_CalculateLayoutWithWorktrees(t *testing.T) {
 	projects := testProjectsWithWorktrees()
-	// Claude carries the subscription row, so chrome includes it here.
 	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
 	m.SetSize(100, 40)
 
 	layout1 := m.CalculateLayout(100, 40)
 
-	// Collapsed: 13 (chrome, incl. subscription row + add-project hint) + 3*2 (projects) = 19
-	expectedCollapsed := 13 + (3 * 2)
+	// Collapsed: 12 (chrome, incl. add-project hint) + 3*2 (projects) = 18
+	expectedCollapsed := 12 + (3 * 2)
 	if layout1.MenuHeight != expectedCollapsed {
 		t.Errorf("collapsed height: got %d, want %d", layout1.MenuHeight, expectedCollapsed)
 	}
@@ -3971,8 +3963,8 @@ func TestMainMenu_CalculateLayoutWithWorktrees(t *testing.T) {
 	m.ToggleWorktrees(0)
 	layout2 := m.CalculateLayout(100, 40)
 
-	// Expanded: 13 (chrome) + 3*2 (projects) + 2*2 (worktrees) + 1 (add-worktree) = 24
-	expectedExpanded := 13 + (3 * 2) + (2 * 2) + 1
+	// Expanded: 12 (chrome) + 3*2 (projects) + 2*2 (worktrees) + 1 (add-worktree) = 23
+	expectedExpanded := 12 + (3 * 2) + (2 * 2) + 1
 	if layout2.MenuHeight != expectedExpanded {
 		t.Errorf("expanded height: got %d, want %d", layout2.MenuHeight, expectedExpanded)
 	}
@@ -4129,33 +4121,31 @@ func TestMainMenu_CollapseWithAddWorktreeAdjustsSelection(t *testing.T) {
 
 func TestMainMenu_MapRowToItemWithAddWorktree(t *testing.T) {
 	projects := testProjectsWithWorktrees()
-	// Claude carries the subscription row, which shifts every project/worktree row
-	// down by one.
+	// The PLAN row was removed, shifting every project/worktree row up by one.
 	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
 	m.SetSize(100, 40)
 
 	m.ToggleWorktrees(0)
-	// Layout: P0(rows 7-8), WT0(rows 9-10), WT1(rows 11-12), +Add(row 13), P1(rows 14-15)
-	if got := m.MapRowToItem(13); got != 3 {
-		t.Errorf("+Add row 13: got flat %d, want 3", got)
+	// Layout: P0(rows 6-7), WT0(rows 8-9), WT1(rows 10-11), +Add(row 12), P1(rows 13-14)
+	if got := m.MapRowToItem(12); got != 3 {
+		t.Errorf("+Add row 12: got flat %d, want 3", got)
 	}
-	if got := m.MapRowToItem(14); got != 4 {
-		t.Errorf("P1 row 14: got flat %d, want 4", got)
+	if got := m.MapRowToItem(13); got != 4 {
+		t.Errorf("P1 row 13: got flat %d, want 4", got)
 	}
 }
 
 func TestMainMenu_CalculateLayoutWithAddWorktree(t *testing.T) {
 	projects := testProjectsWithWorktrees()
-	// Claude carries the subscription row, so chrome includes it here.
 	m := tui.NewMainMenu(projects, testAITools(), "claude", "animated")
 
 	m.ToggleWorktrees(0)
 	m.ToggleWorktrees(2)
 
 	layout := m.CalculateLayout(100, 60)
-	// 13 (chrome, incl. subscription row + add-project hint) + 3*2 (projects) + 3*2 (worktrees) + 2*1 (add-worktree) = 27
-	if layout.MenuHeight != 27 {
-		t.Errorf("menu height: got %d, want 27", layout.MenuHeight)
+	// 12 (chrome, incl. add-project hint) + 3*2 (projects) + 3*2 (worktrees) + 2*1 (add-worktree) = 26
+	if layout.MenuHeight != 26 {
+		t.Errorf("menu height: got %d, want 26", layout.MenuHeight)
 	}
 }
 
