@@ -220,6 +220,7 @@ func TestSubscriptionModal_addPreviewShowsProvidersAndAuth(t *testing.T) {
 		"Zhipu / GLM",
 		"Xiaomi MiMo",
 		"OpenAI / ChatGPT",
+		"Moonshot Kimi",
 		"API KEY",
 		"CODEX LOGIN",
 		"[ Choose provider ]",

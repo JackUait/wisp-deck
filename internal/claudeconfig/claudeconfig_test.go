@@ -735,6 +735,108 @@ func TestProviders_haveDisplayNamesAndValidDefaults(t *testing.T) {
 	}
 }
 
+// Moonshot Kimi is an Anthropic-compatible API-key gateway, so it must mirror
+// into OpenCode and resolve from either of its aliases. Its models feed a real
+// cost calculator, so the ids and prices are pinned to Moonshot's published list
+// prices rather than left to drift.
+func TestMoonshotProvider_catalogEntry(t *testing.T) {
+	provider, ok := ProviderByKey("moonshot")
+	if !ok {
+		t.Fatal("catalog is missing the moonshot provider")
+	}
+	if provider.Name != "Moonshot Kimi" {
+		t.Errorf("name = %q, want %q", provider.Name, "Moonshot Kimi")
+	}
+	if provider.BaseURL != "https://api.moonshot.ai/anthropic" {
+		t.Errorf("base URL = %q", provider.BaseURL)
+	}
+	if provider.Auth != AuthAPIKey {
+		t.Errorf("auth = %q, want %q", provider.Auth, AuthAPIKey)
+	}
+	if !provider.MirrorOpenCode {
+		t.Error("moonshot is Anthropic-compatible and must mirror into OpenCode")
+	}
+
+	// Appended last, so precedence among competing alias matches and the zhipu
+	// fallback at Providers[0] are both unchanged. Note this does not mean no
+	// existing config is affected: a pre-existing profile named "…kimi…" matched
+	// no alias before and fell through to zhipu, and now resolves to Moonshot.
+	// That re-resolution is intended — such a config is a Kimi config.
+	if Providers[len(Providers)-1].Key != "moonshot" {
+		t.Error("moonshot must be appended last in the catalog")
+	}
+
+	for _, name := range []string{"Work kimi", "my Moonshot plan", "Moonshot Kimi"} {
+		if got := ProviderForName(name).Key; got != "moonshot" {
+			t.Errorf("ProviderForName(%q) = %q, want moonshot", name, got)
+		}
+	}
+
+	// Published Moonshot list prices (USD per 1M tokens, cache-miss input) and
+	// documented limits. Max output is pinned per model, not just checked for
+	// non-zero: a mirrored provider's zero reaches OpenCode's limit.output
+	// verbatim, and ModelLimit only gates on Context so nothing else catches it.
+	type modelSpec struct {
+		inPerM, outPerM float64
+		context, output int
+	}
+	wantModels := map[string]modelSpec{
+		"kimi-k3":                  {3, 15, 1048576, 131072},
+		"kimi-k2.7-code":           {0.95, 4, 262144, 32768},
+		"kimi-k2.7-code-highspeed": {1.9, 8, 262144, 32768},
+		"kimi-k2.6":                {0.95, 4, 262144, 32768},
+	}
+	got := map[string]bool{}
+	for _, model := range provider.Models {
+		got[model.ID] = true
+		want, known := wantModels[model.ID]
+		if !known {
+			t.Errorf("unexpected moonshot model %q — only verified models may ship", model.ID)
+			continue
+		}
+		if model.InPerM != want.inPerM || model.OutPerM != want.outPerM {
+			t.Errorf("%s cost = %v/%v, want %v/%v", model.ID, model.InPerM, model.OutPerM, want.inPerM, want.outPerM)
+		}
+		if model.Context != want.context {
+			t.Errorf("%s context = %d, want %d", model.ID, model.Context, want.context)
+		}
+		if model.Output != want.output {
+			t.Errorf("%s max output = %d, want %d", model.ID, model.Output, want.output)
+		}
+	}
+	for id := range wantModels {
+		if !got[id] {
+			t.Errorf("moonshot catalog is missing model %q", id)
+		}
+	}
+
+	// Claude Code routes background work (summarization, file triage) to the
+	// haiku slot, so haiku must not cost more per token than the sonnet
+	// workhorse. kimi-k2.7-code-highspeed is exactly 2x kimi-k2.7-code.
+	wantDefaults := [4]string{"kimi-k3", "kimi-k2.7-code", "kimi-k2.7-code", "kimi-k3"}
+	if provider.DefaultModels != wantDefaults {
+		t.Errorf("DefaultModels = %v, want %v", provider.DefaultModels, wantDefaults)
+	}
+}
+
+// Mirrored providers' limits are serialized into OpenCode's config verbatim by
+// opencodeconfig.modelEntry, and ModelLimit reports ok whenever Context is
+// non-zero — so a model with max output 0 publishes "output": 0 for a model
+// users actually run. Moonshot was the first mirrored provider to hit this.
+func TestMirroredProviders_publishMaxOutput(t *testing.T) {
+	for _, provider := range Providers {
+		if !provider.MirrorOpenCode {
+			continue
+		}
+		for _, model := range provider.Models {
+			if model.Output == 0 {
+				t.Errorf("provider %q model %q has max output 0; it mirrors into OpenCode as limit.output = 0",
+					provider.Key, model.ID)
+			}
+		}
+	}
+}
+
 func TestProviderByKey_returnsCatalogProvider(t *testing.T) {
 	got, ok := ProviderByKey("openai-chatgpt")
 	if !ok || got.Name != "OpenAI / ChatGPT" {
@@ -743,7 +845,7 @@ func TestProviderByKey_returnsCatalogProvider(t *testing.T) {
 }
 
 func TestAddForProvider_writesInitializedProfile(t *testing.T) {
-	for _, key := range []string{"zhipu", "mimo", "openai-chatgpt"} {
+	for _, key := range []string{"zhipu", "mimo", "openai-chatgpt", "moonshot"} {
 		t.Run(key, func(t *testing.T) {
 			dir := t.TempDir()
 			list := filepath.Join(dir, "claude-configs.list")

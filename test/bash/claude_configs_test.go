@@ -76,6 +76,11 @@ func TestGetClaudeConfigProviderReadsOnlyKnownStringMarkers(t *testing.T) {
 			want:    "mimo",
 		},
 		{
+			name:    "moonshot",
+			content: `{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"moonshot"}}`,
+			want:    "moonshot",
+		},
+		{
 			name:    "unknown marker",
 			content: `{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"$(touch /tmp/no)"}}`,
 		},

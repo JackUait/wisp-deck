@@ -92,6 +92,35 @@ var Providers = []Provider{
 			{"gpt-5.3-codex-spark", 0, 0, 128000, 0},
 		},
 	},
+	{
+		Key:            "moonshot",
+		Name:           "Moonshot Kimi",
+		Aliases:        []string{"moonshot", "kimi"},
+		BaseURL:        "https://api.moonshot.ai/anthropic",
+		Auth:           AuthAPIKey,
+		MirrorOpenCode: true,
+		// Haiku maps to the sonnet workhorse rather than -highspeed: Claude Code
+		// routes background work to haiku, and highspeed costs exactly 2x per
+		// token, which would invert the cost gradient every other provider keeps.
+		DefaultModels: [4]string{"kimi-k3", "kimi-k2.7-code", "kimi-k2.7-code", "kimi-k3"},
+		// Prices are Moonshot's official cache-miss input / output list prices
+		// (platform.kimi.ai/docs/pricing). k2.6 and k2.7-code match the rates
+		// already hand-maintained in usage/pricing.go, so init()'s catalog fold
+		// is a no-op for them rather than a silent repricing of past usage.
+		// Max-output must stay non-zero: these mirror into OpenCode's
+		// limit.output verbatim (ModelLimit only gates on Context).
+		Models: []Model{
+			// k3's max output is the documented 131072 default. The docs also
+			// mention 1048576 as a settable maximum, but that is single-sourced
+			// and equal to the whole context window, so the default is used.
+			{"kimi-k3", 3, 15, 1048576, 131072},
+			// The k2.x quickstarts document max_tokens "Default to be 32k aka
+			// 32768" and a shared 256K context for all three.
+			{"kimi-k2.7-code", 0.95, 4, 262144, 32768},
+			{"kimi-k2.7-code-highspeed", 1.9, 8, 262144, 32768},
+			{"kimi-k2.6", 0.95, 4, 262144, 32768},
+		},
+	},
 }
 
 // providerFor returns the provider whose alias appears in the config name, or the

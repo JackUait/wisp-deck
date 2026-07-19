@@ -30,11 +30,12 @@ var modelRates = map[string]modelRate{
 	"sonnet": {3, 15},
 	"haiku":  {1, 5},
 
-	// GLM (Z.ai) and MiMo (Xiaomi) subscription-provider models are defined once in
-	// claudeconfig's catalog and folded into this map by init() below, so their ids
-	// and prices stay identical in the mapping UI, this cost calc, and the OpenCode
-	// mirror. mimo-v2.5 is a prefix of mimo-v2.5-pro; rateFor's longest-prefix match
-	// keeps them distinct.
+	// GLM (Z.ai), MiMo (Xiaomi), and Moonshot Kimi subscription-provider models are
+	// defined once in claudeconfig's catalog and folded into this map by init()
+	// below, so their ids and prices stay identical in the mapping UI, this cost
+	// calc, and the OpenCode mirror. mimo-v2.5 is a prefix of mimo-v2.5-pro, and
+	// kimi-k2.7-code of kimi-k2.7-code-highspeed; rateFor's longest-prefix match
+	// keeps each pair distinct.
 
 	// Models routed through OpenCode (and other tools), priced from models.dev —
 	// the catalog OpenCode itself uses — input/output USD per 1M tokens, sourced
@@ -93,7 +94,10 @@ var modelRates = map[string]modelRate{
 	"qwen3-max":         {1.2, 6},
 	"qwen-max":          {1.6, 6.4},
 
-	// Moonshot Kimi
+	// Moonshot Kimi. The older ids below are prefix fallbacks for historical
+	// OpenCode usage; the currently offered kimi-k3 / k2.7-code / k2.7-code-
+	// highspeed / k2.6 come from the catalog (folded in init). k2.6 and k2.7-code
+	// are listed in both at the same rate, so the fold cannot reprice them.
 	"kimi-k2":                {0.6, 2.5},
 	"kimi-k2-turbo":          {2.4, 10},
 	"kimi-k2-thinking-turbo": {1.15, 8},

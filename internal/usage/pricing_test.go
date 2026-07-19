@@ -232,10 +232,18 @@ func TestModelCostUSD_openCodeProviders(t *testing.T) {
 		{"qwen3-coder-plus", 1 + 5},
 		{"qwen3-coder-480b-a35b-instruct", 1.5 + 7.5}, // base qwen3-coder
 		{"qwen3-max", 1.2 + 6},
-		// Moonshot Kimi
+		// Moonshot Kimi. k3 and k2.7-code-highspeed are the cases that actually
+		// discriminate the claudeconfig catalog fold — they resolve only through
+		// it. k2.6 and k2.7-code carried these same rates in the hand-maintained
+		// table before the fold existed, so they guard against the fold silently
+		// REPRICING them (which would rewrite historical usage cost), not against
+		// them being absent.
 		{"kimi-k2-0905-preview", 0.6 + 2.5}, // base kimi-k2
 		{"kimi-k2-turbo-preview", 2.4 + 10},
 		{"kimi-k2.6", 0.95 + 4},
+		{"kimi-k3", 3 + 15},
+		{"kimi-k2.7-code", 0.95 + 4},
+		{"kimi-k2.7-code-highspeed", 1.9 + 8},
 		// Z.ai GLM (from the shared model catalog)
 		{"glm-4.6", 0.6 + 2.2},
 		{"glm-5.1", 1.40 + 4.40},
@@ -258,12 +266,14 @@ func TestModelCostUSD_openCodeLongestPrefixWins(t *testing.T) {
 		model string
 		want  float64 // 1M in + 1M out
 	}{
-		{"gpt-5-mini", 0.25 + 2},            // not gpt-5 (11.25)
-		{"gpt-5.2", 1.75 + 14},              // not gpt-5 (11.25)
-		{"gpt-5.4", 2.5 + 15},               // not gpt-5 (11.25)
-		{"glm-5.2", 1.40 + 4.40},            // existing entry beats new glm-5 (4.2)
-		{"qwen3-coder-plus", 1 + 5},         // not qwen3-coder (9)
-		{"kimi-k2-turbo-preview", 2.4 + 10}, // not kimi-k2 (3.1)
+		{"gpt-5-mini", 0.25 + 2},              // not gpt-5 (11.25)
+		{"gpt-5.2", 1.75 + 14},                // not gpt-5 (11.25)
+		{"gpt-5.4", 2.5 + 15},                 // not gpt-5 (11.25)
+		{"glm-5.2", 1.40 + 4.40},              // existing entry beats new glm-5 (4.2)
+		{"qwen3-coder-plus", 1 + 5},           // not qwen3-coder (9)
+		{"kimi-k2-turbo-preview", 2.4 + 10},   // not kimi-k2 (3.1)
+		{"kimi-k2.7-code-highspeed", 1.9 + 8}, // not kimi-k2.7-code (4.95)
+		{"kimi-k3-0716-preview", 3 + 15},      // base kimi-k3, not kimi-k2
 	}
 	for i := 0; i < 30; i++ {
 		for _, c := range cases {
