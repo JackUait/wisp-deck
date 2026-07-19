@@ -48,6 +48,42 @@ printf '%%s\n' "$*" >> %q`,
 		sessionAcct, sessionConfig, resultLine, resultLine, rec))
 }
 
+// A configured subscription makes the switch pill reachable even with a single
+// login and no other agent — otherwise the user could never open the popup to
+// change backends.
+func TestAccountPillEnabled_shows_with_subscription_single_account(t *testing.T) {
+	dir := t.TempDir()
+	list := writeTempFile(t, dir, "claude-accounts.list", "# only comments\n")
+	configsList := writeTempFile(t, dir, "claude-configs.list", "GLM:glm.json\n")
+	relaunch := writeTempFile(t, dir, "relaunch", "tool=claude\nconfigs_list="+configsList+"\n")
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("account_pill_enabled %q %q", relaunch, list)), nil)
+	if code != 0 {
+		t.Fatalf("expected pill enabled with a configured subscription: %s", out)
+	}
+}
+
+// wrapper.sh must stamp the launch subscription into the tmux session env so
+// the switcher's active dot marks THIS pane's backend even after another session
+// flips the global config pointer (mirrors WISP_DECK_CLAUDE_ACCOUNT).
+func TestWrapper_stamps_session_config_on_new_session(t *testing.T) {
+	root := projectRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "wrapper.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, "new-session") && strings.Contains(line, "WISP_DECK_CLAUDE_CONFIG=") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("wrapper.sh must pass WISP_DECK_CLAUDE_CONFIG to tmux new-session via -e")
+	}
+}
+
 // The per-session subscription stamp (WISP_DECK_CLAUDE_CONFIG) wins over the
 // global config pointer, mirroring how WISP_DECK_CLAUDE_ACCOUNT works: another
 // session flipping the pointer must not change what THIS pane's dot marks.

@@ -143,9 +143,13 @@ account_pill_enabled() {
   gt_multiple_claude_accounts "$list_file" && return 0
   # wc -w, not `set -- $tools`: this runs inside the compact-view pane's zsh,
   # which does not word-split an unquoted expansion.
-  local tools
+  local tools configs_list
   tools="$(sed -n 's/^tools=//p' "$relaunch_file" 2>/dev/null)"
-  [ "$(printf '%s\n' "$tools" | wc -w)" -ge 2 ]
+  [ "$(printf '%s\n' "$tools" | wc -w)" -ge 2 ] && return 0
+  # A configured subscription is switchable too, so the pill must show even with
+  # a single login and no other agent.
+  configs_list="$(sed -n 's/^configs_list=//p' "$relaunch_file" 2>/dev/null)"
+  [ -n "$configs_list" ] && [ -s "$configs_list" ]
 }
 
 # pill_current <tool> <pointer_file> <list_file> <default_label_file> \
