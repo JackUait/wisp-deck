@@ -218,7 +218,9 @@ func writeExecutionError(writer http.ResponseWriter, request *http.Request, err 
 	}
 	status := http.StatusBadGateway
 	errorType := "api_error"
-	if strings.Contains(err.Error(), "model ") && strings.Contains(err.Error(), "not available") {
+	var invalidContinuation invalidContinuationError
+	if errors.As(err, &invalidContinuation) ||
+		(strings.Contains(err.Error(), "model ") && strings.Contains(err.Error(), "not available")) {
 		status = http.StatusBadRequest
 		errorType = "invalid_request_error"
 	}

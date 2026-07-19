@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeMessageExecutor struct {
@@ -300,5 +302,60 @@ func TestHandlerUsesBearerKeyForSDKCompatibility(t *testing.T) {
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestStaleToolResultErrorIsNonRetryableInvalidRequest(t *testing.T) {
+	// Regression: an expired tool continuation was surfaced as a retryable 502,
+	// so Claude Code burned its full retry ladder against state the bridge had
+	// already destroyed. The bridge can never satisfy that request again, so it
+	// must answer with a non-retryable 400 invalid_request_error.
+	rpc := newFakeEngineRPC()
+	rpc.onTurnStart = func(threadID, turnID string) {
+		rpc.requests <- ServerRequest{
+			ID:     fakeRequestID("rpc-stale"),
+			Method: "item/tool/call",
+			Params: json.RawMessage(fmt.Sprintf(
+				`{"threadId":%q,"turnId":%q,"callId":"call","tool":"Echo","arguments":{}}`,
+				threadID, turnID,
+			)),
+		}
+	}
+	engine, err := NewEngine(rpc, EngineOptions{
+		PrivateCWD: t.TempDir(), ToolBatchWindow: time.Millisecond,
+		PendingTTL: 15 * time.Millisecond, Models: []string{"gpt-test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	first, err := engine.Execute(context.Background(), testTranslation("expire"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for engine.PendingTurns() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	_, staleErr := engine.Execute(context.Background(), Translation{
+		Model: "gpt-test", MaxTokens: 100,
+		ToolResults: []TranslatedToolResult{{ToolUseID: first.Content[0].ID, Success: true}},
+	}, nil)
+	if staleErr == nil {
+		t.Fatal("expected stale continuation error")
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	writeExecutionError(recorder, request, staleErr)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", recorder.Code, recorder.Body.String())
+	}
+	var body AnthropicErrorResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Type != "invalid_request_error" || !strings.Contains(body.Error.Message, "unknown or expired") {
+		t.Fatalf("error body = %+v", body)
 	}
 }

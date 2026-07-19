@@ -15,8 +15,11 @@ import (
 
 const (
 	defaultToolBatchWindow = 20 * time.Millisecond
-	defaultPendingTTL      = 10 * time.Minute
-	engineCleanupTimeout   = time.Second
+	// Claude executes tools for as long as it needs — bash runs 10+ minutes,
+	// subagents far longer — and expiring a suspended turn kills the
+	// conversation permanently. The TTL only reclaims turns Claude abandoned.
+	defaultPendingTTL    = 24 * time.Hour
+	engineCleanupTimeout = time.Second
 )
 
 // EngineRPC is the active subset of app-server RPC used by the turn engine.
@@ -70,6 +73,13 @@ type engineTurn struct {
 
 	cleanupOnce sync.Once
 }
+
+// invalidContinuationError marks a tool continuation the bridge can never
+// satisfy (state consumed or expired); the client must not retry it.
+type invalidContinuationError struct{ err error }
+
+func (e invalidContinuationError) Error() string { return e.err.Error() }
+func (e invalidContinuationError) Unwrap() error { return e.err }
 
 type pendingDynamicTool struct {
 	request ServerRequest
@@ -227,7 +237,7 @@ func (e *Engine) resume(
 ) (AnthropicMessage, error) {
 	state, err := e.validateContinuation(translation.ToolResults)
 	if err != nil {
-		return AnthropicMessage{}, err
+		return AnthropicMessage{}, invalidContinuationError{err}
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()

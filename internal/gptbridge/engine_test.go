@@ -421,3 +421,14 @@ func TestEnginePendingToolTurnExpires(t *testing.T) {
 		t.Fatalf("stale result error = %v", err)
 	}
 }
+
+func TestDefaultPendingTTLOutlivesLongClaudeToolRuns(t *testing.T) {
+	// Regression: the 10-minute default expired a suspended turn while a
+	// legitimate Claude-side bash tool (a ~12-minute `yarn lint` run) was still
+	// executing, permanently killing the conversation. Claude tools routinely
+	// run 10+ minutes (bash timeouts, subagents), so the default must sit far
+	// above any real tool runtime.
+	if defaultPendingTTL < 12*time.Hour {
+		t.Fatalf("defaultPendingTTL = %s; a live turn must survive long Claude tool runs (want >= 12h)", defaultPendingTTL)
+	}
+}
