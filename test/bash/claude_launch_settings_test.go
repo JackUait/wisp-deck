@@ -91,6 +91,69 @@ func TestSettingsJsonClaudeLaunchSettingsMergesActiveConfigAndDisablesNativeNoti
 	}
 }
 
+func TestSettingsJsonClaudeLaunchSettingsDisablesUnavailableConnectorsForLegacyChatGPTProfile(t *testing.T) {
+	dir := t.TempDir()
+	generationDir := filepath.Join(dir, "generation.ChatGPT1")
+	if err := os.Mkdir(generationDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	active := writeTempFile(t, dir, "openai-chatgpt.json", `{
+  "model": "gpt-5.6-terra",
+  "env": {
+    "WISP_DECK_SUBSCRIPTION_PROVIDER": "openai-chatgpt"
+  }
+}
+`)
+	before, err := os.ReadFile(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snippet := settingsJsonSnippet(t,
+		fmt.Sprintf(`write_claude_launch_settings %q %q`, generationDir, active))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	got := readJSONMap(t, filepath.Join(generationDir, "claude-settings.json"))
+	if got["disableClaudeAiConnectors"] != true {
+		t.Fatalf("disableClaudeAiConnectors = %#v, want true",
+			got["disableClaudeAiConnectors"])
+	}
+	after, err := os.ReadFile(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("legacy ChatGPT source profile was mutated")
+	}
+}
+
+func TestSettingsJsonClaudeLaunchSettingsPreservesConnectorSettingForOtherProviders(t *testing.T) {
+	dir := t.TempDir()
+	generationDir := filepath.Join(dir, "generation.MiMo1")
+	if err := os.Mkdir(generationDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	active := writeTempFile(t, dir, "mimo.json", `{
+  "disableClaudeAiConnectors": false,
+  "env": {
+    "WISP_DECK_SUBSCRIPTION_PROVIDER": "mimo"
+  }
+}
+`)
+
+	snippet := settingsJsonSnippet(t,
+		fmt.Sprintf(`write_claude_launch_settings %q %q`, generationDir, active))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	got := readJSONMap(t, filepath.Join(generationDir, "claude-settings.json"))
+	if got["disableClaudeAiConnectors"] != false {
+		t.Fatalf("disableClaudeAiConnectors = %#v, want preserved false",
+			got["disableClaudeAiConnectors"])
+	}
+}
+
 func TestSettingsJsonClaudeLaunchSettingsPreservesExplicitHookDisable(t *testing.T) {
 	dir := t.TempDir()
 	generationDir := filepath.Join(dir, "generation.HooksOff1")
