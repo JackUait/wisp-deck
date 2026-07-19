@@ -58,8 +58,9 @@ func TestSettingsRowAccessors_match_constants(t *testing.T) {
 	}
 }
 
-// Regression: ↵ on the Account row opens the login panel, not the auto-switch
-// toggle. This is the exact breakage adding a tenth row would have caused.
+// Regression: ↵ on the Account row opens the unified subscription modal, not
+// the auto-switch toggle. This is the exact breakage adding a tenth row would
+// have caused.
 func TestSettingsEnter_on_account_row_opens_account_panel(t *testing.T) {
 	m := rowTestMenu()
 	m.settingsSelected = m.loginRowIndex()
@@ -67,8 +68,8 @@ func TestSettingsEnter_on_account_row_opens_account_panel(t *testing.T) {
 
 	m.settingsEnter()
 
-	if !m.accountMenuOpen {
-		t.Error("↵ on the Account row must open the account panel")
+	if !m.subscriptionModal.open {
+		t.Error("↵ on the Account row must open the unified subscription modal")
 	}
 	if m.AutoSwitchEnabled() != before {
 		t.Error("↵ on the Account row must not toggle auto-switch")

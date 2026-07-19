@@ -335,3 +335,44 @@ func TestSubscriptionModalMouse_clickUseSwitchesLogin(t *testing.T) {
 		t.Fatalf("selectedAccount = %d, want 1 (Work)", got.selectedAccount)
 	}
 }
+
+// Settings › Account now opens the unified subscription modal, focused on the
+// active login row.
+func TestSettingsEnter_onAccountOpensUnifiedModalAtLogins(t *testing.T) {
+	m := newUnifiedModalMenu(t)
+	m.SetActiveClaudeAccount("work")
+	m.settingsSelected = rowAccount
+	_, _ = m.settingsEnter()
+	if !m.subscriptionModal.open {
+		t.Fatal("Account Enter must open the unified subscription modal")
+	}
+	if got, want := m.subscriptionModal.profileCursor, m.subscriptionLoginRowStart()+1; got != want {
+		t.Fatalf("cursor = %d, want active login row %d", got, want)
+	}
+}
+
+// The 'l' shortcut opens the unified modal straight into the new-login input.
+func TestLKey_opensUnifiedModalLoginInput(t *testing.T) {
+	m := newUnifiedModalMenu(t)
+	m.SetActiveTab(TabProjects)
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if !m.subscriptionModal.open {
+		t.Fatal("'l' must open the unified subscription modal")
+	}
+	if m.subscriptionModal.mode != subscriptionLoginName {
+		t.Fatalf("mode = %v, want subscriptionLoginName", m.subscriptionModal.mode)
+	}
+}
+
+// Enter on the main-page LOGIN switcher row opens the unified modal too.
+func TestFocusAccountEnter_opensUnifiedModalAtLogins(t *testing.T) {
+	m := newUnifiedModalMenu(t)
+	m.focus = FocusAccount
+	_, _ = m.focusEnter()
+	if !m.subscriptionModal.open {
+		t.Fatal("FocusAccount Enter must open the unified subscription modal")
+	}
+	if !m.subscriptionModalOnLoginRow() {
+		t.Fatalf("cursor = %d, want a login row", m.subscriptionModal.profileCursor)
+	}
+}

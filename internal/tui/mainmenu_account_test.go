@@ -58,14 +58,15 @@ func TestAccountRow_notShownEvenWithAccounts(t *testing.T) {
 	}
 }
 
-// The 'L' key opens the login panel straight into the inline label input,
-// regardless of whether the row is visible — it is the entry point for the first
-// account (when the row is still hidden).
+// The 'L' key opens the unified subscription modal straight into the new-login
+// label input, regardless of whether the row is visible — it is the entry point
+// for the first account (when the row is still hidden).
 func TestAccount_LKeyOpensInlineInput(t *testing.T) {
 	m := acctTestMenu("claude") // no managed accounts → row hidden
 	m.handleRune('L')
-	if !m.accountMenuOpen || !m.accountMenuInputMode {
-		t.Fatalf("'L' should open the login panel in label-input mode (open=%v input=%v)", m.accountMenuOpen, m.accountMenuInputMode)
+	if !m.subscriptionModal.open || m.subscriptionModal.mode != subscriptionLoginName {
+		t.Fatalf("'L' should open the unified modal in login-label mode (open=%v mode=%v)",
+			m.subscriptionModal.open, m.subscriptionModal.mode)
 	}
 	if r := m.Result(); r != nil {
 		t.Fatalf("'L' should not set a result, got %+v", r)
@@ -172,14 +173,18 @@ func TestSettingsLoginRow_shown(t *testing.T) {
 	}
 }
 
-// Enter on the Settings Login row opens the login-management panel.
+// Enter on the Settings Login row opens the unified subscription modal at the
+// logins section.
 func TestSettingsLoginRow_enterOpensPanel(t *testing.T) {
 	m := acctTestMenu("claude")
 	m.SetActiveTab(TabSettings)
 	m.settingsSelected = m.loginRowIndex()
 	m.settingsEnter()
-	if !m.accountMenuOpen {
-		t.Fatalf("Enter on Login settings row should open the login panel")
+	if !m.subscriptionModal.open {
+		t.Fatalf("Enter on Login settings row should open the unified modal")
+	}
+	if !m.subscriptionModalOnLoginRow() {
+		t.Fatalf("cursor = %d, want a login row", m.subscriptionModal.profileCursor)
 	}
 }
 

@@ -15,6 +15,22 @@ import (
 // actions mutate the Claude login registry (internal/claudeaccount) instead of
 // the subscription config files.
 
+// openSubscriptionModalAtLogins opens the unified modal with the cursor on the
+// active login row — the shared entry point for every login-management surface.
+func (m *MainMenuModel) openSubscriptionModalAtLogins() tea.Cmd {
+	cmd := m.openSubscriptionModal()
+	m.selectSubscriptionProfile(m.subscriptionLoginRowStart() + m.selectedAccount)
+	return cmd
+}
+
+// openSubscriptionModalLoginAdd opens the unified modal straight into the
+// new-login label input (the 'l' shortcut).
+func (m *MainMenuModel) openSubscriptionModalLoginAdd() tea.Cmd {
+	cmd := m.openSubscriptionModal()
+	m.selectSubscriptionProfile(m.subscriptionAddLoginRow())
+	return tea.Batch(cmd, m.startSubscriptionLoginAdd())
+}
+
 // subscriptionLoginActions lists the details-pane action rows for the login
 // under the cursor. The implicit Default login cannot be deleted.
 func (m *MainMenuModel) subscriptionLoginActions() []int {

@@ -312,12 +312,7 @@ func (m *MainMenuModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.browser != nil {
 		return m.handleBrowserMouse(msg)
 	}
-	// The login-management modal is clickable (its cursor doubles as the hover
-	// highlight); its text-entry and remove-confirm sub-modes own input.
-	if m.accountMenuOpen && !m.accountMenuInputMode && !m.accountMenuConfirm {
-		return m.handleAccountMenuMouse(msg)
-	}
-	if m.accountMenuOpen || m.aiToolsPanelOpen ||
+	if m.aiToolsPanelOpen ||
 		m.inputMode != "" || m.deleteMode || m.staleConfirmIdx >= 0 {
 		return m, nil
 	}
@@ -508,71 +503,6 @@ func (m *MainMenuModel) scrollBody(delta int) {
 	}
 }
 
-// accountMenuRowToCursor maps a panel-relative row to a login cursor index, or
-// -1. Panel layout: top(0) title(1) sep(2) blank(3) Default(4) managed(5..4+len)
-// blank then the add row (6+len) when not typing a label.
-func (m *MainMenuModel) accountMenuRowToCursor(panelY int) int {
-	n := len(m.claudeAccounts)
-	switch {
-	case panelY == 4:
-		return 0
-	case panelY >= 5 && panelY <= 4+n:
-		return panelY - 4
-	case !m.accountMenuInputMode && panelY == 6+n:
-		return m.accountMenuAddRow()
-	}
-	return -1
-}
-
-// handleAccountMenuMouse gives the login-management modal pointer parity with the
-// keyboard: hover moves the cursor (its own highlight), left-click activates the
-// row under it (switch login, or open the add-login field), and the wheel moves
-// the cursor.
-func (m *MainMenuModel) handleAccountMenuMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	addRow := m.accountMenuAddRow()
-	switch msg.Button {
-	case tea.MouseButtonWheelDown:
-		if m.accountMenuCursor < addRow {
-			m.accountMenuCursor++
-		}
-		return m, nil
-	case tea.MouseButtonWheelUp:
-		if m.accountMenuCursor > 0 {
-			m.accountMenuCursor--
-		}
-		return m, nil
-	}
-
-	boxX := msg.X - m.menuOriginX
-	cursor := -1
-	// Require an actual glyph under the pointer so the row's trailing padding and
-	// the gap before the right-aligned status don't register as the login.
-	if boxX >= 0 && boxX < menuBoxWidth && m.boxCellHasGlyph(boxX, msg.Y-m.menuOriginY) {
-		cursor = m.accountMenuRowToCursor(msg.Y - m.modalOriginY)
-	}
-
-	switch msg.Action {
-	case tea.MouseActionMotion:
-		// Transient highlight only: cursor is -1 when the pointer is off every login
-		// row, clearing the hover; the keyboard cursor stays where it was.
-		m.accountMenuHover = cursor
-		return m, nil
-	case tea.MouseActionPress:
-		if msg.Button == tea.MouseButtonLeft && cursor >= 0 {
-			m.accountMenuCursor = cursor
-			if cursor == addRow {
-				return m, m.enterAccountAddInput()
-			}
-			// Switch the active login to the clicked row and close the modal,
-			// mirroring the Enter action.
-			m.selectedAccount = cursor
-			m.persistClaudeAccount()
-			m.accountMenuOpen = false
-			return m, nil
-		}
-	}
-	return m, nil
-}
 
 // directionFor maps the prev/next flag to the "prev"/"next" strings the Cycle*
 // helpers expect.

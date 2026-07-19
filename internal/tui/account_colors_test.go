@@ -61,8 +61,8 @@ func TestAccountColors_settingsRow_usesAccountColor(t *testing.T) {
 	}
 }
 
-// The login-management panel paints each login's label in its own color — both
-// the Default row and every managed row.
+// The unified modal's LOGINS section paints each login's label in its own
+// color — both the Default row and every managed row.
 func TestAccountColors_loginPanel_usesPerAccountColor(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
@@ -70,11 +70,10 @@ func TestAccountColors_loginPanel_usesPerAccountColor(t *testing.T) {
 
 	m := acctColorMenu(t, seededColors)
 	m.SetActiveClaudeAccount("work")
-	m.openAccountMenu()
-	// Move the keyboard cursor off every row so no row is overridden by the
-	// cursor's bold-primary highlight — each label shows its own account color.
-	m.accountMenuCursor = m.accountMenuAddRow()
-	panel := m.renderAccountMenuPanel()
+	m.openSubscriptionModal()
+	// The cursor stays on the subscription rows, so no login row is overridden
+	// by the cursor's highlight — each label shows its own account color.
+	panel := strings.Join(m.subscriptionProfileLines(subscriptionListWidth, 20), "\n")
 
 	work := lipgloss.NewStyle().Foreground(lipgloss.Color("78")).Render("Work")
 	personal := lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render("Personal")

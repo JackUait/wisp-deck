@@ -259,13 +259,10 @@ type MainMenuModel struct {
 	// to actually hold a glyph — trailing padding and inter-element gaps are spaces
 	// and so never register as a hover/click.
 	menuLines []string
-	// modalOriginY is the absolute screen row of the first line of the modal
-	// panel (account menu) appended below the menu box, or -1 when no
-	// modal is open. Lets the modal's rows be hit-tested like the menu's.
+	// modalOriginY is the absolute screen row of the first line of a modal
+	// panel appended below the menu box, or -1 when no modal is open. Lets the
+	// modal's rows be hit-tested like the menu's.
 	modalOriginY int
-	// accountMenuHover is the login row under the pointer in the account modal, or
-	// -1. Transient highlight, separate from the keyboard cursor (accountMenuCursor).
-	accountMenuHover int
 
 	// Inline input mode (add-project or open-once)
 	inputMode    string // "", "add-project", "open-once"
@@ -354,10 +351,6 @@ type MainMenuModel struct {
 	autoSwitchFile string // flag file path for persistence
 	keepAwake      string // "on" or "off" — hold the kernel sleep veto while an agent works
 
-	// Login-management panel, opened from the LOGIN row (mirrors the model-map
-	// panel that Plan opens). Lists Default + managed logins + an add row.
-	accountMenuOpen bool
-
 	// About panel: a small credit card opened with 'a' on the Settings tab and
 	// closed with Esc. Purely informational — no selectable rows.
 	aboutOpen bool
@@ -375,13 +368,7 @@ type MainMenuModel struct {
 	disabledToolsFile    string
 	aiToolRemovePending  string
 	aiToolRemoving       string
-	detectAITools        func() []models.AITool
-	accountMenuCursor    int  // 0=Default, 1..len=managed logins, len+1=add row
-	accountMenuConfirm   bool // delete confirmation showing for the cursor login
-	accountMenuInputMode bool // inline label entry (add or rename) is showing
-	accountMenuInput     textinput.Model
-	accountMenuRenameRow int // -1 = adding a login; 0 = renaming Default; 1..len = renaming a managed login (cursor row)
-	accountMenuErr       error
+	detectAITools func() []models.AITool
 
 	// Subscription management overlay. It replaces Settings-row cycling and the
 	// appended model-map panel with one profile inventory and detail surface.
@@ -444,7 +431,6 @@ func NewMainMenu(projects []models.Project, aiTools []string, currentAI string, 
 		defaultAccountLabel:       "Default",
 		hoverTab:                  -1,
 		hoverStatsMode:            -1,
-		accountMenuHover:          -1,
 		chatGPTAuthCheck:          defaultChatGPTAuthCheck,
 		chatGPTAuthLogin:          defaultChatGPTAuthLogin,
 	}
@@ -2376,9 +2362,6 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.aboutOpen {
 			return m.updateAbout(msg)
 		}
-		if m.accountMenuOpen {
-			return m.updateAccountMenu(msg)
-		}
 		if m.aiToolsPanelOpen {
 			return m.updateAIToolsPanel(msg)
 		}
@@ -2609,10 +2592,9 @@ func (m *MainMenuModel) focusRight() tea.Cmd {
 func (m *MainMenuModel) focusEnter() (tea.Model, tea.Cmd) {
 	switch m.focus {
 	case FocusAccount:
-		// Enter on the LOGIN row opens the login-management panel (switch / add /
-		// remove), mirroring how the PLAN row opens its model-map panel.
-		m.openAccountMenu()
-		return m, nil
+		// Enter on the LOGIN row opens the unified subscription modal focused on
+		// the logins section (switch / add / rename / remove).
+		return m, m.openSubscriptionModalAtLogins()
 	case FocusAI:
 		return m, nil
 	case FocusSubscription:
@@ -2753,10 +2735,9 @@ func (m *MainMenuModel) handleRune(r rune) (tea.Model, tea.Cmd) {
 	case 'l', 'L':
 		// Add a native Claude login. Always available (the LOGIN switcher row is
 		// hidden until at least one managed account exists), so this is the entry
-		// point for the first account: open the login panel straight into the
-		// inline label input.
-		m.openAccountMenu()
-		return m, m.enterAccountAddInput()
+		// point for the first account: open the unified subscription modal
+		// straight into the new-login label input.
+		return m, m.openSubscriptionModalLoginAdd()
 	case 'w', 'W':
 		m.ToggleWorktreesAtCursor()
 		return m, nil
@@ -2839,9 +2820,8 @@ func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 	case rowSubscription:
 		return m, m.openSubscriptionModal()
 	case rowAccount:
-		// Open the login-management panel (switch / add / remove logins).
-		m.openAccountMenu()
-		return m, nil
+		// Open the unified subscription modal focused on the logins section.
+		return m, m.openSubscriptionModalAtLogins()
 	case rowAITools:
 		m.openAIToolsPanel()
 		return m, nil
@@ -4060,9 +4040,6 @@ func (m *MainMenuModel) View() string {
 		menuBox = m.renderInputBox()
 	case m.activeTab == TabSettings:
 		menuBox = m.renderSettingsBox()
-		if m.accountMenuOpen {
-			appendModal(m.renderAccountMenuPanel())
-		}
 		if m.aiToolsPanelOpen {
 			appendModal(m.renderAIToolsPanel())
 		}
@@ -4070,9 +4047,6 @@ func (m *MainMenuModel) View() string {
 		menuBox = m.renderStatsBox()
 	default:
 		menuBox = m.renderMenuBox()
-		if m.accountMenuOpen {
-			appendModal(m.renderAccountMenuPanel())
-		}
 	}
 
 	// Capture the box-relative frame (menu + any appended modal) for glyph-precise
