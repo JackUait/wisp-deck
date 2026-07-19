@@ -167,9 +167,28 @@ pill_current() {
       *) label="$tool" ;;
     esac
     printf '%s\t%s\n' "$label" "$(get_tool_accent "$tool")"
-  else
-    account_current "$@"
+    return 0
   fi
+  # claude: when a subscription backend runs, it replaces the account on the
+  # pill — the account is overridden while a backend runs, so a login label
+  # would lie. config_pointer/configs_list are the extra trailing args the
+  # ledger passes; absent for legacy callers, which keep the account pill.
+  local pointer_file="$1" list_file="$2" default_label_file="$3" colors_file="$4" \
+    tmux_cmd="${5:-}" config_pointer="${6:-}" configs_list="${7:-}"
+  if [ -n "$config_pointer" ]; then
+    local active_config
+    if [ -n "$tmux_cmd" ]; then
+      active_config="$(current_session_config "$tmux_cmd" "$config_pointer")"
+    else
+      active_config="$(get_active_claude_config "$config_pointer")"
+    fi
+    if [ -n "$active_config" ]; then
+      # 256-color 111 matches the switcher popup's subscription rows (configRowColor).
+      printf '%s\t%s\n' "$(claude_config_name "$active_config" "$configs_list")" 111
+      return 0
+    fi
+  fi
+  account_current "$pointer_file" "$list_file" "$default_label_file" "$colors_file" "$tmux_cmd"
 }
 
 # account_pill <label> <color> [hover] — render the account pill for the ledger

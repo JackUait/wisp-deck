@@ -43,6 +43,25 @@ get_active_claude_config_name() {
   printf 'Standard Claude\n'
 }
 
+# claude_config_name <filename> <list_file> — display name for a config filename.
+# Empty filename reads as "Standard Claude"; a filename absent from the list
+# falls back to the bare filename (minus .json) so a stale pane still shows
+# something meaningful rather than lying "Standard Claude".
+claude_config_name() {
+  local file="$1" list_file="$2" name f
+  [ -z "$file" ] && { printf 'Standard Claude\n'; return 0; }
+  if [ -f "$list_file" ]; then
+    while IFS=: read -r name f; do
+      [[ -z "$name" || "$name" == \#* ]] && continue
+      if [ "$f" = "$file" ]; then
+        printf '%s\n' "$name"
+        return 0
+      fi
+    done < "$list_file"
+  fi
+  printf '%s\n' "${file%.json}"
+}
+
 # set_active_claude_config <pointer_file> <filename> — empty/standard removes the file.
 set_active_claude_config() {
   local file="$1" filename="$2"

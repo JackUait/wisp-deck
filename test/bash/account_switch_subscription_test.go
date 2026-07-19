@@ -48,6 +48,73 @@ printf '%%s\n' "$*" >> %q`,
 		sessionAcct, sessionConfig, resultLine, resultLine, rec))
 }
 
+// claude_config_name resolves a config filename to its display name, falling
+// back to "Standard Claude" for empty and to the bare filename for a stale one.
+func TestClaudeConfigName_resolves_display_name(t *testing.T) {
+	dir := t.TempDir()
+	list := writeTempFile(t, dir, "claude-configs.list", "GLM:glm.json\nOpenAI / ChatGPT:gpt.json\n")
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf(`claude_config_name gpt.json %q`, list)), nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "OpenAI / ChatGPT" {
+		t.Fatalf("name = %q, want 'OpenAI / ChatGPT'", out)
+	}
+	out, _ = runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf(`claude_config_name "" %q`, list)), nil)
+	if strings.TrimSpace(out) != "Standard Claude" {
+		t.Fatalf("empty = %q, want 'Standard Claude'", out)
+	}
+}
+
+// When a subscription is active for the pane, the ledger pill shows the
+// subscription name (in the subscription accent), not the account — the
+// account is overridden while a backend runs.
+func TestPillCurrent_shows_subscription_when_active(t *testing.T) {
+	dir := t.TempDir()
+	list := writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	pointer := writeTempFile(t, dir, "claude-account", "work\n")
+	colors := writeTempFile(t, dir, "claude-account-colors", "work:1\n")
+	defLabel := filepath.Join(dir, "claude-account-default-label")
+	configsList := writeTempFile(t, dir, "claude-configs.list", "GLM:glm.json\n")
+	configPointer := writeTempFile(t, dir, "claude-config", "glm.json\n")
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+		`pill_current claude %q %q %q %q "" %q %q`,
+		pointer, list, defLabel, colors, configPointer, configsList)), nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "GLM\t")
+	assertNotContains(t, out, "Work")
+}
+
+// With no subscription active (standard Claude), the pill keeps showing the
+// account, unchanged.
+func TestPillCurrent_shows_account_when_standard(t *testing.T) {
+	dir := t.TempDir()
+	list := writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	pointer := writeTempFile(t, dir, "claude-account", "work\n")
+	colors := writeTempFile(t, dir, "claude-account-colors", "work:1\n")
+	defLabel := filepath.Join(dir, "claude-account-default-label")
+	configsList := writeTempFile(t, dir, "claude-configs.list", "GLM:glm.json\n")
+	configPointer := filepath.Join(dir, "claude-config") // absent = standard
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+		`pill_current claude %q %q %q %q "" %q %q`,
+		pointer, list, defLabel, colors, configPointer, configsList)), nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "Work\t")
+}
+
+// The ledger must feed the pill the config context so the pill can show the
+// active subscription.
+func TestCompactView_passes_config_context_to_pill_current(t *testing.T) {
+	root := projectRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "lib", "compact-view.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "$_rc_config_pointer") || !strings.Contains(string(data), "$_rc_configs_list") {
+		t.Fatal("compact-view.sh must pass the config context to pill_current")
+	}
+}
+
 // A configured subscription makes the switch pill reachable even with a single
 // login and no other agent — otherwise the user could never open the popup to
 // change backends.
