@@ -340,44 +340,56 @@ func TestSubscriptionModal_profileRowsReserveRightInset(t *testing.T) {
 	assertInset("+ Add profile", lines)
 }
 
-func TestSubscriptionModal_profilePaneOmitsHeading(t *testing.T) {
+func TestSubscriptionModal_profilePaneSectionsInOrder(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.openSubscriptionModal()
 
-	lines := m.subscriptionProfileLines(subscriptionListWidth, 10)
+	lines := m.subscriptionProfileLines(subscriptionListWidth, 16)
 	plain := stripAnsi(strings.Join(lines, "\n"))
-	if strings.Contains(plain, "PROFILES") {
+	if strings.Contains(plain, "PROFILES ") {
 		t.Fatalf("profile pane kept its redundant heading:\n%s", plain)
 	}
 	if got := strings.TrimSpace(stripAnsi(lines[0])); got != "" {
 		t.Fatalf("profile pane top row = %q, want blank gutter", got)
 	}
-	if got := stripAnsi(lines[1]); !strings.Contains(got, "Standard Claude") {
-		t.Fatalf("first profile row = %q, want Standard Claude after gutter", got)
+	if got := stripAnsi(lines[1]); !strings.Contains(got, "SUBSCRIPTIONS") {
+		t.Fatalf("first pane row = %q, want SUBSCRIPTIONS section line", got)
+	}
+	if got := stripAnsi(lines[2]); !strings.Contains(got, "Standard Claude") {
+		t.Fatalf("first profile row = %q, want Standard Claude after the section line", got)
+	}
+	subs := subscriptionLineIndex(lines, "SUBSCRIPTIONS")
+	addProfile := subscriptionLineIndex(lines, "+ Add profile")
+	logins := subscriptionLineIndex(lines, "LOGINS")
+	addLogin := subscriptionLineIndex(lines, "+ Add login")
+	if !(subs < addProfile && addProfile < logins && logins < addLogin) {
+		t.Fatalf("section order wrong: SUBSCRIPTIONS=%d, +Add profile=%d, LOGINS=%d, +Add login=%d",
+			subs, addProfile, logins, addLogin)
 	}
 }
 
-func TestSubscriptionModal_addProfileIsPinnedToBottom(t *testing.T) {
+func TestSubscriptionModal_addProfileFollowsSubscriptionList(t *testing.T) {
 	withTrueColor(t)
 	m := newSubscriptionModalMenu(t)
 	m.openSubscriptionModal()
 	m.moveSubscriptionProfile(len(m.subscriptionProfiles()))
 
-	lines := m.subscriptionProfileLines(subscriptionListWidth, 10)
-	for i, line := range lines[:len(lines)-1] {
-		if strings.Contains(stripAnsi(line), "+ Add profile") {
-			t.Fatalf("Add profile rendered on row %d instead of the bottom: %q", i, stripAnsi(line))
-		}
+	lines := m.subscriptionProfileLines(subscriptionListWidth, 16)
+	addIndex := subscriptionLineIndex(lines, "+ Add profile")
+	if addIndex < 0 {
+		t.Fatalf("Add profile row missing:\n%s", stripAnsi(strings.Join(lines, "\n")))
 	}
-	add := lines[len(lines)-1]
-	if !strings.Contains(stripAnsi(add), "+ Add profile") {
-		t.Fatalf("bottom row is not Add profile: %q", stripAnsi(add))
+	// The add row sits directly under the last subscription: gutter + section
+	// line + N profiles put it at N+2.
+	if want := len(m.subscriptionProfiles()) + 2; addIndex != want {
+		t.Fatalf("Add profile on row %d, want %d (directly after the subscriptions)", addIndex, want)
 	}
+	add := lines[addIndex]
 	if !ledgerSGRActiveAt(add, "+ Add profile", "48;5;236") {
 		t.Fatalf("focused Add profile lost its selection wash: %q", add)
 	}
 	if !strings.HasSuffix(add, " ") {
-		t.Fatalf("fixed Add profile row lost its right inset: %q", add)
+		t.Fatalf("Add profile row lost its right inset: %q", add)
 	}
 }
 

@@ -57,17 +57,19 @@ func TestSubscriptionModalHit_profilesMappingsAndActions(t *testing.T) {
 	}
 }
 
-func TestSubscriptionModalHit_addProfileIsFixedAtPaneBottom(t *testing.T) {
+func TestSubscriptionModalHit_addProfileFollowsSubscriptions(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.openSubscriptionModal()
 
 	x, y := subscriptionCardCell(t, m, "+ Add profile")
-	if want := m.subscriptionModalBodyHeight(); y != want {
-		t.Fatalf("Add profile card row = %d, want fixed bottom row %d", y, want)
+	// gutter + top border + SUBSCRIPTIONS line + N profiles put the add row
+	// directly under the subscription list.
+	if want := len(m.subscriptionProfiles()) + 3; y != want {
+		t.Fatalf("Add profile card row = %d, want %d (after the subscriptions)", y, want)
 	}
 	target := m.subscriptionModalTarget(x, y)
 	if target.kind != subscriptionHitAdd {
-		t.Fatalf("fixed Add profile target = %+v, want Add", target)
+		t.Fatalf("Add profile target = %+v, want Add", target)
 	}
 }
 
