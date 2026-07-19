@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Accept Claude Code 2.1.214 text-only inline system messages without losing their instruction priority or emitting invalid Codex history.
+**Goal:** Accept Claude Code 2.1.214 inline system messages and Skill continuations without losing instructions or emitting invalid Codex history.
 
-**Architecture:** Normalize inline `system` messages at the Anthropic parsing boundary by appending their text blocks to `MessagesRequest.System` and omitting them from `MessagesRequest.Messages`. Reuse the existing translation of system blocks into Codex `developerInstructions`; keep the downstream history and turn engine restricted to user/assistant roles.
+**Architecture:** Normalize inline `system` messages at the Anthropic parsing boundary by appending their text blocks to `MessagesRequest.System` and omitting them from `MessagesRequest.Messages`. At the translation boundary, merge supplemental text or images from a single-result continuation into that dynamic tool result's content items; reject ambiguous mixed content beside multiple results. Reuse the existing Codex developer-instruction and dynamic-tool response channels.
 
 **Tech Stack:** Go, Anthropic Messages JSON, Codex app-server RPC, Go testing and race detector.
 
@@ -147,7 +147,125 @@ git add internal/gptbridge/anthropic.go internal/gptbridge/translate_test.go
 git commit -m "fix(bridge): accept inline system messages"
 ```
 
-### Task 3: Verify the Live Bridge and Install
+### Task 3: Preserve Skill Continuation Content
+
+**Files:**
+- Modify: `internal/gptbridge/translate.go:174-207`
+- Test: `internal/gptbridge/translate_test.go`
+
+**Step 1: Write the failing captured-shape regression**
+
+Add:
+
+```go
+func TestTranslateSkillContinuationMergesSupplementalContent(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"messages":[
+			{"role":"user","content":"Load the skill"},
+			{"role":"assistant","content":[{
+				"type":"tool_use","id":"skill_1","name":"Skill",
+				"input":{"skill":"superpowers:using-superpowers"}
+			}]},
+			{"role":"user","content":[
+				{"type":"tool_result","tool_use_id":"skill_1",
+				 "content":"Launching skill: superpowers:using-superpowers"},
+				{"type":"text","text":"Base directory for this skill: /skills/superpowers"}
+			]}
+		]
+	}`)
+	if len(got.ToolResults) != 1 || len(got.Input) != 0 {
+		t.Fatalf("translation = %+v", got)
+	}
+	items := got.ToolResults[0].ContentItems
+	if len(items) != 2 ||
+		items[0].Text != "Launching skill: superpowers:using-superpowers" ||
+		items[1].Text != "Base directory for this skill: /skills/superpowers" {
+		t.Fatalf("content items = %#v", items)
+	}
+}
+```
+
+**Step 2: Write the ambiguity regression**
+
+Add a request with two pending tool uses, two final tool results, and one
+ordinary text block. Assert that translation returns:
+
+```text
+final user content alongside multiple tool results is ambiguous
+```
+
+**Step 3: Run both tests and verify RED**
+
+Run:
+
+```bash
+go test ./internal/gptbridge -run 'TestTranslate(SkillContinuation|RejectsAmbiguousMixedToolResults)' -count=1 -v
+```
+
+Expected: both FAIL under the current blanket
+`final tool_result message cannot contain ordinary user content` rejection.
+
+**Step 4: Implement the minimal continuation normalizer**
+
+Add a helper:
+
+```go
+func normalizedFinalToolResults(blocks []ContentBlock) ([]ContentBlock, error) {
+	var results []ContentBlock
+	hasOrdinary := false
+	for _, block := range blocks {
+		if block.Type == "tool_result" {
+			results = append(results, block)
+		} else {
+			hasOrdinary = true
+		}
+	}
+	if !hasOrdinary {
+		return results, nil
+	}
+	if len(results) != 1 {
+		return nil, errors.New(
+			"final user content alongside multiple tool results is ambiguous",
+		)
+	}
+	merged := make([]ContentBlock, 0, len(results[0].ToolContent)+len(blocks)-1)
+	for _, block := range blocks {
+		if block.Type == "tool_result" {
+			merged = append(merged, block.ToolContent...)
+		} else {
+			merged = append(merged, block)
+		}
+	}
+	results[0].ToolContent = merged
+	return results, nil
+}
+```
+
+In the final tool-result branch, call this helper and translate only its
+returned result blocks. Do not alter tool-result-only or ordinary user turns.
+
+**Step 5: Run focused and bridge tests**
+
+Run:
+
+```bash
+go test ./internal/gptbridge -run 'TestTranslate(SkillContinuation|RejectsAmbiguousMixedToolResults)' -count=1 -v
+go test ./internal/gptbridge -count=1
+go test -race ./internal/gptbridge -count=1
+```
+
+Expected: PASS.
+
+**Step 6: Commit**
+
+```bash
+git add internal/gptbridge/translate.go internal/gptbridge/translate_test.go
+git commit -m "fix(bridge): preserve Skill continuation text"
+```
+
+### Task 4: Verify the Live Bridge and Install
 
 **Files:**
 - No source changes expected.
@@ -167,6 +285,14 @@ Expected: PASS.
 
 Launch a fresh OpenAI GPT session through Wisp Deck and send a short prompt.
 Confirm the request no longer returns `messages[1]: unsupported role "system"`.
+
+Run a second non-bare prompt with Claude's default tools so its SessionStart
+hook loads `superpowers:using-superpowers`. Confirm the Skill continuation
+completes without:
+
+```text
+final tool_result message cannot contain ordinary user content
+```
 
 **Step 3: Install**
 
