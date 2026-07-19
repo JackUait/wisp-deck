@@ -81,7 +81,7 @@ var Providers = []Provider{
 		Aliases:        []string{"openai gpt", "chatgpt"},
 		Auth:           AuthCodexChatGPT,
 		MirrorOpenCode: false,
-		DefaultModels:  [4]string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-luna"},
+		DefaultModels:  [4]string{"gpt-5.6-terra", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol"},
 		Models: []Model{
 			{"gpt-5.6-sol", 0, 0, 272000, 0},
 			{"gpt-5.6-terra", 0, 0, 272000, 0},

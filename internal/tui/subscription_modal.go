@@ -177,6 +177,7 @@ type subscriptionProfile struct {
 	Standard bool
 	Active   bool
 	Ready    bool
+	Disabled bool
 }
 
 func (m *MainMenuModel) subscriptionProfiles() []subscriptionProfile {
@@ -188,6 +189,7 @@ func (m *MainMenuModel) subscriptionProfiles() []subscriptionProfile {
 		Active:   active == "",
 		Ready:    true,
 	}}
+	disabled := claudeconfig.LoadDisabled(claudeconfig.DisabledFile(m.claudeConfigsList))
 	for _, config := range m.claudeConfigs {
 		profiles = append(profiles, subscriptionProfile{
 			Name:     config.Name,
@@ -195,6 +197,7 @@ func (m *MainMenuModel) subscriptionProfiles() []subscriptionProfile {
 			Provider: m.claudeConfigProvider(config),
 			Active:   config.File == active,
 			Ready:    m.configReady(config),
+			Disabled: disabled[config.File],
 		})
 	}
 	return profiles
@@ -697,10 +700,31 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 				} else {
 					m.startSubscriptionDelete()
 				}
+			case 'x':
+				m.toggleSubscriptionProfileDisabled()
 			}
 		}
 	}
 	return m, nil
+}
+
+// toggleSubscriptionProfileDisabled flips the focused subscription's disabled
+// state (the 'x' key, mirroring the AI tools panel). A disabled subscription
+// stays manageable here but is hidden from the in-session switcher popup.
+// Standard Claude, the add rows, and the login rows have no toggle.
+func (m *MainMenuModel) toggleSubscriptionProfileDisabled() {
+	cursor := m.subscriptionModal.profileCursor
+	profiles := m.subscriptionProfiles()
+	if cursor <= 0 || cursor >= len(profiles) || m.claudeConfigsList == "" {
+		return
+	}
+	if _, err := claudeconfig.ToggleDisabled(
+		claudeconfig.DisabledFile(m.claudeConfigsList), profiles[cursor].File,
+	); err != nil {
+		m.subscriptionModal.err = err
+		return
+	}
+	m.subscriptionModal.err = nil
 }
 
 func (m *MainMenuModel) moveSubscriptionProfile(delta int) {
@@ -1696,6 +1720,10 @@ func (m *MainMenuModel) subscriptionProfileLines(width, height int) []string {
 			statusText = "Needs key"
 			status = amber.Render(statusText)
 		}
+		if profile.Disabled {
+			statusText = "Disabled"
+			status = dim.Render(statusText)
+		}
 		nameWidth := rowWidth - lipgloss.Width(cursor) - lipgloss.Width(active) - lipgloss.Width(statusText) - 1
 		if nameWidth < 1 {
 			nameWidth = 1
@@ -1715,6 +1743,9 @@ func (m *MainMenuModel) subscriptionProfileLines(width, height int) []string {
 			statusStyle := green
 			if !profile.Ready {
 				statusStyle = amber
+			}
+			if profile.Disabled {
+				statusStyle = dim
 			}
 			status = statusStyle.Background(selectionColor).Render(statusText)
 			items = append(items, cursor+active+name+selectionWash.Render(strings.Repeat(" ", gap))+status)
@@ -2383,7 +2414,7 @@ func (m *MainMenuModel) renderSubscriptionModalCard() string {
 		}
 	}
 
-	help := "↑↓ profile · → details · Tab pane · Enter action · Esc close"
+	help := "↑↓ profile · → details · x disable · Tab pane · Enter action · Esc close"
 	if m.subscriptionModal.mode == subscriptionAddProvider {
 		help = "↑↓ provider · Enter choose · Esc cancel"
 	} else if m.subscriptionModal.mode != subscriptionBrowse {

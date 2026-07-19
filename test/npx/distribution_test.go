@@ -94,18 +94,18 @@ func TestDefaults_include_keyless_OpenAI_GPT_subscription(t *testing.T) {
 	}
 	want := map[string]string{
 		"WISP_DECK_SUBSCRIPTION_PROVIDER": "openai-chatgpt",
-		"ANTHROPIC_DEFAULT_OPUS_MODEL":    "gpt-5.6-sol",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":    "gpt-5.6-terra",
 		"ANTHROPIC_DEFAULT_SONNET_MODEL":  "gpt-5.6-terra",
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL":   "gpt-5.6-luna",
-		"ANTHROPIC_DEFAULT_FABLE_MODEL":   "gpt-5.6-luna",
+		"ANTHROPIC_DEFAULT_FABLE_MODEL":   "gpt-5.6-sol",
 	}
 	for key, value := range want {
 		if settings.Env[key] != value {
 			t.Errorf("%s = %q, want %q", key, settings.Env[key], value)
 		}
 	}
-	if settings.Model != "gpt-5.6-terra" {
-		t.Errorf("model = %q, want gpt-5.6-terra", settings.Model)
+	if settings.Model != "gpt-5.6-sol" {
+		t.Errorf("model = %q, want gpt-5.6-sol", settings.Model)
 	}
 	if !settings.DisableClaudeAiConnectors {
 		t.Error("OpenAI GPT default must disable unavailable claude.ai connectors")

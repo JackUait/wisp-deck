@@ -189,7 +189,9 @@ func AddForProvider(listFile, configsDir, name, providerKey string) (string, err
 		"env":     env,
 	}
 	if provider.Auth == AuthCodexChatGPT {
-		settings["model"] = provider.DefaultModels[1]
+		// ChatGPT sessions start on the strongest tier (the fable slot), not
+		// the sonnet workhorse slot API-key providers would imply.
+		settings["model"] = provider.DefaultModels[3]
 		settings["disableClaudeAiConnectors"] = true
 	}
 	data, err := json.MarshalIndent(settings, "", "  ")

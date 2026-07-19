@@ -112,7 +112,14 @@ func buildSwitchRows(in switchRowsInput) ([]switchRow, int) {
 	for _, acc := range claudeaccount.Load(in.listFile) {
 		rows = append(rows, switchRow{Label: acc.Label, Dir: acc.Dir})
 	}
+	// Subscriptions disabled in the Subscription modal are hidden — except the
+	// one THIS pane runs, which must keep its row (and active marker). The
+	// disabled sidecar is derived from the list path, so no extra flag plumbing.
+	disabled := claudeconfig.LoadDisabled(claudeconfig.DisabledFile(in.configsList))
 	for _, cfg := range claudeconfig.Load(in.configsList) {
+		if disabled[cfg.File] && cfg.File != in.activeConfig {
+			continue
+		}
 		rows = append(rows, switchRow{
 			Label:  cfg.Name,
 			Config: cfg.File,

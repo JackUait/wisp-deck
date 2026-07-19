@@ -410,6 +410,17 @@ func TestOpenAIProviderModelsAndLimits(t *testing.T) {
 	}
 }
 
+func TestOpenAIProviderDefaultTierMapping(t *testing.T) {
+	provider, ok := ProviderByKey("openai-chatgpt")
+	if !ok {
+		t.Fatal("openai-chatgpt provider missing")
+	}
+	want := [4]string{"gpt-5.6-terra", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol"}
+	if provider.DefaultModels != want {
+		t.Fatalf("DefaultModels = %v, want %v (opus, sonnet, haiku, fable)", provider.DefaultModels, want)
+	}
+}
+
 func TestWriteAPIKey_creates_env_section(t *testing.T) {
 	dir := t.TempDir()
 	cfgDir := filepath.Join(dir, "claude-configs")
@@ -898,8 +909,8 @@ func TestAddForProvider_writesInitializedProfile(t *testing.T) {
 			if provider.BaseURL != "" && settings.Env["ANTHROPIC_BASE_URL"] != provider.BaseURL {
 				t.Errorf("base URL = %q, want %q", settings.Env["ANTHROPIC_BASE_URL"], provider.BaseURL)
 			}
-			if provider.Auth == AuthCodexChatGPT && settings.Model != provider.DefaultModels[1] {
-				t.Errorf("ChatGPT model = %q, want %q", settings.Model, provider.DefaultModels[1])
+			if provider.Auth == AuthCodexChatGPT && settings.Model != provider.DefaultModels[3] {
+				t.Errorf("ChatGPT model = %q, want %q", settings.Model, provider.DefaultModels[3])
 			}
 			wantDisableConnectors := provider.Auth == AuthCodexChatGPT
 			if settings.DisableClaudeAiConnectors != wantDisableConnectors {
