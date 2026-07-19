@@ -216,6 +216,46 @@ gt_account_color() {
   printf '%s\n' "$pick"
 }
 
+# Return the persisted 256-color index for a subscription config file, assigning
+# a new one and appending it to the colors file if the config has none yet — the
+# subscription analog of gt_account_color (same palette, same file format, keyed
+# by the config filename; mirrored by claudeconfig.ColorFor in Go). Optional
+# avoid files (e.g. the account colors) contribute their assignments to the
+# used set, so a subscription never mimics a login until the palette is
+# exhausted. Shares gt_account_color's bash/zsh array discipline.
+# Usage: gt_config_color <colors_file> <config_file> [avoid_file...]  =>  "205"
+gt_config_color() {
+  local file="$1" config="$2" k v
+  shift 2
+  [ -n "$config" ] || return 0
+  if [ -f "$file" ]; then
+    while IFS=: read -r k v; do
+      [ "$k" = "$config" ] && { printf '%s\n' "$v"; return 0; }
+    done < "$file"
+  fi
+  local used=" " pal=() avail=() n avoid
+  for avoid in "$file" "$@"; do
+    [ -f "$avoid" ] || continue
+    while IFS=: read -r k v; do
+      [ -n "$v" ] && used="$used$v "
+    done < "$avoid"
+  done
+  for n in "${GT_ACCOUNT_PALETTE[@]}"; do
+    pal+=("$n")
+    case "$used" in *" $n "*) ;; *) avail+=("$n") ;; esac
+  done
+  local pool=("${avail[@]}")
+  [ "${#pool[@]}" -eq 0 ] && pool=("${pal[@]}")
+  local target=$((RANDOM % ${#pool[@]})) i=0 pick="" c
+  for c in "${pool[@]}"; do
+    [ "$i" -eq "$target" ] && { pick="$c"; break; }
+    i=$((i + 1))
+  done
+  mkdir -p "$(dirname "$file")" 2>/dev/null
+  printf '%s:%s\n' "$config" "$pick" >> "$file"
+  printf '%s\n' "$pick"
+}
+
 # Map an account's isolated CLAUDE_CONFIG_DIR to its display label, so the
 # statusline can show which native Claude account this tab is using. The
 # statusline runs as a child of `claude`, which wrapper.sh launches with the

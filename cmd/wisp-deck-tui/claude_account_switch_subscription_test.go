@@ -237,3 +237,31 @@ func TestAccountSwitchModel_clickNotReadySubscriptionIgnored(t *testing.T) {
 		t.Errorf("clicking a not-ready row should keep the popup open, not quit")
 	}
 }
+
+// Each subscription wears its own persistent color (claude-config-colors),
+// mirroring account colors, so the switcher row matches the ledger pill and
+// the statusline usage bars.
+func TestAccountSwitch_innerLines_subscriptionRowWearsOwnColor(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	defer lipgloss.SetColorProfile(termenv.Ascii)
+	dir := t.TempDir()
+	configColors := filepath.Join(dir, "claude-config-colors")
+	if err := os.WriteFile(configColors, []byte("glm.json:205\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rows := []switchRow{
+		{Label: "Work", Dir: "work"},
+		{Label: "GLM", Config: "glm.json", Ready: true},
+	}
+	m := newAccountSwitchModel(rows, 1, "", configColors)
+	lines := m.innerLines()
+	var glmLine string
+	for _, l := range lines {
+		if strings.Contains(l, "GLM") {
+			glmLine = l
+		}
+	}
+	if !strings.Contains(glmLine, "38;5;205m") {
+		t.Errorf("subscription row must wear its persisted color 205, got %q", glmLine)
+	}
+}

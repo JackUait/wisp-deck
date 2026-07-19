@@ -184,8 +184,17 @@ pill_current() {
       active_config="$(get_active_claude_config "$config_pointer")"
     fi
     if [ -n "$active_config" ]; then
-      # 256-color 111 matches the switcher popup's subscription rows (configRowColor).
-      printf '%s\t%s\n' "$(claude_config_name "$active_config" "$configs_list")" 111
+      # The subscription's own persistent color (claude-config-colors next to
+      # the configs list; account colors are the avoid set), matching the
+      # switcher rows and the statusline usage bars. 111 is the legacy shared
+      # blue for callers without gt_config_color loaded.
+      local config_color=111
+      if command -v gt_config_color >/dev/null 2>&1 && [ -n "$configs_list" ]; then
+        config_color="$(gt_config_color "$(dirname "$configs_list")/claude-config-colors" \
+          "$active_config" "$colors_file")"
+        [ -n "$config_color" ] || config_color=111
+      fi
+      printf '%s\t%s\n' "$(claude_config_name "$active_config" "$configs_list")" "$config_color"
       return 0
     fi
     # config_pointer present but active_config empty: the per-session stamp

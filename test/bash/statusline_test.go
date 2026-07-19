@@ -2562,3 +2562,102 @@ func TestStatusline_wrapper_overall_metrics_include_agent_spawned_processes(t *t
 	// No dedicated spawned-processes segment (nf-fa-sitemap glyph).
 	assertNotContains(t, out, "")
 }
+
+// --- per-subscription colors (gt_config_color) ---
+// Subscriptions wear persistent identity colors exactly like accounts: same
+// palette, same file format (claude-config-colors, keyed by config filename),
+// mirrored by claudeconfig.ColorFor in Go.
+
+func TestStatusline_config_color_reads_existing_assignment(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "claude-config-colors", "glm.json:205\n")
+	colors := filepath.Join(dir, "claude-config-colors")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_config_color",
+		[]string{colors, "glm.json"}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "205" {
+		t.Fatalf("color = %q, want 205", strings.TrimSpace(out))
+	}
+}
+
+func TestStatusline_config_color_assigns_palette_member_and_persists(t *testing.T) {
+	dir := t.TempDir()
+	colors := filepath.Join(dir, "claude-config-colors")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_config_color",
+		[]string{colors, "glm.json"}, nil)
+	assertExitCode(t, code, 0)
+	if !accountPalette[strings.TrimSpace(out)] {
+		t.Fatalf("assigned color %q is not a palette member", strings.TrimSpace(out))
+	}
+	data, err := os.ReadFile(colors)
+	if err != nil {
+		t.Fatalf("assignment not persisted: %v", err)
+	}
+	if !strings.Contains(string(data), "glm.json:") {
+		t.Fatalf("colors file missing assignment:\n%s", string(data))
+	}
+}
+
+func TestStatusline_config_color_avoids_account_colors(t *testing.T) {
+	dir := t.TempDir()
+	// Accounts wear every palette color but one; the subscription must take the
+	// single remaining hue so identities stay visually distinct.
+	palette := []string{"39", "208", "170", "78", "203", "141", "43", "220", "205", "75", "156"}
+	lines := ""
+	for i, c := range palette {
+		lines += fmt.Sprintf("acct%d:%s\n", i, c)
+	}
+	writeTempFile(t, dir, "claude-account-colors", lines)
+	accountColors := filepath.Join(dir, "claude-account-colors")
+	colors := filepath.Join(dir, "claude-config-colors")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_config_color",
+		[]string{colors, "glm.json", accountColors}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "214" {
+		t.Fatalf("color = %q, want the only free palette member 214", strings.TrimSpace(out))
+	}
+}
+
+// When this pane runs a subscription backend (WISP_DECK_CLAUDE_CONFIG names the
+// config), the usage bars wear the SUBSCRIPTION's color, not the account's —
+// the account is overridden while the backend runs.
+func TestStatusline_wrapper_usage_bar_wears_subscription_color(t *testing.T) {
+	env := setupWrapperTest(t)
+	env = append(env, "CLAUDE_CONFIG_DIR=", "WISP_DECK_CLAUDE_CONFIG=glm.json")
+	fakeHome := wrapperHome(env)
+	cfg := filepath.Join(fakeHome, ".config", "wisp-deck")
+	writeTempFile(t, cfg, "claude-accounts.list", "Personal:personal\n")
+	writeTempFile(t, cfg, "claude-account-colors", "default:141\n")
+	writeTempFile(t, cfg, "claude-config-colors", "glm.json:205\n")
+
+	root := projectRoot(t)
+	wrapperPath := filepath.Join(root, "templates", "statusline-wrapper.sh")
+	stdinData := `{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"rate_limits":{"seven_day":{"used_percentage":90,"resets_at":2}},"workspace":{"current_dir":"/tmp"}}`
+	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, wrapperPath)
+
+	out, code := runBashSnippet(t, script, env)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "\x1b[38;5;205m"+bar(9))
+	assertNotContains(t, out, "\x1b[38;5;141m"+bar(9))
+}
+
+// Standard Claude (WISP_DECK_CLAUDE_CONFIG stamped empty) keeps the account
+// color on the usage bars.
+func TestStatusline_wrapper_usage_bar_keeps_account_color_when_standard(t *testing.T) {
+	env := setupWrapperTest(t)
+	env = append(env, "CLAUDE_CONFIG_DIR=", "WISP_DECK_CLAUDE_CONFIG=")
+	fakeHome := wrapperHome(env)
+	cfg := filepath.Join(fakeHome, ".config", "wisp-deck")
+	writeTempFile(t, cfg, "claude-accounts.list", "Personal:personal\n")
+	writeTempFile(t, cfg, "claude-account-colors", "default:141\n")
+	writeTempFile(t, cfg, "claude-config-colors", "glm.json:205\n")
+
+	root := projectRoot(t)
+	wrapperPath := filepath.Join(root, "templates", "statusline-wrapper.sh")
+	stdinData := `{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"rate_limits":{"seven_day":{"used_percentage":90,"resets_at":2}},"workspace":{"current_dir":"/tmp"}}`
+	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, wrapperPath)
+
+	out, code := runBashSnippet(t, script, env)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "\x1b[38;5;141m"+bar(9))
+}

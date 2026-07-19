@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -281,7 +282,11 @@ func runClaudeAccountSwitch(cmd *cobra.Command, args []string) error {
 	})
 	prevActive := claudeaccount.GetActive(casPointer)
 
-	model := newAccountSwitchModel(rows, cursor, casColors)
+	configColorsFile := ""
+	if casConfigs != "" {
+		configColorsFile = filepath.Join(filepath.Dir(casConfigs), "claude-config-colors")
+	}
+	model := newAccountSwitchModel(rows, cursor, casColors, configColorsFile)
 	// Show the screen behind the (full-screen) popup dimmed around the card. Best
 	// effort: an unreadable/missing backdrop file just leaves the margin blank.
 	if casBackdrop != "" {
@@ -331,20 +336,26 @@ func runClaudeAccountSwitch(cmd *cobra.Command, args []string) error {
 // terminal size (for centering + mouse mapping), which row is the active login,
 // and whether a row was chosen; all persistence lives in the pure helpers above.
 type accountSwitchModel struct {
-	rows       []switchRow
-	cursor     int
-	active     int
-	colorsFile string
-	chosen     bool
-	width      int
-	height     int
-	backdrop   []string
+	rows             []switchRow
+	cursor           int
+	active           int
+	colorsFile       string
+	configColorsFile string
+	chosen           bool
+	width            int
+	height           int
+	backdrop         []string
 }
 
-func newAccountSwitchModel(rows []switchRow, cursor int, colorsFile string) accountSwitchModel {
+func newAccountSwitchModel(rows []switchRow, cursor int, colorsFile string, configColorsFile ...string) accountSwitchModel {
 	// The switcher opens with the cursor on the active login, so the initial
-	// cursor is also the active-row marker.
-	return accountSwitchModel{rows: rows, cursor: cursor, active: cursor, colorsFile: colorsFile}
+	// cursor is also the active-row marker. configColorsFile is variadic only to
+	// spare the many test call sites; at most one value is meaningful.
+	model := accountSwitchModel{rows: rows, cursor: cursor, active: cursor, colorsFile: colorsFile}
+	if len(configColorsFile) > 0 {
+		model.configColorsFile = configColorsFile[0]
+	}
+	return model
 }
 
 // withBackdrop attaches a captured screen (rows of plain text) shown dimmed
@@ -515,8 +526,9 @@ func (m accountSwitchModel) innerLines() []string {
 			glyph = toolRowGlyph(r.Tool)
 		}
 		if r.Config != "" {
-			// Subscription rows: one shared accent + the subscription spark.
-			color = configRowColor()
+			// Subscription rows: the subscription's own persistent color (shared
+			// with the ledger pill and statusline) + the subscription spark.
+			color = m.configRowColor(r.Config)
 			glyph = configRowGlyph()
 		}
 		if i != m.cursor && i != m.active {
@@ -590,9 +602,17 @@ func toolRowColor(tool string) int {
 // spark, distinct from the account person and the agent brand icons.
 func configRowGlyph() string { return "✦" }
 
-// configRowColor is the accent hue for a ready subscription row: one shared
+// configRowColor is the accent hue for a ready subscription row: the
+// subscription's persistent identity color from claude-config-colors (assigned
+// on first render, avoiding the account hues), shared with the ledger pill and
+// the statusline usage bars. Without a colors file it falls back to the shared
 // blue, distinct from claude orange / codex teal / opencode purple.
-func configRowColor() int { return 111 }
+func (m accountSwitchModel) configRowColor(file string) int {
+	if m.configColorsFile == "" {
+		return 111
+	}
+	return claudeconfig.ColorFor(m.configColorsFile, file, m.colorsFile)
+}
 
 // contentWidth is the width of the widest inner line, used to size and center the
 // card and to bound mouse clicks horizontally.

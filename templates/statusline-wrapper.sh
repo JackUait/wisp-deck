@@ -54,6 +54,17 @@ if type gt_claude_account_label &>/dev/null \
     [ -z "$account_key" ] && account_key="default"
     account_color=$(gt_account_color "$_gt_accounts_root/claude-account-colors" "$account_key")
   fi
+  # When this pane runs a subscription backend (WISP_DECK_CLAUDE_CONFIG names
+  # the config file; stamped empty means standard Claude), the usage bars wear
+  # the SUBSCRIPTION's persistent color instead — the account is overridden
+  # while the backend runs, so the account color would tie the usage to the
+  # wrong identity. Shared with the ledger pill and the switcher rows via the
+  # claude-config-colors file; the account colors are the avoid set.
+  if [ -n "${WISP_DECK_CLAUDE_CONFIG:-}" ] && type gt_config_color &>/dev/null; then
+    config_color=$(gt_config_color "$_gt_accounts_root/claude-config-colors" \
+      "$WISP_DECK_CLAUDE_CONFIG" "$_gt_accounts_root/claude-account-colors")
+    [ -n "$config_color" ] && account_color="$config_color"
+  fi
 fi
 
 # Usage pills for the active login: the 7-day (weekly) and 5-hour (rolling

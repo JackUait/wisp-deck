@@ -400,3 +400,22 @@ func TestOpenAccountSwitcher_account_pick_resets_subscription(t *testing.T) {
 		t.Fatalf("account pick must reset the subscription to standard (pointer removed)")
 	}
 }
+
+// The subscription pill wears the subscription's own persistent color from
+// claude-config-colors (next to the configs list), matching the switcher rows
+// and the statusline usage bars.
+func TestPillCurrent_subscription_wears_config_color(t *testing.T) {
+	dir := t.TempDir()
+	list := writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	pointer := writeTempFile(t, dir, "claude-account", "work\n")
+	colors := writeTempFile(t, dir, "claude-account-colors", "work:1\n")
+	defLabel := filepath.Join(dir, "claude-account-default-label")
+	configsList := writeTempFile(t, dir, "claude-configs.list", "GLM:glm.json\n")
+	configPointer := writeTempFile(t, dir, "claude-config", "glm.json\n")
+	writeTempFile(t, dir, "claude-config-colors", "glm.json:205\n")
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+		`pill_current claude %q %q %q %q "" %q %q`,
+		pointer, list, defLabel, colors, configPointer, configsList)), nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "GLM\t205")
+}
