@@ -172,7 +172,8 @@ pill_current() {
   # claude: when a subscription backend runs, it replaces the account on the
   # pill — the account is overridden while a backend runs, so a login label
   # would lie. config_pointer/configs_list are the extra trailing args the
-  # ledger passes; absent for legacy callers, which keep the account pill.
+  # ledger passes; absent for legacy callers, which fall back to the pane's
+  # launch-frozen WISP_DECK_PLAN (same label the header shows) before the account.
   local pointer_file="$1" list_file="$2" default_label_file="$3" colors_file="$4" \
     tmux_cmd="${5:-}" config_pointer="${6:-}" configs_list="${7:-}"
   if [ -n "$config_pointer" ]; then
@@ -187,6 +188,19 @@ pill_current() {
       printf '%s\t%s\n' "$(claude_config_name "$active_config" "$configs_list")" 111
       return 0
     fi
+    # config_pointer present but active_config empty: the per-session stamp
+    # authoritatively says standard Claude — show the account, never the stale
+    # launch plan below.
+  elif [ -n "${WISP_DECK_PLAN:-}" ] && [ "${WISP_DECK_PLAN:-}" != "Standard Claude" ]; then
+    # Legacy relaunch context (session launched before the subscription feature)
+    # carries no config_pointer, so the per-session machinery above is
+    # unavailable. WISP_DECK_PLAN — the pane's launch-frozen subscription label,
+    # the same one the ledger header already shows — is the fallback so the pill
+    # agrees with the header without waiting for a full relaunch. It is frozen at
+    # launch (never the global pointer), so it cannot "switch back" when another
+    # session flips the pointer.
+    printf '%s\t%s\n' "$WISP_DECK_PLAN" 111
+    return 0
   fi
   account_current "$pointer_file" "$list_file" "$default_label_file" "$colors_file" "$tmux_cmd"
 }

@@ -102,6 +102,72 @@ func TestPillCurrent_shows_account_when_standard(t *testing.T) {
 	assertContains(t, out, "Work\t")
 }
 
+// A session launched before the subscription feature carries no config_pointer
+// in its relaunch context, so the per-session config machinery is unavailable.
+// The pane's launch-frozen WISP_DECK_PLAN — the SAME label the ledger header
+// already shows — is the fallback: the pill must show the subscription from it
+// instead of lying with the account, so the header and pill agree without a
+// full relaunch.
+func TestPillCurrent_legacy_context_falls_back_to_plan(t *testing.T) {
+	dir := t.TempDir()
+	list := writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	pointer := writeTempFile(t, dir, "claude-account", "work\n")
+	colors := writeTempFile(t, dir, "claude-account-colors", "work:1\n")
+	defLabel := filepath.Join(dir, "claude-account-default-label")
+	// Legacy relaunch context: config_pointer/configs_list are empty.
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+		`pill_current claude %q %q %q %q "" "" ""`,
+		pointer, list, defLabel, colors)),
+		buildEnv(t, nil, "WISP_DECK_PLAN=OpenAI / ChatGPT"))
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "OpenAI / ChatGPT\t")
+	assertNotContains(t, out, "Work")
+}
+
+// Legacy context with WISP_DECK_PLAN unset or "Standard Claude" (no subscription
+// at launch) keeps the account pill — "Standard Claude" is not a subscription.
+func TestPillCurrent_legacy_context_standard_plan_shows_account(t *testing.T) {
+	dir := t.TempDir()
+	list := writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	pointer := writeTempFile(t, dir, "claude-account", "work\n")
+	colors := writeTempFile(t, dir, "claude-account-colors", "work:1\n")
+	defLabel := filepath.Join(dir, "claude-account-default-label")
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+		`pill_current claude %q %q %q %q "" "" ""`,
+		pointer, list, defLabel, colors)),
+		buildEnv(t, nil, "WISP_DECK_PLAN=Standard Claude"))
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "Work\t")
+	assertNotContains(t, out, "Standard Claude")
+}
+
+// When the per-session machinery IS present (fresh session), it is authoritative
+// and the stale launch-time WISP_DECK_PLAN must NOT leak through: a mid-session
+// switch to standard stamps WISP_DECK_CLAUDE_CONFIG empty, and the pill must show
+// the account even though WISP_DECK_PLAN still holds the launch subscription.
+func TestPillCurrent_session_stamp_wins_over_stale_plan(t *testing.T) {
+	dir := t.TempDir()
+	list := writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	pointer := writeTempFile(t, dir, "claude-account", "work\n")
+	colors := writeTempFile(t, dir, "claude-account-colors", "work:1\n")
+	defLabel := filepath.Join(dir, "claude-account-default-label")
+	configsList := writeTempFile(t, dir, "claude-configs.list", "GLM:glm.json\n")
+	configPointer := writeTempFile(t, dir, "claude-config", "glm.json\n")
+	// tmux stamps the per-session config empty (switched to standard mid-session).
+	binDir := mockCommand(t, dir, "tmux", `
+if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_CONFIG" ]; then printf 'WISP_DECK_CLAUDE_CONFIG=\n'; exit 0; fi
+if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_ACCOUNT" ]; then printf -- '-WISP_DECK_CLAUDE_ACCOUNT\n'; exit 0; fi
+exit 0`)
+	tmuxPath := filepath.Join(binDir, "tmux")
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+		`pill_current claude %q %q %q %q %q %q %q`,
+		pointer, list, defLabel, colors, tmuxPath, configPointer, configsList)),
+		buildEnv(t, []string{binDir}, "WISP_DECK_PLAN=OpenAI / ChatGPT"))
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "Work\t")
+	assertNotContains(t, out, "OpenAI / ChatGPT")
+}
+
 // The ledger must feed the pill the config context so the pill can show the
 // active subscription.
 func TestCompactView_passes_config_context_to_pill_current(t *testing.T) {
