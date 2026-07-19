@@ -190,6 +190,7 @@ func AddForProvider(listFile, configsDir, name, providerKey string) (string, err
 	}
 	if provider.Auth == AuthCodexChatGPT {
 		settings["model"] = provider.DefaultModels[1]
+		settings["disableClaudeAiConnectors"] = true
 	}
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {

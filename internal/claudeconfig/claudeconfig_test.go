@@ -783,8 +783,9 @@ func TestAddForProvider_writesInitializedProfile(t *testing.T) {
 				t.Fatal(err)
 			}
 			var settings struct {
-				Model string            `json:"model"`
-				Env   map[string]string `json:"env"`
+				Model                     string            `json:"model"`
+				DisableClaudeAiConnectors bool              `json:"disableClaudeAiConnectors"`
+				Env                       map[string]string `json:"env"`
 			}
 			if err := json.Unmarshal(data, &settings); err != nil {
 				t.Fatal(err)
@@ -797,6 +798,11 @@ func TestAddForProvider_writesInitializedProfile(t *testing.T) {
 			}
 			if provider.Auth == AuthCodexChatGPT && settings.Model != provider.DefaultModels[1] {
 				t.Errorf("ChatGPT model = %q, want %q", settings.Model, provider.DefaultModels[1])
+			}
+			wantDisableConnectors := provider.Auth == AuthCodexChatGPT
+			if settings.DisableClaudeAiConnectors != wantDisableConnectors {
+				t.Errorf("disableClaudeAiConnectors = %v, want %v",
+					settings.DisableClaudeAiConnectors, wantDisableConnectors)
 			}
 		})
 	}

@@ -85,8 +85,9 @@ func TestDefaults_include_keyless_OpenAI_GPT_subscription(t *testing.T) {
 		t.Fatal(err)
 	}
 	var settings struct {
-		Model string            `json:"model"`
-		Env   map[string]string `json:"env"`
+		Model                     string            `json:"model"`
+		DisableClaudeAiConnectors bool              `json:"disableClaudeAiConnectors"`
+		Env                       map[string]string `json:"env"`
 	}
 	if err := json.Unmarshal(data, &settings); err != nil {
 		t.Fatalf("invalid OpenAI GPT settings JSON: %v", err)
@@ -105,6 +106,9 @@ func TestDefaults_include_keyless_OpenAI_GPT_subscription(t *testing.T) {
 	}
 	if settings.Model != "gpt-5.6-terra" {
 		t.Errorf("model = %q, want gpt-5.6-terra", settings.Model)
+	}
+	if !settings.DisableClaudeAiConnectors {
+		t.Error("OpenAI GPT default must disable unavailable claude.ai connectors")
 	}
 	if settings.Env["ANTHROPIC_AUTH_TOKEN"] != "" || settings.Env["ANTHROPIC_BASE_URL"] != "" {
 		t.Fatal("OpenAI GPT default must not persist a key or fixed base URL")
