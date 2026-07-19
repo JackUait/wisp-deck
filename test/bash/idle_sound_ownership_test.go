@@ -245,6 +245,13 @@ func TestMainMenuSoundPreviewOwnershipGuardRejectsBypasses(t *testing.T) {
 			"\t_ = exec.Cmd{Path: \"/usr/bin/say\"}\n"+
 				"\tcmd := exec.CommandContext(ctx, plan.executable, plan.arguments...)",
 		),
+		"allocated exec Cmd path": mutateBoundarySource(
+			t, sources, "host",
+			"\tcmd := exec.CommandContext(ctx, plan.executable, plan.arguments...)",
+			"\textra := new(exec.Cmd)\n"+
+				"\textra.Path = \"/usr/bin/say\"\n"+
+				"\tcmd := exec.CommandContext(ctx, plan.executable, plan.arguments...)",
+		),
 		"missing process group": mutateBoundarySource(
 			t, sources, "host",
 			"cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}",
@@ -365,6 +372,9 @@ func TestIdleSoundProductionHostEffectGuardRejectsBypasses(t *testing.T) {
 		"syscall exec":                   `package p; import "syscall"; func f() { _ = syscall.Exec("/usr/bin/afplay", nil, nil) }`,
 		"exec cmd path":                  `package p; import "os/exec"; func f() { _ = exec.Cmd{Path: "/usr/bin/afplay"} }`,
 		"exec cmd later path":            `package p; import "os/exec"; func f() { cmd := exec.Cmd{}; cmd.Path = "/usr/bin/say" }`,
+		"allocated exec cmd later path":  `package p; import "os/exec"; func f() { cmd := new(exec.Cmd); cmd.Path = "/usr/bin/say" }`,
+		"allocated aliased exec cmd":     `package p; import process "os/exec"; func f() { cmd := new(process.Cmd); cmd.Path = "/usr/bin/say" }`,
+		"allocated dot imported cmd":     `package p; import . "os/exec"; func f() { cmd := new(Cmd); cmd.Path = "/usr/bin/say" }`,
 	}
 	for name, source := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -750,6 +760,18 @@ func TestTestSourceAudioLaunchGuardRejectsBypasses(t *testing.T) {
 			source: `package p; import "os/exec"; func test() { cmd := exec.Cmd{}; cmd.Path = "/usr/bin/afplay" }`,
 			want:   true,
 		},
+		"allocated exec cmd later path": {
+			source: `package p; import "os/exec"; func test() { cmd := new(exec.Cmd); cmd.Path = "/usr/bin/say" }`,
+			want:   true,
+		},
+		"allocated aliased exec cmd later path": {
+			source: `package p; import process "os/exec"; func test() { cmd := new(process.Cmd); cmd.Path = "/usr/bin/say" }`,
+			want:   true,
+		},
+		"allocated dot imported exec cmd later path": {
+			source: `package p; import . "os/exec"; func test() { cmd := new(Cmd); cmd.Path = "/usr/bin/say" }`,
+			want:   true,
+		},
 		"production runner argument": {
 			source: `package p; func test(effect hostEffect) { _ = runHostEffect(context.Background(), effect) }`,
 			want:   true,
@@ -1132,6 +1154,12 @@ func isExecCmdExpression(
 	case *ast.CompositeLit:
 		return isExecCmdType(expression.Type, aliases, dotImports)
 	case *ast.CallExpr:
+		if function, ok := expression.Fun.(*ast.Ident); ok &&
+			function.Name == "new" &&
+			len(expression.Args) == 1 &&
+			isExecCmdType(expression.Args[0], aliases, dotImports) {
+			return true
+		}
 		importPath, function := calledPackageFunction(
 			expression.Fun,
 			aliases,
