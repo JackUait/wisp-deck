@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jackuait/wisp-deck/internal/claudeaccount"
+	"github.com/jackuait/wisp-deck/internal/claudeconfig"
 	"github.com/jackuait/wisp-deck/internal/models"
 	"github.com/jackuait/wisp-deck/internal/tui"
 	"github.com/jackuait/wisp-deck/internal/util"
@@ -36,16 +37,43 @@ var (
 	casResultFile   string
 	casTools        string
 	casActiveTool   string
+	casConfigs      string
+	casConfigsDir   string
+	casActiveConfig string
 )
 
 // switchRow is one selectable entry in the switcher: a claude login (Dir set,
-// "" = the implicit Default/Keychain login) or another AI agent (Tool set,
-// e.g. "opencode"). Exactly one dimension is meaningful per row — claude
-// account rows carry no Tool, agent rows carry no Dir.
+// "" = the implicit Default/Keychain login), a subscription/backend (Config set
+// — the settings filename launched via `claude --settings`), or another AI
+// agent (Tool set, e.g. "opencode"). Exactly one of Dir/Config/Tool is
+// meaningful per row. Ready is honored only for subscription rows: a keyless
+// API provider is shown but not selectable.
 type switchRow struct {
-	Label string
-	Dir   string
-	Tool  string
+	Label  string
+	Dir    string
+	Tool   string
+	Config string
+	Ready  bool
+}
+
+// selectable reports whether the row can be chosen. Account and agent rows
+// (no Config) are always selectable; a subscription row needs Ready.
+func (r switchRow) selectable() bool {
+	return r.Config == "" || r.Ready
+}
+
+// switchRowsInput is the full set of inputs buildSwitchRows needs: the claude
+// accounts, the subscription backends, and the other AI agents, plus which of
+// each the pane currently runs (so the cursor and active dot land on it).
+type switchRowsInput struct {
+	listFile         string
+	defaultLabelFile string
+	active           string   // account dir THIS pane runs ("" = Default)
+	activeTool       string   // tool THIS pane runs (default "claude")
+	tools            []string // other available agents
+	configsList      string   // subscriptions list file (name:file)
+	configsDir       string   // subscriptions dir (for readiness)
+	activeConfig     string   // subscription filename THIS pane runs ("" = standard)
 }
 
 // switchRowsForActive builds the ordered row list — Default first, then each
@@ -56,7 +84,7 @@ type switchRow struct {
 // launcher) flips it without changing what this pane runs — the popup would
 // mark the wrong login and read as the account having "switched back".
 func switchRowsForActive(listFile, defaultLabelFile, active string) ([]switchRow, int) {
-	return switchRowsForSession(listFile, defaultLabelFile, active, "", nil)
+	return buildSwitchRows(switchRowsInput{listFile: listFile, defaultLabelFile: defaultLabelFile, active: active})
 }
 
 // switchRowsForSession is switchRowsForActive extended with agent rows: after
@@ -66,11 +94,31 @@ func switchRowsForActive(listFile, defaultLabelFile, active string) ([]switchRow
 // agent, the cursor (and active dot) lands on that agent's row instead of a
 // claude account.
 func switchRowsForSession(listFile, defaultLabelFile, active, activeTool string, tools []string) ([]switchRow, int) {
-	rows := []switchRow{{Label: claudeaccount.GetDefaultLabel(defaultLabelFile), Dir: ""}}
-	for _, acc := range claudeaccount.Load(listFile) {
+	return buildSwitchRows(switchRowsInput{
+		listFile: listFile, defaultLabelFile: defaultLabelFile,
+		active: active, activeTool: activeTool, tools: tools,
+	})
+}
+
+// buildSwitchRows assembles the switcher's rows in display order —
+// [Default, …logins…, …subscriptions…, …agents…] — and resolves the initial
+// cursor. Priority for the active row: a non-claude agent the pane runs, else
+// the subscription backend it runs, else its claude login. Subscriptions come
+// from the claude-configs list; a keyless API provider is included but flagged
+// not Ready (shown dimmed, not selectable).
+func buildSwitchRows(in switchRowsInput) ([]switchRow, int) {
+	rows := []switchRow{{Label: claudeaccount.GetDefaultLabel(in.defaultLabelFile), Dir: ""}}
+	for _, acc := range claudeaccount.Load(in.listFile) {
 		rows = append(rows, switchRow{Label: acc.Label, Dir: acc.Dir})
 	}
-	for _, tool := range tools {
+	for _, cfg := range claudeconfig.Load(in.configsList) {
+		rows = append(rows, switchRow{
+			Label:  cfg.Name,
+			Config: cfg.File,
+			Ready:  claudeconfig.ConfigReady(in.configsDir, cfg),
+		})
+	}
+	for _, tool := range in.tools {
 		if tool == "" || tool == "claude" {
 			continue
 		}
@@ -78,14 +126,21 @@ func switchRowsForSession(listFile, defaultLabelFile, active, activeTool string,
 	}
 	cursor := 0
 	for i, r := range rows {
-		if activeTool != "" && activeTool != "claude" {
-			if r.Tool == activeTool {
+		if in.activeTool != "" && in.activeTool != "claude" {
+			if r.Tool == in.activeTool {
 				cursor = i
 				break
 			}
 			continue
 		}
-		if r.Tool == "" && r.Dir == active {
+		if in.activeConfig != "" {
+			if r.Config == in.activeConfig {
+				cursor = i
+				break
+			}
+			continue
+		}
+		if r.Tool == "" && r.Config == "" && r.Dir == in.active {
 			cursor = i
 			break
 		}
@@ -99,6 +154,9 @@ func switchRowsForSession(listFile, defaultLabelFile, active, activeTool string,
 func switchResultValue(r switchRow) string {
 	if r.Tool != "" {
 		return "tool:" + r.Tool
+	}
+	if r.Config != "" {
+		return "config:" + r.Config
 	}
 	return r.Dir
 }
@@ -156,6 +214,22 @@ func selectToolResultJSON(tool, activeTool string) (string, error) {
 	return string(out), nil
 }
 
+// configResultJSON is the JSON for a subscription-row choice. Like an agent
+// choice it never touches the claude account pointer; the bash side owns
+// setting the active-config pointer and relaunching. changed reports whether
+// the chosen subscription differs from the one the pane was running.
+func configResultJSON(file, activeConfig string) (string, error) {
+	out, err := json.Marshal(struct {
+		Selected bool   `json:"selected"`
+		Config   string `json:"config"`
+		Changed  bool   `json:"changed"`
+	}{Selected: true, Config: file, Changed: file != activeConfig})
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 // cancelResultJSON returns the JSON emitted when the user cancels (no pointer
 // write).
 func cancelResultJSON() string {
@@ -195,7 +269,16 @@ func runClaudeAccountSwitch(cmd *cobra.Command, args []string) error {
 	if activeTool == "" {
 		activeTool = "claude"
 	}
-	rows, cursor := switchRowsForSession(casList, casDefaultLabel, active, activeTool, tools)
+	rows, cursor := buildSwitchRows(switchRowsInput{
+		listFile:         casList,
+		defaultLabelFile: casDefaultLabel,
+		active:           active,
+		activeTool:       activeTool,
+		tools:            tools,
+		configsList:      casConfigs,
+		configsDir:       casConfigsDir,
+		activeConfig:     casActiveConfig,
+	})
 	prevActive := claudeaccount.GetActive(casPointer)
 
 	model := newAccountSwitchModel(rows, cursor, casColors)
@@ -226,9 +309,12 @@ func runClaudeAccountSwitch(cmd *cobra.Command, args []string) error {
 	}
 	chosen := rows[m.cursor]
 	var out string
-	if chosen.Tool != "" {
+	switch {
+	case chosen.Tool != "":
 		out, err = selectToolResultJSON(chosen.Tool, activeTool)
-	} else {
+	case chosen.Config != "":
+		out, err = configResultJSON(chosen.Config, casActiveConfig)
+	default:
 		out, err = selectResultJSON(casPointer, chosen.Dir, prevActive)
 	}
 	if err != nil {
@@ -294,6 +380,27 @@ func (m accountSwitchModel) titleText() string {
 
 func (m accountSwitchModel) Init() tea.Cmd { return nil }
 
+// nextSelectable / prevSelectable move the cursor to the next/previous
+// selectable row, skipping over not-ready subscription rows. With no
+// selectable row in that direction the cursor stays put.
+func (m accountSwitchModel) nextSelectable(from int) int {
+	for i := from + 1; i < len(m.rows); i++ {
+		if m.rows[i].selectable() {
+			return i
+		}
+	}
+	return from
+}
+
+func (m accountSwitchModel) prevSelectable(from int) int {
+	for i := from - 1; i >= 0; i-- {
+		if m.rows[i].selectable() {
+			return i
+		}
+	}
+	return from
+}
+
 func (m accountSwitchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -304,13 +411,9 @@ func (m accountSwitchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc", "q", "ctrl+c":
 			return m, tea.Quit
 		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
+			m.cursor = m.prevSelectable(m.cursor)
 		case "down", "j":
-			if m.cursor < len(m.rows)-1 {
-				m.cursor++
-			}
+			m.cursor = m.nextSelectable(m.cursor)
 		case "enter":
 			m.chosen = true
 			return m, tea.Quit
@@ -323,6 +426,10 @@ func (m accountSwitchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			idx := msg.Y - firstRowY - m.headerLines()
 			onCard := msg.X >= cardLeft && msg.X < cardLeft+cardWidth
 			if onCard && idx >= 0 && idx < len(m.rows) {
+				if !m.rows[idx].selectable() {
+					// A not-ready subscription: ignore the click, keep the popup open.
+					return m, nil
+				}
 				m.cursor = idx
 				m.chosen = true
 				return m, tea.Quit
@@ -407,7 +514,17 @@ func (m accountSwitchModel) innerLines() []string {
 			color = toolRowColor(r.Tool)
 			glyph = toolRowGlyph(r.Tool)
 		}
+		if r.Config != "" {
+			// Subscription rows: one shared accent + the subscription spark.
+			color = configRowColor()
+			glyph = configRowGlyph()
+		}
 		if i != m.cursor && i != m.active {
+			color = grayRow
+		}
+		if r.Config != "" && !r.Ready {
+			// A not-ready subscription stays dimmed even under the cursor — it
+			// can't be selected until it's set up in the Subscription modal.
 			color = grayRow
 		}
 		labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(color)))
@@ -468,6 +585,14 @@ func toolRowColor(tool string) int {
 		return 209 // orange (claude default)
 	}
 }
+
+// configRowGlyph is the mark for a subscription/backend row — a four-pointed
+// spark, distinct from the account person and the agent brand icons.
+func configRowGlyph() string { return "✦" }
+
+// configRowColor is the accent hue for a ready subscription row: one shared
+// blue, distinct from claude orange / codex teal / opencode purple.
+func configRowColor() int { return 111 }
 
 // contentWidth is the width of the widest inner line, used to size and center the
 // card and to bound mouse clicks horizontally.
@@ -596,5 +721,8 @@ func init() {
 	claudeAccountSwitchCmd.Flags().StringVar(&casResultFile, "result-file", "", "File to write the chosen dir to on selection (absent on cancel)")
 	claudeAccountSwitchCmd.Flags().StringVar(&casTools, "tools", "", "Comma-separated other available AI tools, each shown as an agent row after the logins")
 	claudeAccountSwitchCmd.Flags().StringVar(&casActiveTool, "active-tool", "", "Tool THIS pane is running (default claude); marks the active row for non-claude agents")
+	claudeAccountSwitchCmd.Flags().StringVar(&casConfigs, "configs", "", "Path to subscriptions list (name:file), each shown as a backend row under Claude")
+	claudeAccountSwitchCmd.Flags().StringVar(&casConfigsDir, "configs-dir", "", "Path to the subscriptions directory (for readiness checks)")
+	claudeAccountSwitchCmd.Flags().StringVar(&casActiveConfig, "active-config", "", "Subscription filename THIS pane is running (empty = standard Claude); marks the active row")
 	rootCmd.AddCommand(claudeAccountSwitchCmd)
 }
