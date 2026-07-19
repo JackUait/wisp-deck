@@ -42,6 +42,58 @@ func writeAttentionDescriptor(t *testing.T, root, generation, tool, state string
 	return descriptor
 }
 
+func TestTabTitleWatcherMarkedNotificationUsesRealSilentGuard(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "config")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTempFile(
+		t,
+		configDir,
+		"claude-features.json",
+		`{"sound":true,"sound_name":"Glass"}`,
+	)
+	generation := "generation.silent1"
+	state := writeAttentionState(t, root, generation, "0", "ready", "-")
+	descriptor := writeAttentionDescriptor(t, root, generation, "claude", state)
+	recording := filepath.Join(root, "tui-argv")
+	binDir := mockCommand(t, root, "wisp-deck-tui",
+		fmt.Sprintf(`printf '%%s\n' "$@" > %q`, recording))
+
+	project := projectRoot(t)
+	script := fmt.Sprintf(`
+source %q
+source %q
+source %q
+apply_tab_title() { :; }
+keep_awake_tick() { :; }
+tmux_fixture() {
+  [ "$1" = list-panes ] && printf '%%7\t1\n'
+}
+attention_watcher_reset
+attention_watcher_tick session project full tmux_fixture %q %q
+printf '1\t%s\t1\tattention\tquestion\n' > %q
+attention_watcher_tick session project full tmux_fixture %q %q
+wait
+`,
+		filepath.Join(project, "lib", "tui.sh"),
+		filepath.Join(project, "lib", "notification-setup.sh"),
+		filepath.Join(project, "lib", "tab-title-watcher.sh"),
+		descriptor,
+		configDir,
+		generation,
+		state,
+		descriptor,
+		configDir,
+	)
+	_, code := runBashSnippet(t, script, buildEnv(t, []string{binDir}))
+	assertExitCode(t, code, 0)
+	if _, err := os.Stat(recording); !os.IsNotExist(err) {
+		t.Fatalf("marked watcher notification delegated to wisp-deck-tui: %v", err)
+	}
+}
+
 func TestTabTitleWatcher_reads_strict_descriptor_and_state_records(t *testing.T) {
 	root := t.TempDir()
 	generation := "generation.Abc123"

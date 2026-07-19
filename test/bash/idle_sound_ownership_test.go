@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -243,6 +244,183 @@ func validateShellNotificationOwnership(source string) error {
 		}
 	}
 	return nil
+}
+
+func TestShellProductionHostEffectOwnershipGuardRejectsBypasses(t *testing.T) {
+	sources := trackedShellProductionSources(t)
+	if err := validateShellProductionHostEffectOwnership(sources); err != nil {
+		t.Fatalf("current shell production host-effect inventory rejected: %v", err)
+	}
+	mutations := map[string]string{
+		"afplay":             "afplay /tmp/chime.aiff\n",
+		"system sound path":  "printf '%s\\n' /System/Library/Sounds/Glass.aiff\n",
+		"NSSound":            "printf '%s\\n' NSSound\n",
+		"AudioServices":      "printf '%s\\n' AudioServicesPlaySystemSound\n",
+		"speech":             "say audit\n",
+		"notification sound": "osascript -e 'display notification \"audit\" with sound name \"Glass\"'\n",
+		"OSC 9":              "printf '\\033]9;audit\\007'\n",
+		"escaped BEL":        "printf '\\a'\n",
+		"raw BEL":            "printf 'audit\a'\n",
+	}
+	for name, source := range mutations {
+		t.Run(name, func(t *testing.T) {
+			mutated := addShellProductionSource(
+				sources,
+				"lib/future-host-effect.sh",
+				source,
+			)
+			if err := validateShellProductionHostEffectOwnership(mutated); err == nil {
+				t.Fatal("shell host-effect mutation escaped production ownership validation")
+			}
+		})
+	}
+}
+
+func trackedShellProductionSources(t *testing.T) map[string]string {
+	t.Helper()
+	root := projectRoot(t)
+	output, err := exec.Command(
+		"git",
+		"-C",
+		root,
+		"ls-files",
+		"-z",
+		"--",
+		"lib/",
+		"templates/",
+		"bin/",
+		"wrapper.sh",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("discover shell production sources: %v\n%s", err, output)
+	}
+	sources := make(map[string]string)
+	for _, relative := range strings.Split(string(output), "\x00") {
+		if relative == "" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
+		if err != nil {
+			t.Fatalf("read shell production source %s: %v", relative, err)
+		}
+		if bytes.IndexByte(data, 0) >= 0 {
+			continue
+		}
+		sources[relative] = string(data)
+	}
+	return sources
+}
+
+func addShellProductionSource(
+	sources map[string]string,
+	path string,
+	source string,
+) map[string]string {
+	added := make(map[string]string, len(sources)+1)
+	for existingPath, existingSource := range sources {
+		added[existingPath] = existingSource
+	}
+	added[path] = source
+	return added
+}
+
+func validateShellProductionHostEffectOwnership(
+	sources map[string]string,
+) error {
+	sanitized := make(map[string]string, len(sources))
+	for path, source := range sources {
+		sanitized[path] = source
+	}
+
+	allowlist := map[string][]string{
+		"lib/session-restore.sh": {
+			`restore_trigger_tab() {
+  osascript \
+    -e 'tell application "Ghostty" to activate' \
+    -e 'tell application "System Events" to keystroke "t" using command down' \
+    >/dev/null 2>&1
+}`,
+		},
+		"lib/tui.sh": {
+			`set_tab_title() {
+  local project="$1"
+  local tool="${2:-}"
+  # Probed by opening it, not with ` + "`[ -w /dev/tty ]`" + `: the device node is there
+  # and reports writable even for a process with no controlling terminal, where
+  # the open then fails with "Device not configured" — printed, of course, to
+  # the terminal this whole exercise is about keeping clean.
+  local out=/dev/stdout
+  { : > /dev/tty; } 2>/dev/null && out=/dev/tty
+  if [ -n "$tool" ]; then
+    printf '\033]0;%s · %s\007' "$project" "$tool" > "$out"
+  else
+    printf '\033]0;%s\007' "$project" > "$out"
+  fi
+}`,
+		},
+		"wrapper.sh": {
+			`printf '\033]0;󰊠  Wisp Deck\007'`,
+		},
+	}
+	for path, allowedShapes := range allowlist {
+		source, ok := sanitized[path]
+		if !ok {
+			return fmt.Errorf("shell host-effect inventory is missing %s", path)
+		}
+		for _, allowedShape := range allowedShapes {
+			if count := strings.Count(source, allowedShape); count != 1 {
+				return fmt.Errorf(
+					"%s contains %d exact allowed host-control shapes %q, want 1",
+					path,
+					count,
+					allowedShape,
+				)
+			}
+			source = strings.Replace(source, allowedShape, "", 1)
+		}
+		sanitized[path] = source
+	}
+
+	paths := make([]string, 0, len(sanitized))
+	for path := range sanitized {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		for lineNumber, line := range strings.Split(sanitized[path], "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			if shellProductionLineHasHostEffect(trimmed) {
+				return fmt.Errorf(
+					"%s:%d contains an unaudited shell host effect: %q",
+					path,
+					lineNumber+1,
+					trimmed,
+				)
+			}
+		}
+	}
+	return nil
+}
+
+func shellProductionLineHasHostEffect(line string) bool {
+	if stringHasHostEffectMarker(line) ||
+		strings.ContainsRune(line, '\a') {
+		return true
+	}
+	for _, bell := range []string{`\007`, `\a`, `\x07`} {
+		if strings.Contains(line, bell) {
+			return true
+		}
+	}
+	for _, field := range strings.Fields(strings.ToLower(line)) {
+		if strings.Trim(field, `"'(){}[];,`) == "say" {
+			return true
+		}
+	}
+	return false
 }
 
 func TestMainMenuSoundPreviewOwnershipGuardRejectsBypasses(t *testing.T) {
