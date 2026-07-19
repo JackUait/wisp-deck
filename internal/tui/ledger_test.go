@@ -1151,3 +1151,38 @@ func TestLedgerFooterPillGlyphFollowsIdentityKind(t *testing.T) {
 		t.Fatalf("account pill lost the person glyph:\n%s", plain)
 	}
 }
+
+// A file row's NAME is tinted with its section title's color — yellow under
+// "modified", green under "staged", cyan under "new" — so a section reads as
+// one colored block. Binary (byte-delta) rows follow the same rule.
+func TestLedgerFileRowFilenameCarriesGroupColor(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+
+	tests := []struct {
+		name   string
+		group  ledger.Group
+		binary bool
+		color  string
+	}{
+		{name: "staged", group: ledger.GroupStaged, color: "32m"},
+		{name: "modified", group: ledger.GroupModified, color: "33m"},
+		{name: "new", group: ledger.GroupNew, color: "36m"},
+		{name: "binary modified", group: ledger.GroupModified, binary: true, color: "33m"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			row := ledger.Row{
+				Kind: ledger.RowFile,
+				ID:   ledger.RowID{Group: tt.group, Path: "tooltip.ts"},
+				Path: "tooltip.ts", Added: 27, Deleted: 32,
+				Binary: tt.binary, OldBytes: 100, NewBytes: 300,
+			}
+			raw := renderLedgerFileRow(row, 80, ledger.RowVisualState{})
+			if !ledgerSGRActiveAt(raw, "tooltip.ts", tt.color) {
+				t.Fatalf("filename does not carry group color %q: %q", tt.color, raw)
+			}
+		})
+	}
+}

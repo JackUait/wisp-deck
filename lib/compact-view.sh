@@ -80,15 +80,19 @@ format_group_header() {
 # Each count is LEFT-aligned from that column inside a fixed 4-wide cell (sign +
 # up to 3 digits), so the "−deleted" column and the filename stay aligned
 # regardless of digit count. The "−" is a format literal (not a %s arg) to keep
-# its multibyte width from skewing printf's padding. Emits a trailing newline.
-# Usage: format_ledger_row <added> <deleted> <display>
+# its multibyte width from skewing printf's padding. The optional <name_color>
+# tints the filename with its section title's color (yellow under "modified",
+# green under "staged", cyan under "new") so a section reads as one colored
+# block; absent, the name stays bright white. Emits a trailing newline.
+# Usage: format_ledger_row <added> <deleted> <display> [name_color]
 format_ledger_row() {
   local added="$1" deleted="$2" display="$3"
   local green="\033[32m" red="\033[31m" bright="\033[97m" reset="\033[0m"
+  local name_color="${4:-$bright}"
   local pad_a pad_d
   pad_a=$((3 - ${#added})); [ "$pad_a" -lt 0 ] && pad_a=0
   pad_d=$((3 - ${#deleted})); [ "$pad_d" -lt 0 ] && pad_d=0
-  printf "   ${green}+%s${reset}%*s ${red}−%s${reset}%*s  ${bright}%s${reset}\n" \
+  printf "   ${green}+%s${reset}%*s ${red}−%s${reset}%*s  ${name_color}%s${reset}\n" \
     "$added" "$pad_a" '' "$deleted" "$pad_d" '' "$display"
 }
 
@@ -117,11 +121,14 @@ human_bytes() {
 # field the "+NNN −NNN" counts fill, so the filename still starts at column 14 and
 # stays aligned with normal rows (see format_ledger_row). The sign is a single
 # rune emitted as a literal (not a %s arg) to keep its multibyte width from
-# skewing printf's padding. Emits a trailing newline.
-# Usage: format_ledger_size_row <old_bytes> <new_bytes> <display>
+# skewing printf's padding. The optional <name_color> tints the filename with
+# its section title's color (see format_ledger_row); absent, it stays bright
+# white. Emits a trailing newline.
+# Usage: format_ledger_size_row <old_bytes> <new_bytes> <display> [name_color]
 format_ledger_size_row() {
   local old="$1" new="$2" display="$3"
   local green="\033[32m" red="\033[31m" dim="\033[90m" bright="\033[97m" reset="\033[0m"
+  local name_color="${4:-$bright}"
   local diff=$((new - old)) sign mag color
   if [ "$diff" -gt 0 ]; then
     sign="+"; color="$green"; mag=$(human_bytes "$diff")
@@ -133,7 +140,7 @@ format_ledger_size_row() {
   # Visible width of the figure = 1 rune (sign) + the ASCII magnitude. Pad it out
   # to the 9-col count field so the filename lands at column 14.
   local pad=$(( 8 - ${#mag} )); [ "$pad" -lt 0 ] && pad=0
-  printf "   ${color}%s%s${reset}%*s  ${bright}%s${reset}\n" \
+  printf "   ${color}%s%s${reset}%*s  ${name_color}%s${reset}\n" \
     "$sign" "$mag" "$pad" '' "$display"
 }
 
@@ -163,10 +170,11 @@ worktree_size() {
 # looked up against its current path via numstat_path. The local is named `relpath`,
 # NOT `path`: the pane runs under zsh, where `path` is a special array tied to
 # $PATH, so a `local path=…` here would clobber the command search path and make
-# wc/tr/git vanish. Usage:
-#   format_image_row <dir> <staged|unstaged|untracked> <file> <display>
+# wc/tr/git vanish. The optional <name_color> tints the filename with its
+# section title's color (see format_ledger_row). Usage:
+#   format_image_row <dir> <staged|unstaged|untracked> <file> <display> [name_color]
 format_image_row() {
-  local dir="$1" ref="$2" file="$3" display="$4"
+  local dir="$1" ref="$2" file="$3" display="$4" name_color="${5:-}"
   local relpath old=0 new=0
   numstat_path "$file" >/dev/null
   relpath="$NUMSTAT_PATH"
@@ -184,7 +192,7 @@ format_image_row() {
       new=$(worktree_size "$dir" "$relpath")
       ;;
   esac
-  format_ledger_size_row "$old" "$new" "$display"
+  format_ledger_size_row "$old" "$new" "$display" "$name_color"
 }
 
 # clamp_scroll keeps a scroll offset within [0, total - avail]. When the content
@@ -1355,11 +1363,11 @@ compact_view_shell() {
       format_file "$file" "$name_width" >/dev/null
       display="$FORMAT_FILE"
       if is_image_file "$file"; then
-        format_image_row "$project_dir" "$sizeref" "$file" "$display"
+        format_image_row "$project_dir" "$sizeref" "$file" "$display" "$gcolor"
       else
         [ "$added" = "-" ] && added=0
         [ "$deleted" = "-" ] && deleted=0
-        format_ledger_row "$added" "$deleted" "$display"
+        format_ledger_row "$added" "$deleted" "$display" "$gcolor"
       fi
     done <<< "$data"
     printf "\n"

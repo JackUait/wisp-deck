@@ -813,7 +813,13 @@ func renderLedgerFileRow(row ledger.Row, width int, visual ledger.RowVisualState
 		nameWidth = 1
 	}
 	name := runewidth.Truncate(path.Base(row.Path), nameWidth, "…")
-	line := prefix + rowStyle.Foreground(currentTheme.Text).Render(name)
+	// The filename takes its section title's color (yellow under "modified",
+	// green under "staged", cyan under "new") so a section reads as one block.
+	nameColor := currentTheme.Text
+	if groupColor, ok := ledgerGroupColor(row.ID.Group); ok {
+		nameColor = groupColor
+	}
+	line := prefix + rowStyle.Foreground(nameColor).Render(name)
 	if visual.Hovered {
 		if padding := width - lipgloss.Width(line); padding > 0 {
 			line += rowStyle.Render(strings.Repeat(" ", padding))
