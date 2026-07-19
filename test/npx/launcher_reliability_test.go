@@ -384,6 +384,42 @@ func TestLauncher_skip_tui_download_requires_exact_repository_test_mode(t *testi
 		}
 	})
 
+	for _, skip := range []string{"", "0"} {
+		t.Run("marked launcher downloads with skip "+fmt.Sprintf("%q", skip), func(t *testing.T) {
+			sb := newLauncherSandbox(t)
+			version := repoVersion(t)
+			curlCalls := filepath.Join(t.TempDir(), "curl-calls")
+			artifact := filepath.Join(t.TempDir(), "wisp-deck-tui")
+			writeLauncherTuiArtifact(
+				t,
+				artifact,
+				version,
+				validLauncherTuiCapabilities,
+				0,
+			)
+			sb.mockCurl(
+				t,
+				fmt.Sprintf(
+					`printf 'called\n' >> %q; cp %q "$dest"; exit 0`,
+					curlCalls,
+					artifact,
+				),
+			)
+			env := append([]string{}, sb.env...)
+			if skip != "" {
+				env = append(env, "WISP_DECK_SKIP_TUI_DOWNLOAD="+skip)
+			}
+
+			_, stderr, code := runLauncher(t, env)
+			if code != 0 {
+				t.Fatalf("marked launcher failed with skip %q: %s", skip, stderr)
+			}
+			if _, err := os.Stat(curlCalls); err != nil {
+				t.Fatalf("marked launcher skipped download with skip %q: %v", skip, err)
+			}
+		})
+	}
+
 	t.Run("pure policy requires both exact values", func(t *testing.T) {
 		for _, marker := range []string{"", "0", "stale", "1"} {
 			for _, skip := range []string{"", "0", "stale", "1"} {

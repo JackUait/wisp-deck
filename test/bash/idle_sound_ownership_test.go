@@ -309,8 +309,46 @@ func TestFuture() { _ = exec.Command("/usr/bin/afplay", "/tmp/chime.aiff") }
 `,
 		},
 		{
+			name: "Go test helper",
+			path: "test/helpers/audio_helper.go",
+			source: `package helpers
+import "os/exec"
+func Play() { _ = exec.Command("/usr/bin/afplay", "/tmp/chime.aiff").Run() }
+`,
+		},
+		{
+			name: "Go test helper alias",
+			path: "test/future_audio_test.go",
+			source: `package future
+import "os/exec"
+func run(path string) { _ = exec.Command(path).Run() }
+func TestFuture() {
+	alias := run
+	alias("/usr/bin/afplay")
+}
+`,
+		},
+		{
+			name: "Go test helper alias chain",
+			path: "test/future_audio_test.go",
+			source: `package future
+import "os/exec"
+func run(path string) { _ = exec.Command(path).Run() }
+func TestFuture() {
+	first := run
+	second := first
+	second("/usr/bin/say")
+}
+`,
+		},
+		{
 			name:   "JavaScript spec",
 			path:   "future.spec.js",
+			source: `require("child_process").execFileSync("/usr/bin/afplay", ["/tmp/chime.aiff"]);`,
+		},
+		{
+			name:   "JavaScript test helper",
+			path:   "test/helpers/audio.js",
 			source: `require("child_process").execFileSync("/usr/bin/afplay", ["/tmp/chime.aiff"]);`,
 		},
 		{
@@ -349,9 +387,115 @@ func TestFuture() { _ = exec.Command("/usr/bin/afplay", "/tmp/chime.aiff") }
 			source: `require("child_process").spawnSync("af" + "play", ["/tmp/chime.aiff"]);`,
 		},
 		{
+			name:   "template player",
+			path:   "future.spec.ts",
+			source: "require(\"child_process\").spawnSync(`af${\"play\"}`, [\"/tmp/chime.aiff\"]);",
+		},
+		{
+			name:   "destructured process alias",
+			path:   "future.test.js",
+			source: `const { execFileSync: run } = require("child_process"); run("say", ["audit"]);`,
+		},
+		{
+			name:   "static namespace process import",
+			path:   "future.test.mjs",
+			source: `import * as processTools from "node:child_process"; processTools.spawnSync("/usr/bin/afplay", ["/tmp/chime.aiff"]);`,
+		},
+		{
+			name:   "static named process import",
+			path:   "future.test.mjs",
+			source: `import { execFileSync as run } from "node:child_process"; run("/usr/bin/say", ["audit"]);`,
+		},
+		{
+			name: "computed process method alias",
+			path: "future.test.js",
+			source: `const processTools = require("node:child_process");
+const method = "spawn" + "Sync";
+processTools[method]("/usr/bin/afplay", ["/tmp/chime.aiff"]);`,
+		},
+		{
+			name: "JavaScript process helper",
+			path: "future.test.js",
+			source: `const cp = require("child_process");
+function run(path) { cp.execFileSync(path, ["audit"]); }
+run("/usr/bin/say");`,
+		},
+		{
+			name: "JavaScript shadowed process helper argument",
+			path: "future.test.js",
+			source: `const processTools = require("node:child_process");
+function run(processTools) {
+  processTools.spawnSync("/usr/bin/afplay", []);
+}
+run(processTools);`,
+		},
+		{
+			name: "JavaScript helper chain",
+			path: "future.test.js",
+			source: `const cp = require("child_process");
+function run(path) { cp.execFileSync(path, ["audit"]); }
+function relay(path) { run(path); }
+relay("/usr/bin/afplay");`,
+		},
+		{
+			name: "JavaScript helper alias",
+			path: "future.test.js",
+			source: `const cp = require("child_process");
+function run(path) { cp.execFileSync(path, ["audit"]); }
+const alias = run;
+alias("/usr/bin/afplay");`,
+		},
+		{
+			name: "JavaScript helper alias chain",
+			path: "future.test.js",
+			source: `const cp = require("child_process");
+function run(path) { cp.execFileSync(path, ["audit"]); }
+const first = run;
+const second = first;
+second("/usr/bin/say");`,
+		},
+		{
+			name: "JavaScript arrow helper",
+			path: "future.test.js",
+			source: `const cp = require("child_process");
+const run = path => cp.execFileSync(path, ["audit"]);
+run("/usr/bin/afplay");`,
+		},
+		{
+			name: "JavaScript function-expression helper",
+			path: "future.test.js",
+			source: `const cp = require("child_process");
+const run = function(path) { cp.execFileSync(path, ["audit"]); };
+run("/usr/bin/say");`,
+		},
+		{
+			name: "JavaScript object method helper",
+			path: "future.test.js",
+			source: `const cp = require("child_process");
+const runner = {
+  run(path) { cp.execFileSync(path, ["audit"]); },
+};
+runner.run("/usr/bin/afplay");`,
+		},
+		{
+			name: "JavaScript class method helper",
+			path: "future.test.js",
+			source: `const cp = require("child_process");
+class Runner {
+  run(path) { cp.execFileSync(path, ["audit"]); }
+}
+const runner = new Runner();
+runner.run("/usr/bin/say");`,
+		},
+		{
 			name:   "direct fs output",
 			path:   "future.test.js",
 			source: `require("fs").writeSync(1, "\x07");`,
+		},
+		{
+			name:   "numeric Buffer BEL",
+			path:   "future.test.js",
+			source: `require("fs").writeSync(1, Buffer.from([7]));`,
 		},
 		{
 			name:   "bracket stdout output",
@@ -359,9 +503,24 @@ func TestFuture() { _ = exec.Command("/usr/bin/afplay", "/tmp/chime.aiff") }
 			source: `process["stdout"].write("\x1b]9;audit\x07");`,
 		},
 		{
+			name:   "aliased stdout output",
+			path:   "future.test.js",
+			source: `const output = process.stdout; output["write"]("\x07");`,
+		},
+		{
+			name:   "aliased fs output",
+			path:   "future.test.js",
+			source: `const files = require("fs"); const emit = files.writeSync; emit(1, "\x07");`,
+		},
+		{
 			name:   "console terminal output",
 			path:   "future.test.js",
 			source: `console.log("\x07");`,
+		},
+		{
+			name:   "String fromCharCode BEL",
+			path:   "future.test.js",
+			source: `process.stdout.write(String.fromCharCode(7));`,
 		},
 		{
 			name:   "shell test",
@@ -393,10 +552,146 @@ func TestFuture() { _ = exec.Command("/usr/bin/afplay", "/tmp/chime.aiff") }
 			source: []byte(`// afplay is a forbidden fixture
 const fixture = "afplay";
 require("child_process").spawnSync("git", ["-C", "/tmp/wisp-deck-tui", "status"]);
+const object = { exec() {} };
+object.exec("afplay");
+const harmlessArrow = value => String(value);
+harmlessArrow("afplay");
+require("fs").writeSync(1, Buffer.alloc(7));
 `),
 		}
 		if err := validateRepositoryHostEffectInventory(mutated); err != nil {
 			t.Fatalf("harmless JavaScript audit fixture rejected: %v", err)
+		}
+	})
+
+	t.Run("JavaScript lexical shadows and unrelated methods are harmless", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["cmd/future/shadowed.js"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`const processTools = require("node:child_process");
+const { spawnSync: run } = processTools;
+function shadowedModule(processTools) {
+  processTools.spawnSync("/usr/bin/afplay", []);
+}
+function shadowedFunction(run) {
+  run("/usr/bin/say", []);
+}
+const recorder = {
+  run(value) { return String(value); },
+};
+class Recorder {
+  run(value) { return String(value); }
+}
+shadowedModule({ spawnSync() {} });
+shadowedFunction(() => {});
+recorder.run("/usr/bin/afplay");
+new Recorder().run("/usr/bin/say");
+`),
+		}
+		if err := validateRepositoryHostEffectInventory(mutated); err != nil {
+			t.Fatalf("harmless JavaScript shadow fixture rejected: %v", err)
+		}
+	})
+
+	t.Run("JavaScript local binding shadows are harmless", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["cmd/future/local-shadowed.js"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`const processTools = require("node:child_process");
+const { spawnSync: run } = processTools;
+function locallyShadowedModule(path) {
+  const processTools = { spawnSync() {} };
+  processTools.spawnSync(path, []);
+}
+function locallyShadowedFunction(path) {
+  const run = () => {};
+  run(path, []);
+}
+const files = require("node:fs");
+const emit = files.writeSync;
+function locallyShadowedOutput(value) {
+  const files = { writeSync() {} };
+  const emit = () => {};
+  files.writeSync(1, value);
+  emit(1, value);
+}
+locallyShadowedModule("/usr/bin/afplay");
+locallyShadowedFunction("/usr/bin/say");
+locallyShadowedOutput("\x07");
+`),
+		}
+		if err := validateRepositoryHostEffectInventory(mutated); err != nil {
+			t.Fatalf("harmless JavaScript local shadow fixture rejected: %v", err)
+		}
+	})
+
+	t.Run("JavaScript same-named object owners stay distinct", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["cmd/future/object-shadowed.js"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`const processTools = require("node:child_process");
+function locallyShadowedOwner() {
+  const runner = {
+    run(value) { return String(value); },
+  };
+  runner.run("/usr/bin/afplay");
+}
+const runner = {
+  run(path) { processTools.execFileSync(path, []); },
+};
+function parameterShadowedOwner(runner) {
+  runner.run("/usr/bin/say");
+}
+const recorder = {
+  relay(runner) {
+    runner.run("/usr/bin/afplay");
+  },
+};
+locallyShadowedOwner();
+parameterShadowedOwner({ run() {} });
+recorder.relay({ run() {} });
+`),
+		}
+		if err := validateRepositoryHostEffectInventory(mutated); err != nil {
+			t.Fatalf("same-named JavaScript object owners crossed provenance: %v", err)
+		}
+	})
+
+	t.Run("Go helper parameter lexical shadow is harmless", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["test/future_shadow_test.go"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`package future
+import "os/exec"
+func run(path string) {
+	{
+		path := "git"
+		_ = exec.Command(path, "status").Run()
+	}
+}
+func TestFuture() { run("/usr/bin/afplay") }
+`),
+		}
+		if err := validateRepositoryHostEffectInventory(mutated); err != nil {
+			t.Fatalf("harmless Go helper parameter shadow rejected: %v", err)
+		}
+	})
+
+	t.Run("JavaScript helper parameter lexical shadow is harmless", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["future.test.js"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`const cp = require("child_process");
+function run(path) {
+  {
+    const path = "git";
+    cp.execFileSync(path, ["status"]);
+  }
+}
+run("/usr/bin/afplay");`),
+		}
+		if err := validateRepositoryHostEffectInventory(mutated); err != nil {
+			t.Fatalf("harmless JavaScript helper parameter shadow rejected: %v", err)
 		}
 	})
 
@@ -689,13 +984,18 @@ func isProductionAuditTextPath(
 }
 
 func isTrackedTestSource(path string) bool {
+	slashPath := filepath.ToSlash(path)
 	base := filepath.Base(path)
-	if strings.HasSuffix(base, "_test.go") {
+	if strings.HasSuffix(base, "_test.go") ||
+		(strings.HasPrefix(slashPath, "test/") &&
+			strings.HasSuffix(base, ".go")) {
 		return true
 	}
 	for _, extension := range []string{".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"} {
 		if strings.HasSuffix(base, ".spec"+extension) ||
-			strings.HasSuffix(base, ".test"+extension) {
+			strings.HasSuffix(base, ".test"+extension) ||
+			(strings.HasPrefix(slashPath, "test/") &&
+				strings.HasSuffix(base, extension)) {
 			return true
 		}
 	}
@@ -705,14 +1005,14 @@ func isTrackedTestSource(path string) bool {
 		strings.HasSuffix(base, ".bats") ||
 		!strings.Contains(base, ".")
 	return shellTest &&
-		(strings.HasPrefix(filepath.ToSlash(path), "test/") ||
+		(strings.HasPrefix(slashPath, "test/") ||
 			strings.HasSuffix(base, "_test.sh") ||
 			strings.HasSuffix(base, ".test.sh") ||
 			strings.HasSuffix(base, ".spec.sh"))
 }
 
 func trackedTestSourceLaunchesHostEffect(path string, source []byte) bool {
-	if strings.HasSuffix(path, "_test.go") {
+	if strings.HasSuffix(path, ".go") {
 		return testSourceLaunchesHostAudio(path, source)
 	}
 	if !isJavaScriptAuditPath(path) {
@@ -729,8 +1029,9 @@ func trackedTestSourceLaunchesHostEffect(path string, source []byte) bool {
 }
 
 type javascriptAuditToken struct {
-	kind  byte
-	value string
+	kind     byte
+	value    string
+	position int
 }
 
 func isJavaScriptAuditPath(path string) bool {
@@ -743,13 +1044,27 @@ func isJavaScriptAuditPath(path string) bool {
 }
 
 func javascriptSourceLaunchesHostEffect(source []byte) bool {
+	if repositoryJavaScriptSourceLaunchesHostEffect(string(source)) {
+		return true
+	}
 	tokens, ok := lexJavaScriptAudit(string(source))
 	if !ok {
 		return true
 	}
 	constants := javascriptStringConstants(tokens)
+	bindings := collectJavaScriptAuditBindings(tokens, constants)
+	methodOwners := javascriptAuditMethodOwners(tokens)
+	parameterUses := collectJavaScriptHostEffectParameterUses(
+		tokens,
+		bindings,
+		constants,
+	)
 	for index, token := range tokens {
 		if token.kind != '(' {
+			continue
+		}
+		if index >= 2 && tokens[index-2].kind == 'i' &&
+			tokens[index-2].value == "function" {
 			continue
 		}
 		end := matchingJavaScriptToken(tokens, index, '(', ')')
@@ -758,31 +1073,298 @@ func javascriptSourceLaunchesHostEffect(source []byte) bool {
 		}
 		method := javascriptCallMethod(tokens, index)
 		arguments := splitJavaScriptArguments(tokens[index+1 : end])
+		sensitive := javascriptCallInvokesSensitiveHostEffect(
+			method,
+			arguments,
+			parameterUses,
+			constants,
+			tokens,
+			index,
+			bindings,
+		)
+		if binding := javascriptAuditBareFunctionKey(
+			tokens,
+			index,
+			index,
+			methodOwners,
+		); binding != "" {
+			sensitive = sensitive ||
+				javascriptCallInvokesSensitiveHostEffect(
+					binding,
+					arguments,
+					parameterUses,
+					constants,
+					tokens,
+					index,
+					bindings,
+				)
+		}
+		if qualified := javascriptAuditQualifiedMethodKey(
+			tokens,
+			index,
+			index,
+			methodOwners,
+		); qualified != "" {
+			sensitive = sensitive ||
+				javascriptCallInvokesSensitiveHostEffect(
+					qualified,
+					arguments,
+					parameterUses,
+					constants,
+					tokens,
+					index,
+					bindings,
+				)
+		}
+		if sensitive {
+			return true
+		}
+		outputMethod, outputCall := javascriptScopedOutputMethod(
+			tokens,
+			index,
+			method,
+			bindings,
+			nil,
+		)
+		if !outputCall {
+			continue
+		}
+		outputArguments := arguments
+		if outputMethod == "writesync" {
+			if !javascriptOutputFileDescriptor(arguments) {
+				continue
+			}
+			outputArguments = arguments[1:]
+		}
+		if javascriptArgumentsHaveTerminalEffect(
+			outputArguments,
+			constants,
+		) {
+			return true
+		}
+	}
+	return false
+}
+
+func repositoryJavaScriptSourceLaunchesHostEffect(source string) bool {
+	tokens, ok := lexRepositoryJavaScript(source)
+	if !ok {
+		return true
+	}
+	scope := &repositoryJavaScriptScope{
+		bindings: map[string]repositoryJavaScriptValue{
+			"Bun":  {module: true},
+			"Deno": {module: true},
+		},
+	}
+	functionBodies := repositoryJavaScriptFunctionBodies(tokens)
+	for index := 0; index < len(tokens); index++ {
+		current := tokens[index]
+		if current.kind == '{' {
+			if parameters, functionBody := functionBodies[index]; functionBody {
+				scope = newRepositoryJavaScriptFunctionScope(scope, parameters)
+			} else {
+				scope = &repositoryJavaScriptScope{
+					parent:   scope,
+					bindings: make(map[string]repositoryJavaScriptValue),
+				}
+			}
+			continue
+		}
+		if current.kind == '}' {
+			if scope.parent != nil {
+				scope = scope.parent
+			}
+			continue
+		}
+		if current.kind == 'i' {
+			switch current.value {
+			case "const", "let", "var":
+				end := repositoryJavaScriptStatementEnd(tokens, index+1)
+				repositoryJavaScriptDeclare(
+					scope,
+					current.value,
+					tokens[index+1:end],
+				)
+			case "function":
+				if index+1 < len(tokens) && tokens[index+1].kind == 'i' {
+					scope.declare(
+						tokens[index+1].value,
+						repositoryJavaScriptValue{},
+					)
+				}
+			case "import":
+				if index+1 < len(tokens) && tokens[index+1].kind != '(' {
+					end := repositoryJavaScriptStatementEnd(tokens, index+1)
+					repositoryJavaScriptDeclareImport(
+						scope,
+						tokens[index+1:end],
+					)
+				}
+			default:
+				if index+1 < len(tokens) && tokens[index+1].kind == '=' &&
+					(index+2 >= len(tokens) || tokens[index+2].kind != '=') {
+					end := repositoryJavaScriptStatementEnd(tokens, index+2)
+					scope.assign(
+						current.value,
+						repositoryJavaScriptEvaluate(
+							scope,
+							tokens[index+2:end],
+						),
+					)
+				}
+			}
+		}
+		if current.kind != '(' {
+			continue
+		}
+		end := matchingRepositoryJavaScriptToken(tokens, index, '(', ')')
+		if end < 0 {
+			return true
+		}
+		start := repositoryJavaScriptExpressionStart(tokens, index)
+		callee := repositoryJavaScriptHostProcessCallee(
+			scope,
+			tokens[start:index],
+		)
+		if len(callee.processMethods) == 0 {
+			continue
+		}
+		argumentTokens := splitRepositoryJavaScriptArguments(
+			tokens[index+1 : end],
+		)
+		arguments := make(
+			[]repositoryJavaScriptValue,
+			len(argumentTokens),
+		)
+		for argumentIndex, argument := range argumentTokens {
+			arguments[argumentIndex] = repositoryJavaScriptEvaluate(
+				scope,
+				argument,
+			)
+		}
+		if repositoryJavaScriptHostProcessCallIsEffect(callee, arguments) {
+			return true
+		}
+	}
+	return false
+}
+
+func repositoryJavaScriptHostProcessCallee(
+	scope *repositoryJavaScriptScope,
+	tokens []repositoryJavaScriptToken,
+) repositoryJavaScriptValue {
+	value := repositoryJavaScriptEvaluate(scope, tokens)
+	if len(value.processMethods) != 0 {
+		return value
+	}
+	tokens = trimRepositoryJavaScriptTokens(tokens)
+	if len(tokens) >= 3 && tokens[len(tokens)-2].kind == '.' &&
+		tokens[len(tokens)-1].kind == 'i' {
+		method := tokens[len(tokens)-1].value
+		receiver := repositoryJavaScriptEvaluate(
+			scope,
+			tokens[:len(tokens)-2],
+		)
+		if receiver.module &&
+			(javascriptProcessMethod(method) ||
+				strings.EqualFold(method, "command")) {
+			return repositoryJavaScriptValue{
+				processMethods: map[string]bool{method: true},
+			}
+		}
+	}
+	if len(tokens) > 3 && tokens[len(tokens)-1].kind == ']' {
+		open := matchingRepositoryJavaScriptTokenBackward(
+			tokens,
+			len(tokens)-1,
+			'[',
+			']',
+		)
+		if open > 0 {
+			receiver := repositoryJavaScriptEvaluate(scope, tokens[:open])
+			property := repositoryJavaScriptEvaluate(
+				scope,
+				tokens[open+1:len(tokens)-1],
+			)
+			if receiver.module {
+				methods := make(map[string]bool)
+				for method := range property.strings {
+					if javascriptProcessMethod(method) ||
+						strings.EqualFold(method, "command") {
+						methods[method] = true
+					}
+				}
+				if len(methods) != 0 {
+					return repositoryJavaScriptValue{
+						processMethods: methods,
+					}
+				}
+			}
+		}
+	}
+	return repositoryJavaScriptValue{}
+}
+
+func repositoryJavaScriptHostProcessCallIsEffect(
+	callee repositoryJavaScriptValue,
+	arguments []repositoryJavaScriptValue,
+) bool {
+	for method := range callee.processMethods {
 		switch strings.ToLower(method) {
 		case "exec", "execsync":
 			if len(arguments) > 0 &&
-				javascriptExpressionHasHostEffect(arguments[0], constants) {
+				repositoryJavaScriptValueHasHostEffect(arguments[0]) {
 				return true
 			}
 		case "execfile", "execfilesync", "spawn", "spawnsync", "command":
-			if javascriptProcessArgumentsHaveHostEffect(arguments, constants) {
+			if len(arguments) == 0 {
+				continue
+			}
+			executable := arguments[0]
+			if executable.sequenceKnown && len(executable.sequence) > 0 {
+				executable = executable.sequence[0]
+			}
+			if repositoryJavaScriptValueHasHostEffect(executable) {
 				return true
 			}
-		case "write", "writestring", "writeline":
-			if javascriptCallTargetsTerminal(tokens, index) &&
-				javascriptArgumentsHaveTerminalEffect(arguments, constants) {
-				return true
+			if repositoryJavaScriptValueNamesShell(executable) {
+				for _, argument := range arguments[1:] {
+					if repositoryJavaScriptValueHasHostEffect(argument) {
+						return true
+					}
+				}
 			}
-		case "writesync":
-			if javascriptWriteSyncTargetsTerminal(tokens, index, arguments) &&
-				javascriptArgumentsHaveTerminalEffect(arguments, constants) {
-				return true
-			}
-		case "log", "error", "warn", "info":
-			if javascriptCallHasReceiver(tokens, index, "console") &&
-				javascriptArgumentsHaveTerminalEffect(arguments, constants) {
-				return true
-			}
+		}
+	}
+	return false
+}
+
+func repositoryJavaScriptValueHasHostEffect(
+	value repositoryJavaScriptValue,
+) bool {
+	for item := range value.strings {
+		if javascriptStringHasHostEffectMarker(item) ||
+			strings.ContainsRune(item, '\a') ||
+			shellLineHasBellEscape(item) {
+			return true
+		}
+	}
+	for _, item := range value.sequence {
+		if repositoryJavaScriptValueHasHostEffect(item) {
+			return true
+		}
+	}
+	return false
+}
+
+func repositoryJavaScriptValueNamesShell(
+	value repositoryJavaScriptValue,
+) bool {
+	for item := range value.strings {
+		switch strings.ToLower(filepath.Base(item)) {
+		case "sh", "bash", "zsh", "env":
+			return true
 		}
 	}
 	return false
@@ -819,7 +1401,11 @@ func lexJavaScriptAudit(source string) ([]javascriptAuditToken, bool) {
 			if !ok {
 				return nil, false
 			}
-			tokens = append(tokens, javascriptAuditToken{kind: 's', value: value})
+			tokens = append(tokens, javascriptAuditToken{
+				kind:     's',
+				value:    value,
+				position: len(tokens),
+			})
 			index = next
 			continue
 		}
@@ -830,8 +1416,9 @@ func lexJavaScriptAudit(source string) ([]javascriptAuditToken, bool) {
 				index++
 			}
 			tokens = append(tokens, javascriptAuditToken{
-				kind:  'i',
-				value: source[start:index],
+				kind:     'i',
+				value:    source[start:index],
+				position: len(tokens),
 			})
 			continue
 		}
@@ -846,14 +1433,16 @@ func lexJavaScriptAudit(source string) ([]javascriptAuditToken, bool) {
 				index++
 			}
 			tokens = append(tokens, javascriptAuditToken{
-				kind:  'n',
-				value: source[start:index],
+				kind:     'n',
+				value:    source[start:index],
+				position: len(tokens),
 			})
 			continue
 		}
 		tokens = append(tokens, javascriptAuditToken{
-			kind:  character,
-			value: string(character),
+			kind:     character,
+			value:    string(character),
+			position: len(tokens),
 		})
 		index++
 	}
@@ -1066,10 +1655,133 @@ func javascriptCallMethod(
 	tokens []javascriptAuditToken,
 	open int,
 ) string {
-	if open == 0 || tokens[open-1].kind != 'i' {
+	if open == 0 {
 		return ""
 	}
-	return tokens[open-1].value
+	if tokens[open-1].kind == 'i' {
+		return tokens[open-1].value
+	}
+	if tokens[open-1].kind == ']' {
+		for index := open - 2; index >= 0; index-- {
+			if tokens[index].kind == '[' {
+				if index+1 < open-1 &&
+					(tokens[index+1].kind == 's' ||
+						tokens[index+1].kind == 'i') {
+					return tokens[index+1].value
+				}
+				break
+			}
+		}
+	}
+	return ""
+}
+
+func javascriptCallHasExplicitReceiver(
+	tokens []javascriptAuditToken,
+	open int,
+) bool {
+	if open < 2 {
+		return false
+	}
+	if tokens[open-1].kind == ']' {
+		return true
+	}
+	return tokens[open-2].kind == '.'
+}
+
+func javascriptIdentifierIsFunctionParameterAt(
+	tokens []javascriptAuditToken,
+	position int,
+	name string,
+) bool {
+	if name == "" {
+		return false
+	}
+	for index := 0; index < len(tokens); index++ {
+		if tokens[index].kind == 'i' && tokens[index].value == "function" {
+			parametersStart := index + 1
+			if parametersStart < len(tokens) &&
+				tokens[parametersStart].kind == 'i' {
+				parametersStart++
+			}
+			if parametersStart >= len(tokens) ||
+				tokens[parametersStart].kind != '(' {
+				continue
+			}
+			parametersEnd := matchingJavaScriptToken(
+				tokens,
+				parametersStart,
+				'(',
+				')',
+			)
+			if parametersEnd < 0 || parametersEnd+1 >= len(tokens) ||
+				tokens[parametersEnd+1].kind != '{' {
+				continue
+			}
+			bodyEnd := matchingJavaScriptToken(
+				tokens,
+				parametersEnd+1,
+				'{',
+				'}',
+			)
+			if bodyEnd > position && parametersEnd+1 < position &&
+				javascriptTokensContainIdentifier(
+					tokens[parametersStart+1:parametersEnd],
+					name,
+				) {
+				return true
+			}
+			continue
+		}
+		if tokens[index].kind != '>' || index == 0 ||
+			tokens[index-1].kind != '=' || index+1 >= len(tokens) ||
+			tokens[index+1].kind != '{' {
+			continue
+		}
+		bodyEnd := matchingJavaScriptToken(tokens, index+1, '{', '}')
+		if bodyEnd <= position || index+1 >= position {
+			continue
+		}
+		parametersStart := index - 2
+		parametersEnd := index - 1
+		if parametersStart >= 0 && tokens[parametersStart].kind == ')' {
+			parametersStart = matchingJavaScriptTokenBackward(
+				tokens,
+				parametersStart,
+				'(',
+				')',
+			)
+		}
+		if parametersStart >= 0 &&
+			javascriptTokensContainIdentifier(
+				tokens[parametersStart:parametersEnd],
+				name,
+			) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchingJavaScriptTokenBackward(
+	tokens []javascriptAuditToken,
+	start int,
+	open byte,
+	close byte,
+) int {
+	depth := 0
+	for index := start; index >= 0; index-- {
+		switch tokens[index].kind {
+		case close:
+			depth++
+		case open:
+			depth--
+			if depth == 0 {
+				return index
+			}
+		}
+	}
+	return -1
 }
 
 func splitJavaScriptArguments(
@@ -1123,7 +1835,7 @@ func javascriptExpressionHasHostEffect(
 	constants map[string]string,
 ) bool {
 	for _, value := range javascriptExpressionStrings(tokens, constants) {
-		if stringHasHostEffectMarker(value) ||
+		if javascriptStringHasHostEffectMarker(value) ||
 			strings.ContainsRune(value, '\a') ||
 			shellLineHasBellEscape(value) {
 			return true
@@ -1144,7 +1856,7 @@ func javascriptProcessArgumentsHaveHostEffect(
 		return false
 	}
 	executable := strings.ToLower(filepath.Base(values[0]))
-	if stringHasHostEffectMarker(values[0]) ||
+	if javascriptStringHasHostEffectMarker(values[0]) ||
 		executable == "afplay" || executable == "say" ||
 		executable == "osascript" {
 		return true
@@ -1160,11 +1872,43 @@ func javascriptProcessArgumentsHaveHostEffect(
 	return false
 }
 
+func javascriptStringHasHostEffectMarker(value string) bool {
+	if stringHasHostEffectMarker(value) {
+		return true
+	}
+	var compact strings.Builder
+	for _, character := range strings.ToLower(value) {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= '0' && character <= '9') ||
+			character == '/' {
+			compact.WriteRune(character)
+		}
+	}
+	normalized := compact.String()
+	for _, marker := range []string{
+		"afplay",
+		"osascript",
+		"/usr/bin/say",
+		"/system/library/sounds/",
+		"nssound",
+		"audioservicesplaysystemsound",
+		"displaynotification",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return normalized == "say"
+}
+
 func javascriptArgumentsHaveTerminalEffect(
 	arguments [][]javascriptAuditToken,
 	constants map[string]string,
 ) bool {
 	for _, argument := range arguments {
+		if javascriptExpressionHasNumericBEL(argument) {
+			return true
+		}
 		for _, value := range javascriptExpressionStrings(argument, constants) {
 			if strings.ContainsRune(value, '\a') ||
 				strings.Contains(value, "]9;") ||
@@ -1176,11 +1920,1323 @@ func javascriptArgumentsHaveTerminalEffect(
 	return false
 }
 
-func javascriptCallHasReceiver(
+func javascriptExpressionHasNumericBEL(tokens []javascriptAuditToken) bool {
+	for index, token := range tokens {
+		if token.kind != '(' {
+			continue
+		}
+		end := matchingJavaScriptToken(tokens, index, '(', ')')
+		if end < 0 {
+			continue
+		}
+		method := strings.ToLower(javascriptCallMethod(tokens, index))
+		byteSequence := false
+		switch method {
+		case "from", "of":
+			receiver := javascriptCallReceiverTokens(tokens, index)
+			byteSequence = javascriptTokensContainIdentifier(receiver, "Buffer") ||
+				javascriptTokensContainIdentifier(receiver, "Uint8Array")
+		case "uint8array", "buffer":
+			byteSequence = index >= 2 &&
+				tokens[index-2].kind == 'i' &&
+				tokens[index-2].value == "new"
+		case "fromcharcode", "fromcodepoint":
+			receiver := javascriptCallReceiverTokens(tokens, index)
+			byteSequence = javascriptTokensContainIdentifier(receiver, "String")
+		}
+		if !byteSequence {
+			continue
+		}
+		for _, argument := range tokens[index+1 : end] {
+			if argument.kind != 'n' {
+				continue
+			}
+			value, err := strconv.ParseInt(argument.value, 0, 32)
+			if err == nil && value == 7 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type javascriptAuditBindings struct {
+	processObjects      map[string]bool
+	terminalObjects     map[string]bool
+	fsObjects           map[string]bool
+	processFunctions    map[string]string
+	outputFunctions     map[string]string
+	fsMutationFunctions map[string]string
+}
+
+type javascriptAuditFunction struct {
+	name       string
+	parameters []string
+	body       []javascriptAuditToken
+	bodyStart  int
+}
+
+func collectJavaScriptHostEffectParameterUses(
+	tokens []javascriptAuditToken,
+	bindings javascriptAuditBindings,
+	constants map[string]string,
+) map[string]map[int]goHostEffectUse {
+	functions := javascriptAuditFunctions(tokens)
+	methodOwners := javascriptAuditMethodOwners(tokens)
+	uses := make(map[string]map[int]goHostEffectUse, len(functions))
+	processCalls := make(
+		map[string]map[int]repositoryJavaScriptValue,
+		len(functions),
+	)
+	for name := range functions {
+		uses[name] = make(map[int]goHostEffectUse)
+		processCalls[name] = javascriptScopedProcessCalls(
+			functions[name],
+			bindings,
+		)
+	}
+	for range 32 {
+		changed := false
+		for name, function := range functions {
+			parameterBindings := make([]int, len(function.parameters))
+			for index, parameter := range function.parameters {
+				parameterBindings[index] = -1
+				if binding, ok := methodOwners.resolveBinding(
+					parameter,
+					function.bodyStart,
+				); ok {
+					parameterBindings[index] = binding.declaration
+				}
+			}
+			mark := func(
+				expression []javascriptAuditToken,
+				use goHostEffectUse,
+			) {
+				for index, parameter := range function.parameters {
+					if javascriptExpressionReferencesBinding(
+						expression,
+						parameter,
+						parameterBindings[index],
+						methodOwners,
+					) && uses[name][index]&use == 0 {
+						uses[name][index] |= use
+						changed = true
+					}
+				}
+			}
+			for index, token := range function.body {
+				if token.kind != '(' {
+					continue
+				}
+				end := matchingJavaScriptToken(
+					function.body,
+					index,
+					'(',
+					')',
+				)
+				if end < 0 {
+					continue
+				}
+				method := javascriptCallMethod(function.body, index)
+				arguments := splitJavaScriptArguments(
+					function.body[index+1 : end],
+				)
+				processMethod := method
+				if alias := bindings.processFunctions[method]; alias != "" {
+					processMethod = alias
+				}
+				if javascriptProcessMethod(processMethod) &&
+					javascriptProcessArgumentsHaveHostEffect(
+						arguments,
+						constants,
+					) {
+					if javascriptCallHasExplicitReceiver(
+						function.body,
+						index,
+					) {
+						mark(
+							javascriptCallReceiverTokens(
+								function.body,
+								index,
+							),
+							goProcessCapabilityHostEffectUse,
+						)
+					} else if index > 0 {
+						mark(
+							function.body[index-1:index],
+							goProcessCapabilityHostEffectUse,
+						)
+					}
+				}
+				processCall := processCalls[name][index]
+				if len(processCall.processMethods) != 0 {
+					if len(arguments) > 0 {
+						mark(arguments[0], goProcessHostEffectUse)
+						dynamic := false
+						for _, parameter := range function.parameters {
+							if javascriptTokensContainIdentifier(
+								arguments[0],
+								parameter,
+							) {
+								dynamic = true
+								break
+							}
+						}
+						shellCommand := false
+						for processMethod := range processCall.processMethods {
+							if strings.EqualFold(processMethod, "exec") ||
+								strings.EqualFold(processMethod, "execsync") {
+								shellCommand = true
+								break
+							}
+						}
+						if dynamic || shellCommand {
+							for _, argument := range arguments {
+								mark(
+									argument,
+									goProcessHostEffectUse|
+										goTerminalHostEffectUse,
+								)
+							}
+						}
+					}
+				}
+				outputMethod, outputCall := javascriptScopedOutputMethod(
+					function.body,
+					index,
+					method,
+					bindings,
+					function.parameters,
+				)
+				if outputCall {
+					outputArguments := arguments
+					if outputMethod == "writesync" {
+						if !javascriptOutputFileDescriptor(arguments) {
+							outputArguments = nil
+						} else {
+							outputArguments = arguments[1:]
+						}
+					}
+					for _, argument := range outputArguments {
+						mark(argument, goTerminalHostEffectUse)
+					}
+				}
+				callees := []string{method}
+				if binding := javascriptAuditBareFunctionKey(
+					function.body,
+					index,
+					function.bodyStart+index,
+					methodOwners,
+				); binding != "" {
+					callees = append(callees, binding)
+				}
+				if qualified := javascriptAuditQualifiedMethodKey(
+					function.body,
+					index,
+					function.bodyStart+index,
+					methodOwners,
+				); qualified != "" {
+					callees = append(callees, qualified)
+				}
+				for _, callee := range callees {
+					for argumentIndex, use := range uses[callee] {
+						if argumentIndex < len(arguments) {
+							mark(arguments[argumentIndex], use)
+						}
+					}
+				}
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	return uses
+}
+
+func javascriptExpressionReferencesBinding(
+	expression []javascriptAuditToken,
+	name string,
+	declaration int,
+	owners javascriptAuditMethodOwnerSet,
+) bool {
+	for _, current := range expression {
+		if current.kind != 'i' || current.value != name {
+			continue
+		}
+		if declaration < 0 {
+			return true
+		}
+		binding, ok := owners.resolveBinding(name, current.position)
+		if ok && binding.declaration == declaration {
+			return true
+		}
+	}
+	return false
+}
+
+func javascriptScopedProcessCalls(
+	function javascriptAuditFunction,
+	bindings javascriptAuditBindings,
+) map[int]repositoryJavaScriptValue {
+	tokens := make(
+		[]repositoryJavaScriptToken,
+		len(function.body),
+	)
+	for index, token := range function.body {
+		tokens[index] = repositoryJavaScriptToken{
+			kind:  token.kind,
+			value: token.value,
+		}
+	}
+	scope := &repositoryJavaScriptScope{
+		bindings: make(map[string]repositoryJavaScriptValue),
+	}
+	for name := range bindings.processObjects {
+		scope.declare(name, repositoryJavaScriptValue{module: true})
+	}
+	for name, method := range bindings.processFunctions {
+		scope.declare(name, repositoryJavaScriptValue{
+			processMethods: map[string]bool{method: true},
+		})
+	}
+	for _, parameter := range function.parameters {
+		scope.declare(parameter, repositoryJavaScriptValue{})
+	}
+	functionBodies := repositoryJavaScriptFunctionBodies(tokens)
+	calls := make(map[int]repositoryJavaScriptValue)
+	for index := 0; index < len(tokens); index++ {
+		current := tokens[index]
+		if current.kind == '{' {
+			if parameters, functionBody := functionBodies[index]; functionBody {
+				scope = newRepositoryJavaScriptFunctionScope(scope, parameters)
+			} else {
+				scope = &repositoryJavaScriptScope{
+					parent:   scope,
+					bindings: make(map[string]repositoryJavaScriptValue),
+				}
+			}
+			continue
+		}
+		if current.kind == '}' {
+			if scope.parent != nil {
+				scope = scope.parent
+			}
+			continue
+		}
+		if current.kind == 'i' {
+			switch current.value {
+			case "const", "let", "var":
+				end := repositoryJavaScriptStatementEnd(tokens, index+1)
+				repositoryJavaScriptDeclare(
+					scope,
+					current.value,
+					tokens[index+1:end],
+				)
+			case "function":
+				if index+1 < len(tokens) && tokens[index+1].kind == 'i' {
+					scope.declare(
+						tokens[index+1].value,
+						repositoryJavaScriptValue{},
+					)
+				}
+			default:
+				if index+1 < len(tokens) && tokens[index+1].kind == '=' &&
+					(index+2 >= len(tokens) || tokens[index+2].kind != '=') {
+					end := repositoryJavaScriptStatementEnd(tokens, index+2)
+					scope.assign(
+						current.value,
+						repositoryJavaScriptEvaluate(
+							scope,
+							tokens[index+2:end],
+						),
+					)
+				}
+			}
+		}
+		if current.kind != '(' {
+			continue
+		}
+		start := repositoryJavaScriptExpressionStart(tokens, index)
+		callee := repositoryJavaScriptHostProcessCallee(
+			scope,
+			tokens[start:index],
+		)
+		if len(callee.processMethods) != 0 {
+			calls[index] = callee
+		}
+	}
+	return calls
+}
+
+func javascriptAuditFunctions(
+	tokens []javascriptAuditToken,
+) map[string]javascriptAuditFunction {
+	functions := make(map[string]javascriptAuditFunction)
+	for index := 0; index+4 < len(tokens); index++ {
+		if tokens[index].kind != 'i' ||
+			tokens[index].value != "function" ||
+			tokens[index+1].kind != 'i' ||
+			tokens[index+2].kind != '(' {
+			continue
+		}
+		parametersEnd := matchingJavaScriptToken(
+			tokens,
+			index+2,
+			'(',
+			')',
+		)
+		if parametersEnd < 0 || parametersEnd+1 >= len(tokens) ||
+			tokens[parametersEnd+1].kind != '{' {
+			continue
+		}
+		bodyEnd := matchingJavaScriptToken(
+			tokens,
+			parametersEnd+1,
+			'{',
+			'}',
+		)
+		if bodyEnd < 0 {
+			continue
+		}
+		var parameters []string
+		for _, parameter := range splitJavaScriptArguments(
+			tokens[index+3 : parametersEnd],
+		) {
+			for _, token := range parameter {
+				if token.kind == 'i' {
+					parameters = append(parameters, token.value)
+					break
+				}
+			}
+		}
+		key := javascriptAuditFunctionKey(tokens[index+1].value, index)
+		functions[key] = javascriptAuditFunction{
+			name:       key,
+			parameters: parameters,
+			body:       tokens[parametersEnd+2 : bodyEnd],
+			bodyStart:  parametersEnd + 2,
+		}
+		index = bodyEnd
+	}
+	for index := 0; index+3 < len(tokens); index++ {
+		if tokens[index].kind != 'i' || tokens[index+1].kind != '=' {
+			continue
+		}
+		name := tokens[index].value
+		start := index + 2
+		var parameters []string
+		bodyStart := -1
+		if tokens[start].kind == 'i' && tokens[start].value == "function" &&
+			start+1 < len(tokens) && tokens[start+1].kind == '(' {
+			parametersEnd := matchingJavaScriptToken(tokens, start+1, '(', ')')
+			if parametersEnd < 0 {
+				continue
+			}
+			parameters = javascriptAuditParameterNames(
+				tokens[start+2 : parametersEnd],
+			)
+			bodyStart = parametersEnd + 1
+		} else if tokens[start].kind == 'i' &&
+			start+2 < len(tokens) &&
+			tokens[start+1].kind == '=' && tokens[start+2].kind == '>' {
+			parameters = []string{tokens[start].value}
+			bodyStart = start + 3
+		} else if tokens[start].kind == '(' {
+			parametersEnd := matchingJavaScriptToken(tokens, start, '(', ')')
+			if parametersEnd < 0 || parametersEnd+2 >= len(tokens) ||
+				tokens[parametersEnd+1].kind != '=' ||
+				tokens[parametersEnd+2].kind != '>' {
+				continue
+			}
+			parameters = javascriptAuditParameterNames(
+				tokens[start+1 : parametersEnd],
+			)
+			bodyStart = parametersEnd + 3
+		}
+		if bodyStart < 0 || bodyStart >= len(tokens) {
+			continue
+		}
+		var body []javascriptAuditToken
+		sourceStart := bodyStart
+		if tokens[bodyStart].kind == '{' {
+			bodyEnd := matchingJavaScriptToken(tokens, bodyStart, '{', '}')
+			if bodyEnd < 0 {
+				continue
+			}
+			body = tokens[bodyStart+1 : bodyEnd]
+			sourceStart = bodyStart + 1
+		} else {
+			bodyEnd := javascriptAuditStatementEnd(tokens, bodyStart)
+			body = tokens[bodyStart:bodyEnd]
+		}
+		functions[name] = javascriptAuditFunction{
+			name:       name,
+			parameters: parameters,
+			body:       body,
+			bodyStart:  sourceStart,
+		}
+	}
+	collectJavaScriptAuditMethodFunctions(tokens, functions)
+	return functions
+}
+
+func javascriptAuditFunctionKey(name string, declaration int) string {
+	return fmt.Sprintf("@function:%s:%d", name, declaration)
+}
+
+func collectJavaScriptAuditMethodFunctions(
+	tokens []javascriptAuditToken,
+	functions map[string]javascriptAuditFunction,
+) {
+	owners := javascriptAuditMethodOwners(tokens)
+	for index := 0; index+3 < len(tokens); index++ {
+		if tokens[index].kind == 'i' &&
+			(tokens[index].value == "const" ||
+				tokens[index].value == "let" ||
+				tokens[index].value == "var") &&
+			tokens[index+1].kind == 'i' &&
+			tokens[index+2].kind == '=' &&
+			tokens[index+3].kind == '{' {
+			owner := owners.byDeclaration[index]
+			end := matchingJavaScriptToken(tokens, index+3, '{', '}')
+			if owner != "" && end > index+3 {
+				collectJavaScriptAuditMethodsInBody(
+					tokens,
+					index+3,
+					end,
+					owner,
+					functions,
+				)
+			}
+			continue
+		}
+		if tokens[index].kind == 'i' && tokens[index].value == "class" &&
+			tokens[index+1].kind == 'i' &&
+			tokens[index+2].kind == '{' {
+			owner := owners.byDeclaration[index]
+			end := matchingJavaScriptToken(tokens, index+2, '{', '}')
+			if owner != "" && end > index+2 {
+				collectJavaScriptAuditMethodsInBody(
+					tokens,
+					index+2,
+					end,
+					owner,
+					functions,
+				)
+			}
+		}
+	}
+}
+
+func collectJavaScriptAuditMethodsInBody(
+	tokens []javascriptAuditToken,
+	start int,
+	end int,
+	owner string,
+	functions map[string]javascriptAuditFunction,
+) {
+	for index := start + 1; index+3 < end; {
+		if tokens[index].kind != 'i' || tokens[index+1].kind != '(' {
+			index++
+			continue
+		}
+		parametersEnd := matchingJavaScriptToken(
+			tokens,
+			index+1,
+			'(',
+			')',
+		)
+		if parametersEnd < 0 || parametersEnd+1 >= end ||
+			tokens[parametersEnd+1].kind != '{' {
+			index++
+			continue
+		}
+		bodyEnd := matchingJavaScriptToken(
+			tokens,
+			parametersEnd+1,
+			'{',
+			'}',
+		)
+		if bodyEnd < 0 || bodyEnd > end {
+			index++
+			continue
+		}
+		key := owner + "." + tokens[index].value
+		functions[key] = javascriptAuditFunction{
+			name: key,
+			parameters: javascriptAuditParameterNames(
+				tokens[index+2 : parametersEnd],
+			),
+			body:      tokens[parametersEnd+2 : bodyEnd],
+			bodyStart: parametersEnd + 2,
+		}
+		index = bodyEnd + 1
+	}
+}
+
+type javascriptAuditMethodOwner struct {
+	key         string
+	declaration int
+	scopeStart  int
+	scopeEnd    int
+}
+
+type javascriptAuditMethodOwnerSet struct {
+	byName        map[string][]javascriptAuditMethodOwner
+	byDeclaration map[int]string
+}
+
+func javascriptAuditMethodOwners(
+	tokens []javascriptAuditToken,
+) javascriptAuditMethodOwnerSet {
+	owners := javascriptAuditMethodOwnerSet{
+		byName:        make(map[string][]javascriptAuditMethodOwner),
+		byDeclaration: make(map[int]string),
+	}
+	for index := 0; index+2 < len(tokens); index++ {
+		if tokens[index].kind == 'i' &&
+			tokens[index].value == "function" &&
+			tokens[index+1].kind == 'i' {
+			owners.add(
+				tokens,
+				tokens[index+1].value,
+				index,
+				javascriptAuditFunctionKey(tokens[index+1].value, index),
+			)
+		}
+		if tokens[index].kind == 'i' && tokens[index].value == "class" &&
+			tokens[index+1].kind == 'i' &&
+			tokens[index+2].kind == '{' {
+			name := tokens[index+1].value
+			owners.addShadow(tokens, name, index)
+			owners.add(
+				tokens,
+				name,
+				index,
+				fmt.Sprintf("@class:%s:%d", name, index),
+			)
+		}
+		if tokens[index].kind == 'i' &&
+			(tokens[index].value == "const" ||
+				tokens[index].value == "let" ||
+				tokens[index].value == "var") &&
+			tokens[index+1].kind == 'i' &&
+			tokens[index+2].kind == '=' &&
+			index+3 < len(tokens) {
+			name := tokens[index+1].value
+			owners.addShadow(tokens, name, index)
+			if tokens[index+3].kind == '{' {
+				owners.add(
+					tokens,
+					name,
+					index,
+					fmt.Sprintf("@object:%s:%d", name, index),
+				)
+			}
+		}
+	}
+	owners.addFunctionParameterShadows(tokens)
+	for range 16 {
+		changed := false
+		for index := 0; index+3 < len(tokens); index++ {
+			if tokens[index].kind != 'i' ||
+				(tokens[index].value != "const" &&
+					tokens[index].value != "let" &&
+					tokens[index].value != "var") ||
+				tokens[index+1].kind != 'i' ||
+				tokens[index+2].kind != '=' {
+				continue
+			}
+			name := tokens[index+1].value
+			var owner string
+			switch {
+			case index+5 < len(tokens) &&
+				tokens[index+3].kind == 'i' &&
+				tokens[index+3].value == "new" &&
+				tokens[index+4].kind == 'i':
+				owner = owners.resolve(tokens[index+4].value, index)
+			case tokens[index+3].kind == 'i':
+				owner = owners.resolve(tokens[index+3].value, index)
+			}
+			if owner != "" &&
+				owners.byDeclaration[index] != owner {
+				owners.add(tokens, name, index, owner)
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	return owners
+}
+
+func (owners *javascriptAuditMethodOwnerSet) add(
+	tokens []javascriptAuditToken,
+	name string,
+	declaration int,
+	key string,
+) {
+	for index := range owners.byName[name] {
+		binding := &owners.byName[name][index]
+		if binding.declaration == declaration {
+			binding.key = key
+			owners.byDeclaration[declaration] = key
+			return
+		}
+	}
+	scopeStart, scopeEnd := javascriptAuditLexicalScope(
+		tokens,
+		declaration,
+	)
+	owners.byName[name] = append(
+		owners.byName[name],
+		javascriptAuditMethodOwner{
+			key:         key,
+			declaration: declaration,
+			scopeStart:  scopeStart,
+			scopeEnd:    scopeEnd,
+		},
+	)
+	owners.byDeclaration[declaration] = key
+}
+
+func (owners *javascriptAuditMethodOwnerSet) addShadow(
+	tokens []javascriptAuditToken,
+	name string,
+	declaration int,
+) {
+	for _, binding := range owners.byName[name] {
+		if binding.declaration == declaration {
+			return
+		}
+	}
+	scopeStart, scopeEnd := javascriptAuditLexicalScope(tokens, declaration)
+	owners.addScopedShadow(
+		name,
+		declaration,
+		scopeStart,
+		scopeEnd,
+	)
+}
+
+func (owners *javascriptAuditMethodOwnerSet) addScopedShadow(
+	name string,
+	declaration int,
+	scopeStart int,
+	scopeEnd int,
+) {
+	owners.byName[name] = append(
+		owners.byName[name],
+		javascriptAuditMethodOwner{
+			declaration: declaration,
+			scopeStart:  scopeStart,
+			scopeEnd:    scopeEnd,
+		},
+	)
+}
+
+func (owners *javascriptAuditMethodOwnerSet) addFunctionParameterShadows(
+	tokens []javascriptAuditToken,
+) {
+	for index := 0; index < len(tokens); index++ {
+		if tokens[index].kind == 'i' && tokens[index].value == "function" {
+			open := index + 1
+			if open < len(tokens) && tokens[open].kind == 'i' {
+				open++
+			}
+			if open >= len(tokens) || tokens[open].kind != '(' {
+				continue
+			}
+			close := matchingJavaScriptToken(tokens, open, '(', ')')
+			if close < 0 || close+1 >= len(tokens) ||
+				tokens[close+1].kind != '{' {
+				continue
+			}
+			bodyEnd := matchingJavaScriptToken(
+				tokens,
+				close+1,
+				'{',
+				'}',
+			)
+			if bodyEnd < 0 {
+				continue
+			}
+			owners.addParameterShadows(
+				tokens[open+1:close],
+				open+1,
+				close+1,
+				bodyEnd,
+			)
+			continue
+		}
+		if tokens[index].kind == 'i' &&
+			index+1 < len(tokens) &&
+			tokens[index+1].kind == '(' &&
+			(index == 0 || tokens[index-1].value != "function") &&
+			!javascriptAuditControlKeyword(tokens[index].value) {
+			close := matchingJavaScriptToken(
+				tokens,
+				index+1,
+				'(',
+				')',
+			)
+			if close >= 0 && close+1 < len(tokens) &&
+				tokens[close+1].kind == '{' {
+				bodyEnd := matchingJavaScriptToken(
+					tokens,
+					close+1,
+					'{',
+					'}',
+				)
+				if bodyEnd >= 0 {
+					owners.addParameterShadows(
+						tokens[index+2:close],
+						index+2,
+						close+1,
+						bodyEnd,
+					)
+					continue
+				}
+			}
+		}
+		if tokens[index].kind != '>' || index == 0 ||
+			tokens[index-1].kind != '=' || index+1 >= len(tokens) ||
+			tokens[index+1].kind != '{' {
+			continue
+		}
+		start := index - 2
+		end := index - 1
+		if start >= 0 && tokens[start].kind == ')' {
+			start = matchingJavaScriptTokenBackward(
+				tokens,
+				start,
+				'(',
+				')',
+			)
+			if start >= 0 {
+				start++
+			}
+		}
+		if start < 0 {
+			continue
+		}
+		bodyEnd := matchingJavaScriptToken(tokens, index+1, '{', '}')
+		if bodyEnd < 0 {
+			continue
+		}
+		owners.addParameterShadows(
+			tokens[start:end],
+			start,
+			index+1,
+			bodyEnd,
+		)
+	}
+}
+
+func javascriptAuditControlKeyword(name string) bool {
+	switch name {
+	case "catch", "for", "if", "switch", "while", "with":
+		return true
+	default:
+		return false
+	}
+}
+
+func (owners *javascriptAuditMethodOwnerSet) addParameterShadows(
+	tokens []javascriptAuditToken,
+	offset int,
+	scopeStart int,
+	scopeEnd int,
+) {
+	cursor := 0
+	for _, parameter := range splitJavaScriptArguments(tokens) {
+		for parameterIndex, token := range parameter {
+			if token.kind != 'i' {
+				continue
+			}
+			owners.addScopedShadow(
+				token.value,
+				offset+cursor+parameterIndex,
+				scopeStart,
+				scopeEnd,
+			)
+			break
+		}
+		cursor += len(parameter) + 1
+	}
+}
+
+func (owners javascriptAuditMethodOwnerSet) resolve(
+	name string,
+	position int,
+) string {
+	selected, ok := owners.resolveBinding(name, position)
+	if !ok {
+		return ""
+	}
+	return selected.key
+}
+
+func (owners javascriptAuditMethodOwnerSet) resolveBinding(
+	name string,
+	position int,
+) (javascriptAuditMethodOwner, bool) {
+	var selected *javascriptAuditMethodOwner
+	for index := range owners.byName[name] {
+		candidate := &owners.byName[name][index]
+		if position <= candidate.scopeStart ||
+			position >= candidate.scopeEnd {
+			continue
+		}
+		if selected == nil ||
+			candidate.scopeStart > selected.scopeStart ||
+			(candidate.scopeStart == selected.scopeStart &&
+				candidate.declaration <= position &&
+				(selected.declaration > position ||
+					candidate.declaration > selected.declaration)) {
+			selected = candidate
+		}
+	}
+	if selected == nil {
+		return javascriptAuditMethodOwner{}, false
+	}
+	return *selected, true
+}
+
+func javascriptAuditLexicalScope(
+	tokens []javascriptAuditToken,
+	position int,
+) (int, int) {
+	start := -1
+	end := len(tokens)
+	var stack []int
+	for index := 0; index < position && index < len(tokens); index++ {
+		switch tokens[index].kind {
+		case '{':
+			stack = append(stack, index)
+		case '}':
+			if len(stack) != 0 {
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+	if len(stack) == 0 {
+		return start, end
+	}
+	start = stack[len(stack)-1]
+	if close := matchingJavaScriptToken(tokens, start, '{', '}'); close >= 0 {
+		end = close
+	}
+	return start, end
+}
+
+func javascriptAuditQualifiedMethodKey(
 	tokens []javascriptAuditToken,
 	open int,
-	receiver string,
+	position int,
+	owners javascriptAuditMethodOwnerSet,
+) string {
+	method := javascriptCallMethod(tokens, open)
+	if method == "" || !javascriptCallHasExplicitReceiver(tokens, open) {
+		return ""
+	}
+	receiver := javascriptCallReceiverTokens(tokens, open)
+	for index := len(receiver) - 1; index >= 0; index-- {
+		if receiver[index].kind != 'i' {
+			continue
+		}
+		if owner := owners.resolve(receiver[index].value, position); owner != "" {
+			return owner + "." + method
+		}
+	}
+	return ""
+}
+
+func javascriptAuditBareFunctionKey(
+	tokens []javascriptAuditToken,
+	open int,
+	position int,
+	owners javascriptAuditMethodOwnerSet,
+) string {
+	if open == 0 || javascriptCallHasExplicitReceiver(tokens, open) ||
+		tokens[open-1].kind != 'i' {
+		return ""
+	}
+	return owners.resolve(tokens[open-1].value, position)
+}
+
+func javascriptAuditParameterNames(
+	tokens []javascriptAuditToken,
+) []string {
+	var parameters []string
+	for _, parameter := range splitJavaScriptArguments(tokens) {
+		for _, token := range parameter {
+			if token.kind == 'i' {
+				parameters = append(parameters, token.value)
+				break
+			}
+		}
+	}
+	return parameters
+}
+
+func javascriptCallInvokesSensitiveHostEffect(
+	method string,
+	arguments [][]javascriptAuditToken,
+	uses map[string]map[int]goHostEffectUse,
+	constants map[string]string,
+	tokens []javascriptAuditToken,
+	position int,
+	bindings javascriptAuditBindings,
 ) bool {
+	for index, use := range uses[method] {
+		if index >= len(arguments) {
+			continue
+		}
+		if use&goProcessHostEffectUse != 0 &&
+			javascriptExpressionHasHostEffect(arguments[index], constants) {
+			return true
+		}
+		if use&goTerminalHostEffectUse != 0 &&
+			javascriptArgumentsHaveTerminalEffect(
+				[][]javascriptAuditToken{arguments[index]},
+				constants,
+			) {
+			return true
+		}
+		if use&goProcessCapabilityHostEffectUse != 0 &&
+			javascriptExpressionReferencesProcessBinding(
+				tokens,
+				position,
+				arguments[index],
+				bindings,
+				nil,
+				make(map[string]bool),
+			) {
+			return true
+		}
+	}
+	return false
+}
+
+func collectJavaScriptAuditBindings(
+	tokens []javascriptAuditToken,
+	constants map[string]string,
+) javascriptAuditBindings {
+	bindings := javascriptAuditBindings{
+		processObjects:      map[string]bool{"Deno": true, "Bun": true},
+		terminalObjects:     make(map[string]bool),
+		fsObjects:           map[string]bool{"fs": true},
+		processFunctions:    make(map[string]string),
+		outputFunctions:     make(map[string]string),
+		fsMutationFunctions: make(map[string]string),
+	}
+	for range 16 {
+		changed := false
+		for index := 0; index+2 < len(tokens); index++ {
+			if tokens[index].kind == 'i' &&
+				(tokens[index].value == "const" ||
+					tokens[index].value == "let" ||
+					tokens[index].value == "var") &&
+				tokens[index+1].kind == '{' {
+				close := matchingJavaScriptToken(tokens, index+1, '{', '}')
+				if close > index+1 && close+1 < len(tokens) &&
+					tokens[close+1].kind == '=' {
+					end := javascriptAuditStatementEnd(tokens, close+2)
+					rhs := tokens[close+2 : end]
+					if javascriptTokensReferenceProcessObject(rhs, bindings) {
+						changed = collectJavaScriptDestructuredFunctions(
+							tokens[index+2:close],
+							bindings.processFunctions,
+							javascriptProcessMethod,
+						) || changed
+					}
+					if javascriptTokensReferenceTerminalObject(rhs, bindings) {
+						changed = collectJavaScriptDestructuredFunctions(
+							tokens[index+2:close],
+							bindings.outputFunctions,
+							javascriptOutputMethod,
+						) || changed
+					}
+					if javascriptTokensReferenceFSObject(rhs, bindings) {
+						changed = collectJavaScriptDestructuredFunctions(
+							tokens[index+2:close],
+							bindings.fsMutationFunctions,
+							javascriptFSMutationMethod,
+						) || changed
+					}
+				}
+				continue
+			}
+			if tokens[index].kind != 'i' || tokens[index+1].kind != '=' {
+				continue
+			}
+			name := tokens[index].value
+			end := javascriptAuditStatementEnd(tokens, index+2)
+			rhs := tokens[index+2 : end]
+			if javascriptTokensReferenceProcessObject(rhs, bindings) &&
+				!bindings.processObjects[name] {
+				bindings.processObjects[name] = true
+				changed = true
+			}
+			if javascriptTokensReferenceTerminalObject(rhs, bindings) &&
+				!bindings.terminalObjects[name] {
+				bindings.terminalObjects[name] = true
+				changed = true
+			}
+			if javascriptTokensReferenceFSObject(rhs, bindings) &&
+				!bindings.fsObjects[name] {
+				bindings.fsObjects[name] = true
+				changed = true
+			}
+			member := strings.ToLower(javascriptLastMemberName(rhs))
+			if javascriptProcessMethod(member) &&
+				javascriptTokensReferenceProcessObject(rhs, bindings) &&
+				bindings.processFunctions[name] != member {
+				bindings.processFunctions[name] = member
+				changed = true
+			}
+			if javascriptOutputMethod(member) &&
+				(javascriptTokensReferenceTerminalObject(rhs, bindings) ||
+					javascriptTokensReferenceFSObject(rhs, bindings) ||
+					javascriptTokensContainIdentifier(rhs, "console")) &&
+				bindings.outputFunctions[name] != member {
+				bindings.outputFunctions[name] = member
+				changed = true
+			}
+			mutationMethod := member
+			if alias := bindings.fsMutationFunctions[member]; alias != "" {
+				mutationMethod = alias
+			}
+			if javascriptFSMutationMethod(mutationMethod) &&
+				(javascriptTokensReferenceFSObject(rhs, bindings) ||
+					bindings.fsMutationFunctions[member] != "") &&
+				bindings.fsMutationFunctions[name] != mutationMethod {
+				bindings.fsMutationFunctions[name] = mutationMethod
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	_ = constants
+	return bindings
+}
+
+func javascriptAuditStatementEnd(
+	tokens []javascriptAuditToken,
+	start int,
+) int {
+	depth := 0
+	for index := start; index < len(tokens); index++ {
+		switch tokens[index].kind {
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			if depth > 0 {
+				depth--
+			}
+		case ';':
+			if depth == 0 {
+				return index
+			}
+		}
+	}
+	return len(tokens)
+}
+
+func collectJavaScriptDestructuredFunctions(
+	tokens []javascriptAuditToken,
+	destination map[string]string,
+	allowed func(string) bool,
+) bool {
+	changed := false
+	for index := 0; index < len(tokens); index++ {
+		if tokens[index].kind != 'i' {
+			continue
+		}
+		original := strings.ToLower(tokens[index].value)
+		if !allowed(original) {
+			continue
+		}
+		alias := tokens[index].value
+		if index+2 < len(tokens) && tokens[index+1].kind == ':' &&
+			tokens[index+2].kind == 'i' {
+			alias = tokens[index+2].value
+			index += 2
+		}
+		if destination[alias] != original {
+			destination[alias] = original
+			changed = true
+		}
+	}
+	return changed
+}
+
+func javascriptProcessMethod(method string) bool {
+	switch strings.ToLower(method) {
+	case "exec", "execsync", "execfile", "execfilesync",
+		"spawn", "spawnsync", "command":
+		return true
+	default:
+		return false
+	}
+}
+
+func javascriptOutputMethod(method string) bool {
+	switch strings.ToLower(method) {
+	case "write", "writestring", "writeline", "writesync",
+		"log", "error", "warn", "info":
+		return true
+	default:
+		return false
+	}
+}
+
+func javascriptFSMutationMethod(method string) bool {
+	switch strings.ToLower(method) {
+	case "appendfilesync", "copyfilesync", "cpsync", "linksync",
+		"renamesync", "symlinksync", "truncatesync", "writefilesync":
+		return true
+	default:
+		return false
+	}
+}
+
+func javascriptLastMemberName(tokens []javascriptAuditToken) string {
+	for index := len(tokens) - 1; index >= 0; index-- {
+		if tokens[index].kind == 'i' || tokens[index].kind == 's' {
+			return tokens[index].value
+		}
+	}
+	return ""
+}
+
+func javascriptTokensContainIdentifier(
+	tokens []javascriptAuditToken,
+	want string,
+) bool {
+	for _, token := range tokens {
+		if (token.kind == 'i' || token.kind == 's') &&
+			token.value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func javascriptTokensReferenceProcessObject(
+	tokens []javascriptAuditToken,
+	bindings javascriptAuditBindings,
+) bool {
+	for _, token := range tokens {
+		if token.kind == 's' &&
+			(token.value == "child_process" ||
+				token.value == "node:child_process") {
+			return true
+		}
+		if token.kind == 'i' && bindings.processObjects[token.value] {
+			return true
+		}
+	}
+	return false
+}
+
+func javascriptExpressionReferencesProcessBinding(
+	tokens []javascriptAuditToken,
+	position int,
+	expression []javascriptAuditToken,
+	bindings javascriptAuditBindings,
+	parameters []string,
+	seen map[string]bool,
+) bool {
+	for _, token := range expression {
+		if token.kind == 's' &&
+			(token.value == "child_process" ||
+				token.value == "node:child_process") {
+			return true
+		}
+		if token.kind != 'i' || seen[token.value] ||
+			javascriptOutputIdentifierIsParameter(
+				tokens,
+				position,
+				token.value,
+				parameters,
+			) {
+			continue
+		}
+		if value, local := javascriptLocalDeclarationValueAt(
+			tokens,
+			position,
+			token.value,
+		); local {
+			seen[token.value] = true
+			found := javascriptExpressionReferencesProcessBinding(
+				tokens,
+				position,
+				value,
+				bindings,
+				parameters,
+				seen,
+			)
+			delete(seen, token.value)
+			if found {
+				return true
+			}
+			continue
+		}
+		if bindings.processObjects[token.value] ||
+			bindings.processFunctions[token.value] != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func javascriptTokensReferenceTerminalObject(
+	tokens []javascriptAuditToken,
+	bindings javascriptAuditBindings,
+) bool {
+	hasProcess := false
+	hasStream := false
+	for _, token := range tokens {
+		if token.kind == 'i' && token.value == "process" {
+			hasProcess = true
+		}
+		if (token.kind == 'i' || token.kind == 's') &&
+			(token.value == "stdout" || token.value == "stderr") {
+			hasStream = true
+		}
+		if token.kind == 'i' && bindings.terminalObjects[token.value] {
+			return true
+		}
+	}
+	return hasProcess && hasStream
+}
+
+func javascriptTokensReferenceFSObject(
+	tokens []javascriptAuditToken,
+	bindings javascriptAuditBindings,
+) bool {
+	for _, token := range tokens {
+		if token.kind == 's' &&
+			(token.value == "fs" || token.value == "node:fs") {
+			return true
+		}
+		if token.kind == 'i' && bindings.fsObjects[token.value] {
+			return true
+		}
+	}
+	return false
+}
+
+func javascriptCallReceiverTokens(
+	tokens []javascriptAuditToken,
+	open int,
+) []javascriptAuditToken {
 	start := 0
 	depth := 0
 	for index := open - 2; index >= 0; index-- {
@@ -1198,40 +3254,367 @@ func javascriptCallHasReceiver(
 			}
 		}
 	}
-	for _, token := range tokens[start:open] {
-		if token.kind == 'i' && token.value == receiver {
+	return tokens[start:open]
+}
+
+func javascriptScopedOutputMethod(
+	tokens []javascriptAuditToken,
+	open int,
+	method string,
+	bindings javascriptAuditBindings,
+	parameters []string,
+) (string, bool) {
+	if method == "" {
+		return "", false
+	}
+	if !javascriptCallHasExplicitReceiver(tokens, open) {
+		if javascriptOutputIdentifierIsParameter(
+			tokens,
+			open,
+			method,
+			parameters,
+		) {
+			return "", false
+		}
+		if value, local := javascriptLocalDeclarationValueAt(
+			tokens,
+			open,
+			method,
+		); local {
+			return javascriptExpressionOutputMethod(
+				tokens,
+				open,
+				value,
+				bindings,
+				parameters,
+				make(map[string]bool),
+			)
+		}
+		canonical := strings.ToLower(bindings.outputFunctions[method])
+		return canonical, javascriptOutputMethod(canonical)
+	}
+	receiver := javascriptCallReceiverTokens(tokens, open)
+	canonical := strings.ToLower(method)
+	switch canonical {
+	case "writesync":
+		if javascriptExpressionReferencesFSBinding(
+			tokens,
+			open,
+			receiver,
+			bindings,
+			parameters,
+			make(map[string]bool),
+		) {
+			return canonical, true
+		}
+	case "write", "writestring", "writeline":
+		if javascriptExpressionReferencesTerminalBinding(
+			tokens,
+			open,
+			receiver,
+			bindings,
+			parameters,
+			make(map[string]bool),
+		) {
+			return canonical, true
+		}
+	case "log", "error", "warn", "info":
+		if javascriptExpressionReferencesConsole(
+			tokens,
+			open,
+			receiver,
+			parameters,
+		) {
+			return canonical, true
+		}
+	}
+	return "", false
+}
+
+func javascriptOutputFileDescriptor(
+	arguments [][]javascriptAuditToken,
+) bool {
+	if len(arguments) == 0 || len(arguments[0]) != 1 {
+		return false
+	}
+	target := arguments[0][0]
+	return target.kind == 'n' &&
+		(target.value == "1" || target.value == "2")
+}
+
+func javascriptExpressionOutputMethod(
+	tokens []javascriptAuditToken,
+	position int,
+	expression []javascriptAuditToken,
+	bindings javascriptAuditBindings,
+	parameters []string,
+	seen map[string]bool,
+) (string, bool) {
+	member := strings.ToLower(javascriptLastMemberName(expression))
+	switch member {
+	case "writesync":
+		if javascriptExpressionReferencesFSBinding(
+			tokens,
+			position,
+			expression,
+			bindings,
+			parameters,
+			seen,
+		) {
+			return member, true
+		}
+	case "write", "writestring", "writeline":
+		if javascriptExpressionReferencesTerminalBinding(
+			tokens,
+			position,
+			expression,
+			bindings,
+			parameters,
+			seen,
+		) {
+			return member, true
+		}
+	case "log", "error", "warn", "info":
+		if javascriptExpressionReferencesConsole(
+			tokens,
+			position,
+			expression,
+			parameters,
+		) {
+			return member, true
+		}
+	}
+	expression = trimJavaScriptAuditExpression(expression)
+	if len(expression) != 1 || expression[0].kind != 'i' {
+		return "", false
+	}
+	name := expression[0].value
+	if seen[name] || javascriptOutputIdentifierIsParameter(
+		tokens,
+		position,
+		name,
+		parameters,
+	) {
+		return "", false
+	}
+	if value, local := javascriptLocalDeclarationValueAt(
+		tokens,
+		position,
+		name,
+	); local {
+		seen[name] = true
+		method, output := javascriptExpressionOutputMethod(
+			tokens,
+			position,
+			value,
+			bindings,
+			parameters,
+			seen,
+		)
+		delete(seen, name)
+		return method, output
+	}
+	canonical := strings.ToLower(bindings.outputFunctions[name])
+	return canonical, javascriptOutputMethod(canonical)
+}
+
+func javascriptExpressionReferencesFSBinding(
+	tokens []javascriptAuditToken,
+	position int,
+	expression []javascriptAuditToken,
+	bindings javascriptAuditBindings,
+	parameters []string,
+	seen map[string]bool,
+) bool {
+	for _, token := range expression {
+		if token.kind == 's' &&
+			(token.value == "fs" || token.value == "node:fs") {
 			return true
 		}
-		if token.kind == 's' && token.value == receiver {
+		if token.kind != 'i' || seen[token.value] ||
+			javascriptOutputIdentifierIsParameter(
+				tokens,
+				position,
+				token.value,
+				parameters,
+			) {
+			continue
+		}
+		if value, local := javascriptLocalDeclarationValueAt(
+			tokens,
+			position,
+			token.value,
+		); local {
+			seen[token.value] = true
+			found := javascriptExpressionReferencesFSBinding(
+				tokens,
+				position,
+				value,
+				bindings,
+				parameters,
+				seen,
+			)
+			delete(seen, token.value)
+			if found {
+				return true
+			}
+			continue
+		}
+		if bindings.fsObjects[token.value] {
 			return true
 		}
 	}
 	return false
 }
 
-func javascriptCallTargetsTerminal(
+func javascriptExpressionReferencesTerminalBinding(
 	tokens []javascriptAuditToken,
-	open int,
+	position int,
+	expression []javascriptAuditToken,
+	bindings javascriptAuditBindings,
+	parameters []string,
+	seen map[string]bool,
 ) bool {
-	return javascriptCallHasReceiver(tokens, open, "process") &&
-		(javascriptCallHasReceiver(tokens, open, "stdout") ||
-			javascriptCallHasReceiver(tokens, open, "stderr"))
+	hasStream := false
+	for _, token := range expression {
+		if (token.kind == 'i' || token.kind == 's') &&
+			(token.value == "stdout" || token.value == "stderr") {
+			hasStream = true
+		}
+	}
+	for _, token := range expression {
+		if token.kind != 'i' || seen[token.value] ||
+			javascriptOutputIdentifierIsParameter(
+				tokens,
+				position,
+				token.value,
+				parameters,
+			) {
+			continue
+		}
+		if value, local := javascriptLocalDeclarationValueAt(
+			tokens,
+			position,
+			token.value,
+		); local {
+			seen[token.value] = true
+			found := javascriptExpressionReferencesTerminalBinding(
+				tokens,
+				position,
+				value,
+				bindings,
+				parameters,
+				seen,
+			)
+			delete(seen, token.value)
+			if found {
+				return true
+			}
+			continue
+		}
+		if token.value == "process" && hasStream {
+			return true
+		}
+		if bindings.terminalObjects[token.value] {
+			return true
+		}
+	}
+	return false
 }
 
-func javascriptWriteSyncTargetsTerminal(
+func javascriptExpressionReferencesConsole(
 	tokens []javascriptAuditToken,
-	open int,
-	arguments [][]javascriptAuditToken,
+	position int,
+	expression []javascriptAuditToken,
+	parameters []string,
 ) bool {
-	if javascriptCallHasReceiver(tokens, open, "fs") {
-		if len(arguments) == 0 || len(arguments[0]) != 1 {
-			return false
+	for _, token := range expression {
+		if token.kind == 'i' && token.value == "console" &&
+			!javascriptOutputIdentifierIsParameter(
+				tokens,
+				position,
+				token.value,
+				parameters,
+			) {
+			if _, local := javascriptLocalDeclarationValueAt(
+				tokens,
+				position,
+				token.value,
+			); !local {
+				return true
+			}
 		}
-		target := arguments[0][0]
-		return target.kind == 'n' &&
-			(target.value == "1" || target.value == "2")
 	}
-	return javascriptCallTargetsTerminal(tokens, open)
+	return false
+}
+
+func javascriptOutputIdentifierIsParameter(
+	tokens []javascriptAuditToken,
+	position int,
+	name string,
+	parameters []string,
+) bool {
+	for _, parameter := range parameters {
+		if parameter == name {
+			return true
+		}
+	}
+	return len(parameters) == 0 &&
+		javascriptIdentifierIsFunctionParameterAt(
+			tokens,
+			position,
+			name,
+		)
+}
+
+func javascriptLocalDeclarationValueAt(
+	tokens []javascriptAuditToken,
+	position int,
+	name string,
+) ([]javascriptAuditToken, bool) {
+	selected := -1
+	selectedScope := -2
+	selectedEnd := 0
+	for index := 0; index+3 < len(tokens); index++ {
+		if tokens[index].kind != 'i' ||
+			(tokens[index].value != "const" &&
+				tokens[index].value != "let" &&
+				tokens[index].value != "var") ||
+			tokens[index+1].kind != 'i' ||
+			tokens[index+1].value != name ||
+			tokens[index+2].kind != '=' {
+			continue
+		}
+		scopeStart, scopeEnd := javascriptAuditLexicalScope(tokens, index)
+		if position <= scopeStart || position >= scopeEnd {
+			continue
+		}
+		if selected >= 0 && (scopeStart < selectedScope ||
+			(scopeStart == selectedScope &&
+				index <= selected)) {
+			continue
+		}
+		selected = index
+		selectedScope = scopeStart
+		selectedEnd = javascriptAuditStatementEnd(tokens, index+3)
+	}
+	if selected < 0 {
+		return nil, false
+	}
+	return tokens[selected+3 : selectedEnd], true
+}
+
+func trimJavaScriptAuditExpression(
+	tokens []javascriptAuditToken,
+) []javascriptAuditToken {
+	for len(tokens) > 0 && tokens[0].kind == '(' {
+		end := matchingJavaScriptToken(tokens, 0, '(', ')')
+		if end != len(tokens)-1 {
+			break
+		}
+		tokens = tokens[1:end]
+	}
+	return tokens
 }
 
 func isMachO(source []byte) bool {
@@ -1351,6 +3734,27 @@ func TestFuture() {
 		&os.ProcAttr{Env: []string{"HOME=/tmp"}},
 	)
 }`,
+		"indirect os StartProcess environment": `package future
+import "os"
+func TestFuture() {
+	attr := &os.ProcAttr{Env: []string{"HOME=/tmp"}}
+	_, _ = os.StartProcess(
+		"/tmp/wisp-deck-tui",
+		[]string{"/tmp/wisp-deck-tui", "main-menu"},
+		attr,
+	)
+}`,
+		"assigned indirect os StartProcess environment": `package future
+import "os"
+func TestFuture() {
+	attr := &os.ProcAttr{}
+	attr.Env = []string{"HOME=/tmp"}
+	_, _ = os.StartProcess(
+		"/tmp/wisp-deck-tui",
+		[]string{"/tmp/wisp-deck-tui", "main-menu"},
+		attr,
+	)
+}`,
 		"syscall Exec environment": `package future
 import "syscall"
 func TestFuture() {
@@ -1400,6 +3804,63 @@ func run(path string) {
 	cmd.Env = []string{"HOME=/tmp"}
 	_ = cmd.Run()
 }`,
+		"application helper parameter": `package future
+import (
+	"os/exec"
+	"testing"
+)
+func launch(binary string) {
+	cmd := exec.Command(binary)
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}
+func TestFuture(t *testing.T) {
+	launch(nativeLedgerBinary(t))
+}`,
+		"chained application helper parameter": `package future
+import (
+	"os/exec"
+	"testing"
+)
+func launch(binary string) {
+	cmd := exec.Command(binary)
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}
+func relay(binary string) {
+	launch(binary)
+}
+func TestFuture(t *testing.T) {
+	relay(nativeLedgerBinary(t))
+}`,
+		"application receiver helper parameter": `package future
+import (
+	"os/exec"
+	"testing"
+)
+type launcher struct{}
+func (launcher) launch(binary string) {
+	cmd := exec.Command(binary)
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}
+func TestFuture(t *testing.T) {
+	launcher{}.launch(nativeLedgerBinary(t))
+}`,
+		"application pointer receiver helper parameter": `package future
+import (
+	"os/exec"
+	"testing"
+)
+type launcher struct{}
+func (*launcher) launch(binary string) {
+	cmd := exec.Command(binary)
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}
+func TestFuture(t *testing.T) {
+	(&launcher{}).launch(nativeLedgerBinary(t))
+}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			mutated := cloneRepositoryAuditFiles(files)
@@ -1412,6 +3873,80 @@ func run(path string) {
 			}
 		})
 	}
+
+	for name, helper := range map[string]string{
+		"shadowed repository normalizer": "repositoryTestEnvironment",
+		"shadowed build environment":     "buildEnv",
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutated := cloneRepositoryAuditFiles(files)
+			mutated["test/helpers/application.go"] = repositoryAuditFile{
+				mode: "100644",
+				source: []byte(fmt.Sprintf(`package helpers
+import "os/exec"
+func %[1]s(environment []string) []string { return environment }
+func launch() {
+	cmd := exec.Command("/tmp/wisp-deck-tui", "main-menu")
+	cmd.Env = %[1]s([]string{"HOME=/tmp"})
+	_ = cmd.Run()
+}`, helper)),
+			}
+			if err := validateRepositoryApplicationTestEnvironments(mutated); err == nil {
+				t.Fatal("noncanonical environment normalizer escaped validation")
+			}
+		})
+	}
+
+	t.Run("application helper Go source", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["test/helpers/application.go"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`package helpers
+import "os/exec"
+func launch() {
+	cmd := exec.Command("/tmp/wisp-deck-tui", "main-menu")
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}`),
+		}
+		if err := validateRepositoryApplicationTestEnvironments(mutated); err == nil {
+			t.Fatal("unsafe application helper Go source escaped validation")
+		}
+	})
+
+	t.Run("allows normalized application helper Go source", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["test/helpers/application.go"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`package helpers
+import "os/exec"
+func launch() {
+	cmd := exec.Command("/tmp/wisp-deck-tui", "main-menu")
+	cmd.Env = repositoryTestEnvironment([]string{"HOME=/tmp"})
+	_ = cmd.Run()
+}`),
+		}
+		if err := validateRepositoryApplicationTestEnvironments(mutated); err != nil {
+			t.Fatalf("normalized application helper Go source rejected: %v", err)
+		}
+	})
+
+	t.Run("allows unrelated process helper Go source", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["test/helpers/git.go"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`package helpers
+import "os/exec"
+func status() {
+	cmd := exec.Command("git", "status")
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}`),
+		}
+		if err := validateRepositoryApplicationTestEnvironments(mutated); err != nil {
+			t.Fatalf("unrelated process helper Go source rejected: %v", err)
+		}
+	})
 
 	t.Run("allows normalized application child", func(t *testing.T) {
 		mutated := cloneRepositoryAuditFiles(files)
@@ -1427,6 +3962,146 @@ func TestFuture() {
 		}
 		if err := validateRepositoryApplicationTestEnvironments(mutated); err != nil {
 			t.Fatalf("normalized application child rejected: %v", err)
+		}
+	})
+
+	t.Run("allows normalized indirect StartProcess environment", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["test/future_application_test.go"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`package future
+import "os"
+func TestFuture() {
+	attr := &os.ProcAttr{}
+	attr.Env = repositoryTestEnvironment([]string{"HOME=/tmp"})
+	_, _ = os.StartProcess(
+		"/tmp/wisp-deck-tui",
+		[]string{"/tmp/wisp-deck-tui", "main-menu"},
+		attr,
+	)
+}`),
+		}
+		if err := validateRepositoryApplicationTestEnvironments(mutated); err != nil {
+			t.Fatalf("normalized indirect StartProcess environment rejected: %v", err)
+		}
+	})
+
+	t.Run("allows normalized application helper", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["test/future_application_test.go"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`package future
+import (
+	"os/exec"
+	"testing"
+)
+func launch(binary string) {
+	cmd := exec.Command(binary)
+	cmd.Env = repositoryTestEnvironment([]string{"HOME=/tmp"})
+	_ = cmd.Run()
+}
+func TestFuture(t *testing.T) {
+	launch(nativeLedgerBinary(t))
+}`),
+		}
+		if err := validateRepositoryApplicationTestEnvironments(mutated); err != nil {
+			t.Fatalf("normalized application helper rejected: %v", err)
+		}
+	})
+
+	t.Run("allows normalized application receiver helper", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["test/future_application_test.go"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`package future
+import (
+	"os/exec"
+	"testing"
+)
+type launcher struct{}
+func (launcher) launch(binary string) {
+	cmd := exec.Command(binary)
+	cmd.Env = repositoryTestEnvironment([]string{"HOME=/tmp"})
+	_ = cmd.Run()
+}
+func TestFuture(t *testing.T) {
+	launcher{}.launch(nativeLedgerBinary(t))
+}`),
+		}
+		if err := validateRepositoryApplicationTestEnvironments(mutated); err != nil {
+			t.Fatalf("normalized application receiver helper rejected: %v", err)
+		}
+	})
+
+	t.Run("allows unrelated application receiver helper", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["test/future_git_test.go"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`package future
+import "os/exec"
+type launcher struct{}
+func (launcher) launch(binary string) {
+	cmd := exec.Command(binary)
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}
+func TestFuture() {
+	launcher{}.launch("git")
+}`),
+		}
+		if err := validateRepositoryApplicationTestEnvironments(mutated); err != nil {
+			t.Fatalf("unrelated application receiver helper rejected: %v", err)
+		}
+	})
+
+	t.Run("allows same-named receiver helpers", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["test/future_receivers_test.go"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`package future
+import (
+	"os/exec"
+	"testing"
+)
+type applicationLauncher struct{}
+func (applicationLauncher) launch(binary string) {
+	cmd := exec.Command(binary)
+	cmd.Env = repositoryTestEnvironment([]string{"HOME=/tmp"})
+	_ = cmd.Run()
+}
+type gitLauncher struct{}
+func (*gitLauncher) launch(binary string) {
+	cmd := exec.Command(binary)
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}
+func TestFuture(t *testing.T) {
+	applicationLauncher{}.launch(nativeLedgerBinary(t))
+	(&gitLauncher{}).launch("git")
+}`),
+		}
+		if err := validateRepositoryApplicationTestEnvironments(mutated); err != nil {
+			t.Fatalf("same-named receiver helpers cross-contaminated provenance: %v", err)
+		}
+	})
+
+	t.Run("allows unrelated process helper", func(t *testing.T) {
+		mutated := cloneRepositoryAuditFiles(files)
+		mutated["test/future_git_test.go"] = repositoryAuditFile{
+			mode: "100644",
+			source: []byte(`package future
+import "os/exec"
+func launch(binary string) {
+	cmd := exec.Command(binary)
+	cmd.Env = []string{"HOME=/tmp"}
+	_ = cmd.Run()
+}
+func TestFuture() {
+	launch("git")
+}`),
+		}
+		if err := validateRepositoryApplicationTestEnvironments(mutated); err != nil {
+			t.Fatalf("unrelated process helper rejected: %v", err)
 		}
 	})
 
@@ -1652,7 +4327,10 @@ func validateRepositoryApplicationTestEnvironments(
 	files map[string]repositoryAuditFile,
 ) error {
 	for path, file := range files {
-		if !strings.HasSuffix(path, "_test.go") {
+		slashPath := filepath.ToSlash(path)
+		if !strings.HasSuffix(slashPath, ".go") ||
+			(!strings.HasSuffix(slashPath, "_test.go") &&
+				!strings.HasPrefix(slashPath, "test/")) {
 			continue
 		}
 		if err := validateApplicationTestEnvironment(path, file.source); err != nil {
@@ -1668,6 +4346,11 @@ func validateApplicationTestEnvironment(path string, source []byte) error {
 		return fmt.Errorf("parse application-child audit %s: %w", path, err)
 	}
 	aliases, dotImports := processImportAliases(file)
+	applicationParameters := collectApplicationAuditParameterValues(
+		file,
+		aliases,
+		dotImports,
+	)
 	for _, declaration := range file.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
 		if !ok || function.Body == nil {
@@ -1714,6 +4397,7 @@ func validateApplicationTestEnvironment(path string, source []byte) error {
 				functionAliases,
 				dotImports,
 				staticStrings,
+				applicationParameters[function],
 				map[string]bool{"helper": true},
 			); err != nil {
 				return err
@@ -1738,12 +4422,121 @@ func validateApplicationTestEnvironment(path string, source []byte) error {
 			functionAliases,
 			dotImports,
 			staticStrings,
+			applicationParameters[function],
 			nil,
 		); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func collectApplicationAuditParameterValues(
+	file *ast.File,
+	aliases map[string]string,
+	dotImports map[string]bool,
+) map[*ast.FuncDecl]map[string]bool {
+	functions := make(map[string][]*ast.FuncDecl)
+	var allFunctions []*ast.FuncDecl
+	receiverTypes := collectGoAuditReceiverTypes(file)
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Body == nil {
+			continue
+		}
+		for _, key := range goAuditFunctionKeys(function) {
+			functions[key] = append(functions[key], function)
+		}
+		allFunctions = append(allFunctions, function)
+	}
+
+	parameters := make(map[*ast.FuncDecl]map[string]bool, len(allFunctions))
+	for {
+		changed := false
+		for _, caller := range allFunctions {
+			functionAliases := make(map[string]string, len(aliases))
+			for name, importPath := range aliases {
+				functionAliases[name] = importPath
+			}
+			collectApplicationAuditProcessAliases(
+				caller,
+				functionAliases,
+				dotImports,
+			)
+			staticStrings := collectApplicationAuditStaticStrings(caller)
+			callerValues := applicationValueVariables(
+				caller,
+				functionAliases,
+				dotImports,
+				staticStrings,
+				parameters[caller],
+			)
+			ast.Inspect(caller.Body, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				for _, calleeKey := range goAuditCalleeKeys(
+					call.Fun,
+					receiverTypes,
+				) {
+					for _, callee := range functions[calleeKey] {
+						calleeParameters, variadic := applicationAuditFunctionParameters(callee)
+						for index, argument := range call.Args {
+							parameterIndex := index
+							if parameterIndex >= len(calleeParameters) {
+								if !variadic || len(calleeParameters) == 0 {
+									continue
+								}
+								parameterIndex = len(calleeParameters) - 1
+							}
+							parameter := calleeParameters[parameterIndex]
+							if parameter == nil ||
+								!expressionIsApplicationValue(
+									argument,
+									callerValues,
+									staticStrings,
+								) {
+								continue
+							}
+							if parameters[callee] == nil {
+								parameters[callee] = make(map[string]bool)
+							}
+							if !parameters[callee][parameter.Name] {
+								parameters[callee][parameter.Name] = true
+								changed = true
+							}
+						}
+					}
+				}
+				return true
+			})
+		}
+		if !changed {
+			return parameters
+		}
+	}
+}
+
+func applicationAuditFunctionParameters(
+	function *ast.FuncDecl,
+) ([]*ast.Ident, bool) {
+	if function.Type.Params == nil {
+		return nil, false
+	}
+	var parameters []*ast.Ident
+	for _, field := range function.Type.Params.List {
+		if len(field.Names) == 0 {
+			parameters = append(parameters, nil)
+			continue
+		}
+		parameters = append(parameters, field.Names...)
+	}
+	if len(function.Type.Params.List) == 0 {
+		return parameters, false
+	}
+	_, variadic := function.Type.Params.List[len(function.Type.Params.List)-1].Type.(*ast.Ellipsis)
+	return parameters, variadic
 }
 
 func validateEnabledChildMarkerException(
@@ -2136,6 +4929,7 @@ func validateApplicationChildrenInFunction(
 	aliases map[string]string,
 	dotImports map[string]bool,
 	staticStrings map[string]map[string]bool,
+	knownApplicationValues map[string]bool,
 	allowedUnnormalized map[string]bool,
 ) error {
 	applicationValues := applicationValueVariables(
@@ -2143,6 +4937,7 @@ func validateApplicationChildrenInFunction(
 		aliases,
 		dotImports,
 		staticStrings,
+		knownApplicationValues,
 	)
 	applicationCommands := applicationCommandVariables(
 		function,
@@ -2152,6 +4947,7 @@ func validateApplicationChildrenInFunction(
 		staticStrings,
 	)
 	environmentAssignments := make(map[string][]ast.Expr)
+	procAttrEnvironments := collectApplicationAuditProcAttrEnvironments(function)
 	ast.Inspect(function.Body, func(node ast.Node) bool {
 		assignment, ok := node.(*ast.AssignStmt)
 		if !ok {
@@ -2242,6 +5038,7 @@ func validateApplicationChildrenInFunction(
 			call,
 			aliases,
 			dotImports,
+			procAttrEnvironments,
 		) {
 			if err := validateApplicationAuditEnvironment(
 				path,
@@ -2262,8 +5059,12 @@ func applicationValueVariables(
 	aliases map[string]string,
 	dotImports map[string]bool,
 	staticStrings map[string]map[string]bool,
+	known map[string]bool,
 ) map[string]bool {
-	values := make(map[string]bool)
+	values := make(map[string]bool, len(known))
+	for name := range known {
+		values[name] = true
+	}
 	for range 16 {
 		changed := false
 		ast.Inspect(function.Body, func(node ast.Node) bool {
@@ -2737,13 +5538,35 @@ func applicationAuditCallHasStringArgument(
 	return false
 }
 
-func expressionUsesNormalizedEnvironment(expression ast.Expr) bool {
+func expressionUsesNormalizedEnvironment(path string, expression ast.Expr) bool {
 	switch expression := expression.(type) {
 	case *ast.ParenExpr:
-		return expressionUsesNormalizedEnvironment(expression.X)
+		return expressionUsesNormalizedEnvironment(path, expression.X)
 	case *ast.CallExpr:
-		switch expressionName(expression.Fun) {
-		case "repositoryTestEnvironment", "buildEnv":
+		function, ok := expression.Fun.(*ast.Ident)
+		if !ok {
+			return false
+		}
+		slashPath := filepath.ToSlash(path)
+		if function.Obj != nil {
+			declaration, ok := function.Obj.Decl.(*ast.FuncDecl)
+			if !ok || declaration.Name.Name != function.Name {
+				return false
+			}
+			switch function.Name {
+			case "repositoryTestEnvironment":
+				return slashPath == "test/bash/helpers_test.go" ||
+					slashPath == "test/npx/helpers_test.go"
+			case "buildEnv":
+				return slashPath == "test/bash/helpers_test.go"
+			default:
+				return false
+			}
+		}
+		switch function.Name {
+		case "repositoryTestEnvironment":
+			return true
+		case "buildEnv":
 			return true
 		}
 	}
@@ -2773,7 +5596,7 @@ func validateApplicationAuditEnvironment(
 	function string,
 	environment ast.Expr,
 ) error {
-	if expressionUsesNormalizedEnvironment(environment) {
+	if expressionUsesNormalizedEnvironment(path, environment) {
 		return nil
 	}
 	if expressionHasNonRepositoryTestMarker(environment) {
@@ -2794,6 +5617,7 @@ func applicationAuditCallEnvironments(
 	call *ast.CallExpr,
 	aliases map[string]string,
 	dotImports map[string]bool,
+	procAttrs map[*ast.Object]ast.Expr,
 ) []ast.Expr {
 	importPath, function := calledPackageFunction(call.Fun, aliases, dotImports)
 	switch {
@@ -2810,6 +5634,7 @@ func applicationAuditCallEnvironments(
 		if len(call.Args) > 2 {
 			if environment, exists := applicationAuditProcAttrEnvironment(
 				call.Args[2],
+				procAttrs,
 			); exists {
 				return []ast.Expr{environment}
 			}
@@ -2820,18 +5645,85 @@ func applicationAuditCallEnvironments(
 
 func applicationAuditProcAttrEnvironment(
 	expression ast.Expr,
+	known map[*ast.Object]ast.Expr,
 ) (ast.Expr, bool) {
 	switch expression := expression.(type) {
 	case *ast.ParenExpr:
-		return applicationAuditProcAttrEnvironment(expression.X)
+		return applicationAuditProcAttrEnvironment(expression.X, known)
 	case *ast.UnaryExpr:
 		if expression.Op == token.AND {
-			return applicationAuditProcAttrEnvironment(expression.X)
+			return applicationAuditProcAttrEnvironment(expression.X, known)
 		}
 	case *ast.CompositeLit:
 		return applicationAuditCompositeField(expression, "Env")
+	case *ast.Ident:
+		if expression.Obj != nil {
+			environment, ok := known[expression.Obj]
+			return environment, ok
+		}
 	}
 	return nil, false
+}
+
+func collectApplicationAuditProcAttrEnvironments(
+	function *ast.FuncDecl,
+) map[*ast.Object]ast.Expr {
+	environments := make(map[*ast.Object]ast.Expr)
+	for range 16 {
+		changed := false
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			switch node := node.(type) {
+			case *ast.ValueSpec:
+				for index, value := range node.Values {
+					if index >= len(node.Names) || node.Names[index].Obj == nil {
+						continue
+					}
+					environment, ok := applicationAuditProcAttrEnvironment(
+						value,
+						environments,
+					)
+					if ok && environments[node.Names[index].Obj] != environment {
+						environments[node.Names[index].Obj] = environment
+						changed = true
+					}
+				}
+			case *ast.AssignStmt:
+				for index, value := range node.Rhs {
+					if index >= len(node.Lhs) {
+						continue
+					}
+					if name, ok := node.Lhs[index].(*ast.Ident); ok &&
+						name.Obj != nil {
+						environment, exists := applicationAuditProcAttrEnvironment(
+							value,
+							environments,
+						)
+						if exists && environments[name.Obj] != environment {
+							environments[name.Obj] = environment
+							changed = true
+						}
+						continue
+					}
+					selected, ok := node.Lhs[index].(*ast.SelectorExpr)
+					if !ok {
+						continue
+					}
+					receiver, receiverOK := selected.X.(*ast.Ident)
+					if receiverOK && selected.Sel.Name == "Env" &&
+						receiver.Obj != nil &&
+						environments[receiver.Obj] != value {
+						environments[receiver.Obj] = value
+						changed = true
+					}
+				}
+			}
+			return true
+		})
+		if !changed {
+			break
+		}
+	}
+	return environments
 }
 
 func callRemovesRepositoryTestMarker(
@@ -2941,6 +5833,39 @@ func TestInstallerAndReleaseHostEffectBoundaryRejectsBypasses(t *testing.T) {
 			"install -m 0755 \"$tmp\" \"$dest\"\n"+
 				`  if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then`,
 		),
+		"Bash braced destination before verification": mutateBoundarySource(
+			t,
+			sources,
+			"bash",
+			`if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then`,
+			"mv -f \"$tmp\" \"${dest}\"\n"+
+				`  if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then`,
+		),
+		"Bash destination alias before verification": mutateBoundarySource(
+			t,
+			sources,
+			"bash",
+			`if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then`,
+			"local destination=\"$dest\"\n"+
+				"  cp -f \"$tmp\" \"$destination\"\n"+
+				`  if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then`,
+		),
+		"Bash helper replacement before verification": mutateBoundarySourceSequence(
+			t,
+			sources,
+			"bash",
+			[][2]string{
+				{
+					"install_binary() {",
+					"replace_before_verification() { mv -f \"$tmp\" \"$dest\"; }\n\ninstall_binary() {",
+				},
+				{
+					`  if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then`,
+					"  replace_before_verification\n" +
+						`  if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then`,
+				},
+			},
+		),
 		"Node existing artifact bypass": mutateBoundarySource(
 			t,
 			sources,
@@ -2978,6 +5903,60 @@ func TestInstallerAndReleaseHostEffectBoundaryRejectsBypasses(t *testing.T) {
 			`const downloaded = verifyTuiBinary(tmpPath, version);`,
 			"fs.writeFileSync(tuiBinPath, fs.readFileSync(tmpPath));\n"+
 				`  const downloaded = verifyTuiBinary(tmpPath, version);`,
+		),
+		"Node destination alias before verification": mutateBoundarySource(
+			t,
+			sources,
+			"node",
+			`const downloaded = verifyTuiBinary(tmpPath, version);`,
+			"const destination = tuiBinPath;\n"+
+				"  fs.copyFileSync(tmpPath, destination);\n"+
+				`  const downloaded = verifyTuiBinary(tmpPath, version);`,
+		),
+		"Node mutation function alias before verification": mutateBoundarySource(
+			t,
+			sources,
+			"node",
+			`const downloaded = verifyTuiBinary(tmpPath, version);`,
+			"const replace = fs.renameSync;\n"+
+				"  replace(tmpPath, tuiBinPath);\n"+
+				`  const downloaded = verifyTuiBinary(tmpPath, version);`,
+		),
+		"Node mutation function alias chain before verification": mutateBoundarySource(
+			t,
+			sources,
+			"node",
+			`const downloaded = verifyTuiBinary(tmpPath, version);`,
+			"const replace = fs.renameSync;\n"+
+				"  const replaceAgain = replace;\n"+
+				"  replaceAgain(tmpPath, tuiBinPath);\n"+
+				`  const downloaded = verifyTuiBinary(tmpPath, version);`,
+		),
+		"Node helper replacement before verification": mutateBoundarySourceSequence(
+			t,
+			sources,
+			"node",
+			[][2]string{
+				{
+					"function ensureTuiBinary(version) {",
+					"function replaceBeforeVerification(source, destination) {\n" +
+						"  fs.renameSync(source, destination);\n" +
+						"}\n\nfunction ensureTuiBinary(version) {",
+				},
+				{
+					`  const downloaded = verifyTuiBinary(tmpPath, version);`,
+					"  replaceBeforeVerification(tmpPath, tuiBinPath);\n" +
+						`  const downloaded = verifyTuiBinary(tmpPath, version);`,
+				},
+			},
+		),
+		"Node replacement before failed verification returns": mutateBoundarySource(
+			t,
+			sources,
+			"node",
+			`if (!downloaded.valid) {`,
+			"if (!downloaded.valid) {\n"+
+				"    fs.renameSync(tmpPath, tuiBinPath);",
 		),
 		"release amd64 metadata bypass": mutateBoundarySource(
 			t,
@@ -3032,6 +6011,54 @@ func TestInstallerAndReleaseHostEffectBoundaryRejectsBypasses(t *testing.T) {
 			`  npm --prefix "$project_dir" publish
   if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
 		),
+		"release alternate codesign before verification": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+			`  command /usr/bin/codesign -s - "$build_dir/wisp-deck-tui-darwin-arm64"
+  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+		),
+		"release alternate GitHub release before verification": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+			`  command gh --repo JackUait/wisp-deck release create "$tag"
+  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+		),
+		"release command-wrapped tag before verification": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+			`  command git --git-dir="$project_dir/.git" tag "$tag"
+  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+		),
+		"release command-wrapped push before verification": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+			`  command git --git-dir="$project_dir/.git" push origin main --tags
+  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+		),
+		"release command-wrapped publish before verification": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+			`  command npm --prefix "$project_dir" publish
+  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+		),
+		"release alternate codesign inside failed preflight": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`    echo "Error: release TUI artifact preflight failed; refusing to mutate release state" >&2`,
+			`    command codesign -s - "$build_dir/wisp-deck-tui-darwin-arm64"
+    echo "Error: release TUI artifact preflight failed; refusing to mutate release state" >&2`,
+		),
 		"release copy local binary before verification": mutateBoundarySource(
 			t,
 			sources,
@@ -3048,11 +6075,126 @@ func TestInstallerAndReleaseHostEffectBoundaryRejectsBypasses(t *testing.T) {
 			`  install -m 0755 "$build_dir/wisp-deck-tui-darwin-arm64" "$HOME/.local/bin/wisp-deck-tui"
   if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
 		),
+		"release shell wrapped publish before verification": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+			`  bash -c 'npm publish'
+  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+		),
+		"release eval publish before verification": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+			`  eval 'npm publish'
+  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+		),
+		"release command substitution publish before verification": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+			`  published="$(npm publish)"
+  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+		),
+		"release backtick publish before verification": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+			"  published=`npm publish`\n"+
+				`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+		),
+		"release helper publish before verification": mutateBoundarySourceSequence(
+			t,
+			sources,
+			"release",
+			[][2]string{
+				{
+					`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+					`  publish_before_verification
+  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+				},
+				{
+					`# Only run main when executed directly (not sourced for testing)`,
+					`publish_before_verification(){ npm publish; }
+# Only run main when executed directly (not sourced for testing)`,
+				},
+			},
+		),
 	}
 	for name, mutated := range mutations {
 		t.Run(name, func(t *testing.T) {
 			if err := validateInstallerAndReleaseHostEffectBoundary(mutated); err == nil {
 				t.Fatal("installer/release host-effect boundary mutation escaped validation")
+			}
+		})
+	}
+
+	harmless := map[string]map[string]string{
+		"Bash comments and diagnostics": mutateBoundarySource(
+			t,
+			sources,
+			"bash",
+			`if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then`,
+			`# mv "$tmp" "${dest}" is intentionally delayed until verification
+  info 'cp/install/mv destination operations are delayed'
+  if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then`,
+		),
+		"Node comments and diagnostics": mutateBoundarySource(
+			t,
+			sources,
+			"node",
+			`const downloaded = verifyTuiBinary(tmpPath, version);`,
+			`// fs.copyFileSync(tmpPath, destination) is intentionally delayed.
+  process.stdout.write('fs.renameSync and fs.writeFileSync stay after verification');
+	  const downloaded = verifyTuiBinary(tmpPath, version);`,
+		),
+		"Node non-mutating function alias": mutateBoundarySource(
+			t,
+			sources,
+			"node",
+			`const downloaded = verifyTuiBinary(tmpPath, version);`,
+			`const inspect = fs.statSync;
+  inspect(tmpPath);
+  const downloaded = verifyTuiBinary(tmpPath, version);`,
+		),
+		"release comments diagnostics and read-only commands": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+			`  # codesign, git tag, git push, gh release create, and npm publish follow verification.
+  echo "codesign git tag git push gh release create npm publish remain delayed"
+  git status --porcelain >/dev/null
+  gh auth status >/dev/null
+  npm --version >/dev/null
+	  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+		),
+		"release read-only shell and eval wrappers": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+			`  bash -c 'git status --porcelain'
+  eval 'npm --version'
+  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+		),
+		"release uncalled mutating helper": mutateBoundarySource(
+			t,
+			sources,
+			"release",
+			`# Only run main when executed directly (not sourced for testing)`,
+			`publish_after_verification() { npm publish; }
+# Only run main when executed directly (not sourced for testing)`,
+		),
+	}
+	for name, mutated := range harmless {
+		t.Run("allows "+name, func(t *testing.T) {
+			if err := validateInstallerAndReleaseHostEffectBoundary(mutated); err != nil {
+				t.Fatalf("harmless installer/release source rejected: %v", err)
 			}
 		})
 	}
@@ -3081,26 +6223,57 @@ func validateInstallerAndReleaseHostEffectBoundary(
 			return fmt.Errorf("Bash installer must contain exactly one %q", required)
 		}
 	}
-	verification := strings.Index(
+	installBinary, err := extractAuditFunction(
 		bash,
-		`if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then`,
+		"install_binary() {",
+		false,
 	)
-	replacement := strings.Index(bash, `mv -f "$tmp" "$dest"`)
-	if verification < 0 || replacement <= verification {
-		return fmt.Errorf("Bash installer replaces an artifact before verification")
+	if err != nil {
+		return fmt.Errorf("Bash installer: %w", err)
 	}
-	bashBeforeVerification := bash[:verification]
-	for _, command := range []string{"cp", "install"} {
-		if shellSourceHasCommandWithArguments(
-			bashBeforeVerification,
-			command,
-			"$dest",
-		) {
-			return fmt.Errorf(
-				"Bash installer %s writes an artifact before verification",
-				command,
-			)
-		}
+	const bashVerificationGuard = `  if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then
+    rm -f "$tmp"
+    warn "Downloaded $display_name failed verification — keeping existing install"
+    return 1
+  fi`
+	bashGuardEnd, err := exactAuditBoundaryEnd(
+		installBinary.body,
+		bashVerificationGuard,
+		"Bash downloaded-artifact verification guard",
+	)
+	if err != nil {
+		return err
+	}
+	const bashReplacement = `  mv -f "$tmp" "$dest"`
+	bashReplacementPosition := strings.Index(
+		installBinary.body,
+		bashReplacement,
+	)
+	if strings.Count(installBinary.body, bashReplacement) != 1 ||
+		bashReplacementPosition <= bashGuardEnd {
+		return fmt.Errorf(
+			"Bash installer must replace the artifact exactly once after successful verification",
+		)
+	}
+	bashWithoutReplacement := strings.Replace(
+		installBinary.body,
+		bashReplacement,
+		"",
+		1,
+	)
+	bashFunctions, err := shellAuditFunctionDefinitions(bash)
+	if err != nil {
+		return fmt.Errorf("Bash installer helper audit: %w", err)
+	}
+	if mutation := installerArtifactMutationInFlow(
+		bashWithoutReplacement,
+		bashFunctions,
+		make(map[string]bool),
+	); mutation != "" {
+		return fmt.Errorf(
+			"Bash install_binary contains an extra %s artifact mutation",
+			mutation,
+		)
 	}
 
 	node := sources["node"]
@@ -3118,30 +6291,51 @@ func validateInstallerAndReleaseHostEffectBoundary(
 			return fmt.Errorf("Node installer must contain exactly one %q", required)
 		}
 	}
-	nodeVerification := strings.Index(
+	ensureTUI, err := extractAuditFunction(
 		node,
-		`const downloaded = verifyTuiBinary(tmpPath, version);`,
+		"function ensureTuiBinary(version) {",
+		true,
 	)
-	nodeReplacement := strings.Index(node, `fs.renameSync(tmpPath, tuiBinPath);`)
-	if nodeVerification < 0 || nodeReplacement <= nodeVerification {
-		return fmt.Errorf("Node installer replaces an artifact before verification")
+	if err != nil {
+		return fmt.Errorf("Node installer: %w", err)
 	}
-	nodeBeforeVerification := node[:nodeVerification]
-	for _, method := range []string{
-		"fs.copyFileSync",
-		"fs.writeFileSync",
-		"fs.renameSync",
-	} {
-		if javascriptSourceCallsWithTarget(
-			nodeBeforeVerification,
+	const nodeVerificationGuard = `  const downloaded = verifyTuiBinary(tmpPath, version);
+  if (!downloaded.valid) {
+    fs.rmSync(tmpPath, { force: true });
+    process.stderr.write(` + "`" + `Downloaded wisp-deck-tui failed verification (expected version ${version}, got ${JSON.stringify(downloaded.reported)}).\n` + "`" + `);
+    process.stderr.write('The existing install (if any) was left untouched. Please retry, and report this if it persists.\n');
+    process.exit(1);
+  }`
+	nodeGuardEnd, err := exactAuditBoundaryEnd(
+		ensureTUI.body,
+		nodeVerificationGuard,
+		"Node downloaded-artifact verification guard",
+	)
+	if err != nil {
+		return err
+	}
+	const nodeReplacement = `  fs.renameSync(tmpPath, tuiBinPath);`
+	nodeReplacementPosition := strings.Index(ensureTUI.body, nodeReplacement)
+	if strings.Count(ensureTUI.body, nodeReplacement) != 1 ||
+		nodeReplacementPosition <= nodeGuardEnd {
+		return fmt.Errorf(
+			"Node installer must replace the artifact exactly once after successful verification",
+		)
+	}
+	nodeWithoutReplacement := strings.Replace(
+		ensureTUI.body,
+		nodeReplacement,
+		"",
+		1,
+	)
+	if method := javascriptAuditCallsMutationMethodInFlow(
+		node,
+		nodeWithoutReplacement,
+	); method != "" {
+		return fmt.Errorf(
+			"Node ensureTuiBinary contains an extra fs.%s artifact mutation",
 			method,
-			"tuiBinPath",
-		) {
-			return fmt.Errorf(
-				"Node installer %s writes an artifact before verification",
-				method,
-			)
-		}
+		)
 	}
 
 	release := sources["release"]
@@ -3155,43 +6349,50 @@ func validateInstallerAndReleaseHostEffectBoundary(
 			return fmt.Errorf("release preflight must contain exactly one %q", required)
 		}
 	}
+	releaseMain, err := extractAuditFunction(release, "main() {", false)
+	if err != nil {
+		return fmt.Errorf("release script: %w", err)
+	}
 	armBuild := strings.Index(
-		release,
+		releaseMain.body,
 		`GOOS=darwin GOARCH=arm64 go build -ldflags "$ldflags"`,
 	)
 	amdBuild := strings.Index(
-		release,
+		releaseMain.body,
 		`GOOS=darwin GOARCH=amd64 go build -ldflags "$ldflags"`,
 	)
-	preflight := strings.Index(
-		release,
-		`if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`,
+	const releaseVerificationGuard = `  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then
+    echo "Error: release TUI artifact preflight failed; refusing to mutate release state" >&2
+    exit 1
+  fi`
+	preflightEnd, err := exactAuditBoundaryEnd(
+		releaseMain.body,
+		releaseVerificationGuard,
+		"release artifact verification guard",
 	)
-	if armBuild < 0 || amdBuild <= armBuild || preflight <= amdBuild {
+	if err != nil {
+		return err
+	}
+	preflightStart := strings.Index(
+		releaseMain.body,
+		releaseVerificationGuard,
+	)
+	if armBuild < 0 || amdBuild <= armBuild || preflightStart <= amdBuild {
 		return fmt.Errorf("release artifact verification does not follow both builds")
 	}
-	releaseBeforePreflight := release[:preflight]
-	for _, mutation := range []struct {
-		command   string
-		arguments []string
-	}{
-		{command: "git", arguments: []string{"-C", "tag"}},
-		{command: "git", arguments: []string{"-C", "push"}},
-		{command: "npm", arguments: []string{"--prefix", "publish"}},
-		{command: "cp", arguments: []string{".local/bin/wisp-deck-tui"}},
-		{command: "install", arguments: []string{".local/bin/wisp-deck-tui"}},
-	} {
-		if shellSourceHasCommandWithArguments(
-			releaseBeforePreflight,
-			mutation.command,
-			mutation.arguments...,
-		) {
-			return fmt.Errorf(
-				"release mutation %s %s precedes artifact verification",
-				mutation.command,
-				strings.Join(mutation.arguments, " "),
-			)
-		}
+	releaseFunctions, err := shellAuditFunctionDefinitions(release)
+	if err != nil {
+		return fmt.Errorf("release helper audit: %w", err)
+	}
+	if mutation := releaseStateMutationInFlow(
+		releaseMain.body[:preflightEnd],
+		releaseFunctions,
+		make(map[string]bool),
+	); mutation != "" {
+		return fmt.Errorf(
+			"release mutation %s precedes successful artifact verification",
+			mutation,
+		)
 	}
 	for _, mutation := range []string{
 		`codesign --sign - --force "$build_dir/wisp-deck-tui-darwin-arm64"`,
@@ -3201,80 +6402,785 @@ func validateInstallerAndReleaseHostEffectBoundary(
 		`local publish_cmd="npm publish"`,
 		`go build -ldflags "$ldflags" -o "$local_bin"`,
 	} {
-		position := strings.Index(release, mutation)
-		if position < 0 || position <= preflight {
+		position := strings.Index(releaseMain.body, mutation)
+		if position < 0 || position <= preflightEnd {
 			return fmt.Errorf("release mutation %q precedes artifact verification", mutation)
 		}
 	}
 	return nil
 }
 
-func shellSourceHasCommandWithArguments(
+type auditFunctionSource struct {
+	start int
+	body  string
+}
+
+func extractAuditFunction(
 	source string,
-	command string,
-	required ...string,
-) bool {
+	signature string,
+	javascript bool,
+) (auditFunctionSource, error) {
+	if strings.Count(source, signature) != 1 {
+		return auditFunctionSource{}, fmt.Errorf(
+			"function signature %q must occur exactly once",
+			signature,
+		)
+	}
+	start := strings.Index(source, signature)
+	open := start + strings.LastIndex(signature, "{")
+	depth := 1
+	const (
+		auditCode = iota
+		auditSingleQuote
+		auditDoubleQuote
+		auditBacktick
+		auditLineComment
+		auditBlockComment
+	)
+	state := auditCode
+	for index := open + 1; index < len(source); index++ {
+		character := source[index]
+		switch state {
+		case auditSingleQuote:
+			if character == '\'' {
+				state = auditCode
+			}
+			continue
+		case auditDoubleQuote:
+			if character == '\\' && index+1 < len(source) {
+				index++
+			} else if character == '"' {
+				state = auditCode
+			}
+			continue
+		case auditBacktick:
+			if character == '\\' && index+1 < len(source) {
+				index++
+			} else if character == '`' {
+				state = auditCode
+			}
+			continue
+		case auditLineComment:
+			if character == '\n' {
+				state = auditCode
+			}
+			continue
+		case auditBlockComment:
+			if character == '*' && index+1 < len(source) &&
+				source[index+1] == '/' {
+				index++
+				state = auditCode
+			}
+			continue
+		}
+		switch {
+		case character == '\'':
+			state = auditSingleQuote
+		case character == '"':
+			state = auditDoubleQuote
+		case character == '`':
+			state = auditBacktick
+		case javascript && character == '/' && index+1 < len(source) &&
+			source[index+1] == '/':
+			index++
+			state = auditLineComment
+		case javascript && character == '/' && index+1 < len(source) &&
+			source[index+1] == '*':
+			index++
+			state = auditBlockComment
+		case !javascript && character == '#' &&
+			shellAuditCommentStarts(source, index):
+			state = auditLineComment
+		case character == '{':
+			depth++
+		case character == '}':
+			depth--
+			if depth == 0 {
+				return auditFunctionSource{
+					start: start,
+					body:  source[open+1 : index],
+				}, nil
+			}
+		}
+	}
+	return auditFunctionSource{}, fmt.Errorf(
+		"function %q has no balanced closing brace",
+		signature,
+	)
+}
+
+func shellAuditCommentStarts(source string, index int) bool {
+	if source[index] != '#' {
+		return false
+	}
+	if index == 0 {
+		return true
+	}
+	previous := source[index-1]
+	if previous == '$' ||
+		(previous == '{' && index >= 2 && source[index-2] == '$') {
+		return false
+	}
+	return previous == ' ' || previous == '\t' || previous == '\n' ||
+		previous == ';' || previous == '|' || previous == '&' ||
+		previous == '(' || previous == ')'
+}
+
+func exactAuditBoundaryEnd(
+	source string,
+	boundary string,
+	description string,
+) (int, error) {
+	if strings.Count(source, boundary) != 1 {
+		return 0, fmt.Errorf(
+			"%s must occur exactly once",
+			description,
+		)
+	}
+	return strings.Index(source, boundary) + len(boundary), nil
+}
+
+func javascriptAuditCallsMutationMethod(source string) string {
+	tokens, ok := lexJavaScriptAudit(source)
+	if !ok {
+		return "unparseable-source"
+	}
+	bindings := collectJavaScriptAuditBindings(
+		tokens,
+		javascriptStringConstants(tokens),
+	)
+	for index, token := range tokens {
+		if token.kind != '(' {
+			continue
+		}
+		method := javascriptCallMethod(tokens, index)
+		canonical := strings.ToLower(method)
+		if alias := bindings.fsMutationFunctions[method]; alias != "" {
+			canonical = alias
+		}
+		if javascriptFSMutationMethod(canonical) &&
+			(bindings.fsMutationFunctions[method] != "" ||
+				javascriptTokensReferenceFSObject(
+					javascriptCallReceiverTokens(tokens, index),
+					bindings,
+				)) {
+			return canonical
+		}
+	}
+	return ""
+}
+
+func javascriptAuditCallsMutationMethodInFlow(
+	completeSource string,
+	entrySource string,
+) string {
+	completeTokens, ok := lexJavaScriptAudit(completeSource)
+	if !ok {
+		return "unparseable-source"
+	}
+	entryTokens, ok := lexJavaScriptAudit(entrySource)
+	if !ok {
+		return "unparseable-entry"
+	}
+	bindings := collectJavaScriptAuditBindings(
+		completeTokens,
+		javascriptStringConstants(completeTokens),
+	)
+	functions := javascriptAuditFunctions(completeTokens)
+	methodOwners := javascriptAuditMethodOwners(completeTokens)
+	var visit func([]javascriptAuditToken, map[string]bool) string
+	visit = func(
+		tokens []javascriptAuditToken,
+		visiting map[string]bool,
+	) string {
+		for index, token := range tokens {
+			if token.kind != '(' {
+				continue
+			}
+			method := javascriptCallMethod(tokens, index)
+			canonical := strings.ToLower(method)
+			if alias := bindings.fsMutationFunctions[method]; alias != "" {
+				canonical = alias
+			}
+			if javascriptFSMutationMethod(canonical) &&
+				(bindings.fsMutationFunctions[method] != "" ||
+					javascriptTokensReferenceFSObject(
+						javascriptCallReceiverTokens(tokens, index),
+						bindings,
+					)) {
+				return canonical
+			}
+			functionKey := method
+			function, helper := functions[functionKey]
+			if !helper {
+				functionKey = javascriptAuditTopLevelFunctionKey(
+					method,
+					methodOwners,
+					functions,
+				)
+				function, helper = functions[functionKey]
+			}
+			if !helper || visiting[functionKey] {
+				continue
+			}
+			visiting[functionKey] = true
+			mutation := visit(function.body, visiting)
+			delete(visiting, functionKey)
+			if mutation != "" {
+				return method + " -> " + mutation
+			}
+		}
+		return ""
+	}
+	return visit(entryTokens, make(map[string]bool))
+}
+
+func javascriptAuditTopLevelFunctionKey(
+	name string,
+	owners javascriptAuditMethodOwnerSet,
+	functions map[string]javascriptAuditFunction,
+) string {
+	var selected string
+	for _, binding := range owners.byName[name] {
+		if binding.scopeStart != -1 || binding.key == "" {
+			continue
+		}
+		if _, function := functions[binding.key]; !function {
+			continue
+		}
+		if selected != "" && selected != binding.key {
+			return ""
+		}
+		selected = binding.key
+	}
+	return selected
+}
+
+func installerArtifactMutationInFlow(
+	source string,
+	functions map[string]string,
+	visiting map[string]bool,
+) string {
+	for _, substitution := range shellAuditCommandSubstitutions(source) {
+		if mutation := installerArtifactMutationInFlow(
+			substitution,
+			functions,
+			visiting,
+		); mutation != "" {
+			return "substitution -> " + mutation
+		}
+	}
+	for _, command := range shellAuditCommands(source) {
+		executable := strings.ToLower(filepath.Base(command.executable))
+		switch executable {
+		case "cp", "install", "mv":
+			return executable
+		case "bash", "sh", "zsh":
+			for index, argument := range command.arguments {
+				if argument != "-c" || index+1 >= len(command.arguments) {
+					continue
+				}
+				if mutation := installerArtifactMutationInFlow(
+					command.arguments[index+1],
+					functions,
+					visiting,
+				); mutation != "" {
+					return executable + " -c -> " + mutation
+				}
+			}
+		case "eval":
+			if mutation := installerArtifactMutationInFlow(
+				strings.Join(command.arguments, " "),
+				functions,
+				visiting,
+			); mutation != "" {
+				return "eval -> " + mutation
+			}
+		}
+		name := filepath.Base(command.executable)
+		body, helper := functions[name]
+		if !helper || visiting[name] {
+			continue
+		}
+		visiting[name] = true
+		mutation := installerArtifactMutationInFlow(body, functions, visiting)
+		delete(visiting, name)
+		if mutation != "" {
+			return name + " -> " + mutation
+		}
+	}
+	return ""
+}
+
+type shellAuditToken struct {
+	value     string
+	separator bool
+}
+
+type shellAuditCommand struct {
+	executable string
+	arguments  []string
+}
+
+func shellAuditCommands(source string) []shellAuditCommand {
+	tokens := lexShellAudit(source)
+	var commands []shellAuditCommand
+	start := 0
+	for index := 0; index <= len(tokens); index++ {
+		if index < len(tokens) && !tokens[index].separator {
+			continue
+		}
+		if command, ok := shellAuditCommandFromSegment(tokens[start:index]); ok {
+			commands = append(commands, command)
+		}
+		start = index + 1
+	}
+	return commands
+}
+
+func shellAuditCommandSubstitutions(source string) []string {
+	var substitutions []string
+	const (
+		substitutionCode = iota
+		substitutionSingleQuote
+		substitutionDoubleQuote
+	)
+	state := substitutionCode
+	for index := 0; index < len(source); index++ {
+		character := source[index]
+		switch state {
+		case substitutionSingleQuote:
+			if character == '\'' {
+				state = substitutionCode
+			}
+			continue
+		case substitutionDoubleQuote:
+			if character == '\\' && index+1 < len(source) {
+				index++
+				continue
+			}
+			if character == '"' {
+				state = substitutionCode
+				continue
+			}
+		default:
+			if character == '\\' && index+1 < len(source) {
+				index++
+				continue
+			}
+			if character == '#' &&
+				shellAuditCommentStarts(source, index) {
+				for index < len(source) && source[index] != '\n' {
+					index++
+				}
+				continue
+			}
+			if character == '\'' {
+				state = substitutionSingleQuote
+				continue
+			}
+			if character == '"' {
+				state = substitutionDoubleQuote
+				continue
+			}
+		}
+		if character == '`' {
+			end := index + 1
+			for end < len(source) {
+				if source[end] == '\\' && end+1 < len(source) {
+					end += 2
+					continue
+				}
+				if source[end] == '`' {
+					break
+				}
+				end++
+			}
+			if end < len(source) {
+				substitutions = append(
+					substitutions,
+					source[index+1:end],
+				)
+				index = end
+			}
+			continue
+		}
+		if character != '$' || index+1 >= len(source) ||
+			source[index+1] != '(' {
+			continue
+		}
+		open := index + 1
+		depth := 1
+		var quote byte
+		end := open + 1
+		for ; end < len(source); end++ {
+			current := source[end]
+			if quote != 0 {
+				if current == '\\' && quote != '\'' && end+1 < len(source) {
+					end++
+					continue
+				}
+				if current == quote {
+					quote = 0
+				}
+				continue
+			}
+			if current == '\'' || current == '"' || current == '`' {
+				quote = current
+				continue
+			}
+			if current == '\\' && end+1 < len(source) {
+				end++
+				continue
+			}
+			switch current {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 {
+					substitutions = append(
+						substitutions,
+						source[open+1:end],
+					)
+					index = end
+					end = len(source)
+				}
+			}
+		}
+	}
+	return substitutions
+}
+
+func lexShellAudit(source string) []shellAuditToken {
+	var tokens []shellAuditToken
+	for index := 0; index < len(source); {
+		character := source[index]
+		if character == ' ' || character == '\t' || character == '\r' {
+			index++
+			continue
+		}
+		if character == '\n' {
+			tokens = append(tokens, shellAuditToken{
+				value:     "\n",
+				separator: true,
+			})
+			index++
+			continue
+		}
+		if character == '#' && shellAuditCommentStarts(source, index) {
+			for index < len(source) && source[index] != '\n' {
+				index++
+			}
+			continue
+		}
+		if strings.ContainsRune(";|&(){}", rune(character)) {
+			operator := string(character)
+			if index+1 < len(source) && source[index+1] == character &&
+				(character == '&' || character == '|') {
+				operator += string(character)
+				index++
+			}
+			tokens = append(tokens, shellAuditToken{
+				value:     operator,
+				separator: true,
+			})
+			index++
+			continue
+		}
+
+		var word strings.Builder
+		for index < len(source) {
+			character = source[index]
+			if character == ' ' || character == '\t' ||
+				character == '\r' || character == '\n' ||
+				strings.ContainsRune(";|&(){}", rune(character)) {
+				break
+			}
+			if character == '\\' && index+1 < len(source) {
+				index++
+				word.WriteByte(source[index])
+				index++
+				continue
+			}
+			if character == '\'' || character == '"' || character == '`' {
+				quote := character
+				index++
+				for index < len(source) && source[index] != quote {
+					if source[index] == '\\' && quote != '\'' &&
+						index+1 < len(source) {
+						index++
+					}
+					word.WriteByte(source[index])
+					index++
+				}
+				if index < len(source) {
+					index++
+				}
+				continue
+			}
+			word.WriteByte(character)
+			index++
+		}
+		if word.Len() > 0 {
+			tokens = append(tokens, shellAuditToken{value: word.String()})
+		}
+	}
+	return tokens
+}
+
+func shellAuditCommandFromSegment(
+	segment []shellAuditToken,
+) (shellAuditCommand, bool) {
+	words := make([]string, 0, len(segment))
+	for _, token := range segment {
+		if !token.separator && token.value != "" {
+			words = append(words, token.value)
+		}
+	}
+	index := 0
+	for index < len(words) {
+		switch words[index] {
+		case "!", "if", "then", "elif", "else", "while", "until", "do",
+			"for", "select", "case", "time":
+			index++
+			continue
+		}
+		if shellAuditAssignment(words[index]) {
+			index++
+			continue
+		}
+		break
+	}
+	if index >= len(words) {
+		return shellAuditCommand{}, false
+	}
+	for {
+		executable := filepath.Base(words[index])
+		switch executable {
+		case "command", "builtin":
+			index++
+			for index < len(words) && strings.HasPrefix(words[index], "-") {
+				index++
+			}
+		case "env":
+			index++
+			for index < len(words) &&
+				(strings.HasPrefix(words[index], "-") ||
+					shellAuditAssignment(words[index])) {
+				if (words[index] == "-u" || words[index] == "--unset") &&
+					index+1 < len(words) {
+					index++
+				}
+				index++
+			}
+		case "sudo", "xcrun":
+			index++
+			for index < len(words) && strings.HasPrefix(words[index], "-") {
+				index++
+			}
+		default:
+			return shellAuditCommand{
+				executable: words[index],
+				arguments:  append([]string(nil), words[index+1:]...),
+			}, true
+		}
+		if index >= len(words) {
+			return shellAuditCommand{}, false
+		}
+	}
+}
+
+func shellAuditAssignment(word string) bool {
+	name, _, ok := strings.Cut(word, "=")
+	if !ok || name == "" {
+		return false
+	}
+	for index, character := range name {
+		if (character < 'a' || character > 'z') &&
+			(character < 'A' || character > 'Z') &&
+			character != '_' &&
+			(index == 0 || character < '0' || character > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func releaseStateMutation(command shellAuditCommand) string {
+	executable := strings.ToLower(filepath.Base(command.executable))
+	switch executable {
+	case "codesign":
+		return "codesign"
+	case "git":
+		if shellAuditHasArgument(command.arguments, "tag") {
+			return "git tag"
+		}
+		if shellAuditHasArgument(command.arguments, "push") {
+			return "git push"
+		}
+	case "gh":
+		if shellAuditHasOrderedArguments(
+			command.arguments,
+			"release",
+			"create",
+		) {
+			return "gh release create"
+		}
+	case "npm":
+		if shellAuditHasArgument(command.arguments, "publish") {
+			return "npm publish"
+		}
+	case "cp", "install", "mv":
+		for _, argument := range command.arguments {
+			if strings.Contains(argument, ".local/bin/wisp-deck-tui") ||
+				argument == "$local_bin" ||
+				argument == "${local_bin}" {
+				return executable + " local binary"
+			}
+		}
+	case "go":
+		if shellAuditHasArgument(command.arguments, "build") &&
+			(shellAuditHasArgument(command.arguments, "$local_bin") ||
+				shellAuditHasArgument(command.arguments, "${local_bin}")) {
+			return "go build local binary"
+		}
+	}
+	return ""
+}
+
+func shellAuditFunctionDefinitions(source string) (map[string]string, error) {
+	definitions := make(map[string]string)
 	for _, line := range strings.Split(source, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		fields := strings.Fields(trimmed)
-		commandIndex := -1
-		for index, field := range fields {
-			token := strings.Trim(field, `"'(){}[];,|&`)
-			if filepath.Base(token) == command {
-				commandIndex = index
-				break
-			}
-		}
-		if commandIndex < 0 {
+		open := strings.Index(trimmed, "{")
+		if open <= 0 {
 			continue
 		}
-		matches := true
-		for _, want := range required {
-			found := false
-			for _, field := range fields[commandIndex+1:] {
-				token := strings.Trim(field, `"'(){}[];,|&`)
-				if strings.Contains(token, want) {
-					found = true
-					break
+		header := strings.TrimSpace(trimmed[:open])
+		compact := strings.NewReplacer(" ", "", "\t", "").Replace(header)
+		var name string
+		switch {
+		case strings.HasSuffix(compact, "()"):
+			name = strings.TrimSuffix(compact, "()")
+		case strings.HasPrefix(header, "function "):
+			name = strings.TrimSpace(strings.TrimPrefix(header, "function "))
+		default:
+			continue
+		}
+		if !shellAuditIdentifier(name) {
+			continue
+		}
+		signature := trimmed[:open+1]
+		function, err := extractAuditFunction(
+			source,
+			signature,
+			false,
+		)
+		if err != nil {
+			return nil, err
+		}
+		definitions[name] = function.body
+	}
+	return definitions, nil
+}
+
+func shellAuditIdentifier(name string) bool {
+	if name == "" {
+		return false
+	}
+	for index, character := range name {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			character == '_' ||
+			(index > 0 && character >= '0' && character <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func releaseStateMutationInFlow(
+	source string,
+	functions map[string]string,
+	visiting map[string]bool,
+) string {
+	for _, substitution := range shellAuditCommandSubstitutions(source) {
+		if mutation := releaseStateMutationInFlow(
+			substitution,
+			functions,
+			visiting,
+		); mutation != "" {
+			return "substitution -> " + mutation
+		}
+	}
+	for _, command := range shellAuditCommands(source) {
+		if mutation := releaseStateMutation(command); mutation != "" {
+			return mutation
+		}
+		executable := strings.ToLower(filepath.Base(command.executable))
+		switch executable {
+		case "bash", "sh", "zsh":
+			for index, argument := range command.arguments {
+				if argument != "-c" || index+1 >= len(command.arguments) {
+					continue
+				}
+				if mutation := releaseStateMutationInFlow(
+					command.arguments[index+1],
+					functions,
+					visiting,
+				); mutation != "" {
+					return executable + " -c " + mutation
 				}
 			}
-			if !found {
-				matches = false
-				break
+		case "eval":
+			if mutation := releaseStateMutationInFlow(
+				strings.Join(command.arguments, " "),
+				functions,
+				visiting,
+			); mutation != "" {
+				return "eval " + mutation
 			}
 		}
-		if matches {
+		name := filepath.Base(command.executable)
+		body, helper := functions[name]
+		if !helper || visiting[name] {
+			continue
+		}
+		visiting[name] = true
+		mutation := releaseStateMutationInFlow(body, functions, visiting)
+		delete(visiting, name)
+		if mutation != "" {
+			return name + " -> " + mutation
+		}
+	}
+	return ""
+}
+
+func shellAuditHasArgument(arguments []string, want string) bool {
+	for _, argument := range arguments {
+		if argument == want {
 			return true
 		}
 	}
 	return false
 }
 
-func javascriptSourceCallsWithTarget(
-	source string,
-	method string,
-	target string,
+func shellAuditHasOrderedArguments(
+	arguments []string,
+	required ...string,
 ) bool {
-	marker := method + "("
-	for offset := 0; offset < len(source); {
-		relative := strings.Index(source[offset:], marker)
-		if relative < 0 {
-			return false
+	next := 0
+	for _, argument := range arguments {
+		if next < len(required) && argument == required[next] {
+			next++
 		}
-		start := offset + relative
-		end := strings.Index(source[start:], ";")
-		if end < 0 {
-			end = len(source) - start
-		}
-		if strings.Contains(source[start:start+end], target) {
-			return true
-		}
-		offset = start + len(marker)
 	}
-	return false
+	return next == len(required)
 }
 
 func TestShellProductionHostEffectOwnershipGuardRejectsBypasses(t *testing.T) {
@@ -3295,6 +7201,42 @@ func TestShellProductionHostEffectOwnershipGuardRejectsBypasses(t *testing.T) {
 		)
 		if err := validateShellProductionHostEffectOwnership(mutated); err == nil {
 			t.Fatal("relocated wrapper OSC0 title escaped exact context audit")
+		}
+	})
+	t.Run("wrapper OSC0 title moved into helper", func(t *testing.T) {
+		const allowed = `  fi
+
+  # Use TUI for project selection
+  printf '\033]0;󰊠  Wisp Deck\007'
+
+  # Stop loading animation before TUI takes over
+  type stop_loading_screen &>/dev/null && stop_loading_screen`
+		wrapper := sources["wrapper.sh"]
+		if strings.Count(wrapper, allowed) != 1 {
+			t.Fatal("wrapper OSC0 helper-move prerequisite missing")
+		}
+		mutated := addShellProductionSource(
+			sources,
+			"wrapper.sh",
+			strings.Replace(
+				wrapper,
+				allowed,
+				"future_wrapper_title() {\n"+allowed+"\n}",
+				1,
+			),
+		)
+		if err := validateShellProductionHostEffectOwnership(mutated); err == nil {
+			t.Fatal("wrapper OSC0 title escaped its top-level structural owner")
+		}
+	})
+	t.Run("allows unrelated wrapper helper", func(t *testing.T) {
+		mutated := addShellProductionSource(
+			sources,
+			"wrapper.sh",
+			sources["wrapper.sh"]+"\nfuture_safe_helper() { printf '%s\\n' safe; }\n",
+		)
+		if err := validateShellProductionHostEffectOwnership(mutated); err != nil {
+			t.Fatalf("unrelated wrapper helper rejected: %v", err)
 		}
 	})
 	mutations := map[string]string{
@@ -3389,6 +7331,15 @@ func validateShellProductionHostEffectOwnership(
 	for path, source := range sources {
 		sanitized[path] = source
 	}
+	wrapper, ok := sanitized["wrapper.sh"]
+	if !ok {
+		return fmt.Errorf("shell host-effect inventory is missing wrapper.sh")
+	}
+	wrapper, err := sanitizeExactWrapperTitleOwnership(wrapper)
+	if err != nil {
+		return err
+	}
+	sanitized["wrapper.sh"] = wrapper
 
 	allowlist := map[string][]string{
 		"lib/session-restore.sh": {
@@ -3415,15 +7366,6 @@ func validateShellProductionHostEffectOwnership(
     printf '\033]0;%s\007' "$project" > "$out"
   fi
 }`,
-		},
-		"wrapper.sh": {
-			`  fi
-
-  # Use TUI for project selection
-  printf '\033]0;󰊠  Wisp Deck\007'
-
-  # Stop loading animation before TUI takes over
-  type stop_loading_screen &>/dev/null && stop_loading_screen`,
 		},
 	}
 	for path, allowedShapes := range allowlist {
@@ -3467,6 +7409,50 @@ func validateShellProductionHostEffectOwnership(
 		}
 	}
 	return nil
+}
+
+func sanitizeExactWrapperTitleOwnership(source string) (string, error) {
+	const exactLine = `  printf '\033]0;󰊠  Wisp Deck\007'`
+	const exactOwner = `  fi
+
+  # Use TUI for project selection
+  printf '\033]0;󰊠  Wisp Deck\007'
+
+  # Stop loading animation before TUI takes over
+  type stop_loading_screen &>/dev/null && stop_loading_screen`
+	if strings.Count(source, exactLine) != 1 {
+		return "", fmt.Errorf(
+			"wrapper.sh contains %d exact picker-title commands, want 1",
+			strings.Count(source, exactLine),
+		)
+	}
+	if strings.Count(source, exactOwner) != 1 {
+		return "", fmt.Errorf(
+			"wrapper.sh picker-title command left its exact structural owner",
+		)
+	}
+	functions, err := shellAuditFunctionDefinitions(source)
+	if err != nil {
+		return "", fmt.Errorf("wrapper title function audit: %w", err)
+	}
+	for name, body := range functions {
+		if strings.Contains(body, strings.TrimSpace(exactLine)) {
+			return "", fmt.Errorf(
+				"wrapper.sh picker-title command moved into function %s",
+				name,
+			)
+		}
+	}
+	commands := shellAuditCommands(exactLine)
+	if len(commands) != 1 ||
+		filepath.Base(commands[0].executable) != "printf" ||
+		len(commands[0].arguments) != 1 ||
+		commands[0].arguments[0] != `\033]0;󰊠  Wisp Deck\007` {
+		return "", fmt.Errorf(
+			"wrapper.sh picker-title command changed its exact OSC0 shape",
+		)
+	}
+	return strings.Replace(source, exactLine, "", 1), nil
 }
 
 func shellProductionLineHasHostEffect(line string) bool {
@@ -3803,6 +7789,16 @@ func TestIdleSoundProductionHostEffectGuardRejectsBypasses(t *testing.T) {
 			alias := runner
 			_ = alias("/usr/bin/osascript", "-e", "display notification \"x\"")
 		}`,
+		"helper parameter player": `package p
+import "os/exec"
+func run(path string) { _ = exec.Command(path).Run() }
+func f() { run("/usr/bin/afplay") }`,
+		"aliased fmt BEL": `package p
+import output "fmt"
+func f() { output.Print("\x07") }`,
+		"numeric stdout BEL": `package p
+import output "os"
+func f() { _, _ = output.Stdout.Write([]byte{7}) }`,
 		"dot imported player":            `package p; import . "os/exec"; func f() { _ = Command("afplay", "x") }`,
 		"dot imported constructor alias": `package p; import . "os/exec"; func f() { runner := Command; _ = runner("/usr/bin/say", "x") }`,
 		"start process":                  `package p; import "os"; func f() { _, _ = os.StartProcess("/usr/bin/afplay", nil, nil) }`,
@@ -3976,6 +7972,37 @@ func mutateBoundarySource(
 	return mutated
 }
 
+func mutateBoundarySourceSequence(
+	t *testing.T,
+	sources map[string]string,
+	file string,
+	replacements [][2]string,
+) map[string]string {
+	t.Helper()
+	mutated := make(map[string]string, len(sources))
+	for name, source := range sources {
+		mutated[name] = source
+	}
+	for _, replacement := range replacements {
+		old := replacement[0]
+		if strings.Count(mutated[file], old) != 1 {
+			t.Fatalf(
+				"mutation prerequisite %q in %s occurs %d times, want exactly once",
+				old,
+				file,
+				strings.Count(mutated[file], old),
+			)
+		}
+		mutated[file] = strings.Replace(
+			mutated[file],
+			old,
+			replacement[1],
+			1,
+		)
+	}
+	return mutated
+}
+
 func validateGlobalHostEffectsBoundary(sources map[string]string) error {
 	policy := sources["policy"]
 	for _, required := range []string{
@@ -4125,6 +8152,100 @@ func TestTestSourceAudioLaunchGuardRejectsBypasses(t *testing.T) {
 			source: `package p; import "os/exec"; func test() { player := "/usr/bin/afplay"; _ = exec.Command(player, "x") }`,
 			want:   true,
 		},
+		"player helper parameter": {
+			source: `package p
+import "os/exec"
+func run(path string) { _ = exec.Command(path).Run() }
+func test() { run("/usr/bin/afplay") }`,
+			want: true,
+		},
+		"player helper chain": {
+			source: `package p
+import "os/exec"
+func run(path string) { _ = exec.Command(path).Run() }
+func relay(path string) { run(path) }
+func test() { relay("/usr/bin/say") }`,
+			want: true,
+		},
+		"player helper alias": {
+			source: `package p
+import "os/exec"
+func run(path string) { _ = exec.Command(path).Run() }
+func test() {
+	alias := run
+	alias("/usr/bin/afplay")
+}`,
+			want: true,
+		},
+		"player helper alias chain": {
+			source: `package p
+import "os/exec"
+func run(path string) { _ = exec.Command(path).Run() }
+func test() {
+	first := run
+	second := first
+	second("/usr/bin/say")
+}`,
+			want: true,
+		},
+		"harmless helper parameter lexical shadow": {
+			source: `package p
+import "os/exec"
+func run(path string) {
+	{
+		path := "git"
+		_ = exec.Command(path, "status").Run()
+	}
+}
+func test() { run("/usr/bin/afplay") }`,
+		},
+		"player receiver method": {
+			source: `package p
+import "os/exec"
+type runner struct{}
+func (runner) run(path string) { _ = exec.Command(path).Run() }
+func test() { runner{}.run("/usr/bin/afplay") }`,
+			want: true,
+		},
+		"player pointer receiver method": {
+			source: `package p
+import "os/exec"
+type runner struct{}
+func (*runner) run(path string) { _ = exec.Command(path).Run() }
+func test() { (&runner{}).run("/usr/bin/say") }`,
+			want: true,
+		},
+		"same-named harmless receiver method": {
+			source: `package p
+import "os/exec"
+type audioRunner struct{}
+func (audioRunner) run(path string) { _ = exec.Command(path).Run() }
+type recorder struct{}
+func (*recorder) run(value string) { _ = value }
+func test() { (&recorder{}).run("/usr/bin/afplay") }`,
+		},
+		"player function literal": {
+			source: `package p
+import "os/exec"
+func test() {
+	run := func(path string) { _ = exec.Command(path).Run() }
+	run("/usr/bin/say")
+}`,
+			want: true,
+		},
+		"harmless receiver method": {
+			source: `package p
+type recorder struct{}
+func (recorder) record(value string) {}
+func test() { recorder{}.record("/usr/bin/afplay") }`,
+		},
+		"harmless function literal": {
+			source: `package p
+func test() {
+	record := func(value string) { _ = value }
+	record("/usr/bin/afplay")
+}`,
+		},
 		"shell script player": {
 			source: `package p; import "os/exec"; func test() { _ = exec.Command("/bin/sh", "-c", "afplay x") }`,
 			want:   true,
@@ -4211,9 +8332,39 @@ func TestTestSourceAudioLaunchGuardRejectsBypasses(t *testing.T) {
 			source: `package p; import "os"; func test() { _, _ = os.Stdout.Write([]byte("\a")) }`,
 			want:   true,
 		},
-		"direct stderr OSC notification": {
-			source: `package p; import "fmt"; func test() { fmt.Fprint(os.Stderr, "\x1b]9;audit\x07") }`,
+		"numeric stdout BEL": {
+			source: `package p; import output "os"; func test() { _, _ = output.Stdout.Write([]byte{7}) }`,
 			want:   true,
+		},
+		"aliased fmt output": {
+			source: `package p; import output "fmt"; func test() { output.Print("\x1b]9;audit\x07") }`,
+			want:   true,
+		},
+		"fmt function alias output": {
+			source: `package p; import "fmt"; func test() { emit := fmt.Print; emit("\x07") }`,
+			want:   true,
+		},
+		"terminal output helper": {
+			source: `package p
+import "os"
+func emit(value []byte) { _, _ = os.Stdout.Write(value) }
+func test() { emit([]byte{0x07}) }`,
+			want: true,
+		},
+		"direct stderr OSC notification": {
+			source: `package p
+import (
+	"fmt"
+	"os"
+)
+func test() { fmt.Fprint(os.Stderr, "\x1b]9;audit\x07") }`,
+			want: true,
+		},
+		"numeric string BEL": {
+			source: `package p
+import "fmt"
+func test() { fmt.Print(string(7)) }`,
+			want: true,
 		},
 	}
 	for name, test := range tests {
@@ -4230,7 +8381,8 @@ func TestPumpTerminalOutputFiltersRealPTY() {
 	cmd := exec.Command("/bin/sh", "-c", ` +
 		"`printf 'before\\007\\033]9;plain\\007\\033Ptmux;\\033\\033]9;wrapped\\007\\033\\\\after'`" +
 		`)
-	_ = cmd
+	_, _ = pty.Start(cmd)
+	_ = cmd.Wait()
 }`
 	fixturePath := filepath.Join(
 		"cmd",
@@ -4257,6 +8409,35 @@ func TestPumpTerminalOutputFiltersRealPTY() {
 	)
 	if !testSourceLaunchesHostAudio(fixturePath, []byte(relocatedFixture)) {
 		t.Fatal("relocated filtered PTY process escaped the test-source guard")
+	}
+	executedFixture := strings.Replace(
+		filteredPTYFixture,
+		"_, _ = pty.Start(cmd)",
+		"_ = cmd.Run()",
+		1,
+	)
+	if !testSourceLaunchesHostAudio(fixturePath, []byte(executedFixture)) {
+		t.Fatal("directly executed filtered PTY command escaped the test-source guard")
+	}
+	aliasedExecutionFixture := strings.Replace(
+		filteredPTYFixture,
+		"_, _ = pty.Start(cmd)",
+		"_, _ = pty.Start(cmd)\n\talias := cmd\n\tagain := alias\n\t_ = again.Run()",
+		1,
+	)
+	if !testSourceLaunchesHostAudio(fixturePath, []byte(aliasedExecutionFixture)) {
+		t.Fatal("aliased filtered PTY command execution escaped the test-source guard")
+	}
+	helperExecutionFixture := strings.Replace(
+		filteredPTYFixture,
+		"_, _ = pty.Start(cmd)",
+		"_ = executeCommand(cmd)\n\t_, _ = pty.Start(cmd)",
+		1,
+	) + `
+func executeCommand(cmd *exec.Cmd) error { return cmd.Run() }
+`
+	if !testSourceLaunchesHostAudio(fixturePath, []byte(helperExecutionFixture)) {
+		t.Fatal("helper-executed filtered PTY command escaped the test-source guard")
 	}
 
 	const openCodePTYFixture = `package opencodeadapter
@@ -4293,12 +8474,39 @@ func TestRunDefaultPTYPreservesExitAndFiltersTerminalNotifications(t *testing.T)
 	) {
 		t.Fatal("relocated OpenCode filtered PTY fixture escaped the test-source guard")
 	}
+	const detachedOpenCodeFixture = `package opencodeadapter
+import (
+	"bytes"
+	"context"
+	"os"
+	"os/exec"
+	"testing"
+)
+func TestRunDefaultPTYPreservesExitAndFiltersTerminalNotifications(t *testing.T) {
+	var output bytes.Buffer
+	supervisor := Supervisor{}
+	spec := ptySpec{
+		Argv: []string{"/bin/sh", "-c", "printf 'left\\007middle\\033]9;native\\007right'; exit 7"},
+		Env: os.Environ(), CWD: t.TempDir(), Stdin: bytes.NewReader(nil), Stdout: &output,
+	}
+	_ = exec.Command(spec.Argv[0], spec.Argv[1:]...).Run()
+	_, _ = supervisor.runDefaultPTY(context.Background(), spec, func() {})
+}`
+	if !testSourceLaunchesHostAudio(
+		openCodeFixturePath,
+		[]byte(detachedOpenCodeFixture),
+	) {
+		t.Fatal("detached OpenCode PTY fixture launch escaped the test-source guard")
+	}
 
 	const codexOutputFixture = `package codexadapter
 import "os"
 func TestCodexPTYConsumesFragmentedOSCAndForwardsOrdinaryBytes() {
-	_, _ = os.Stdout.Write([]byte("\x1b]9;dynamic"))
-	_, _ = os.Stdout.Write([]byte(" preview\x07\x1b\\"))
+	if os.Getenv("WISP_DECK_CODEX_PTY_CHILD") == "1" {
+		_, _ = os.Stdout.Write([]byte("\x1b]9;dynamic"))
+		_, _ = os.Stdout.Write([]byte(" preview\x07\x1b\\"))
+		os.Exit(0)
+	}
 }`
 	codexFixturePath := filepath.Join(
 		"internal",
@@ -4320,6 +8528,731 @@ func TestCodexPTYConsumesFragmentedOSCAndForwardsOrdinaryBytes() {
 	) {
 		t.Fatal("relocated Codex PTY output fixture escaped the test-source guard")
 	}
+	duplicatedCodexFixture := strings.Replace(
+		codexOutputFixture,
+		`_, _ = os.Stdout.Write([]byte(" preview\x07\x1b\\"))`,
+		`_, _ = os.Stdout.Write([]byte(" preview\x07\x1b\\"))
+	_, _ = os.Stdout.Write([]byte(" preview\x07\x1b\\"))`,
+		1,
+	)
+	if !testSourceLaunchesHostAudio(
+		codexFixturePath,
+		[]byte(duplicatedCodexFixture),
+	) {
+		t.Fatal("duplicated Codex PTY output fixture escaped the exact-count guard")
+	}
+}
+
+type goHostEffectUse uint8
+
+const (
+	goProcessHostEffectUse goHostEffectUse = 1 << iota
+	goTerminalHostEffectUse
+	goProcessCapabilityHostEffectUse
+)
+
+type goAuditFunction struct {
+	name       string
+	parameters []*ast.Object
+	body       *ast.BlockStmt
+}
+
+type goAuditReceiverTypes map[*ast.Object]string
+
+const goAuditMethodPrefix = "@method:"
+
+func collectGoAuditReceiverTypes(file *ast.File) goAuditReceiverTypes {
+	types := make(goAuditReceiverTypes)
+	setType := func(identifier *ast.Ident, typeName string) bool {
+		if identifier == nil || identifier.Obj == nil || typeName == "" ||
+			types[identifier.Obj] == typeName {
+			return false
+		}
+		types[identifier.Obj] = typeName
+		return true
+	}
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Recv == nil || len(function.Recv.List) != 1 {
+			continue
+		}
+		typeName := goAuditDeclaredTypeName(function.Recv.List[0].Type)
+		for _, name := range function.Recv.List[0].Names {
+			setType(name, typeName)
+		}
+	}
+	for range 16 {
+		changed := false
+		ast.Inspect(file, func(node ast.Node) bool {
+			switch node := node.(type) {
+			case *ast.ValueSpec:
+				declared := goAuditDeclaredTypeName(node.Type)
+				for _, name := range node.Names {
+					changed = setType(name, declared) || changed
+				}
+				for index, expression := range node.Values {
+					if index < len(node.Names) {
+						changed = setType(
+							node.Names[index],
+							goAuditExpressionType(expression, types),
+						) || changed
+					}
+				}
+			case *ast.AssignStmt:
+				for index, expression := range node.Rhs {
+					if index >= len(node.Lhs) {
+						continue
+					}
+					name, _ := node.Lhs[index].(*ast.Ident)
+					changed = setType(
+						name,
+						goAuditExpressionType(expression, types),
+					) || changed
+				}
+			}
+			return true
+		})
+		if !changed {
+			break
+		}
+	}
+	return types
+}
+
+func goAuditDeclaredTypeName(expression ast.Expr) string {
+	switch expression := expression.(type) {
+	case nil:
+		return ""
+	case *ast.Ident:
+		return expression.Name
+	case *ast.SelectorExpr:
+		return expressionName(expression)
+	case *ast.StarExpr:
+		return goAuditDeclaredTypeName(expression.X)
+	case *ast.ParenExpr:
+		return goAuditDeclaredTypeName(expression.X)
+	case *ast.IndexExpr:
+		return goAuditDeclaredTypeName(expression.X)
+	case *ast.IndexListExpr:
+		return goAuditDeclaredTypeName(expression.X)
+	default:
+		return ""
+	}
+}
+
+func goAuditExpressionType(
+	expression ast.Expr,
+	types goAuditReceiverTypes,
+) string {
+	switch expression := expression.(type) {
+	case *ast.Ident:
+		if expression.Obj != nil {
+			return types[expression.Obj]
+		}
+	case *ast.CompositeLit:
+		return goAuditDeclaredTypeName(expression.Type)
+	case *ast.UnaryExpr:
+		if expression.Op == token.AND || expression.Op == token.MUL {
+			return goAuditExpressionType(expression.X, types)
+		}
+	case *ast.ParenExpr:
+		return goAuditExpressionType(expression.X, types)
+	case *ast.CallExpr:
+		if function, ok := expression.Fun.(*ast.Ident); ok &&
+			function.Name == "new" && len(expression.Args) == 1 {
+			return goAuditDeclaredTypeName(expression.Args[0])
+		}
+	}
+	return ""
+}
+
+func goAuditMethodKey(typeName string, method string) string {
+	if typeName == "" {
+		return goAuditMethodPrefix + method
+	}
+	return typeName + "." + method
+}
+
+func goAuditFunctionKeys(function *ast.FuncDecl) []string {
+	if function.Recv == nil || len(function.Recv.List) != 1 {
+		return []string{function.Name.Name}
+	}
+	return []string{
+		goAuditMethodKey(
+			goAuditDeclaredTypeName(function.Recv.List[0].Type),
+			function.Name.Name,
+		),
+		goAuditMethodKey("", function.Name.Name),
+	}
+}
+
+func collectGoHostEffectParameterUses(
+	file *ast.File,
+	aliases map[string]string,
+	dotImports map[string]bool,
+	staticStrings map[string]map[string]bool,
+	receiverTypes goAuditReceiverTypes,
+) map[string]map[int]goHostEffectUse {
+	var functions []goAuditFunction
+	uses := make(map[string]map[int]goHostEffectUse)
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Body == nil {
+			continue
+		}
+		for _, key := range goAuditFunctionKeys(function) {
+			functions = append(functions, goAuditFunction{
+				name:       key,
+				parameters: goFunctionParameterObjects(function.Type.Params),
+				body:       function.Body,
+			})
+			if uses[key] == nil {
+				uses[key] = make(map[int]goHostEffectUse)
+			}
+		}
+	}
+	literalKeys := make(map[token.Pos]bool)
+	addLiteral := func(name string, literal *ast.FuncLit) {
+		if name == "" || literal == nil || literal.Body == nil {
+			return
+		}
+		functions = append(functions, goAuditFunction{
+			name:       name,
+			parameters: goFunctionParameterObjects(literal.Type.Params),
+			body:       literal.Body,
+		})
+		if uses[name] == nil {
+			uses[name] = make(map[int]goHostEffectUse)
+		}
+	}
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch node := node.(type) {
+		case *ast.FuncLit:
+			if !literalKeys[node.Pos()] {
+				literalKeys[node.Pos()] = true
+				addLiteral(goAuditFunctionLiteralKey(node), node)
+			}
+		case *ast.AssignStmt:
+			for index, expression := range node.Rhs {
+				if index >= len(node.Lhs) {
+					continue
+				}
+				name, nameOK := node.Lhs[index].(*ast.Ident)
+				literal, literalOK := expression.(*ast.FuncLit)
+				if nameOK && literalOK {
+					addLiteral(name.Name, literal)
+				}
+			}
+		case *ast.ValueSpec:
+			for index, expression := range node.Values {
+				if index >= len(node.Names) {
+					continue
+				}
+				literal, ok := expression.(*ast.FuncLit)
+				if ok {
+					addLiteral(node.Names[index].Name, literal)
+				}
+			}
+		}
+		return true
+	})
+	functionAliases := collectGoAuditFunctionAliases(file, receiverTypes)
+	for range 32 {
+		changed := false
+		for _, function := range functions {
+			name := function.name
+			parameters := function.parameters
+			markExpression := func(
+				expression ast.Expr,
+				use goHostEffectUse,
+			) {
+				for index, parameter := range parameters {
+					if parameter != nil &&
+						expressionReferencesObject(
+							expression,
+							parameter,
+						) &&
+						uses[name][index]&use == 0 {
+						uses[name][index] |= use
+						changed = true
+					}
+				}
+			}
+			ast.Inspect(function.body, func(node ast.Node) bool {
+				if literal, ok := node.(*ast.FuncLit); ok &&
+					literal.Body != function.body {
+					return false
+				}
+				composite, ok := node.(*ast.CompositeLit)
+				if ok {
+					if execCmdLiteralHasPath(
+						composite,
+						aliases,
+						dotImports,
+					) {
+						if path, exists := applicationAuditCompositeField(
+							composite,
+							"Path",
+						); exists {
+							markExpression(path, goProcessHostEffectUse)
+						}
+					}
+					if expressionName(composite.Type) == "ptySpec" ||
+						expressionName(composite.Type) == "processSpec" {
+						if argv, exists := applicationAuditCompositeField(
+							composite,
+							"Argv",
+						); exists {
+							markExpression(
+								argv,
+								goProcessHostEffectUse|
+									goTerminalHostEffectUse,
+							)
+						}
+					}
+				}
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				if arguments, output := goTerminalOutputArguments(
+					call,
+					aliases,
+					dotImports,
+				); output {
+					for _, argument := range arguments {
+						markExpression(
+							argument,
+							goTerminalHostEffectUse,
+						)
+					}
+				}
+				if executableIndex, process := processExecutableArgument(
+					call,
+					aliases,
+					dotImports,
+				); process && executableIndex < len(call.Args) {
+					executable := call.Args[executableIndex]
+					markExpression(
+						executable,
+						goProcessHostEffectUse,
+					)
+					dynamicExecutable := false
+					for _, parameter := range parameters {
+						if parameter != nil &&
+							expressionReferencesObject(
+								executable,
+								parameter,
+							) {
+							dynamicExecutable = true
+							break
+						}
+					}
+					if dynamicExecutable ||
+						isShellExecutable(executable, staticStrings) {
+						for _, argument := range call.Args[executableIndex+1:] {
+							markExpression(
+								argument,
+								goProcessHostEffectUse|
+									goTerminalHostEffectUse,
+							)
+						}
+					}
+				}
+				for _, callee := range goAuditCalleeKeysWithAliases(
+					call.Fun,
+					receiverTypes,
+					functionAliases,
+				) {
+					for index, use := range uses[callee] {
+						if index < len(call.Args) {
+							markExpression(call.Args[index], use)
+						}
+					}
+				}
+				return true
+			})
+		}
+		if !changed {
+			break
+		}
+	}
+	return uses
+}
+
+func goFunctionParameterObjects(parameters *ast.FieldList) []*ast.Object {
+	if parameters == nil {
+		return nil
+	}
+	var objects []*ast.Object
+	for _, field := range parameters.List {
+		if len(field.Names) == 0 {
+			objects = append(objects, nil)
+			continue
+		}
+		for _, name := range field.Names {
+			objects = append(objects, name.Obj)
+		}
+	}
+	return objects
+}
+
+func goAuditFunctionLiteralKey(literal *ast.FuncLit) string {
+	return fmt.Sprintf("@func:%d", literal.Pos())
+}
+
+func goAuditCalleeKeys(
+	expression ast.Expr,
+	receiverTypes goAuditReceiverTypes,
+) []string {
+	switch expression := expression.(type) {
+	case *ast.Ident:
+		return []string{expression.Name}
+	case *ast.SelectorExpr:
+		return []string{goAuditMethodKey(
+			goAuditExpressionType(expression.X, receiverTypes),
+			expression.Sel.Name,
+		)}
+	case *ast.ParenExpr:
+		return goAuditCalleeKeys(expression.X, receiverTypes)
+	case *ast.FuncLit:
+		return []string{goAuditFunctionLiteralKey(expression)}
+	default:
+		return nil
+	}
+}
+
+func collectGoAuditFunctionAliases(
+	file *ast.File,
+	receiverTypes goAuditReceiverTypes,
+) map[*ast.Object][]string {
+	aliases := make(map[*ast.Object][]string)
+	resolve := func(expression ast.Expr) []string {
+		return goAuditCalleeKeysWithAliases(
+			expression,
+			receiverTypes,
+			aliases,
+		)
+	}
+	for range 32 {
+		changed := false
+		ast.Inspect(file, func(node ast.Node) bool {
+			var names []*ast.Ident
+			var values []ast.Expr
+			switch node := node.(type) {
+			case *ast.AssignStmt:
+				for _, target := range node.Lhs {
+					name, _ := target.(*ast.Ident)
+					names = append(names, name)
+				}
+				values = node.Rhs
+			case *ast.ValueSpec:
+				names = node.Names
+				values = node.Values
+			default:
+				return true
+			}
+			for index, value := range values {
+				if index >= len(names) || names[index] == nil ||
+					names[index].Obj == nil {
+					continue
+				}
+				keys := resolve(value)
+				if len(keys) == 0 ||
+					equalGoAuditFunctionKeys(
+						aliases[names[index].Obj],
+						keys,
+					) {
+					continue
+				}
+				aliases[names[index].Obj] = append([]string(nil), keys...)
+				changed = true
+			}
+			return true
+		})
+		if !changed {
+			break
+		}
+	}
+	return aliases
+}
+
+func goAuditCalleeKeysWithAliases(
+	expression ast.Expr,
+	receiverTypes goAuditReceiverTypes,
+	aliases map[*ast.Object][]string,
+) []string {
+	switch expression := expression.(type) {
+	case *ast.Ident:
+		if expression.Obj == nil {
+			return []string{expression.Name}
+		}
+		if keys := aliases[expression.Obj]; len(keys) != 0 {
+			return append([]string(nil), keys...)
+		}
+		if function, ok := expression.Obj.Decl.(*ast.FuncDecl); ok {
+			return goAuditFunctionKeys(function)
+		}
+		return nil
+	case *ast.ParenExpr:
+		return goAuditCalleeKeysWithAliases(
+			expression.X,
+			receiverTypes,
+			aliases,
+		)
+	case *ast.FuncLit:
+		return []string{goAuditFunctionLiteralKey(expression)}
+	default:
+		return goAuditCalleeKeys(expression, receiverTypes)
+	}
+}
+
+func equalGoAuditFunctionKeys(left []string, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func expressionReferencesObject(
+	expression ast.Expr,
+	object *ast.Object,
+) bool {
+	found := false
+	ast.Inspect(expression, func(node ast.Node) bool {
+		identifier, ok := node.(*ast.Ident)
+		if ok && identifier.Obj == object {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func goCallInvokesSensitiveHostEffect(
+	call *ast.CallExpr,
+	uses map[string]map[int]goHostEffectUse,
+	staticStrings map[string]map[string]bool,
+	receiverTypes goAuditReceiverTypes,
+	functionAliases map[*ast.Object][]string,
+) bool {
+	for _, callee := range goAuditCalleeKeysWithAliases(
+		call.Fun,
+		receiverTypes,
+		functionAliases,
+	) {
+		for index, use := range uses[callee] {
+			if index >= len(call.Args) {
+				continue
+			}
+			argument := call.Args[index]
+			if use&goProcessHostEffectUse != 0 &&
+				expressionContainsHostEffectMarker(argument, staticStrings) {
+				return true
+			}
+			if use&goTerminalHostEffectUse != 0 &&
+				expressionContainsTerminalHostEffect(argument, staticStrings) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func auditedTestHostEffectAllowances(
+	path string,
+	file *ast.File,
+	staticStrings map[string]map[string]bool,
+) (map[token.Pos]bool, map[token.Pos]bool) {
+	allowedCalls := make(map[token.Pos]bool)
+	allowedComposites := make(map[token.Pos]bool)
+	slashPath := filepath.ToSlash(path)
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Body == nil {
+			continue
+		}
+		switch {
+		case slashPath == "cmd/wisp-deck-tui/screenshot_filter_test.go" &&
+			function.Name.Name == "TestPumpTerminalOutputFiltersRealPTY":
+			if call := auditedScreenshotFilterProcessCall(function); call != nil {
+				allowedCalls[call.Pos()] = true
+			}
+		case slashPath == "internal/codexadapter/supervisor_test.go" &&
+			function.Name.Name ==
+				"TestCodexPTYConsumesFragmentedOSCAndForwardsOrdinaryBytes":
+			for _, call := range auditedCodexFilterOutputCalls(function) {
+				allowedCalls[call.Pos()] = true
+			}
+		case slashPath == "internal/opencodeadapter/supervisor_test.go" &&
+			function.Name.Name ==
+				"TestRunDefaultPTYPreservesExitAndFiltersTerminalNotifications":
+			var candidates []*ast.CompositeLit
+			ast.Inspect(function.Body, func(node ast.Node) bool {
+				composite, ok := node.(*ast.CompositeLit)
+				if ok && testProcessSpecLaunchesHostEffect(
+					composite,
+					staticStrings,
+				) {
+					candidates = append(candidates, composite)
+				}
+				return true
+			})
+			if len(candidates) == 1 &&
+				auditedOpenCodeFilterPTYFixture(
+					path,
+					function,
+					candidates[0],
+				) {
+				allowedComposites[candidates[0].Pos()] = true
+			}
+		}
+	}
+	return allowedCalls, allowedComposites
+}
+
+func auditedScreenshotFilterProcessCall(
+	function *ast.FuncDecl,
+) *ast.CallExpr {
+	const exact = "exec.Command(\"/bin/sh\", \"-c\", `printf 'before\\007\\033]9;plain\\007\\033Ptmux;\\033\\033]9;wrapped\\007\\033\\\\after'`)"
+	var effectCalls []*ast.CallExpr
+	assignedToCmd := 0
+	var commandObject *ast.Object
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if ok {
+			rendered, renderedOK := renderApplicationAuditNode(call)
+			if renderedOK && rendered == exact {
+				effectCalls = append(effectCalls, call)
+			}
+		}
+		assignment, ok := node.(*ast.AssignStmt)
+		if !ok || len(assignment.Lhs) != 1 ||
+			len(assignment.Rhs) != 1 {
+			return true
+		}
+		left, leftOK := assignment.Lhs[0].(*ast.Ident)
+		right, rightOK := assignment.Rhs[0].(*ast.CallExpr)
+		if leftOK && rightOK && left.Name == "cmd" {
+			rendered, renderedOK := renderApplicationAuditNode(right)
+			if renderedOK && rendered == exact {
+				assignedToCmd++
+				commandObject = left.Obj
+			}
+		}
+		return true
+	})
+	ptyStarts := 0
+	commandWaits := 0
+	forbiddenLifecycle := 0
+	commandReferences := 0
+	if commandObject != nil {
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			identifier, ok := node.(*ast.Ident)
+			if ok && identifier.Obj == commandObject {
+				commandReferences++
+			}
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			rendered, renderedOK := renderApplicationAuditNode(call)
+			if renderedOK && rendered == "pty.Start(cmd)" &&
+				len(call.Args) == 1 {
+				command, commandOK := call.Args[0].(*ast.Ident)
+				if commandOK && command.Obj == commandObject {
+					ptyStarts++
+				}
+			}
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			receiver, receiverOK := selector.X.(*ast.Ident)
+			if !receiverOK || receiver.Obj != commandObject {
+				return true
+			}
+			if selector.Sel.Name == "Wait" &&
+				len(call.Args) == 0 {
+				commandWaits++
+				return true
+			}
+			forbiddenLifecycle++
+			return true
+		})
+	}
+	if len(effectCalls) != 1 || assignedToCmd != 1 ||
+		ptyStarts != 1 || commandWaits != 1 ||
+		forbiddenLifecycle != 0 || commandReferences != 3 {
+		return nil
+	}
+	return effectCalls[0]
+}
+
+func auditedCodexFilterOutputCalls(
+	function *ast.FuncDecl,
+) []*ast.CallExpr {
+	const condition = `os.Getenv("WISP_DECK_CODEX_PTY_CHILD") == "1"`
+	var childBody *ast.BlockStmt
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		statement, ok := node.(*ast.IfStmt)
+		if !ok || childBody != nil {
+			return true
+		}
+		rendered, renderedOK := renderApplicationAuditNode(statement.Cond)
+		if renderedOK && rendered == condition {
+			childBody = statement.Body
+			return false
+		}
+		return true
+	})
+	if childBody == nil {
+		return nil
+	}
+	required := map[string]int{
+		`os.Stdout.Write([]byte("\x1b]9;dynamic"))`:     1,
+		`os.Stdout.Write([]byte(" preview\x07\x1b\\"))`: 1,
+	}
+	var allowed []*ast.CallExpr
+	exits := 0
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		rendered, renderedOK := renderApplicationAuditNode(call)
+		if !renderedOK {
+			return true
+		}
+		if _, expected := required[rendered]; expected {
+			required[rendered]--
+			if call.Pos() >= childBody.Pos() &&
+				call.End() <= childBody.End() {
+				allowed = append(allowed, call)
+			}
+		}
+		if rendered == "os.Exit(0)" &&
+			call.Pos() >= childBody.Pos() &&
+			call.End() <= childBody.End() {
+			exits++
+		}
+		return true
+	})
+	for _, remaining := range required {
+		if remaining != 0 {
+			return nil
+		}
+	}
+	if len(allowed) != 2 || exits != 1 {
+		return nil
+	}
+	return allowed
 }
 
 func testSourceLaunchesHostAudio(path string, source []byte) bool {
@@ -4329,34 +9262,28 @@ func testSourceLaunchesHostAudio(path string, source []byte) bool {
 	}
 	aliases, dotImports := processImportAliases(file)
 	collectProcessConstructorAliases(file, aliases, dotImports)
+	collectTerminalOutputFunctionAliases(file, aliases, dotImports)
 	staticStrings := collectStaticStrings(file)
+	receiverTypes := collectGoAuditReceiverTypes(file)
+	functionAliases := collectGoAuditFunctionAliases(file, receiverTypes)
+	parameterUses := collectGoHostEffectParameterUses(
+		file,
+		aliases,
+		dotImports,
+		staticStrings,
+		receiverTypes,
+	)
+	allowedCalls, allowedComposites := auditedTestHostEffectAllowances(
+		path,
+		file,
+		staticStrings,
+	)
 	execCmdVariables := collectExecCmdVariables(file, aliases, dotImports)
-	callOwners := make(map[token.Pos]string)
-	nodeOwners := make(map[token.Pos]string)
-	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Body == nil {
-			continue
-		}
-		ast.Inspect(function.Body, func(node ast.Node) bool {
-			if node != nil {
-				nodeOwners[node.Pos()] = function.Name.Name
-			}
-			if call, ok := node.(*ast.CallExpr); ok {
-				callOwners[call.Pos()] = function.Name.Name
-			}
-			return true
-		})
-	}
 	launchesAudio := false
 	ast.Inspect(file, func(node ast.Node) bool {
 		composite, ok := node.(*ast.CompositeLit)
 		if ok && testProcessSpecLaunchesHostEffect(composite, staticStrings) {
-			if !auditedOpenCodeFilterPTYFixture(
-				path,
-				nodeOwners[composite.Pos()],
-				composite,
-			) {
+			if !allowedComposites[composite.Pos()] {
 				launchesAudio = true
 				return false
 			}
@@ -4387,11 +9314,21 @@ func testSourceLaunchesHostAudio(path string, source []byte) bool {
 			}
 			return true
 		}
-		if testCallWritesHostEffect(
-			path,
-			callOwners[call.Pos()],
+		if goCallInvokesSensitiveHostEffect(
+			call,
+			parameterUses,
+			staticStrings,
+			receiverTypes,
+			functionAliases,
+		) {
+			launchesAudio = true
+			return false
+		}
+		if !allowedCalls[call.Pos()] && testCallWritesHostEffect(
 			call,
 			staticStrings,
+			aliases,
+			dotImports,
 		) {
 			launchesAudio = true
 			return false
@@ -4414,11 +9351,7 @@ func testSourceLaunchesHostAudio(path string, source []byte) bool {
 				}
 			}
 		}
-		if auditedFilteredPTYHostEffectFixture(
-			path,
-			callOwners[call.Pos()],
-			call,
-		) {
+		if allowedCalls[call.Pos()] {
 			return true
 		}
 		executableIndex, ok := processExecutableArgument(call, aliases, dotImports)
@@ -4443,43 +9376,103 @@ func testSourceLaunchesHostAudio(path string, source []byte) bool {
 	return launchesAudio
 }
 
+func goTerminalOutputArguments(
+	call *ast.CallExpr,
+	aliases map[string]string,
+	dotImports map[string]bool,
+) ([]ast.Expr, bool) {
+	importPath, function := calledPackageFunction(
+		call.Fun,
+		aliases,
+		dotImports,
+	)
+	switch {
+	case importPath == "fmt" &&
+		(function == "Print" || function == "Printf" ||
+			function == "Println"):
+		return call.Args, true
+	case importPath == "fmt" &&
+		(function == "Fprint" || function == "Fprintf" ||
+			function == "Fprintln"):
+		if len(call.Args) == 0 ||
+			!goExpressionIsTerminalOutput(
+				call.Args[0],
+				aliases,
+				dotImports,
+			) {
+			return nil, false
+		}
+		return call.Args[1:], true
+	case importPath == "io" && function == "WriteString":
+		if len(call.Args) == 0 ||
+			!goExpressionIsTerminalOutput(
+				call.Args[0],
+				aliases,
+				dotImports,
+			) {
+			return nil, false
+		}
+		return call.Args[1:], true
+	case importPath == "syscall" && function == "Write":
+		if len(call.Args) < 2 ||
+			(!hasIntegerLiteral(call.Args[0], "1") &&
+				!hasIntegerLiteral(call.Args[0], "2")) {
+			return nil, false
+		}
+		return call.Args[1:], true
+	}
+	if identifier, ok := call.Fun.(*ast.Ident); ok &&
+		(identifier.Name == "print" || identifier.Name == "println") {
+		return call.Args, true
+	}
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || (selector.Sel.Name != "Write" &&
+		selector.Sel.Name != "WriteString") ||
+		!goExpressionIsTerminalOutput(
+			selector.X,
+			aliases,
+			dotImports,
+		) {
+		return nil, false
+	}
+	return call.Args, true
+}
+
+func goExpressionIsTerminalOutput(
+	expression ast.Expr,
+	aliases map[string]string,
+	dotImports map[string]bool,
+) bool {
+	if identifier, ok := expression.(*ast.Ident); ok {
+		return dotImports["os"] &&
+			(identifier.Name == "Stdout" ||
+				identifier.Name == "Stderr")
+	}
+	selector, ok := expression.(*ast.SelectorExpr)
+	if !ok || (selector.Sel.Name != "Stdout" &&
+		selector.Sel.Name != "Stderr") {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && aliases[pkg.Name] == "os"
+}
+
 func testCallWritesHostEffect(
-	path string,
-	owner string,
 	call *ast.CallExpr,
 	staticStrings map[string]map[string]bool,
+	aliases map[string]string,
+	dotImports map[string]bool,
 ) bool {
-	name := expressionName(call.Fun)
-	arguments := call.Args
-	switch name {
-	case "os.Stdout.Write", "os.Stdout.WriteString",
-		"os.Stderr.Write", "os.Stderr.WriteString",
-		"fmt.Print", "fmt.Printf", "fmt.Println",
-		"print", "println":
-	case "fmt.Fprint", "fmt.Fprintf", "fmt.Fprintln", "io.WriteString":
-		if len(arguments) == 0 {
-			return false
-		}
-		target := expressionName(arguments[0])
-		if target != "os.Stdout" && target != "os.Stderr" {
-			return false
-		}
-		arguments = arguments[1:]
-	case "syscall.Write":
-		if len(arguments) < 2 ||
-			(!hasIntegerLiteral(arguments[0], "1") &&
-				!hasIntegerLiteral(arguments[0], "2")) {
-			return false
-		}
-		arguments = arguments[1:]
-	default:
+	arguments, writes := goTerminalOutputArguments(
+		call,
+		aliases,
+		dotImports,
+	)
+	if !writes {
 		return false
 	}
 	for _, argument := range arguments {
 		if expressionContainsTerminalHostEffect(argument, staticStrings) {
-			if auditedCodexFilterOutputFixture(path, owner, call) {
-				continue
-			}
 			return true
 		}
 	}
@@ -4503,6 +9496,9 @@ func expressionContainsTerminalHostEffect(
 	expression ast.Expr,
 	staticStrings map[string]map[string]bool,
 ) bool {
+	if expressionContainsByteBEL(expression) {
+		return true
+	}
 	for _, value := range resolvedStrings(expression, staticStrings) {
 		if stringHasHostEffectMarker(value) ||
 			strings.ContainsRune(value, '\a') ||
@@ -4513,7 +9509,8 @@ func expressionContainsTerminalHostEffect(
 	found := false
 	ast.Inspect(expression, func(node ast.Node) bool {
 		literal, ok := node.(*ast.BasicLit)
-		if !ok || literal.Kind != token.STRING {
+		if !ok || (literal.Kind != token.STRING &&
+			literal.Kind != token.CHAR) {
 			return true
 		}
 		value, err := strconv.Unquote(literal.Value)
@@ -4529,44 +9526,66 @@ func expressionContainsTerminalHostEffect(
 	return found
 }
 
-func auditedCodexFilterOutputFixture(
-	path string,
-	owner string,
-	call *ast.CallExpr,
-) bool {
-	if filepath.ToSlash(path) != "internal/codexadapter/supervisor_test.go" ||
-		owner != "TestCodexPTYConsumesFragmentedOSCAndForwardsOrdinaryBytes" {
-		return false
-	}
-	var rendered bytes.Buffer
-	if err := format.Node(&rendered, token.NewFileSet(), call); err != nil {
-		return false
-	}
-	switch rendered.String() {
-	case `os.Stdout.Write([]byte("\x1b]9;dynamic"))`,
-		`os.Stdout.Write([]byte(" preview\x07\x1b\\"))`:
-		return true
-	default:
-		return false
-	}
+func expressionContainsByteBEL(expression ast.Expr) bool {
+	found := false
+	ast.Inspect(expression, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if ok && len(call.Args) == 1 {
+			function, functionOK := call.Fun.(*ast.Ident)
+			if functionOK && function.Name == "string" &&
+				goExpressionIsBELByte(call.Args[0]) {
+				found = true
+				return false
+			}
+		}
+		composite, ok := node.(*ast.CompositeLit)
+		if !ok || !goCompositeIsByteSequence(composite) {
+			return true
+		}
+		for _, element := range composite.Elts {
+			if goExpressionIsBELByte(element) {
+				found = true
+				return false
+			}
+		}
+		return !found
+	})
+	return found
 }
 
-func auditedFilteredPTYHostEffectFixture(
-	path string,
-	owner string,
-	call *ast.CallExpr,
-) bool {
-	const fixturePath = "cmd/wisp-deck-tui/screenshot_filter_test.go"
-	if filepath.ToSlash(path) != fixturePath ||
-		owner != "TestPumpTerminalOutputFiltersRealPTY" {
+func goCompositeIsByteSequence(composite *ast.CompositeLit) bool {
+	array, ok := composite.Type.(*ast.ArrayType)
+	if !ok {
 		return false
 	}
-	var rendered bytes.Buffer
-	if err := format.Node(&rendered, token.NewFileSet(), call); err != nil {
-		return false
+	element, ok := array.Elt.(*ast.Ident)
+	return ok && (element.Name == "byte" ||
+		element.Name == "uint8" || element.Name == "rune")
+}
+
+func goExpressionIsBELByte(expression ast.Expr) bool {
+	switch expression := expression.(type) {
+	case *ast.BasicLit:
+		switch expression.Kind {
+		case token.INT:
+			value, err := strconv.ParseInt(expression.Value, 0, 32)
+			return err == nil && value == 7
+		case token.CHAR:
+			value, err := strconv.Unquote(expression.Value)
+			return err == nil && len([]rune(value)) == 1 &&
+				[]rune(value)[0] == '\a'
+		}
+	case *ast.CallExpr:
+		if len(expression.Args) == 1 {
+			if identifier, ok := expression.Fun.(*ast.Ident); ok &&
+				(identifier.Name == "byte" ||
+					identifier.Name == "uint8" ||
+					identifier.Name == "rune") {
+				return goExpressionIsBELByte(expression.Args[0])
+			}
+		}
 	}
-	const exact = "exec.Command(\"/bin/sh\", \"-c\", `printf 'before\\007\\033]9;plain\\007\\033Ptmux;\\033\\033]9;wrapped\\007\\033\\\\after'`)"
-	return rendered.String() == exact
+	return false
 }
 
 func testProcessSpecLaunchesHostEffect(
@@ -4594,11 +9613,13 @@ func testProcessSpecLaunchesHostEffect(
 
 func auditedOpenCodeFilterPTYFixture(
 	path string,
-	owner string,
+	function *ast.FuncDecl,
 	literal *ast.CompositeLit,
 ) bool {
 	if filepath.ToSlash(path) != "internal/opencodeadapter/supervisor_test.go" ||
-		owner != "TestRunDefaultPTYPreservesExitAndFiltersTerminalNotifications" {
+		function == nil ||
+		function.Name.Name !=
+			"TestRunDefaultPTYPreservesExitAndFiltersTerminalNotifications" {
 		return false
 	}
 	if expressionName(literal.Type) != "ptySpec" || len(literal.Elts) != 5 {
@@ -4634,7 +9655,54 @@ func auditedOpenCodeFilterPTYFixture(
 		}
 		delete(required, key.Name)
 	}
-	return len(required) == 0
+	if len(required) != 0 {
+		return false
+	}
+	filterCalls := 0
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok || expressionName(call.Fun) != "supervisor.runDefaultPTY" ||
+			len(call.Args) != 3 || call.Args[1] != literal {
+			return true
+		}
+		background, backgroundOK := call.Args[0].(*ast.CallExpr)
+		callback, callbackOK := call.Args[2].(*ast.FuncLit)
+		if !backgroundOK ||
+			expressionName(background.Fun) != "context.Background" ||
+			len(background.Args) != 0 ||
+			!callbackOK ||
+			!auditedOpenCodeStartCallback(callback) {
+			return true
+		}
+		filterCalls++
+		return true
+	})
+	return filterCalls == 1
+}
+
+func auditedOpenCodeStartCallback(callback *ast.FuncLit) bool {
+	if callback.Type.Params != nil &&
+		len(callback.Type.Params.List) != 0 {
+		return false
+	}
+	if callback.Body == nil {
+		return false
+	}
+	if len(callback.Body.List) == 0 {
+		return true
+	}
+	if len(callback.Body.List) != 1 {
+		return false
+	}
+	assignment, ok := callback.Body.List[0].(*ast.AssignStmt)
+	if !ok || assignment.Tok != token.ASSIGN ||
+		len(assignment.Lhs) != 1 || len(assignment.Rhs) != 1 {
+		return false
+	}
+	left, leftOK := assignment.Lhs[0].(*ast.Ident)
+	right, rightOK := assignment.Rhs[0].(*ast.Ident)
+	return leftOK && rightOK &&
+		left.Name == "started" && right.Name == "true"
 }
 
 func expressionReferencesProductionHostEffectRunner(node ast.Node) bool {
@@ -4714,6 +9782,19 @@ func calledPackageFunction(
 					function.Name == "StartProcess" {
 					return importPath, function.Name
 				}
+				if function.Name == "Write" {
+					return importPath, function.Name
+				}
+			case "fmt":
+				switch function.Name {
+				case "Print", "Printf", "Println",
+					"Fprint", "Fprintf", "Fprintln":
+					return importPath, function.Name
+				}
+			case "io":
+				if function.Name == "WriteString" {
+					return importPath, function.Name
+				}
 			default:
 				if strings.HasSuffix(importPath, "/unix") &&
 					(function.Name == "Exec" || function.Name == "ForkExec") {
@@ -4781,6 +9862,79 @@ func collectProcessConstructorAliases(
 			return
 		}
 	}
+}
+
+func collectTerminalOutputFunctionAliases(
+	file *ast.File,
+	aliases map[string]string,
+	dotImports map[string]bool,
+) {
+	for range 16 {
+		changed := false
+		ast.Inspect(file, func(node ast.Node) bool {
+			var names []*ast.Ident
+			var values []ast.Expr
+			switch node := node.(type) {
+			case *ast.ValueSpec:
+				names = node.Names
+				values = node.Values
+			case *ast.AssignStmt:
+				for _, expression := range node.Lhs {
+					name, _ := expression.(*ast.Ident)
+					names = append(names, name)
+				}
+				values = node.Rhs
+			default:
+				return true
+			}
+			for index, value := range values {
+				if index >= len(names) || names[index] == nil {
+					continue
+				}
+				importPath, function := calledPackageFunction(
+					value,
+					aliases,
+					dotImports,
+				)
+				if !goPackageFunctionWritesTerminal(
+					importPath,
+					function,
+				) {
+					continue
+				}
+				target := importPath +
+					processConstructorAliasSeparator +
+					function
+				if aliases[names[index].Name] != target {
+					aliases[names[index].Name] = target
+					changed = true
+				}
+			}
+			return true
+		})
+		if !changed {
+			return
+		}
+	}
+}
+
+func goPackageFunctionWritesTerminal(
+	importPath string,
+	function string,
+) bool {
+	switch importPath {
+	case "fmt":
+		switch function {
+		case "Print", "Printf", "Println",
+			"Fprint", "Fprintf", "Fprintln":
+			return true
+		}
+	case "io":
+		return function == "WriteString"
+	case "syscall":
+		return function == "Write"
+	}
+	return false
 }
 
 func decodeProcessConstructorAlias(target string) (string, string, bool) {
@@ -5582,21 +10736,18 @@ func productionSourceLaunchesHostEffect(path string, source []byte) bool {
 	}
 	aliases, dotImports := processImportAliases(file)
 	collectProcessConstructorAliases(file, aliases, dotImports)
+	collectTerminalOutputFunctionAliases(file, aliases, dotImports)
 	staticStrings := collectStaticStrings(file)
+	receiverTypes := collectGoAuditReceiverTypes(file)
+	functionAliases := collectGoAuditFunctionAliases(file, receiverTypes)
+	parameterUses := collectGoHostEffectParameterUses(
+		file,
+		aliases,
+		dotImports,
+		staticStrings,
+		receiverTypes,
+	)
 	execCmdVariables := collectExecCmdVariables(file, aliases, dotImports)
-	callOwners := make(map[token.Pos]string)
-	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Body == nil {
-			continue
-		}
-		ast.Inspect(function.Body, func(node ast.Node) bool {
-			if call, ok := node.(*ast.CallExpr); ok {
-				callOwners[call.Pos()] = function.Name.Name
-			}
-			return true
-		})
-	}
 	launchesEffect := false
 	ast.Inspect(file, func(node ast.Node) bool {
 		switch node := node.(type) {
@@ -5616,11 +10767,21 @@ func productionSourceLaunchesHostEffect(path string, source []byte) bool {
 				return false
 			}
 		case *ast.CallExpr:
+			if goCallInvokesSensitiveHostEffect(
+				node,
+				parameterUses,
+				staticStrings,
+				receiverTypes,
+				functionAliases,
+			) {
+				launchesEffect = true
+				return false
+			}
 			if testCallWritesHostEffect(
-				path,
-				callOwners[node.Pos()],
 				node,
 				staticStrings,
+				aliases,
+				dotImports,
 			) {
 				launchesEffect = true
 				return false
