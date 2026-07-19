@@ -1,6 +1,7 @@
 package bash_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -105,6 +106,58 @@ func TestWrapperPropagatesExactTestingMarkerToTmux(t *testing.T) {
 	}
 	if markerIndex == 0 || arguments[markerIndex-1] != "-e" {
 		t.Fatalf("testing marker is not immediately preceded by -e\nargv: %#v", arguments)
+	}
+}
+
+// This reduced shell fixture exercises only the tmux-launch prelude. It is not
+// an application launch: repository application children always retain the
+// exact test marker. The fixture proves stale client values cannot leak into a
+// newly started tmux server through its inherited process environment.
+func TestWrapperTestingMarkerPreludeSanitizesNormalClientEnvironment(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		setup string
+	}{
+		{name: "absent", setup: "unset WISP_DECK_TESTING"},
+		{name: "zero", setup: "export WISP_DECK_TESTING=0"},
+		{name: "stale", setup: "export WISP_DECK_TESTING=stale"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			recording := filepath.Join(dir, "environment")
+			command := filepath.Join(dir, "tmux-fixture")
+			if err := os.WriteFile(command, []byte(`#!/bin/bash
+printf 'defined=%s\n' "${WISP_DECK_TESTING+x}" > "$GT_REC"
+printf 'value=%s\n' "${WISP_DECK_TESTING-}" >> "$GT_REC"
+printf 'arg=%s\n' "$@" >> "$GT_REC"
+`), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			snippet := fmt.Sprintf(`
+%s
+TMUX_CMD=%q
+_wisp_deck_testing_tmux_args=()
+if [[ "${WISP_DECK_TESTING:-}" == "1" ]]; then
+  _wisp_deck_testing_tmux_args=(-e WISP_DECK_TESTING=1)
+fi
+env -u WISP_DECK_TESTING "$TMUX_CMD" new-session "${_wisp_deck_testing_tmux_args[@]}"
+`, test.setup, command)
+			out, code := runBashSnippet(
+				t,
+				snippet,
+				buildEnv(t, nil, "GT_REC="+recording),
+			)
+			if code != 0 {
+				t.Fatalf("tmux prelude fixture exited %d: %s", code, out)
+			}
+			data, err := os.ReadFile(recording)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := string(data); got != "defined=\nvalue=\narg=new-session\n" {
+				t.Fatalf("sanitized tmux fixture = %q", got)
+			}
+		})
 	}
 }
 

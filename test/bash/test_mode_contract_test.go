@@ -399,6 +399,12 @@ func TestWrapperTestingMarkerSourceContract(t *testing.T) {
 			`"${_wisp_deck_testing_tmux_args[@]}"`,
 			`${_wisp_deck_testing_tmux_args[@]}`,
 		),
+		"client marker not sanitized": mutateWrapperTestingMarkerSource(
+			t,
+			source,
+			`env -u WISP_DECK_TESTING "$TMUX_CMD" new-session`,
+			`"$TMUX_CMD" new-session`,
+		),
 		"spare command unsets marker": mutateWrapperTestingMarkerSource(
 			t,
 			source,
@@ -434,7 +440,7 @@ if [[ "${WISP_DECK_TESTING:-}" == "1" ]]; then
   _wisp_deck_testing_tmux_args=(-e WISP_DECK_TESTING=1)
 fi
 
-"$TMUX_CMD" new-session`
+env -u WISP_DECK_TESTING "$TMUX_CMD" new-session`
 	if strings.Count(source, setup) != 1 {
 		return fmt.Errorf("testing marker array is not initialized immediately before new-session")
 	}
@@ -442,9 +448,10 @@ fi
 	if strings.Count(source, expansion) != 1 {
 		return fmt.Errorf("testing marker array must have one quoted argv expansion")
 	}
-	commandStart := strings.Index(source, `"$TMUX_CMD" new-session`)
+	const sanitizedLaunch = `env -u WISP_DECK_TESTING "$TMUX_CMD" new-session`
+	commandStart := strings.Index(source, sanitizedLaunch)
 	if commandStart < 0 {
-		return fmt.Errorf("wrapper is missing outer tmux new-session")
+		return fmt.Errorf("wrapper does not sanitize the outer tmux client environment")
 	}
 	commandEnd := strings.Index(source[commandStart:], "2>&3")
 	if commandEnd < 0 {
@@ -454,15 +461,16 @@ fi
 	if strings.Count(command, expansion) != 1 {
 		return fmt.Errorf("testing marker array is not expanded exactly once in outer new-session")
 	}
-	if strings.Count(source, "WISP_DECK_TESTING") != 2 {
+	if strings.Count(source, "WISP_DECK_TESTING") != 3 {
 		return fmt.Errorf("wrapper contains a stale or arbitrary testing marker path")
 	}
+	remaining := strings.Replace(source, sanitizedLaunch, `"$TMUX_CMD" new-session`, 1)
 	for _, forbidden := range []string{
 		"unset WISP_DECK_TESTING",
 		"env -u WISP_DECK_TESTING",
 		"-u WISP_DECK_TESTING",
 	} {
-		if strings.Contains(source, forbidden) {
+		if strings.Contains(remaining, forbidden) {
 			return fmt.Errorf("wrapper resets the inherited testing marker with %q", forbidden)
 		}
 	}

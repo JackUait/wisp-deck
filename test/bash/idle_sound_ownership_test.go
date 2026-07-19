@@ -260,6 +260,9 @@ func TestShellProductionHostEffectOwnershipGuardRejectsBypasses(t *testing.T) {
 		"notification sound": "osascript -e 'display notification \"audit\" with sound name \"Glass\"'\n",
 		"OSC 9":              "printf '\\033]9;audit\\007'\n",
 		"escaped BEL":        "printf '\\a'\n",
+		"short octal BEL":    "printf '\\07'\n",
+		"long octal BEL":     "printf '\\0007'\n",
+		"short hex BEL":      "printf '\\x7'\n",
 		"raw BEL":            "printf 'audit\a'\n",
 	}
 	for name, source := range mutations {
@@ -410,7 +413,7 @@ func shellProductionLineHasHostEffect(line string) bool {
 		strings.ContainsRune(line, '\a') {
 		return true
 	}
-	for _, bell := range []string{`\007`, `\a`, `\x07`} {
+	for _, bell := range []string{`\07`, `\007`, `\0007`, `\a`, `\x7`, `\x07`} {
 		if strings.Contains(line, bell) {
 			return true
 		}
