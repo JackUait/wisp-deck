@@ -6,7 +6,9 @@ package npx_test
 // files from previous versions in the install dir.
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -61,6 +63,47 @@ done
 `+writeCmd)
 }
 
+const validLauncherTuiCapabilities = `{"host_effects_compiled":true,"sound_preview_compiled":true,"host_effects_boundary":1,"host_effects_allowed":false}`
+
+func launcherTuiArtifact(version, capabilities string, capabilityExit int) string {
+	return fmt.Sprintf(`#!/bin/bash
+case "$1" in
+  --version)
+    printf '%%s\n' 'wisp-deck-tui version %s'
+    ;;
+  capabilities)
+    [ "$2" = "--require-production" ] || exit 64
+    cat <<'CAPABILITIES'
+%s
+CAPABILITIES
+    exit %d
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+`, version, capabilities, capabilityExit)
+}
+
+func (s *launcherSandbox) mockTuiDownload(t *testing.T, version, capabilities string, capabilityExit int) {
+	t.Helper()
+	artifact := filepath.Join(t.TempDir(), "wisp-deck-tui")
+	if err := os.WriteFile(artifact, []byte(launcherTuiArtifact(version, capabilities, capabilityExit)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s.mockCurl(t, fmt.Sprintf(`cp %q "$dest"; exit 0`, artifact))
+}
+
+func writeLauncherTuiArtifact(t *testing.T, path, version, capabilities string, capabilityExit int) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(launcherTuiArtifact(version, capabilities, capabilityExit)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func repoVersion(t *testing.T) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(projectRoot(t), "VERSION"))
@@ -113,11 +156,7 @@ func TestLauncher_rejects_corrupt_tui_download(t *testing.T) {
 func TestLauncher_installs_tui_after_verifying_version(t *testing.T) {
 	sb := newLauncherSandbox(t)
 	version := repoVersion(t)
-	sb.mockCurl(t, `cat > "$dest" <<PAYLOAD
-#!/bin/bash
-[ "\$1" = "--version" ] && echo "wisp-deck-tui version `+version+`"
-PAYLOAD
-exit 0`)
+	sb.mockTuiDownload(t, version, validLauncherTuiCapabilities, 0)
 
 	stdout, stderr, code := runLauncher(t, sb.env)
 	if code != 0 {
@@ -134,6 +173,238 @@ exit 0`)
 		t.Error("installed TUI binary is not executable")
 	}
 	assertNoPartialDownloads(t, filepath.Dir(sb.tuiPath()))
+}
+
+func TestLauncher_downloaded_tui_capability_matrix(t *testing.T) {
+	version := repoVersion(t)
+	tests := []struct {
+		name           string
+		reported       string
+		capabilities   string
+		capabilityExit int
+		wantValid      bool
+	}{
+		{
+			name:         "valid with runtime host effects denied",
+			reported:     version,
+			capabilities: validLauncherTuiCapabilities,
+			wantValid:    true,
+		},
+		{
+			name:         "superstring version",
+			reported:     "1" + version,
+			capabilities: validLauncherTuiCapabilities,
+		},
+		{
+			name:           "production capability exits nonzero",
+			reported:       version,
+			capabilities:   validLauncherTuiCapabilities,
+			capabilityExit: 1,
+		},
+		{name: "empty JSON", reported: version},
+		{name: "malformed JSON", reported: version, capabilities: `{broken`},
+		{
+			name:         "multiple JSON objects",
+			reported:     version,
+			capabilities: validLauncherTuiCapabilities + "\n" + validLauncherTuiCapabilities,
+		},
+		{
+			name:         "host effects compiled false",
+			reported:     version,
+			capabilities: `{"host_effects_compiled":false,"sound_preview_compiled":true,"host_effects_boundary":1}`,
+		},
+		{
+			name:         "sound preview compiled false",
+			reported:     version,
+			capabilities: `{"host_effects_compiled":true,"sound_preview_compiled":false,"host_effects_boundary":1}`,
+		},
+		{
+			name:         "fractional boundary",
+			reported:     version,
+			capabilities: `{"host_effects_compiled":true,"sound_preview_compiled":true,"host_effects_boundary":1.5}`,
+		},
+		{
+			name:         "wrong boundary",
+			reported:     version,
+			capabilities: `{"host_effects_compiled":true,"sound_preview_compiled":true,"host_effects_boundary":2}`,
+		},
+		{
+			name:         "wrong field types",
+			reported:     version,
+			capabilities: `{"host_effects_compiled":"true","sound_preview_compiled":1,"host_effects_boundary":"1"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sb := newLauncherSandbox(t)
+			sb.mockTuiDownload(t, tt.reported, tt.capabilities, tt.capabilityExit)
+
+			_, stderr, code := runLauncher(t, sb.env)
+			if tt.wantValid && code != 0 {
+				t.Fatalf("valid artifact was rejected with exit %d: %s", code, stderr)
+			}
+			if !tt.wantValid && code == 0 {
+				t.Fatalf("invalid artifact was accepted: version=%q capabilities=%q", tt.reported, tt.capabilities)
+			}
+			if !tt.wantValid {
+				if _, err := os.Stat(sb.tuiPath()); err == nil {
+					t.Error("invalid downloaded TUI was installed")
+				}
+				assertNoPartialDownloads(t, filepath.Dir(sb.tuiPath()))
+			}
+		})
+	}
+}
+
+func TestLauncher_keeps_up_to_date_tui_with_production_capability_without_curl(t *testing.T) {
+	sb := newLauncherSandbox(t)
+	version := repoVersion(t)
+	writeLauncherTuiArtifact(t, sb.tuiPath(), version, validLauncherTuiCapabilities, 0)
+	curlCalls := filepath.Join(t.TempDir(), "curl-calls")
+	sb.mockCurl(t, fmt.Sprintf(`printf 'called\n' >> %q; exit 1`, curlCalls))
+
+	stdout, stderr, code := runLauncher(t, sb.env)
+	if code != 0 {
+		t.Fatalf("valid existing artifact was rejected with exit %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "already up to date") {
+		t.Fatalf("expected up-to-date result, got %q", stdout)
+	}
+	if _, err := os.Stat(curlCalls); err == nil {
+		t.Error("valid existing artifact should not call curl")
+	}
+}
+
+func TestLauncher_replaces_up_to_date_version_with_failing_capability(t *testing.T) {
+	sb := newLauncherSandbox(t)
+	version := repoVersion(t)
+	writeLauncherTuiArtifact(t, sb.tuiPath(), version, validLauncherTuiCapabilities, 1)
+	sb.mockTuiDownload(t, version, validLauncherTuiCapabilities, 0)
+
+	stdout, stderr, code := runLauncher(t, sb.env)
+	if code != 0 {
+		t.Fatalf("replacement failed with exit %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "installed") {
+		t.Fatalf("expected invalid existing artifact to be replaced, got %q", stdout)
+	}
+}
+
+func TestLauncher_rejects_capability_invalid_download_atomically(t *testing.T) {
+	sb := newLauncherSandbox(t)
+	if err := os.MkdirAll(filepath.Dir(sb.tuiPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := "#!/bin/bash\nprintf 'wisp-deck-tui version 0.0.1\\n'\n"
+	if err := os.WriteFile(sb.tuiPath(), []byte(existing), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sb.mockTuiDownload(t, repoVersion(t), `{malformed`, 0)
+
+	_, _, code := runLauncher(t, sb.env)
+	if code == 0 {
+		t.Fatal("capability-invalid download was accepted")
+	}
+	data, err := os.ReadFile(sb.tuiPath())
+	if err != nil {
+		t.Fatalf("invalid download removed existing TUI: %v", err)
+	}
+	if string(data) != existing {
+		t.Fatalf("invalid download replaced existing TUI: %q", data)
+	}
+	assertNoPartialDownloads(t, filepath.Dir(sb.tuiPath()))
+}
+
+func TestLauncher_uses_supported_tui_asset_architecture(t *testing.T) {
+	tests := []struct {
+		nodeArch  string
+		assetArch string
+	}{
+		{nodeArch: "x64", assetArch: "amd64"},
+		{nodeArch: "arm64", assetArch: "arm64"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.nodeArch, func(t *testing.T) {
+			sb := newLauncherSandbox(t)
+			version := repoVersion(t)
+			curlCalls := filepath.Join(t.TempDir(), "curl-calls")
+			artifact := filepath.Join(t.TempDir(), "wisp-deck-tui")
+			writeLauncherTuiArtifact(t, artifact, version, validLauncherTuiCapabilities, 0)
+			sb.mockCurl(t, fmt.Sprintf(`printf '%%s\n' "$*" >> %q; cp %q "$dest"; exit 0`, curlCalls, artifact))
+			env := append(sb.env, "WISP_DECK_MOCK_ARCH="+tt.nodeArch)
+
+			_, stderr, code := runLauncher(t, env)
+			if code != 0 {
+				t.Fatalf("launcher failed for %s: %s", tt.nodeArch, stderr)
+			}
+			calls, err := os.ReadFile(curlCalls)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(calls), "wisp-deck-tui-darwin-"+tt.assetArch) {
+				t.Fatalf("curl args %q do not contain mapped architecture %q", calls, tt.assetArch)
+			}
+		})
+	}
+}
+
+func TestLauncher_rejects_unsupported_tui_asset_architecture(t *testing.T) {
+	sb := newLauncherSandbox(t)
+	curlCalls := filepath.Join(t.TempDir(), "curl-calls")
+	sb.mockCurl(t, fmt.Sprintf(`printf 'called\n' >> %q; exit 1`, curlCalls))
+	env := append(sb.env, "WISP_DECK_MOCK_ARCH=ppc64")
+
+	_, stderr, code := runLauncher(t, env)
+	if code == 0 {
+		t.Fatal("unsupported architecture was accepted")
+	}
+	if !strings.Contains(stderr, "Unsupported architecture") {
+		t.Fatalf("missing unsupported architecture error: %s", stderr)
+	}
+	if _, err := os.Stat(curlCalls); err == nil {
+		t.Error("unsupported architecture reached curl")
+	}
+}
+
+func TestLauncher_skip_tui_download_requires_exact_repository_test_mode(t *testing.T) {
+	t.Run("exact test marker skips", func(t *testing.T) {
+		sb := newLauncherSandbox(t)
+		curlCalls := filepath.Join(t.TempDir(), "curl-calls")
+		sb.mockCurl(t, fmt.Sprintf(`printf 'called\n' >> %q; exit 1`, curlCalls))
+		env := append(sb.env, "WISP_DECK_SKIP_TUI_DOWNLOAD=1")
+
+		_, stderr, code := runLauncher(t, env)
+		if code != 0 {
+			t.Fatalf("exact repository test skip failed: %s", stderr)
+		}
+		if _, err := os.Stat(curlCalls); err == nil {
+			t.Error("exact repository test skip called curl")
+		}
+	})
+
+	t.Run("skip is ignored outside test mode", func(t *testing.T) {
+		sb := newLauncherSandbox(t)
+		version := repoVersion(t)
+		curlCalls := filepath.Join(t.TempDir(), "curl-calls")
+		artifact := filepath.Join(t.TempDir(), "wisp-deck-tui")
+		writeLauncherTuiArtifact(t, artifact, version, validLauncherTuiCapabilities, 0)
+		sb.mockCurl(t, fmt.Sprintf(`printf 'called\n' >> %q; cp %q "$dest"; exit 0`, curlCalls, artifact))
+		root := projectRoot(t)
+		cmd := exec.Command("node", filepath.Join(root, "bin", "npx-wisp-deck.js"))
+		cmd.Env = append(append([]string{}, sb.env...),
+			"WISP_DECK_TESTING=0",
+			"WISP_DECK_SKIP_TUI_DOWNLOAD=1",
+			"WISP_DECK_MOCK_PLATFORM=darwin",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("production-mode launcher failed: %v\n%s", err, out)
+		}
+		if _, err := os.Stat(curlCalls); err != nil {
+			t.Fatal("production mode incorrectly honored WISP_DECK_SKIP_TUI_DOWNLOAD=1")
+		}
+	})
 }
 
 func TestLauncher_preserves_existing_tui_when_download_fails(t *testing.T) {

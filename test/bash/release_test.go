@@ -339,6 +339,278 @@ func TestRelease_trap_does_not_reference_local_variables(t *testing.T) {
 	}
 }
 
+const releaseArtifactTestVersion = "2.23.1"
+
+func releaseArtifactTestLdflags(version string) string {
+	return "-X main.Version=" + version +
+		" -X main.HostEffectsCapability=enabled" +
+		" -X main.SoundPreviewCapability=enabled"
+}
+
+func writeReleaseArtifactTestBinary(t *testing.T, buildDir, arch, marker string, capabilityExit int) string {
+	t.Helper()
+	path := writeTempFile(t, buildDir, "wisp-deck-tui-darwin-"+arch, fmt.Sprintf(`#!/bin/bash
+printf '%%s\n' "$#" "$1" "$2" >> %q
+if [[ "$1" == "capabilities" && "$2" == "--require-production" ]]; then
+  exit %d
+fi
+exit 97
+`, marker, capabilityExit))
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatalf("chmod release artifact: %v", err)
+	}
+	return path
+}
+
+func mockReleaseArtifactTools(
+	t *testing.T,
+	dir, machine, arm64Ldflags, amd64Ldflags, metadataMarker string,
+) string {
+	t.Helper()
+	mockCommand(t, dir, "uname", fmt.Sprintf(`
+if [[ "$1" == "-m" ]]; then
+  printf '%%s\n' %q
+  exit 0
+fi
+exit 97
+`, machine))
+	return mockCommand(t, dir, "go", fmt.Sprintf(`
+if [[ "$1" != "version" || "$2" != "-m" ]]; then
+  exit 97
+fi
+printf '%%s\n' "$1|$2|$3" >> %q
+case "$3" in
+  *-arm64) ldflags=%q ;;
+  *-amd64) ldflags=%q ;;
+  *) exit 98 ;;
+esac
+printf '\tbuild\t-ldflags="%%s"\n' "$ldflags"
+`, metadataMarker, arm64Ldflags, amd64Ldflags))
+}
+
+func TestReleaseArtifactLdflagsHasOneEnabledSource(t *testing.T) {
+	want := releaseArtifactTestLdflags(releaseArtifactTestVersion)
+	snippet := releaseSnippet(t, `release_tui_ldflags "`+releaseArtifactTestVersion+`"`)
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	if got := strings.TrimSpace(out); got != want {
+		t.Fatalf("release_tui_ldflags() = %q, want %q", got, want)
+	}
+
+	data, err := os.ReadFile(filepath.Join(projectRoot(t), "scripts", "release.sh"))
+	if err != nil {
+		t.Fatalf("read release.sh: %v", err)
+	}
+	if got := strings.Count(string(data), "main.HostEffectsCapability=enabled"); got != 1 {
+		t.Fatalf("enabled release ldflags must have one source, found %d", got)
+	}
+}
+
+func TestReleaseArtifactHostArchMapsSupportedMachines(t *testing.T) {
+	for _, tc := range []struct {
+		machine string
+		want    string
+	}{
+		{machine: "arm64", want: "arm64"},
+		{machine: "x86_64", want: "amd64"},
+	} {
+		t.Run(tc.machine, func(t *testing.T) {
+			mockDir := t.TempDir()
+			binDir := mockCommand(t, mockDir, "uname", fmt.Sprintf(`
+if [[ "$1" == "-m" ]]; then printf '%%s\n' %q; exit 0; fi
+exit 97
+`, tc.machine))
+			out, code := runBashSnippet(t, releaseSnippet(t, `release_host_arch`), buildEnv(t, []string{binDir}))
+			assertExitCode(t, code, 0)
+			if got := strings.TrimSpace(out); got != tc.want {
+				t.Fatalf("release_host_arch() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReleaseArtifactHostArchRejectsUnsupportedMachine(t *testing.T) {
+	mockDir := t.TempDir()
+	binDir := mockCommand(t, mockDir, "uname", `
+if [[ "$1" == "-m" ]]; then printf '%s\n' "riscv64"; exit 0; fi
+exit 97
+`)
+	out, code := runBashSnippet(t, releaseSnippet(t, `release_host_arch`), buildEnv(t, []string{binDir}))
+	if code == 0 {
+		t.Fatalf("release_host_arch unexpectedly accepted riscv64: %s", out)
+	}
+	assertContains(t, out, "Unsupported")
+}
+
+func TestReleaseArtifactPreflightVerifiesBothAndRunsOnlyHostCapability(t *testing.T) {
+	for _, tc := range []struct {
+		machine  string
+		hostArch string
+	}{
+		{machine: "arm64", hostArch: "arm64"},
+		{machine: "x86_64", hostArch: "amd64"},
+	} {
+		t.Run(tc.machine, func(t *testing.T) {
+			buildDir := t.TempDir()
+			arm64Marker := filepath.Join(t.TempDir(), "arm64-invocations")
+			amd64Marker := filepath.Join(t.TempDir(), "amd64-invocations")
+			arm64Asset := writeReleaseArtifactTestBinary(t, buildDir, "arm64", arm64Marker, 0)
+			amd64Asset := writeReleaseArtifactTestBinary(t, buildDir, "amd64", amd64Marker, 0)
+			metadataMarker := filepath.Join(t.TempDir(), "metadata-invocations")
+			ldflags := releaseArtifactTestLdflags(releaseArtifactTestVersion)
+			mockDir := t.TempDir()
+			binDir := mockReleaseArtifactTools(t, mockDir, tc.machine, ldflags, ldflags, metadataMarker)
+
+			snippet := releaseSnippet(t, fmt.Sprintf(
+				`ldflags="$(release_tui_ldflags %q)"; verify_release_tui_artifacts %q "$ldflags"`,
+				releaseArtifactTestVersion,
+				buildDir,
+			))
+			out, code := runBashSnippet(t, snippet, buildEnv(t, []string{binDir}))
+			assertExitCode(t, code, 0)
+
+			metadataCalls, err := os.ReadFile(metadataMarker)
+			if err != nil {
+				t.Fatalf("read metadata calls: %v\noutput:\n%s", err, out)
+			}
+			wantMetadataCalls := strings.Join([]string{
+				"version|-m|" + arm64Asset,
+				"version|-m|" + amd64Asset,
+			}, "\n")
+			if got := strings.TrimSpace(string(metadataCalls)); got != wantMetadataCalls {
+				t.Fatalf("metadata calls = %q, want %q", got, wantMetadataCalls)
+			}
+
+			hostMarker, otherMarker := arm64Marker, amd64Marker
+			if tc.hostArch == "amd64" {
+				hostMarker, otherMarker = amd64Marker, arm64Marker
+			}
+			hostCalls, err := os.ReadFile(hostMarker)
+			if err != nil {
+				t.Fatalf("read host capability call: %v", err)
+			}
+			if got, want := string(hostCalls), "2\ncapabilities\n--require-production\n"; got != want {
+				t.Fatalf("host capability call = %q, want %q", got, want)
+			}
+			if _, err := os.Stat(otherMarker); !os.IsNotExist(err) {
+				t.Fatalf("non-host release asset was executed; marker error = %v", err)
+			}
+		})
+	}
+}
+
+func TestReleaseArtifactPreflightRejectsInvalidMetadataBeforeExecution(t *testing.T) {
+	validLdflags := releaseArtifactTestLdflags(releaseArtifactTestVersion)
+	invalidLdflags := strings.Replace(validLdflags, "HostEffectsCapability=enabled", "HostEffectsCapability=disabled", 1)
+	for _, invalidArch := range []string{"arm64", "amd64"} {
+		t.Run(invalidArch, func(t *testing.T) {
+			buildDir := t.TempDir()
+			arm64Marker := filepath.Join(t.TempDir(), "arm64-invocations")
+			amd64Marker := filepath.Join(t.TempDir(), "amd64-invocations")
+			arm64Asset := writeReleaseArtifactTestBinary(t, buildDir, "arm64", arm64Marker, 0)
+			amd64Asset := writeReleaseArtifactTestBinary(t, buildDir, "amd64", amd64Marker, 0)
+			arm64Ldflags, amd64Ldflags := validLdflags, validLdflags
+			if invalidArch == "arm64" {
+				arm64Ldflags = invalidLdflags
+			} else {
+				amd64Ldflags = invalidLdflags
+			}
+			metadataMarker := filepath.Join(t.TempDir(), "metadata-invocations")
+			mockDir := t.TempDir()
+			binDir := mockReleaseArtifactTools(t, mockDir, "x86_64", arm64Ldflags, amd64Ldflags, metadataMarker)
+
+			snippet := releaseSnippet(t, fmt.Sprintf(
+				`verify_release_tui_artifacts %q %q`,
+				buildDir,
+				validLdflags,
+			))
+			out, code := runBashSnippet(t, snippet, buildEnv(t, []string{binDir}))
+			if code == 0 {
+				t.Fatalf("invalid %s metadata unexpectedly passed", invalidArch)
+			}
+			assertContains(t, out, "linker metadata")
+
+			metadataCalls, err := os.ReadFile(metadataMarker)
+			if err != nil {
+				t.Fatalf("read metadata calls: %v", err)
+			}
+			wantMetadataCalls := strings.Join([]string{
+				"version|-m|" + arm64Asset,
+				"version|-m|" + amd64Asset,
+			}, "\n")
+			if got := strings.TrimSpace(string(metadataCalls)); got != wantMetadataCalls {
+				t.Fatalf("metadata calls = %q, want %q", got, wantMetadataCalls)
+			}
+			for _, marker := range []string{arm64Marker, amd64Marker} {
+				if _, err := os.Stat(marker); !os.IsNotExist(err) {
+					t.Fatalf("artifact executed before metadata passed; marker error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestReleaseCapabilityPreflightRejectsFailingHostProbe(t *testing.T) {
+	buildDir := t.TempDir()
+	arm64Marker := filepath.Join(t.TempDir(), "arm64-invocations")
+	amd64Marker := filepath.Join(t.TempDir(), "amd64-invocations")
+	writeReleaseArtifactTestBinary(t, buildDir, "arm64", arm64Marker, 0)
+	writeReleaseArtifactTestBinary(t, buildDir, "amd64", amd64Marker, 1)
+	metadataMarker := filepath.Join(t.TempDir(), "metadata-invocations")
+	ldflags := releaseArtifactTestLdflags(releaseArtifactTestVersion)
+	mockDir := t.TempDir()
+	binDir := mockReleaseArtifactTools(t, mockDir, "x86_64", ldflags, ldflags, metadataMarker)
+
+	snippet := releaseSnippet(t, fmt.Sprintf(
+		`verify_release_tui_artifacts %q %q`,
+		buildDir,
+		ldflags,
+	))
+	out, code := runBashSnippet(t, snippet, buildEnv(t, []string{binDir}))
+	if code == 0 {
+		t.Fatal("failing host capability probe unexpectedly passed")
+	}
+	assertContains(t, out, "production capability")
+	if _, err := os.Stat(arm64Marker); !os.IsNotExist(err) {
+		t.Fatalf("non-host release asset was executed; marker error = %v", err)
+	}
+	amd64Calls, err := os.ReadFile(amd64Marker)
+	if err != nil {
+		t.Fatalf("read amd64 capability call: %v", err)
+	}
+	if got, want := string(amd64Calls), "2\ncapabilities\n--require-production\n"; got != want {
+		t.Fatalf("host capability call = %q, want %q", got, want)
+	}
+}
+
+func TestReleaseArtifactPreflightPrecedesReleaseMutations(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(projectRoot(t), "scripts", "release.sh"))
+	if err != nil {
+		t.Fatalf("read release.sh: %v", err)
+	}
+	content := string(data)
+	preflight := strings.Index(content, `if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then`)
+	if preflight < 0 {
+		t.Fatal("release main lacks an explicit artifact-preflight failure gate")
+	}
+	for _, mutation := range []string{
+		"\n  codesign --sign",
+		"\n  git tag -a",
+		"\n  git push origin",
+		"\n  gh release create",
+		"\n    (cd \"$project_dir\" && npm version",
+		`-o "$local_bin"`,
+	} {
+		index := strings.Index(content, mutation)
+		if index < 0 {
+			t.Fatalf("release mutation %q not found", mutation)
+		}
+		if index < preflight {
+			t.Fatalf("release mutation %q occurs before artifact preflight", mutation)
+		}
+	}
+}
+
 // ============================================================
 // npm publish token tests
 // ============================================================

@@ -261,16 +261,27 @@ func TestEnsureWispDeckTui_skips_when_binary_version_matches(t *testing.T) {
 	dir := t.TempDir()
 	shareDir := t.TempDir()
 	writeTempFile(t, shareDir, "VERSION", "2.4.0")
-	// Mock binary that reports matching version
+	curlCalls := filepath.Join(dir, "curl-calls")
+	// Mock binary reports the exact version and proves the production boundary.
 	binDir := mockCommand(t, dir, "wisp-deck-tui", `
-if [ "$1" = "--version" ]; then echo "wisp-deck-tui version 2.4.0"; exit 0; fi
-echo "I exist"
+case "$1" in
+  --version) echo "wisp-deck-tui version 2.4.0" ;;
+  capabilities)
+    [ "$2" = "--require-production" ] || exit 1
+    echo '`+validTuiCapabilities+`'
+    ;;
+  *) exit 1 ;;
+esac
 `)
+	mockCommand(t, dir, "curl", fmt.Sprintf(`printf 'called\n' >> %q; exit 1`, curlCalls))
 	snippet := installSnippet(t, fmt.Sprintf(`ensure_wisp_deck_tui %q`, shareDir))
 	env := buildEnv(t, []string{binDir})
 	out, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "wisp-deck-tui is up to date")
+	if _, err := os.Stat(curlCalls); err == nil {
+		t.Error("valid existing artifact should be kept without calling curl")
+	}
 }
 
 func TestEnsureWispDeckTui_updates_when_version_mismatch(t *testing.T) {
@@ -286,12 +297,14 @@ func TestEnsureWispDeckTui_updates_when_version_mismatch(t *testing.T) {
 if [ "$1" = "--version" ]; then echo "wisp-deck-tui version 2.4.0"; exit 0; fi
 echo "I exist"
 `)
+	download := filepath.Join(dir, "downloaded-wisp-deck-tui")
+	writeTuiArtifact(t, download, "2.5.0", validTuiCapabilities, 0)
 	mockCommand(t, dir, "curl", mockCurlWriting(
 		fmt.Sprintf(`echo "$@" >> %q`, curlCalls),
-		`printf '#!/bin/bash\n[ "$1" = "--version" ] && echo "wisp-deck-tui version 2.5.0"\n' > "$dest"; exit 0`))
+		fmt.Sprintf(`cp %q "$dest"; exit 0`, download)))
 	mockCommand(t, dir, "uname", `echo "arm64"`)
 	snippet := installSnippet(t, fmt.Sprintf(`ensure_wisp_deck_tui %q`, shareDir))
-	env := buildEnv(t, nil, "HOME="+fakeHome, "PATH="+binDir+":/usr/bin:/bin")
+	env := buildEnv(t, []string{binDir}, "HOME="+fakeHome)
 	out, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "Updating wisp-deck-tui")
@@ -312,12 +325,14 @@ func TestEnsureWispDeckTui_updates_when_no_version_flag(t *testing.T) {
 if [ "$1" = "--version" ]; then echo "Error: unknown flag: --version" >&2; exit 1; fi
 echo "I exist"
 `)
+	download := filepath.Join(dir, "downloaded-wisp-deck-tui")
+	writeTuiArtifact(t, download, "2.5.0", validTuiCapabilities, 0)
 	mockCommand(t, dir, "curl", mockCurlWriting(
 		fmt.Sprintf(`echo "$@" >> %q`, curlCalls),
-		`printf '#!/bin/bash\n[ "$1" = "--version" ] && echo "wisp-deck-tui version 2.5.0"\n' > "$dest"; exit 0`))
+		fmt.Sprintf(`cp %q "$dest"; exit 0`, download)))
 	mockCommand(t, dir, "uname", `echo "arm64"`)
 	snippet := installSnippet(t, fmt.Sprintf(`ensure_wisp_deck_tui %q`, shareDir))
-	env := buildEnv(t, nil, "HOME="+fakeHome, "PATH="+binDir+":/usr/bin:/bin")
+	env := buildEnv(t, []string{binDir}, "HOME="+fakeHome)
 	out, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "Updating wisp-deck-tui")
@@ -325,7 +340,7 @@ echo "I exist"
 	assertContains(t, string(calls), "2.5.0")
 }
 
-func TestEnsureWispDeckTui_downloads_binary_for_correct_arch(t *testing.T) {
+func TestEnsureWispDeckTui_x86_64_downloads_amd64_tui_asset(t *testing.T) {
 	dir := t.TempDir()
 	fakeHome := filepath.Join(dir, "home")
 	os.MkdirAll(filepath.Join(fakeHome, ".local", "bin"), 0755)
@@ -333,18 +348,20 @@ func TestEnsureWispDeckTui_downloads_binary_for_correct_arch(t *testing.T) {
 	writeTempFile(t, shareDir, "VERSION", "2.2.0")
 
 	curlCalls := filepath.Join(dir, "curl_calls")
+	download := filepath.Join(dir, "downloaded-wisp-deck-tui")
+	writeTuiArtifact(t, download, "2.2.0", validTuiCapabilities, 0)
 	binDir := mockCommand(t, dir, "curl", mockCurlWriting(
 		fmt.Sprintf(`echo "$@" >> %q`, curlCalls),
-		`printf '#!/bin/bash\n[ "$1" = "--version" ] && echo "wisp-deck-tui version 2.2.0"\n' > "$dest"; exit 0`))
-	unameDir := mockCommand(t, dir, "uname", `echo "arm64"`)
+		fmt.Sprintf(`cp %q "$dest"; exit 0`, download)))
+	unameDir := mockCommand(t, dir, "uname", `echo "x86_64"`)
 	snippet := installSnippet(t, fmt.Sprintf(`ensure_wisp_deck_tui %q`, shareDir))
 	// Use explicit PATH so the real wisp-deck-tui (if installed) is not found.
-	env := buildEnv(t, nil, "HOME="+fakeHome, "PATH="+binDir+":"+unameDir+":/usr/bin:/bin")
+	env := buildEnv(t, []string{binDir, unameDir}, "HOME="+fakeHome)
 	out, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "wisp-deck-tui")
 	calls, _ := os.ReadFile(curlCalls)
-	assertContains(t, string(calls), "wisp-deck-tui-darwin-arm64")
+	assertContains(t, string(calls), "wisp-deck-tui-darwin-amd64")
 	assertContains(t, string(calls), "2.2.0")
 }
 

@@ -111,13 +111,20 @@ func TestEnsureWispDeckTui_warms_freshly_installed_binary(t *testing.T) {
 	binDir := mockCommand(t, dir, "curl", mockCurlWriting("", `cat > "$dest" <<PAYLOAD
 #!/bin/bash
 echo "\$@" >> `+warmLog+`
-[ "\$1" = "--version" ] && echo "wisp-deck-tui version 9.9.9"
+case "\$1" in
+  --version) echo "wisp-deck-tui version 9.9.9" ;;
+  capabilities)
+    [ "\$2" = "--require-production" ] || exit 1
+    echo '`+validTuiCapabilities+`'
+    ;;
+  *) exit 1 ;;
+esac
 PAYLOAD
 exit 0`))
 	mockCommand(t, dir, "uname", `echo "arm64"`)
 
 	snippet := installSnippet(t, `ensure_wisp_deck_tui "`+shareDir+`"`)
-	env := buildEnv(t, nil, "HOME="+fakeHome, "PATH="+binDir+":/usr/bin:/bin")
+	env := buildEnv(t, []string{binDir}, "HOME="+fakeHome)
 	_, code := runBashSnippet(t, snippet, env)
 	assertExitCode(t, code, 0)
 

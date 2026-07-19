@@ -48,7 +48,9 @@ function main() {
   }
 
   // Download TUI binary if needed
-  if (!process.env.WISP_DECK_SKIP_TUI_DOWNLOAD) {
+  const skipTuiDownload = process.env.WISP_DECK_TESTING === '1'
+    && process.env.WISP_DECK_SKIP_TUI_DOWNLOAD === '1';
+  if (!skipTuiDownload) {
     ensureTuiBinary(version);
   }
 
@@ -122,22 +124,65 @@ function copyRecursive(src, dest) {
   }
 }
 
-// Download the TUI binary from GitHub Releases if missing or wrong version.
-function ensureTuiBinary(version) {
-  // Check if existing binary matches version
+// Check the exact version and compiled production host-effect boundary. Runtime
+// host_effects_allowed is diagnostic only and may be false under test ancestry.
+function verifyTuiBinary(binaryPath, expectedVersion) {
+  let reported = '';
   try {
-    const out = execFileSync(tuiBinPath, ['--version'], { encoding: 'utf8' });
-    const installed = out.replace(/.*version\s*/, '').trim();
-    if (installed === version) {
-      process.stdout.write(`wisp-deck-tui ${version} already up to date\n`);
-      return;
+    reported = execFileSync(binaryPath, ['--version'], { encoding: 'utf8' }).trim();
+    if (reported !== `wisp-deck-tui version ${expectedVersion}`) {
+      return { valid: false, reported };
     }
-    process.stdout.write(`Updating wisp-deck-tui (${installed} -> ${version})...\n`);
+
+    const output = execFileSync(
+      binaryPath,
+      ['capabilities', '--require-production'],
+      { encoding: 'utf8' },
+    );
+    const capabilities = JSON.parse(output);
+    const valid = capabilities !== null
+      && typeof capabilities === 'object'
+      && !Array.isArray(capabilities)
+      && capabilities.host_effects_compiled === true
+      && capabilities.sound_preview_compiled === true
+      && Number.isInteger(capabilities.host_effects_boundary)
+      && capabilities.host_effects_boundary === 1;
+    return { valid, reported };
   } catch (_) {
+    return { valid: false, reported };
+  }
+}
+
+function tuiAssetArchitecture() {
+  const arch = process.env.WISP_DECK_TESTING === '1'
+    && process.env.WISP_DECK_MOCK_ARCH
+    ? process.env.WISP_DECK_MOCK_ARCH
+    : process.arch;
+  switch (arch) {
+    case 'x64':
+      return 'amd64';
+    case 'arm64':
+      return 'arm64';
+    default:
+      process.stderr.write(`Unsupported architecture: ${arch}\n`);
+      process.exit(1);
+  }
+}
+
+// Download the TUI binary from GitHub Releases if missing or invalid.
+function ensureTuiBinary(version) {
+  const existing = verifyTuiBinary(tuiBinPath, version);
+  if (existing.valid) {
+    process.stdout.write(`wisp-deck-tui ${version} already up to date\n`);
+    return;
+  }
+  if (fs.existsSync(tuiBinPath)) {
+    process.stdout.write(`Updating wisp-deck-tui (${existing.reported || 'unknown'} -> ${version})...\n`);
+  } else {
     process.stdout.write(`Downloading wisp-deck-tui ${version}...\n`);
   }
 
-  const arch = process.arch === 'x64' ? 'amd64' : process.arch;
+  const arch = tuiAssetArchitecture();
   const url = `https://github.com/${REPO}/releases/download/v${version}/wisp-deck-tui-darwin-${arch}`;
 
   // Download to a temp path and only replace the real binary after the new
@@ -148,15 +193,10 @@ function ensureTuiBinary(version) {
   const tmpPath = tuiBinPath + '.download-' + process.pid;
   downloadFile(url, tmpPath);
   fs.chmodSync(tmpPath, 0o755);
-  let reported = '';
-  try {
-    reported = execFileSync(tmpPath, ['--version'], { encoding: 'utf8' });
-  } catch (_) {
-    // Leave reported empty; handled below.
-  }
-  if (!reported.includes(version)) {
+  const downloaded = verifyTuiBinary(tmpPath, version);
+  if (!downloaded.valid) {
     fs.rmSync(tmpPath, { force: true });
-    process.stderr.write(`Downloaded wisp-deck-tui failed verification (expected version ${version}, got ${JSON.stringify(reported.trim())}).\n`);
+    process.stderr.write(`Downloaded wisp-deck-tui failed verification (expected version ${version}, got ${JSON.stringify(downloaded.reported)}).\n`);
     process.stderr.write('The existing install (if any) was left untouched. Please retry, and report this if it persists.\n');
     process.exit(1);
   }

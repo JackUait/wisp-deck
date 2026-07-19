@@ -1,6 +1,7 @@
 package npx_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -135,6 +136,10 @@ func (s *installSandbox) mockTUI(t *testing.T, dir, version string) {
 	writeMock(t, dir, "wisp-deck-tui", `
 case "$1" in
   --version) echo "wisp-deck-tui version `+version+`" ;;
+  capabilities)
+    [ "$2" = "--require-production" ] || exit 1
+    echo '`+validLauncherTuiCapabilities+`'
+    ;;
   multi-select-ai-tool) echo '{"confirmed":true,"tools":["claude"]}' ;;
   *) exit 0 ;;
 esac`)
@@ -266,8 +271,21 @@ func TestInstall_e2e_from_npm_registry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("released wisp-deck-tui did not run: %v", err)
 	}
-	if !strings.Contains(string(verOut), version) {
-		t.Errorf("released wisp-deck-tui reports %q, want version %s", strings.TrimSpace(string(verOut)), version)
+	if got, want := strings.TrimSpace(string(verOut)), "wisp-deck-tui version "+version; got != want {
+		t.Errorf("released wisp-deck-tui reports %q, want %q", got, want)
+	}
+	capOut, err := exec.Command(tui, "capabilities", "--require-production").Output()
+	if err != nil {
+		t.Fatalf("released wisp-deck-tui lacks the production capability boundary: %v", err)
+	}
+	var capabilities map[string]any
+	if err := json.Unmarshal(capOut, &capabilities); err != nil {
+		t.Fatalf("released wisp-deck-tui returned malformed capabilities: %v", err)
+	}
+	if capabilities["host_effects_compiled"] != true ||
+		capabilities["sound_preview_compiled"] != true ||
+		capabilities["host_effects_boundary"] != float64(1) {
+		t.Fatalf("released wisp-deck-tui returned invalid production capabilities: %#v", capabilities)
 	}
 
 	// Phase 2: swap in a scriptable TUI (same path, same version) so the picker

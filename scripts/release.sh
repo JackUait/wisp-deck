@@ -53,6 +53,93 @@ check_gh_auth() {
   fi
 }
 
+release_tui_ldflags() {
+  local version="$1"
+  printf '%s\n' "-X main.Version=$version -X main.HostEffectsCapability=enabled -X main.SoundPreviewCapability=enabled"
+}
+
+release_host_arch() {
+  local machine
+  if ! machine="$(uname -m)"; then
+    echo "Error: Unable to determine host architecture." >&2
+    return 1
+  fi
+
+  case "$machine" in
+    arm64)
+      printf '%s\n' "arm64"
+      ;;
+    x86_64)
+      printf '%s\n' "amd64"
+      ;;
+    *)
+      echo "Error: Unsupported release host architecture: $machine" >&2
+      return 1
+      ;;
+  esac
+}
+
+verify_release_tui_metadata() {
+  local asset="$1"
+  local expected_ldflags="$2"
+  if [[ ! -f "$asset" ]]; then
+    echo "Error: Release artifact is missing: $asset" >&2
+    return 1
+  fi
+
+  local metadata
+  if ! metadata="$(go version -m "$asset" 2>/dev/null)"; then
+    echo "Error: Unable to read linker metadata from $asset" >&2
+    return 1
+  fi
+
+  local expected_line=$'\tbuild\t-ldflags="'"$expected_ldflags"'"'
+  local ldflags_lines=0
+  local line
+  while IFS= read -r line; do
+    if [[ "$line" == $'\tbuild\t-ldflags='* ]]; then
+      if [[ "$line" != "$expected_line" ]]; then
+        echo "Error: Release artifact has unexpected linker metadata: $asset" >&2
+        return 1
+      fi
+      ldflags_lines=$((ldflags_lines + 1))
+    fi
+  done <<< "$metadata"
+
+  if [[ "$ldflags_lines" -ne 1 ]]; then
+    echo "Error: Release artifact is missing exact linker metadata: $asset" >&2
+    return 1
+  fi
+}
+
+verify_release_tui_artifacts() {
+  local build_dir="$1"
+  local expected_ldflags="$2"
+  local arm64_asset="$build_dir/wisp-deck-tui-darwin-arm64"
+  local amd64_asset="$build_dir/wisp-deck-tui-darwin-amd64"
+  local metadata_failed=0
+
+  if ! verify_release_tui_metadata "$arm64_asset" "$expected_ldflags"; then
+    metadata_failed=1
+  fi
+  if ! verify_release_tui_metadata "$amd64_asset" "$expected_ldflags"; then
+    metadata_failed=1
+  fi
+  if [[ "$metadata_failed" -ne 0 ]]; then
+    return 1
+  fi
+
+  local host_arch
+  if ! host_arch="$(release_host_arch)"; then
+    return 1
+  fi
+  local host_asset="$build_dir/wisp-deck-tui-darwin-$host_arch"
+  if ! "$host_asset" capabilities --require-production >/dev/null; then
+    echo "Error: Release artifact failed the production capability probe: $host_asset" >&2
+    return 1
+  fi
+}
+
 # Prove the package we are about to publish can actually be installed. v2.22.0
 # shipped an installer that symlinked ~/.local/bin/wisp-deck at a file npm never
 # published: `ln -sf` created a dangling link, so setup reported success while
@@ -136,13 +223,18 @@ main() {
   echo "Building wisp-deck-tui binaries..."
   build_dir="$(mktemp -d)"
 
-  local ldflags="-X main.Version=$version -X main.HostEffectsCapability=enabled -X main.SoundPreviewCapability=enabled"
+  local ldflags
+  ldflags="$(release_tui_ldflags "$version")"
   (cd "$project_dir" && GOOS=darwin GOARCH=arm64 go build -ldflags "$ldflags" -o "$build_dir/wisp-deck-tui-darwin-arm64" ./cmd/wisp-deck-tui) || {
     echo "Error: failed to build wisp-deck-tui for arm64" >&2; exit 1
   }
   (cd "$project_dir" && GOOS=darwin GOARCH=amd64 go build -ldflags "$ldflags" -o "$build_dir/wisp-deck-tui-darwin-amd64" ./cmd/wisp-deck-tui) || {
     echo "Error: failed to build wisp-deck-tui for amd64" >&2; exit 1
   }
+  if ! verify_release_tui_artifacts "$build_dir" "$ldflags"; then
+    echo "Error: release TUI artifact preflight failed; refusing to mutate release state" >&2
+    exit 1
+  fi
   codesign --sign - --force "$build_dir/wisp-deck-tui-darwin-arm64"
   codesign --sign - --force "$build_dir/wisp-deck-tui-darwin-amd64"
   echo "  ✓ Built wisp-deck-tui for darwin/arm64 and darwin/amd64"

@@ -37,13 +37,16 @@ get_latest_release_tag() {
 
 # Download a binary from $url to $dest and make it executable.
 # The download lands in a temp file and only replaces $dest after it succeeds
-# (and passes $verify_cmd, when given), so a failed, truncated, or wrong
+# (and passes the verifier, when given), so a failed, truncated, or wrong
 # download never clobbers a working binary.
-# Usage: install_binary url dest display_name [verify_cmd]
-#   verify_cmd is invoked with the downloaded temp path appended; a non-zero
-#   exit rejects the download and keeps the existing install untouched.
+# Usage: install_binary url dest display_name [verifier [verifier_arg...]]
+#   The verifier and each of its arguments stay as separate shell words. The
+#   downloaded temp path is appended; a non-zero exit rejects the download and
+#   keeps the existing install untouched.
 install_binary() {
-  local url="$1" dest="$2" display_name="$3" verify_cmd="${4:-}"
+  local url="$1" dest="$2" display_name="$3"
+  shift 3
+  local -a verifier=("$@")
   info "Downloading $display_name..."
   mkdir -p "$(dirname "$dest")"
   local tmp="$dest.download.$$"
@@ -53,7 +56,7 @@ install_binary() {
     return 1
   fi
   chmod +x "$tmp"
-  if [ -n "$verify_cmd" ] && ! $verify_cmd "$tmp" >/dev/null 2>&1; then
+  if (( ${#verifier[@]} > 0 )) && ! "${verifier[@]}" "$tmp" >/dev/null 2>&1; then
     rm -f "$tmp"
     warn "Downloaded $display_name failed verification — keeping existing install"
     return 1
@@ -67,13 +70,29 @@ verify_binary_runs() {
   "$1" --version >/dev/null 2>&1
 }
 
-# Verifier for install_binary: wisp-deck-tui must run AND report the version
-# we asked for (catches a stale CDN or mis-published release asset).
-# Usage (via install_binary): verify_wisp_deck_tui_version <expected> <path>
-verify_wisp_deck_tui_version() {
-  local expected="$1" bin="$2" reported
+# Verify a TUI artifact's exact version and its compiled production host-effect
+# boundary. Runtime host_effects_allowed is intentionally diagnostic only: a
+# repository test ancestor may deny it even for a correctly compiled artifact.
+# Usage: verify_wisp_deck_tui_artifact <expected_version> <path>
+verify_wisp_deck_tui_artifact() {
+  local expected="$1" bin="$2" reported capabilities
   reported="$("$bin" --version 2>/dev/null)" || return 1
-  [[ "$reported" == *"$expected"* ]]
+  [[ "$reported" == "wisp-deck-tui version $expected" ]] || return 1
+
+  capabilities="$("$bin" capabilities --require-production 2>/dev/null)" || return 1
+  printf '%s\n' "$capabilities" | jq -e -s '
+    length == 1 and
+    (.[0] |
+      type == "object" and
+      (.host_effects_compiled | type == "boolean") and
+      .host_effects_compiled == true and
+      (.sound_preview_compiled | type == "boolean") and
+      .sound_preview_compiled == true and
+      (.host_effects_boundary | type == "number") and
+      (.host_effects_boundary | floor == .) and
+      .host_effects_boundary == 1
+    )
+  ' >/dev/null 2>&1
 }
 
 # Install jq from jqlang/jq GitHub releases.
@@ -128,6 +147,11 @@ ensure_tmux() {
 ensure_wisp_deck_tui() {
   local share_dir="$1"
 
+  if [[ "${WISP_DECK_TESTING:-}" == "1" &&
+        "${WISP_DECK_SKIP_TUI_DOWNLOAD:-}" == "1" ]]; then
+    return 0
+  fi
+
   local version
   # Grouped so stderr is closed before the open: a missing VERSION is a case this
   # handles below, and it must not also spew the shell's own "No such file" first.
@@ -137,24 +161,30 @@ ensure_wisp_deck_tui() {
     return 1
   fi
 
-  if command -v wisp-deck-tui &>/dev/null; then
-    # Check if installed version matches expected version
-    local installed_version
-    installed_version="$(wisp-deck-tui --version 2>/dev/null | sed 's/.*version //' || echo "")"
-    if [[ "$installed_version" == "$version" ]]; then
+  local installed_bin=""
+  installed_bin="$(command -v wisp-deck-tui 2>/dev/null)" || installed_bin=""
+  if [[ -n "$installed_bin" ]]; then
+    local installed_version=""
+    installed_version="$("$installed_bin" --version 2>/dev/null)" || installed_version=""
+    installed_version="${installed_version#wisp-deck-tui version }"
+    if verify_wisp_deck_tui_artifact "$version" "$installed_bin"; then
       success "wisp-deck-tui is up to date ($version)"
       return 0
     fi
     info "Updating wisp-deck-tui ($installed_version -> $version)..."
   fi
 
-  local arch url
+  local arch tui_arch url
   arch="$(detect_arch)" || return 1
-  url="https://github.com/JackUait/wisp-deck/releases/download/v${version}/wisp-deck-tui-darwin-${arch}"
+  case "$arch" in
+    arm64) tui_arch="arm64" ;;
+    x86_64) tui_arch="amd64" ;;
+  esac
+  url="https://github.com/JackUait/wisp-deck/releases/download/v${version}/wisp-deck-tui-darwin-${tui_arch}"
 
   mkdir -p "$HOME/.local/bin"
   install_binary "$url" "$HOME/.local/bin/wisp-deck-tui" "wisp-deck-tui" \
-    "verify_wisp_deck_tui_version $version" || return 1
+    verify_wisp_deck_tui_artifact "$version" || return 1
   # Exec the fresh binary once so its first-run Gatekeeper assessment (~1s,
   # more under load) happens now — not on the first modal open in a session.
   "$HOME/.local/bin/wisp-deck-tui" --version >/dev/null 2>&1 || true
