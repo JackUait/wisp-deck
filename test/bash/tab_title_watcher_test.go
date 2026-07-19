@@ -42,7 +42,7 @@ func writeAttentionDescriptor(t *testing.T, root, generation, tool, state string
 	return descriptor
 }
 
-func TestTabTitleWatcherMarkedNotificationUsesRealSilentGuard(t *testing.T) {
+func TestTabTitleWatcher_play_notification_sound_uses_real_marked_guard(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "config")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
