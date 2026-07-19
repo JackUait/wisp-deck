@@ -52,21 +52,34 @@ func LoadColors(file string) map[string]int {
 
 // ColorFor returns the persisted 256-color index for an account dir, assigning a
 // new one and appending it to file if the dir has none yet. The new color is
-// picked at random from the palette entries not already used by another account,
-// so distinct accounts stay distinct ("non-repeating") until the palette is
+// picked at random from the palette entries not already used by another account
+// — nor by any identity persisted in the avoidFiles (e.g. the subscription
+// colors), so logins and subscriptions never collide — until the palette is
 // exhausted, after which it falls back to a random palette member. The empty dir
 // (implicit Default) is keyed under "default". The file is the source of truth:
 // once assigned, the color is stable across calls and shared with the statusline.
-func ColorFor(file, dir string) int {
-	dir = normalizeDir(dir)
+func ColorFor(file, dir string, avoidFiles ...string) int {
+	return ColorForKey(file, normalizeDir(dir), avoidFiles...)
+}
+
+// ColorForKey is ColorFor without the Default-dir normalization: the shared
+// assignment primitive for any identity keyed in a dir:index colors file.
+// claudeconfig.ColorFor delegates here so accounts and subscriptions draw from
+// one palette with mutual avoidance.
+func ColorForKey(file, key string, avoidFiles ...string) int {
 	colors := LoadColors(file)
-	if c, ok := colors[dir]; ok {
+	if c, ok := colors[key]; ok {
 		return c
 	}
 
 	used := map[int]bool{}
 	for _, c := range colors {
 		used[c] = true
+	}
+	for _, avoid := range avoidFiles {
+		for _, c := range LoadColors(avoid) {
+			used[c] = true
+		}
 	}
 	var avail []int
 	for _, c := range Palette {
@@ -82,7 +95,7 @@ func ColorFor(file, dir string) int {
 
 	f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err == nil {
-		_, _ = f.WriteString(dir + ":" + strconv.Itoa(pick) + "\n")
+		_, _ = f.WriteString(key + ":" + strconv.Itoa(pick) + "\n")
 		_ = f.Close()
 	}
 	return pick

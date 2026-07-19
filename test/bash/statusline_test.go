@@ -2661,3 +2661,54 @@ func TestStatusline_wrapper_usage_bar_keeps_account_color_when_standard(t *testi
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "\x1b[38;5;141m"+bar(9))
 }
+
+// The mirror direction: a NEW account color assignment must avoid colors
+// already worn by subscriptions, so logins and subscriptions never collide.
+func TestStatusline_account_color_avoids_config_colors(t *testing.T) {
+	dir := t.TempDir()
+	palette := []string{"39", "208", "170", "78", "203", "141", "43", "220", "205", "75", "156"}
+	lines := ""
+	for i, c := range palette {
+		lines += fmt.Sprintf("cfg%d.json:%s\n", i, c)
+	}
+	writeTempFile(t, dir, "claude-config-colors", lines)
+	configColors := filepath.Join(dir, "claude-config-colors")
+	colors := filepath.Join(dir, "claude-account-colors")
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_account_color",
+		[]string{colors, "work", configColors}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "214" {
+		t.Fatalf("color = %q, want the only free palette member 214", strings.TrimSpace(out))
+	}
+}
+
+// The statusline wrapper feeds the subscription colors into a fresh account
+// assignment as the avoid set, so first-render assignment cannot collide.
+func TestStatusline_wrapper_account_assignment_avoids_config_colors(t *testing.T) {
+	env := setupWrapperTest(t)
+	env = append(env, "CLAUDE_CONFIG_DIR=")
+	fakeHome := wrapperHome(env)
+	cfg := filepath.Join(fakeHome, ".config", "wisp-deck")
+	writeTempFile(t, cfg, "claude-accounts.list", "Personal:personal\n")
+	palette := []string{"39", "208", "170", "78", "203", "141", "43", "220", "205", "75", "156"}
+	lines := ""
+	for i, c := range palette {
+		lines += fmt.Sprintf("cfg%d.json:%s\n", i, c)
+	}
+	writeTempFile(t, cfg, "claude-config-colors", lines)
+
+	root := projectRoot(t)
+	wrapperPath := filepath.Join(root, "templates", "statusline-wrapper.sh")
+	stdinData := `{"model":{"id":"x","display_name":"Fable 5"},"workspace":{"current_dir":"/tmp"}}`
+	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, wrapperPath)
+
+	_, code := runBashSnippet(t, script, env)
+	assertExitCode(t, code, 0)
+	data, err := os.ReadFile(filepath.Join(cfg, "claude-account-colors"))
+	if err != nil {
+		t.Fatalf("account color not persisted: %v", err)
+	}
+	if !strings.Contains(string(data), "default:214") {
+		t.Fatalf("account assignment did not avoid subscription colors, file:\n%s", string(data))
+	}
+}

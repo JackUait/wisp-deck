@@ -52,7 +52,8 @@ if type gt_claude_account_label &>/dev/null \
   if type gt_account_color &>/dev/null; then
     account_key="${account_dir##*/}"
     [ -z "$account_key" ] && account_key="default"
-    account_color=$(gt_account_color "$_gt_accounts_root/claude-account-colors" "$account_key")
+    account_color=$(gt_account_color "$_gt_accounts_root/claude-account-colors" "$account_key" \
+      "$_gt_accounts_root/claude-config-colors")
   fi
   # When this pane runs a subscription backend (WISP_DECK_CLAUDE_CONFIG names
   # the config file; stamped empty means standard Claude), the usage bars wear

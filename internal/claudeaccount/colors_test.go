@@ -1,6 +1,7 @@
 package claudeaccount
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -95,5 +96,26 @@ func TestLoadColors_parses_dir_index_skips_junk(t *testing.T) {
 func TestLoadColors_missing_file_is_empty(t *testing.T) {
 	if got := LoadColors(filepath.Join(t.TempDir(), "absent")); len(got) != 0 {
 		t.Fatalf("missing file should be empty map, got %v", got)
+	}
+}
+
+func TestColorForAvoidsColorsFromOtherFiles(t *testing.T) {
+	dir := t.TempDir()
+	// Subscriptions already wear every palette color except one — the new
+	// account must take the remaining hue so logins and subscriptions never
+	// collide (the mirror of claudeconfig.ColorFor's avoid set).
+	free := Palette[len(Palette)-1]
+	lines := ""
+	for i, c := range Palette[:len(Palette)-1] {
+		lines += fmt.Sprintf("cfg%d.json:%d\n", i, c)
+	}
+	configColors := filepath.Join(dir, "claude-config-colors")
+	if err := os.WriteFile(configColors, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	colors := filepath.Join(dir, "claude-account-colors")
+
+	if got := ColorFor(colors, "work", configColors); got != free {
+		t.Fatalf("color = %d, want the only free palette member %d", got, free)
 	}
 }

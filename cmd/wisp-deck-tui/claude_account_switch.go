@@ -517,7 +517,7 @@ func (m accountSwitchModel) innerLines() []string {
 	}
 
 	for i, r := range m.rows {
-		color := claudeaccount.ColorFor(m.colorsFile, r.Dir)
+		color := claudeaccount.ColorFor(m.colorsFile, r.Dir, m.configColorsFile)
 		glyph := "󰀄"
 		if r.Tool != "" {
 			// Agent rows: the tool's brand hue (mirrors get_tool_accent in

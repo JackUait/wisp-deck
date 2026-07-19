@@ -1,10 +1,6 @@
 package claudeconfig
 
 import (
-	"math/rand"
-	"os"
-	"strconv"
-
 	"github.com/jackuait/wisp-deck/internal/claudeaccount"
 )
 
@@ -17,36 +13,5 @@ import (
 // account colors) whose assignments the pick steers clear of, so a
 // subscription never mimics a login until the palette is exhausted.
 func ColorFor(colorsFile, file string, avoidFiles ...string) int {
-	colors := claudeaccount.LoadColors(colorsFile)
-	if c, ok := colors[file]; ok {
-		return c
-	}
-
-	used := map[int]bool{}
-	for _, c := range colors {
-		used[c] = true
-	}
-	for _, avoid := range avoidFiles {
-		for _, c := range claudeaccount.LoadColors(avoid) {
-			used[c] = true
-		}
-	}
-	var avail []int
-	for _, c := range claudeaccount.Palette {
-		if !used[c] {
-			avail = append(avail, c)
-		}
-	}
-	pool := avail
-	if len(pool) == 0 {
-		pool = claudeaccount.Palette
-	}
-	pick := pool[rand.Intn(len(pool))]
-
-	f, err := os.OpenFile(colorsFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err == nil {
-		_, _ = f.WriteString(file + ":" + strconv.Itoa(pick) + "\n")
-		_ = f.Close()
-	}
-	return pick
+	return claudeaccount.ColorForKey(colorsFile, file, avoidFiles...)
 }

@@ -289,7 +289,9 @@ account_current() {
     dir="$(get_active_claude_account "$pointer_file")"
   fi
   label="$(gt_claude_account_label "$dir" "$list_file" "$default_label_file")"
-  color="$(gt_account_color "$colors_file" "$dir")"
+  # Subscription colors are the avoid set so a fresh login assignment never
+  # collides with a subscription's hue (mirrors the pill's gt_config_color).
+  color="$(gt_account_color "$colors_file" "$dir" "$(dirname "$colors_file")/claude-config-colors")"
   printf '%s\t%s\n' "$label" "$color"
 }
 

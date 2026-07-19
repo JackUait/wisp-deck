@@ -176,9 +176,13 @@ GT_ACCOUNT_PALETTE=(39 208 170 78 203 141 43 220 205 75 156 214)
 # is exhausted, then it falls back to a random palette member. The empty dir (the
 # implicit Default login) is keyed under "default", matching Go. The file is the
 # source of truth — once assigned the color is stable and shared with the menu.
-# Usage: gt_account_color <colors_file> <dir>  =>  "141"
+# Optional avoid files (e.g. the subscription colors) contribute their
+# assignments to the used set, so logins and subscriptions never collide —
+# the mirror of gt_config_color's avoid direction.
+# Usage: gt_account_color <colors_file> <dir> [avoid_file...]  =>  "141"
 gt_account_color() {
   local file="$1" dir="$2" k v
+  shift 2
   [ -z "$dir" ] && dir="default"
   # Already assigned? Return the first match (first writer wins on any race).
   if [ -f "$file" ]; then
@@ -186,15 +190,17 @@ gt_account_color() {
       [ "$k" = "$dir" ] && { printf '%s\n' "$v"; return 0; }
     done < "$file"
   fi
-  # Collect indices already handed out, then split the palette into the full set
-  # and the entries still free. Iterate the quoted palette array so this works the
-  # same under bash and zsh (the pill path runs under the pane's zsh).
-  local used=" " pal=() avail=() n
-  if [ -f "$file" ]; then
+  # Collect indices already handed out (own file plus the avoid set), then split
+  # the palette into the full set and the entries still free. Iterate the quoted
+  # palette array so this works the same under bash and zsh (the pill path runs
+  # under the pane's zsh).
+  local used=" " pal=() avail=() n avoid
+  for avoid in "$file" "$@"; do
+    [ -f "$avoid" ] || continue
     while IFS=: read -r k v; do
       [ -n "$v" ] && used="$used$v "
-    done < "$file"
-  fi
+    done < "$avoid"
+  done
   for n in "${GT_ACCOUNT_PALETTE[@]}"; do
     pal+=("$n")
     case "$used" in *" $n "*) ;; *) avail+=("$n") ;; esac

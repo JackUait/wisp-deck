@@ -1284,7 +1284,7 @@ func (m *MainMenuModel) ensureAccountColors() {
 		if _, ok := m.accountColors[k]; ok {
 			continue
 		}
-		m.accountColors[k] = claudeaccount.ColorFor(file, k)
+		m.accountColors[k] = claudeaccount.ColorFor(file, k, filepath.Join(filepath.Dir(file), "claude-config-colors"))
 	}
 }
 
