@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -285,6 +286,17 @@ func TestMainMenuSoundPreviewOwnershipGuardRejectsBypasses(t *testing.T) {
 			t, sources, "background",
 			"\tTimeout       time.Duration\n",
 			"\tTimeout       time.Duration\n\tRun           func(context.Context, string, []string, []string) error\n",
+		),
+		"fixed process arguments changed": mutateBoundarySource(
+			t, sources, "background",
+			`cmd := exec.CommandContext(ctx, "/bin/ps", "-p", strconv.Itoa(pid), "-o", "lstart=")`,
+			`cmd := exec.CommandContext(ctx, "/bin/ps", "-p", strconv.Itoa(pid), "-o", "pid=")`,
+		),
+		"new fixed process owner": mutateBoundarySource(
+			t, sources, "background",
+			`cmd := exec.CommandContext(ctx, "/bin/ps", "-p", strconv.Itoa(pid), "-o", "lstart=")`,
+			"_ = exec.Command(\"git\", \"status\")\n\t"+
+				`cmd := exec.CommandContext(ctx, "/bin/ps", "-p", strconv.Itoa(pid), "-o", "lstart=")`,
 		),
 		"preference read outside lock": mutateBoundarySource(
 			t, sources, "notification",
@@ -1459,9 +1471,9 @@ func validateGoHostEffectOwnership(root string, overrides map[string][]byte) err
 				return fmt.Errorf("host-effect process literal escaped typed owner: %s", path)
 			}
 			if path != hostPath {
-				if unaudited := unauditedGenericProcessCalls(root, path, source); len(unaudited) != 0 {
+				if unaudited := unauditedProductionProcessCalls(root, path, source); len(unaudited) != 0 {
 					return fmt.Errorf(
-						"generic process site is not exact-audited: %s",
+						"production process site is not exact-audited: %s",
 						strings.Join(unaudited, ", "),
 					)
 				}
@@ -1742,34 +1754,63 @@ func productionSourceLaunchesHostEffect(path string, source []byte) bool {
 	return launchesEffect
 }
 
-func unauditedGenericProcessCalls(root, path string, source []byte) []string {
+func unauditedProductionProcessCalls(root, path string, source []byte) []string {
 	file, err := parser.ParseFile(token.NewFileSet(), path, source, 0)
 	if err != nil {
 		return []string{path + ":parse-error"}
 	}
 	aliases, dotImports := processImportAliases(file)
-	staticStrings := collectStaticStrings(file)
 	relative, err := filepath.Rel(root, path)
 	if err != nil {
 		return []string{path + ":relative-path-error"}
 	}
 	relative = filepath.ToSlash(relative)
-	allowed := auditedGenericProcessCalls()
+	allowed := auditedProductionProcessCalls()
 	seen := map[string]int{}
+	type processOwner struct {
+		identity string
+		node     ast.Node
+	}
+	var owners []processOwner
 	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Body == nil {
-			continue
-		}
-		identity := function.Name.Name
-		if function.Recv != nil && len(function.Recv.List) == 1 {
-			receiver := function.Recv.List[0].Type
-			if pointer, ok := receiver.(*ast.StarExpr); ok {
-				receiver = pointer.X
+		switch declaration := declaration.(type) {
+		case *ast.FuncDecl:
+			if declaration.Body == nil {
+				continue
 			}
-			identity = expressionName(receiver) + "." + identity
+			identity := declaration.Name.Name
+			if declaration.Recv != nil && len(declaration.Recv.List) == 1 {
+				receiver := declaration.Recv.List[0].Type
+				if pointer, ok := receiver.(*ast.StarExpr); ok {
+					receiver = pointer.X
+				}
+				identity = expressionName(receiver) + "." + identity
+			}
+			owners = append(owners, processOwner{
+				identity: identity,
+				node:     declaration.Body,
+			})
+		case *ast.GenDecl:
+			for _, specification := range declaration.Specs {
+				values, ok := specification.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for index, value := range values.Values {
+					identity := "<package>"
+					if index < len(values.Names) {
+						identity = values.Names[index].Name
+					}
+					owners = append(owners, processOwner{
+						identity: identity,
+						node:     value,
+					})
+				}
+			}
 		}
-		ast.Inspect(function.Body, func(node ast.Node) bool {
+	}
+	for _, owner := range owners {
+		ast.Inspect(owner.node, func(node ast.Node) bool {
 			call, ok := node.(*ast.CallExpr)
 			if !ok {
 				return true
@@ -1778,17 +1819,12 @@ func unauditedGenericProcessCalls(root, path string, source []byte) []string {
 			if !process || executableIndex >= len(call.Args) {
 				return true
 			}
-			executable := call.Args[executableIndex]
-			if len(resolvedStrings(executable, staticStrings)) != 0 &&
-				!isShellExecutable(executable, staticStrings) {
-				return true
-			}
 			var rendered bytes.Buffer
 			if err := format.Node(&rendered, token.NewFileSet(), call); err != nil {
-				seen[relative+":"+identity+":render-error"]++
+				seen[relative+":"+owner.identity+":render-error"]++
 				return true
 			}
-			seen[relative+":"+identity+":"+rendered.String()]++
+			seen[relative+":"+owner.identity+":"+rendered.String()]++
 			return true
 		})
 	}
@@ -1809,24 +1845,39 @@ func unauditedGenericProcessCalls(root, path string, source []byte) []string {
 			)
 		}
 	}
+	sort.Strings(violations)
 	return violations
 }
 
-func auditedGenericProcessCalls() map[string]int {
+func auditedProductionProcessCalls() map[string]int {
 	return map[string]int{
-		`cmd/wisp-deck-tui/claude_background.go:runClaudeBackgroundAgents:exec.CommandContext(ctx, claude, "agents", "--json", "--all")`:              1,
-		`cmd/wisp-deck-tui/screenshot_filter.go:runScreenshotFilter:exec.Command(args[0], args[1:]...)`:                                               2,
-		`internal/attention/claude_registry.go:commandOutput:exec.CommandContext(ctx, name, args...)`:                                                 1,
-		`internal/attention/claude_supervisor.go:ClaudeSupervisor.Run:exec.Command(name, args...)`:                                                    1,
-		`internal/attention/claude_supervisor.go:claudeSupervisorSnapshot:exec.CommandContext(ctx, claudePSExecutable, "-axo", "pid=,ppid=,lstart=")`: 1,
-		`internal/codexadapter/supervisor.go:CodexSupervisor.runPTYAttemptWithRouter:exec.Command(argv[0], argv[1:]...)`:                              1,
-		`internal/codexadapter/supervisor.go:startDefaultAppServer:exec.Command(argv[0], argv[1:]...)`:                                                1,
-		`internal/gptbridge/adapter.go:RunAdapter:exec.Command(options.ClaudeArgv[0], options.ClaudeArgv[1:]...)`:                                     1,
-		`internal/gptbridge/rpc.go:StartAppServer:exec.Command(options.CodexPath, "app-server")`:                                                      1,
-		`internal/ledger/popup.go:ExecProcessRunner.Run:exec.CommandContext(ctx, name, args...)`:                                                      1,
-		`internal/opencodeadapter/supervisor.go:Supervisor.runDefaultPTY:exec.Command(spec.Argv[0], spec.Argv[1:]...)`:                                1,
-		`internal/opencodeadapter/supervisor.go:startManagedProcess:exec.Command(spec.Argv[0], spec.Argv[1:]...)`:                                     1,
-		`internal/tui/ai_tools_panel.go:bashLibCmd:exec.Command("bash", "-c", script)`:                                                                1,
+		`cmd/wisp-deck-tui/claude_background.go:runClaudeBackgroundAgents:exec.CommandContext(ctx, claude, "agents", "--json", "--all")`:                    1,
+		`cmd/wisp-deck-tui/claude_background.go:claudeBackgroundProcessStart:exec.CommandContext(ctx, "/bin/ps", "-p", strconv.Itoa(pid), "-o", "lstart=")`: 1,
+		`cmd/wisp-deck-tui/select_branch.go:runSelectBranch:exec.Command("git", "-C", projectPathFlag, "worktree", "list", "--porcelain")`:                  1,
+		`cmd/wisp-deck-tui/screenshot_filter.go:runScreenshotFilter:exec.Command(args[0], args[1:]...)`:                                                     2,
+		`internal/attention/claude_registry.go:commandOutput:exec.CommandContext(ctx, name, args...)`:                                                       1,
+		`internal/attention/claude_supervisor.go:ClaudeSupervisor.Run:exec.Command(name, args...)`:                                                          1,
+		`internal/attention/claude_supervisor.go:claudeSupervisorSnapshot:exec.CommandContext(ctx, claudePSExecutable, "-axo", "pid=,ppid=,lstart=")`:       1,
+		`internal/codexadapter/supervisor.go:CodexSupervisor.runPTYAttemptWithRouter:exec.Command(argv[0], argv[1:]...)`:                                    1,
+		`internal/codexadapter/supervisor.go:startDefaultAppServer:exec.Command(argv[0], argv[1:]...)`:                                                      1,
+		`internal/gptbridge/adapter.go:RunAdapter:exec.Command(options.ClaudeArgv[0], options.ClaudeArgv[1:]...)`:                                           1,
+		`internal/gptbridge/adapter.go:OpenChatGPTAuthURL:exec.Command("open", authURL)`:                                                                    1,
+		`internal/gptbridge/rpc.go:StartAppServer:exec.Command(options.CodexPath, "app-server")`:                                                            1,
+		`internal/ledger/popup.go:ExecProcessRunner.Run:exec.CommandContext(ctx, name, args...)`:                                                            1,
+		`internal/ledger/source.go:runGit:exec.CommandContext(ctx, "git", commandArgs...)`:                                                                  1,
+		`internal/models/worktree.go:AddWorktree:exec.Command("git", "-C", projectPath, "worktree", "add", "-b", branch, wtPath)`:                           1,
+		`internal/models/worktree.go:DeleteBranch:exec.Command("git", "-C", projectPath, "branch", "-D", branch)`:                                           1,
+		`internal/models/worktree.go:DeleteBranch:exec.Command("git", "-C", projectPath, "push", "origin", "--delete", name)`:                               1,
+		`internal/models/worktree.go:DetectWorktrees:exec.Command("git", "-C", projectPath, "worktree", "list", "--porcelain")`:                             1,
+		`internal/models/worktree.go:ListBranches:exec.Command("git", "-C", projectPath, "branch", "-a", "--format=%(refname:short)")`:                      1,
+		`internal/models/worktree.go:RemoveWorktree:exec.Command("git", args...)`:                                                                           1,
+		`internal/opencodeadapter/supervisor.go:Supervisor.runDefaultPTY:exec.Command(spec.Argv[0], spec.Argv[1:]...)`:                                      1,
+		`internal/opencodeadapter/supervisor.go:startManagedProcess:exec.Command(spec.Argv[0], spec.Argv[1:]...)`:                                           1,
+		`internal/tui/ai_tools_panel.go:bashLibCmd:exec.Command("bash", "-c", script)`:                                                                      1,
+		`internal/tui/imageview.go:openInPreview:exec.Command("open", "-a", "Preview", path)`:                                                               1,
+		`internal/tui/mainmenu.go:MainMenuModel.Update:exec.Command("git", "-C", projectPath, "worktree", "add", worktreePath, branch)`:                     1,
+		`internal/tui/mainmenu.go:MainMenuModel.selectCurrent:exec.Command("git", "-C", m.projects[projectIdx].Path, "worktree", "list", "--porcelain")`:    1,
+		`internal/tui/mainmenu.go:defaultGitClone:exec.Command("git", "clone", "--", url, dest)`:                                                            1,
 	}
 }
 
