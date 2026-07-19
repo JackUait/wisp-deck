@@ -55,17 +55,19 @@ if type gt_claude_account_label &>/dev/null \
     account_color=$(gt_account_color "$_gt_accounts_root/claude-account-colors" "$account_key" \
       "$_gt_accounts_root/claude-config-colors")
   fi
-  # When this pane runs a subscription backend (WISP_DECK_CLAUDE_CONFIG names
-  # the config file; stamped empty means standard Claude), the usage bars wear
-  # the SUBSCRIPTION's persistent color instead — the account is overridden
-  # while the backend runs, so the account color would tie the usage to the
-  # wrong identity. Shared with the ledger pill and the switcher rows via the
-  # claude-config-colors file; the account colors are the avoid set.
-  if [ -n "${WISP_DECK_CLAUDE_CONFIG:-}" ] && type gt_config_color &>/dev/null; then
-    config_color=$(gt_config_color "$_gt_accounts_root/claude-config-colors" \
-      "$WISP_DECK_CLAUDE_CONFIG" "$_gt_accounts_root/claude-account-colors")
-    [ -n "$config_color" ] && account_color="$config_color"
-  fi
+fi
+# When this pane runs a subscription backend (WISP_DECK_CLAUDE_CONFIG names
+# the config file; stamped empty means standard Claude), the usage bars wear
+# the SUBSCRIPTION's persistent color instead — the account is overridden
+# while the backend runs, so the account color would tie the usage to the
+# wrong identity. Shared with the ledger pill and the switcher rows via the
+# claude-config-colors file; the account colors are the avoid set. Sits
+# OUTSIDE the 2+ logins guard above: a subscription pane shows its usage even
+# on a single-login setup, and it needs its color to do so.
+if [ -n "${WISP_DECK_CLAUDE_CONFIG:-}" ] && type gt_config_color &>/dev/null; then
+  config_color=$(gt_config_color "$_gt_accounts_root/claude-config-colors" \
+    "$WISP_DECK_CLAUDE_CONFIG" "$_gt_accounts_root/claude-account-colors")
+  [ -n "$config_color" ] && account_color="$config_color"
 fi
 
 # Usage pills for the active login: the 7-day (weekly) and 5-hour (rolling
@@ -96,6 +98,46 @@ if [ -n "${WISP_DECK_LIB_DIR:-}" ] && [ -f "${WISP_DECK_LIB_DIR}/auto-switch.sh"
   source "${WISP_DECK_LIB_DIR}/auto-switch.sh" 2>/dev/null || true
   type auto_switch_maybe_trigger &>/dev/null \
     && auto_switch_maybe_trigger "${five_hour_pct:-}" "${weekly_pct:-}"
+fi
+
+# Subscription panes show the SUBSCRIPTION's real 5h/7d usage, never the
+# login's: claude's own rate_limits describe the Anthropic account, which is
+# overridden while a backend runs. The figures come from a disk cache
+# maintained by `wisp-deck-tui subscription-usage` (each provider's real quota
+# API); this render path only READS the cache — the refresher is spawned
+# disowned with both fds dropped (they are claude's UI) and throttles itself,
+# so spawning it every render is safe. A stale or missing snapshot leaves the
+# pcts empty and the bars show their "…" placeholder rather than stale or
+# native figures. Ordering matters: this sits AFTER the auto-switch trigger,
+# which must keep reading the NATIVE pcts (it rotates Claude logins;
+# subscription quota must never bounce the account).
+if [ -n "${WISP_DECK_CLAUDE_CONFIG:-}" ]; then
+  _gt_sub_cache="$_gt_accounts_root/subscription-usage/$WISP_DECK_CLAUDE_CONFIG"
+  _gt_tui_bin="$(command -v wisp-deck-tui 2>/dev/null || true)"
+  [ -z "$_gt_tui_bin" ] && [ -x "$HOME/.local/bin/wisp-deck-tui" ] \
+    && _gt_tui_bin="$HOME/.local/bin/wisp-deck-tui"
+  if [ -n "$_gt_tui_bin" ]; then
+    "$_gt_tui_bin" subscription-usage \
+      --configs-dir "$_gt_accounts_root/claude-configs" \
+      --list "$_gt_accounts_root/claude-configs.list" \
+      --config "$WISP_DECK_CLAUDE_CONFIG" \
+      --cache "$_gt_sub_cache" >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+  fi
+  weekly_pct=""; five_hour_pct=""; weekly_bar=""; five_hour_bar=""
+  _gt_sub_json=""
+  [ -f "$_gt_sub_cache" ] && _gt_sub_json="$(cat "$_gt_sub_cache" 2>/dev/null)"
+  if [ -n "$_gt_sub_json" ] && type gt_sub_usage_fresh &>/dev/null \
+     && gt_sub_usage_fresh "$_gt_sub_json" "$(date +%s)"; then
+    if type gt_weekly_used_pct &>/dev/null; then
+      weekly_pct=$(gt_weekly_used_pct "$_gt_sub_json")
+      [ -n "$weekly_pct" ] && weekly_bar=$(gt_usage_bar "$weekly_pct")
+    fi
+    if type gt_five_hour_used_pct &>/dev/null; then
+      five_hour_pct=$(gt_five_hour_used_pct "$_gt_sub_json")
+      [ -n "$five_hour_pct" ] && five_hour_bar=$(gt_usage_bar "$five_hour_pct")
+    fi
+  fi
 fi
 
 # Which usage pills to show is a user preference (Settings › Usage bars), stored
@@ -198,8 +240,13 @@ fi
 # bar — still painted in the account color, so the switched-to login is visible
 # INSTANTLY rather than after the first response lands. Once the figure arrives the
 # placeholder upgrades to the real bar in place.
+# Eligibility: an account pill needs 2+ logins ($account_label set), but a
+# subscription pane is ALWAYS eligible — its usage identity is the backend,
+# which exists regardless of how many Claude logins are connected.
+_usage_eligible=""
+{ [ -n "$account_label" ] || [ -n "${WISP_DECK_CLAUDE_CONFIG:-}" ]; } && _usage_eligible=1
 _usage_seg=""
-if [ "$show_5h" = 1 ] && [ -n "$account_label" ]; then
+if [ "$show_5h" = 1 ] && [ -n "$_usage_eligible" ]; then
   _seg="$five_hour_bar"; [ -z "$_seg" ] && _seg="…"
   if [ -n "$account_color" ]; then
     _usage_seg="$_usage_seg$(printf ' \033[02;38;5;%sm5h\033[00m \033[38;5;%sm%s\033[00m' "$account_color" "$account_color" "$_seg")"
@@ -207,7 +254,7 @@ if [ "$show_5h" = 1 ] && [ -n "$account_label" ]; then
     _usage_seg="$_usage_seg$(printf ' \033[02;37m5h\033[00m \033[01;32m%s\033[00m' "$_seg")"
   fi
 fi
-if [ "$show_7d" = 1 ] && [ -n "$account_label" ]; then
+if [ "$show_7d" = 1 ] && [ -n "$_usage_eligible" ]; then
   _seg="$weekly_bar"; [ -z "$_seg" ] && _seg="…"
   if [ -n "$account_color" ]; then
     _usage_seg="$_usage_seg$(printf ' \033[02;38;5;%sm7d\033[00m \033[38;5;%sm%s\033[00m' "$account_color" "$account_color" "$_seg")"

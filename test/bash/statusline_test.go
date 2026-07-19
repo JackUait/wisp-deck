@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ============================================================
@@ -2620,7 +2621,9 @@ func TestStatusline_config_color_avoids_account_colors(t *testing.T) {
 
 // When this pane runs a subscription backend (WISP_DECK_CLAUDE_CONFIG names the
 // config), the usage bars wear the SUBSCRIPTION's color, not the account's —
-// the account is overridden while the backend runs.
+// the account is overridden while the backend runs. The figure comes from the
+// subscription's own usage cache (native rate_limits describe the login, so a
+// subscription pane never reads them — see subscription_usage_statusline_test).
 func TestStatusline_wrapper_usage_bar_wears_subscription_color(t *testing.T) {
 	env := setupWrapperTest(t)
 	env = append(env, "CLAUDE_CONFIG_DIR=", "WISP_DECK_CLAUDE_CONFIG=glm.json")
@@ -2629,10 +2632,13 @@ func TestStatusline_wrapper_usage_bar_wears_subscription_color(t *testing.T) {
 	writeTempFile(t, cfg, "claude-accounts.list", "Personal:personal\n")
 	writeTempFile(t, cfg, "claude-account-colors", "default:141\n")
 	writeTempFile(t, cfg, "claude-config-colors", "glm.json:205\n")
+	seedSubUsageCache(t, fakeHome, "glm.json", fmt.Sprintf(
+		`{"rate_limits":{"seven_day":{"used_percentage":90}},"provider":"zhipu","fetched_at":%d}`,
+		time.Now().Unix()))
 
 	root := projectRoot(t)
 	wrapperPath := filepath.Join(root, "templates", "statusline-wrapper.sh")
-	stdinData := `{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"rate_limits":{"seven_day":{"used_percentage":90,"resets_at":2}},"workspace":{"current_dir":"/tmp"}}`
+	stdinData := `{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"workspace":{"current_dir":"/tmp"}}`
 	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, wrapperPath)
 
 	out, code := runBashSnippet(t, script, env)

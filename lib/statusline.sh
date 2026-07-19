@@ -364,6 +364,21 @@ gt_five_hour_used_pct() {
   printf '%s\n' "$pct" | LC_ALL=C awk '{ gsub(/,/, "."); printf "%d\n", $0 + 0.5 }'
 }
 
+# gt_sub_usage_fresh <json> <now_epoch> [max_age] — exit 0 iff a subscription
+# usage snapshot (written by `wisp-deck-tui subscription-usage`) is fresh
+# enough to DISPLAY: its fetched_at (unix seconds, stamped only on a
+# successful provider fetch) lies within max_age (default 7200s) of now. Stale
+# or unstamped snapshots fail so the bars hide instead of showing yesterday's
+# figures — the display gate is deliberately looser than the refresher's
+# fetch cadence, so a briefly unreachable provider doesn't blank the bars.
+# Usage: gt_sub_usage_fresh "$cache_json" "$(date +%s)" && show
+gt_sub_usage_fresh() {
+  local input="$1" now="$2" max_age="${3:-7200}" fetched
+  fetched=$(printf '%s' "$input" | sed -n 's/.*"fetched_at":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$fetched" ] || return 1
+  [ $((now - fetched)) -le "$max_age" ]
+}
+
 gt_stamp_claude_session() {
   [ -n "${TMUX:-}" ] || return 0
   local sid transcript
