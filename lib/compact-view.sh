@@ -22,7 +22,7 @@
 # path) into the pane env for exactly this; fall back to BASH_SOURCE when sourced
 # from bash (wrapper's own load, the test harness).
 _cv_lib_dir="${WISP_DECK_LIB_DIR:-${BASH_SOURCE[0]%/*}}"
-for _cv_dep in theme statusline claude-accounts tmux-session claude-shared-settings session-pool account-switch; do
+for _cv_dep in theme statusline claude-accounts claude-configs tmux-session claude-shared-settings session-pool account-switch; do
   # shellcheck source=/dev/null
   [ -f "$_cv_lib_dir/$_cv_dep.sh" ] && source "$_cv_lib_dir/$_cv_dep.sh"
 done

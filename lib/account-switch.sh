@@ -42,6 +42,18 @@ if ! declare -f write_claude_launch_settings >/dev/null 2>&1; then
   unset _as_settings_lib_dir
 fi
 
+# claude-configs.sh provides the subscription/backend pointer helpers
+# (get_active_claude_config, resolve_claude_config_path, set_active_claude_config,
+# get_claude_config_provider) the mid-session backend switch needs. Self-sourced
+# with the same guard/fallback so the ledger pane and bare unit-test sources that
+# don't load the full lib set can still switch subscriptions.
+if ! declare -f get_active_claude_config >/dev/null 2>&1; then
+  _as_configs_lib_dir="${WISP_DECK_LIB_DIR:-${BASH_SOURCE[0]%/*}}"
+  # shellcheck source=/dev/null
+  [ -f "$_as_configs_lib_dir/claude-configs.sh" ] && source "$_as_configs_lib_dir/claude-configs.sh"
+  unset _as_configs_lib_dir
+fi
+
 # reload_switcher_lib <lib_dir> — re-source THIS module from disk so a
 # long-running ledger picks up on-disk edits to the switcher (popup dimensions,
 # flags, backdrop) without the whole pane having to restart. Called right before
@@ -100,6 +112,24 @@ switcher_supports_agent_rows() {
     fi
   fi
   [ "$_GT_SWITCHER_TOOLS_PROBE" = ok ]
+}
+
+# switcher_supports_subscription_rows — exit 0 when the installed wisp-deck-tui
+# accepts --active-config on claude-account-switch (subscription/backend rows).
+# Same legacy-detection contract as the probes above: only a help output that
+# positively shows the command WITHOUT --active-config counts as legacy.
+switcher_supports_subscription_rows() {
+  if [ -z "${_GT_SWITCHER_CONFIGS_PROBE:-}" ]; then
+    local help
+    help="$(wisp-deck-tui claude-account-switch --help 2>&1)" || help=""
+    if printf '%s' "$help" | grep -q 'claude-account-switch' \
+       && ! printf '%s' "$help" | grep -q -- '--active-config'; then
+      _GT_SWITCHER_CONFIGS_PROBE=legacy
+    else
+      _GT_SWITCHER_CONFIGS_PROBE=ok
+    fi
+  fi
+  [ "$_GT_SWITCHER_CONFIGS_PROBE" = ok ]
 }
 
 # account_pill_enabled <relaunch_file> <list_file> — exit 0 when the ledger
@@ -176,6 +206,24 @@ current_session_account() {
       ;;
   esac
   get_active_claude_account "$pointer_file"
+}
+
+# current_session_config <tmux_cmd> <config_pointer> — print the subscription
+# filename THIS session's AI pane is running (empty = standard Claude). Mirrors
+# current_session_account: the active-config POINTER is global (any session's
+# switch rewrites it), so the pane's own backend is stamped in the tmux session
+# env (WISP_DECK_CLAUDE_CONFIG). A stamped value — including a stamped empty
+# (standard) — wins; only an UNSTAMPED session falls back to the pointer.
+current_session_config() {
+  local tmux_cmd="$1" pointer_file="$2" line
+  line="$("$tmux_cmd" show-environment WISP_DECK_CLAUDE_CONFIG 2>/dev/null)" || line=""
+  case "$line" in
+    WISP_DECK_CLAUDE_CONFIG=*)
+      printf '%s\n' "${line#WISP_DECK_CLAUDE_CONFIG=}"
+      return 0
+      ;;
+  esac
+  get_active_claude_config "$pointer_file"
 }
 
 # account_current <pointer_file> <list_file> <default_label_file> <colors_file> \
@@ -498,8 +546,55 @@ _read_relaunch_ctx() {
       tool_pref) _rc_tool_pref="$v" ;;
       attention_root) _rc_attention_root="$v" ;;
       attention_descriptor) _rc_attention_descriptor="$v" ;;
+      config_pointer) _rc_config_pointer="$v" ;;
+      configs_dir) _rc_configs_dir="$v" ;;
+      configs_list) _rc_configs_list="$v" ;;
     esac
   done < "$file"
+}
+
+# _set_relaunch_kv <file> <key> <value> — rewrite <key>=<value> in the relaunch
+# context, replacing an existing line in place or appending a missing one, and
+# leaving every other line byte-for-byte. A backend switch uses it to swap the
+# pane's settings source so the relaunch (which re-reads the file) picks it up.
+_set_relaunch_kv() {
+  local file="$1" key="$2" value="$3" tmp found=0 line k
+  [ -f "$file" ] || return 1
+  tmp="$(mktemp "${file}.XXXXXX")" || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    k="${line%%=*}"
+    if [ "$k" = "$key" ]; then
+      printf '%s=%s\n' "$key" "$value"
+      found=1
+    else
+      printf '%s\n' "$line"
+    fi
+  done < "$file" > "$tmp"
+  [ "$found" = 1 ] || printf '%s=%s\n' "$key" "$value" >> "$tmp"
+  mv -f "$tmp" "$file"
+}
+
+# _apply_subscription <tmux_cmd> <relaunch_file> <config_file|standard> — retarget
+# the pane's Claude backend before the relaunch. Sets the global active-config
+# pointer, rewrites the relaunch context's settings source to the chosen config
+# (empty = standard, so the relaunch — which re-reads the file — rebuilds the
+# overlay from it), exports WISP_DECK_CLAUDE_PROVIDER so build_ai_launch_cmd wraps
+# the ChatGPT bridge when needed, and stamps the pane's per-session backend
+# (WISP_DECK_CLAUDE_CONFIG / WISP_DECK_CLAUDE_PROVIDER) so the pill and the next
+# switch read THIS pane's backend. Reads _rc_config_pointer/_rc_configs_dir from
+# the caller's scope (the same dynamic-scoping contract _read_relaunch_ctx uses).
+_apply_subscription() {
+  local tmux_cmd="$1" relaunch_file="$2" config_file="$3"
+  local stamp="$config_file" new_source new_provider
+  [ "$stamp" = "standard" ] && stamp=""
+  set_active_claude_config "$_rc_config_pointer" "$config_file"
+  new_source="$(resolve_claude_config_path "$_rc_configs_dir" "$_rc_config_pointer")"
+  new_provider="$(get_claude_config_provider "$new_source")"
+  _set_relaunch_kv "$relaunch_file" settings_source "$new_source"
+  _set_relaunch_kv "$relaunch_file" settings "$new_source"
+  export WISP_DECK_CLAUDE_PROVIDER="$new_provider"
+  "$tmux_cmd" set-environment WISP_DECK_CLAUDE_CONFIG "$stamp" 2>/dev/null || true
+  "$tmux_cmd" set-environment WISP_DECK_CLAUDE_PROVIDER "$new_provider" 2>/dev/null || true
 }
 
 # write_relaunch_context <out_file> <tool> <tool_cmd> <settings> \
@@ -534,6 +629,9 @@ write_relaunch_context() {
     printf 'list=%s\n' "$cfg_root/claude-accounts.list"
     printf 'colors=%s\n' "$cfg_root/claude-account-colors"
     printf 'default_label=%s\n' "$cfg_root/claude-account-default-label"
+    printf 'config_pointer=%s\n' "$cfg_root/claude-config"
+    printf 'configs_dir=%s\n' "$cfg_root/claude-configs"
+    printf 'configs_list=%s\n' "$cfg_root/claude-configs.list"
     printf 'tools=%s\n' "$tools"
     printf 'claude_cmd=%s\n' "$claude_cmd"
     printf 'opencode_cmd=%s\n' "$opencode_cmd"
@@ -1132,7 +1230,8 @@ open_account_switcher() {
     _rc_filter="" _rc_project_dir="" _rc_accounts_dir="" _rc_pointer="" \
     _rc_list="" _rc_colors="" _rc_default_label="" \
     _rc_tools="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_codex_cmd="" \
-    _rc_tool_pref="" _rc_attention_root="" _rc_attention_descriptor=""
+    _rc_tool_pref="" _rc_attention_root="" _rc_attention_descriptor="" \
+    _rc_config_pointer="" _rc_configs_dir="" _rc_configs_list=""
   [ -f "$relaunch_file" ] || return 0
   _read_relaunch_ctx "$relaunch_file"
 
@@ -1141,8 +1240,9 @@ open_account_switcher() {
   # NOT created — its existence after the popup is the "user picked something"
   # signal. An older binary rejects the new flags (see
   # switcher_supports_session_flags); it gets the legacy pointer-diff flow.
-  local session_acct result_file session_flags=""
+  local session_acct session_config result_file session_flags=""
   session_acct="$(current_session_account "$tmux_cmd" "$_rc_pointer")"
+  session_config="$(current_session_config "$tmux_cmd" "$_rc_config_pointer")"
   result_file=""
   if switcher_supports_session_flags; then
     result_file=$(mktemp "${TMPDIR:-/tmp}/gtswitchsel.XXXXXX" 2>/dev/null) || result_file=""
@@ -1157,6 +1257,16 @@ open_account_switcher() {
   if [ -n "$_rc_tools" ] && switcher_supports_agent_rows; then
     session_flags="${session_flags}--tools $(printf '%s' "$_rc_tools" | tr ' ' ',') \
 --active-tool $(printf '%q' "$_rc_tool") "
+  fi
+
+  # Offer the configured subscription backends as rows under Claude (the popup
+  # marks the pane's active one via --active-config). Only with a capable binary,
+  # a live result-file channel, and at least one configured subscription.
+  if [ -n "$result_file" ] && [ -s "$_rc_configs_list" ] \
+     && switcher_supports_subscription_rows; then
+    session_flags="${session_flags}--configs $(printf '%q' "$_rc_configs_list") \
+--configs-dir $(printf '%q' "$_rc_configs_dir") \
+--active-config $(printf '%q' "$session_config") "
   fi
 
   # Snapshot the screen behind the popup so the switcher can show it DIMMED in the
@@ -1208,11 +1318,31 @@ ${session_flags}${backdrop_arg}" 2>/dev/null || true
           [ "${chosen#tool:}" != "$_rc_tool" ] \
             && relaunch_switch_tool "$tmux_cmd" "$relaunch_file" "${chosen#tool:}"
           ;;
+        config:*)
+          # A subscription row: retarget the Claude backend (no-op when the pane
+          # already runs it). Keep the current account; a pane on another agent
+          # switches to claude on that backend.
+          local cfg_file="${chosen#config:}"
+          if [ "$cfg_file" != "$session_config" ]; then
+            _apply_subscription "$tmux_cmd" "$relaunch_file" "$cfg_file"
+            if [ "$_rc_tool" != "claude" ]; then
+              relaunch_switch_tool "$tmux_cmd" "$relaunch_file" claude "$session_acct"
+            else
+              _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" "$session_acct" "$session_acct"
+            fi
+          fi
+          ;;
         *)
           if [ "$_rc_tool" != "claude" ]; then
             # A claude login picked while another agent runs: switch back to
             # claude under that login, whatever the stamped account says.
             relaunch_switch_tool "$tmux_cmd" "$relaunch_file" claude "$chosen"
+          elif [ -n "$session_config" ]; then
+            # An account picked while a subscription runs means "standard Claude
+            # on that account": reset the backend to standard, then relaunch —
+            # always, since the backend is changing even if the account isn't.
+            _apply_subscription "$tmux_cmd" "$relaunch_file" standard
+            _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" "$session_acct" "$chosen"
           else
             # Hand the CHOICE itself to the relaunch: re-resolving the global
             # pointer there would race another session's concurrent switch.
