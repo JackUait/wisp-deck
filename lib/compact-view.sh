@@ -1427,7 +1427,7 @@ compact_view_shell() {
   # (under zsh, the pane's shell, `local NAME` without assignment on an already-set
   # var is a *display* command that leaks "NAME=value" onto the frame; see the
   # branch/ab_counts NOTE above).
-  local _pill_label _pill_color _pill
+  local _pill_label _pill_color _pill_glyph _pill
   local _rc_relaunch="${WISP_DECK_RELAUNCH_FILE:-}"
   local _rc_pointer="" _rc_list="" _rc_colors="" _rc_default_label="" \
     _rc_config_pointer="" _rc_configs_list=""
@@ -1846,13 +1846,13 @@ compact_view_shell() {
       # Re-read the running tool each tick: a mid-session agent switch
       # rewrites the context's tool= while this ledger keeps running.
       _rc_tool="$(sed -n 's/^tool=//p' "$_rc_relaunch" 2>/dev/null)"
-      IFS=$'\t' read -r _pill_label _pill_color \
+      IFS=$'\t' read -r _pill_label _pill_color _pill_glyph \
         < <(pill_current "${_rc_tool:-claude}" "$_rc_pointer" "$_rc_list" "$_rc_default_label" "$_rc_colors" tmux "$_rc_config_pointer" "$_rc_configs_list")
-      _pill="$(account_pill "$_pill_label" "$_pill_color")"
+      _pill="$(account_pill "$_pill_label" "$_pill_color" 0 "$_pill_glyph")"
       account_pill_str="${_pill%$'\n'*}"
       account_pill_cols="${_pill##*$'\n'}"
       # Hover variant (same width) drawn while the pointer is over the pill.
-      _pill="$(account_pill "$_pill_label" "$_pill_color" 1)"
+      _pill="$(account_pill "$_pill_label" "$_pill_color" 1 "$_pill_glyph")"
       account_pill_hover_str="${_pill%$'\n'*}"
     fi
     # The build recomputed the branch, pill, and changeset, so the bottom bar

@@ -323,11 +323,22 @@ func (m *LedgerModel) hoverLedgerMouse(msg tea.MouseMsg) {
 	m.state.HoverScreenRow(msg.Y + 1)
 }
 
+// ledgerPillText is the footer pill's drawable text: pad, identity glyph (the
+// account person unless the pill carries its own, e.g. the subscription
+// spark), label, pad. Width and render must agree, so both go through here.
+func ledgerPillText(pill *ledger.SessionPill) string {
+	glyph := pill.Glyph
+	if glyph == "" {
+		glyph = "󰀄"
+	}
+	return " " + glyph + " " + pill.Label + " "
+}
+
 func ledgerAccountPillWidth(pill *ledger.SessionPill) int {
 	if pill == nil {
 		return 0
 	}
-	return visibleRuneWidth(" 󰀄 " + pill.Label + " ")
+	return visibleRuneWidth(ledgerPillText(pill))
 }
 
 func (m *LedgerModel) ledgerAccountHit(x, y int) bool {
@@ -842,7 +853,7 @@ func renderLedgerFooter(state *ledger.State, width int, actionError error, pill 
 	if pill == nil {
 		return dim.Render(ledgerFitPlain(status, width))
 	}
-	pillText := " 󰀄 " + pill.Label + " "
+	pillText := ledgerPillText(pill)
 	pillStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(fmt.Sprintf("%d", pill.Color)))
 	if pillHover {
 		pillStyle = pillStyle.Background(lipgloss.Color("238"))

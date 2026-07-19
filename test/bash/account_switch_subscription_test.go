@@ -419,3 +419,51 @@ func TestPillCurrent_subscription_wears_config_color(t *testing.T) {
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "GLM\t205")
 }
+
+// The pill states the identity KIND with its glyph: the subscription spark (✦)
+// while a backend runs, the account person (󰀄) for a login — third output
+// field, consumed by account_pill via the compact view.
+func TestPillCurrent_subscription_emits_spark_glyph(t *testing.T) {
+	dir := t.TempDir()
+	list := writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	pointer := writeTempFile(t, dir, "claude-account", "work\n")
+	colors := writeTempFile(t, dir, "claude-account-colors", "work:1\n")
+	defLabel := filepath.Join(dir, "claude-account-default-label")
+	configsList := writeTempFile(t, dir, "claude-configs.list", "GLM:glm.json\n")
+	configPointer := writeTempFile(t, dir, "claude-config", "glm.json\n")
+	writeTempFile(t, dir, "claude-config-colors", "glm.json:205\n")
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+		`pill_current claude %q %q %q %q "" %q %q`,
+		pointer, list, defLabel, colors, configPointer, configsList)), nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "GLM\t205\t✦")
+}
+
+func TestPillCurrent_account_emits_person_glyph(t *testing.T) {
+	dir := t.TempDir()
+	list := writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	pointer := writeTempFile(t, dir, "claude-account", "work\n")
+	colors := writeTempFile(t, dir, "claude-account-colors", "work:1\n")
+	defLabel := filepath.Join(dir, "claude-account-default-label")
+	configsList := writeTempFile(t, dir, "claude-configs.list", "GLM:glm.json\n")
+	configPointer := filepath.Join(dir, "claude-config") // absent = standard
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+		`pill_current claude %q %q %q %q "" %q %q`,
+		pointer, list, defLabel, colors, configPointer, configsList)), nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "Work\t1\t\U000f0004")
+}
+
+// account_pill renders whatever glyph it is handed (the spark for a
+// subscription); no glyph arg keeps the person for older callers.
+func TestAccountPill_renders_given_glyph(t *testing.T) {
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		`account_pill "GLM" 205 0 "✦"`), nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "✦ GLM")
+	assertNotContains(t, out, "\U000f0004")
+	out, code = runBashSnippet(t, accountSwitchSnippet(t,
+		`account_pill "Work" 1`), nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "\U000f0004 Work")
+}

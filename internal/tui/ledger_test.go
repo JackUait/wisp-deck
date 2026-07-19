@@ -1127,3 +1127,27 @@ func TestLedgerHeaderOmitsSubscriptionPlan(t *testing.T) {
 		t.Fatalf("header lost the changed-file stamp: %q", plain)
 	}
 }
+
+// A subscription pill carries the subscription spark (✦) instead of the
+// account person glyph, so the footer states which identity kind runs.
+func TestLedgerFooterPillGlyphFollowsIdentityKind(t *testing.T) {
+	m := NewLedgerModel(nil, ledgerTestSnapshot(3), LedgerOptions{})
+	sizeLedger(m, 80, 14)
+	m.Update(ledgerSessionMsg{session: ledger.SessionContext{
+		Tool: "claude", Pill: &ledger.SessionPill{Label: "Xiaomi MiMo", Color: 205, Glyph: "✦"},
+	}})
+	plain := stripANSI(m.View())
+	if !strings.Contains(plain, "✦ Xiaomi MiMo") {
+		t.Fatalf("subscription pill missing spark glyph:\n%s", plain)
+	}
+	if strings.Contains(plain, "󰀄") {
+		t.Fatalf("subscription pill still renders the account glyph:\n%s", plain)
+	}
+
+	m.Update(ledgerSessionMsg{session: ledger.SessionContext{
+		Tool: "claude", Pill: &ledger.SessionPill{Label: "Personal", Color: 78},
+	}})
+	if plain := stripANSI(m.View()); !strings.Contains(plain, "󰀄 Personal") {
+		t.Fatalf("account pill lost the person glyph:\n%s", plain)
+	}
+}

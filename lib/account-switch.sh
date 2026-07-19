@@ -166,7 +166,7 @@ pill_current() {
       codex) label="Codex" ;;
       *) label="$tool" ;;
     esac
-    printf '%s\t%s\n' "$label" "$(get_tool_accent "$tool")"
+    printf '%s\t%s\t\xF3\xB0\x80\x84\n' "$label" "$(get_tool_accent "$tool")"
     return 0
   fi
   # claude: when a subscription backend runs, it replaces the account on the
@@ -194,7 +194,7 @@ pill_current() {
           "$active_config" "$colors_file")"
         [ -n "$config_color" ] || config_color=111
       fi
-      printf '%s\t%s\n' "$(claude_config_name "$active_config" "$configs_list")" "$config_color"
+      printf '%s\t%s\t\xE2\x9C\xA6\n' "$(claude_config_name "$active_config" "$configs_list")" "$config_color"
       return 0
     fi
     # config_pointer present but active_config empty: the per-session stamp
@@ -208,13 +208,16 @@ pill_current() {
     # agrees with the header without waiting for a full relaunch. It is frozen at
     # launch (never the global pointer), so it cannot "switch back" when another
     # session flips the pointer.
-    printf '%s\t%s\n' "$WISP_DECK_PLAN" 111
+    printf '%s\t%s\t\xE2\x9C\xA6\n' "$WISP_DECK_PLAN" 111
     return 0
   fi
-  account_current "$pointer_file" "$list_file" "$default_label_file" "$colors_file" "$tmux_cmd"
+  # account_current prints "label\tcolor"; the pill contract appends the
+  # identity-kind glyph as a third field — the account person here.
+  printf '%s\t\xF3\xB0\x80\x84\n' \
+    "$(account_current "$pointer_file" "$list_file" "$default_label_file" "$colors_file" "$tmux_cmd")"
 }
 
-# account_pill <label> <color> [hover] — render the account pill for the ledger
+# account_pill <label> <color> [hover] [glyph] — render the account pill for the ledger
 # bottom bar. Line 1 is the drawable string (a pad space + the 󰀄 glyph + a space +
 # the label + a trailing pad space, the glyph/label in the account's 256-color);
 # line 2 is its VISIBLE click width so the click handler can bound the hit region.
@@ -226,11 +229,15 @@ pill_current() {
 # spaces are reserved in the plain pill too, so the visible width is identical
 # either way and the bottom bar never shifts on hover.
 account_pill() {
-  local label="$1" color="$2" hover="${3:-0}"
+  local label="$1" color="$2" hover="${3:-0}" glyph="${4:-}"
+  # The identity-kind glyph: callers pass the subscription spark (✦) while a
+  # backend runs; no arg keeps the account person (both are one column, so the
+  # width math below is glyph-independent).
+  [ -n "$glyph" ] || glyph="$(printf '\xF3\xB0\x80\x84')"
   if [ "$hover" = 1 ]; then
-    printf '\033[48;5;238;38;5;%sm \xF3\xB0\x80\x84 %s \033[0m\n' "$color" "$label"
+    printf '\033[48;5;238;38;5;%sm %s %s \033[0m\n' "$color" "$glyph" "$label"
   else
-    printf ' \033[38;5;%sm\xF3\xB0\x80\x84 %s\033[0m \n' "$color" "$label"
+    printf ' \033[38;5;%sm%s %s\033[0m \n' "$color" "$glyph" "$label"
   fi
   printf '%s\n' "$((4 + ${#label}))"
 }

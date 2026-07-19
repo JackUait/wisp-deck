@@ -16,10 +16,18 @@ import (
 // subscriptionPillColor matches the switcher popup's subscription rows.
 const subscriptionPillColor = 111
 
+// subscriptionPillGlyph is the subscription spark, matching configRowGlyph in
+// the switcher popup.
+const subscriptionPillGlyph = "✦"
+
 // SessionPill is the current agent/account identity shown in the ledger footer.
+// Glyph is the identity-kind mark: empty means the account person (󰀄, the
+// renderer's default); a subscription pill carries the spark (✦), matching the
+// switcher's subscription rows.
 type SessionPill struct {
 	Label string
 	Color int
+	Glyph string
 }
 
 // SessionContext is the existing key=value relaunch context plus its resolved
@@ -146,11 +154,12 @@ func (s *SessionSource) Load(ctx context.Context, path string) (SessionContext, 
 			result.Pill = &SessionPill{
 				Label: subscriptionDisplayName(config, result.ConfigsList),
 				Color: subscriptionColor(config, result.ConfigsList, result.Colors),
+				Glyph: subscriptionPillGlyph,
 			}
 			return result, nil
 		}
 	} else if s != nil && s.plan != "" && s.plan != "Standard Claude" {
-		result.Pill = &SessionPill{Label: s.plan, Color: subscriptionPillColor}
+		result.Pill = &SessionPill{Label: s.plan, Color: subscriptionPillColor, Glyph: subscriptionPillGlyph}
 		return result, nil
 	}
 

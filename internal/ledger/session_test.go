@@ -292,3 +292,43 @@ func TestSessionPillEligibleWithOnlySubscriptions(t *testing.T) {
 		t.Fatalf("subscription-only pill = %#v", got.Pill)
 	}
 }
+
+func TestSessionPillGlyphDistinguishesSubscriptionFromAccount(t *testing.T) {
+	directory := t.TempDir()
+	relaunch, runner := subscriptionSessionFixture(t, directory, "WISP_DECK_CLAUDE_CONFIG=openai-chatgpt.json")
+	source := NewSessionSource(runner)
+
+	got, err := source.Load(context.Background(), relaunch)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Pill == nil || got.Pill.Glyph != "✦" {
+		t.Fatalf("subscription pill glyph = %#v, want the subscription spark", got.Pill)
+	}
+
+	standard, runner2 := subscriptionSessionFixture(t, t.TempDir(), "WISP_DECK_CLAUDE_CONFIG=")
+	got2, err := NewSessionSource(runner2).Load(context.Background(), standard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got2.Pill == nil || got2.Pill.Glyph != "" {
+		t.Fatalf("account pill glyph = %#v, want empty (renderer default 󰀄)", got2.Pill)
+	}
+}
+
+func TestSessionPillLegacyPlanUsesSubscriptionGlyph(t *testing.T) {
+	directory := t.TempDir()
+	list := writeSessionFixture(t, directory, "claude-accounts.list", "Work:work\n")
+	relaunch := writeSessionFixture(t, directory, "relaunch", "tool=claude\ntools=claude\nlist="+list+"\n")
+	source := NewSessionSource(&recordingProcessRunner{}, WithSessionPlan("OpenAI / ChatGPT"))
+
+	got, err := source.Load(context.Background(), relaunch)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Pill == nil || got.Pill.Glyph != "✦" {
+		t.Fatalf("legacy plan pill glyph = %#v, want the subscription spark", got.Pill)
+	}
+}
