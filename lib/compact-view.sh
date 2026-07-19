@@ -1747,11 +1747,11 @@ compact_view_shell() {
       ta=${sums% *}
       td=${sums#* }
 
-      # ── Header: the active plan (PLAN control) on the left and the changed-file
-      # count + net +/- stamp on the right. The branch name is shown ONLY at the
-      # bottom bar, so it is deliberately absent here. This whole line (plus the
-      # separator below) is PINNED by the renderer — it never scrolls — so the
-      # changeset size stays in view.
+      # ── Header: the changed-file count + net +/- stamp, right-aligned. The
+      # branch name is shown ONLY at the bottom bar, and the subscription/plan
+      # lives on the account pill there too, so both are deliberately absent
+      # here. This whole line (plus the separator below) is PINNED by the
+      # renderer — it never scrolls — so the changeset size stays in view.
       local total_files=$((n_staged + n_unstaged + n_untracked))
       local funit="files"
       [ "$total_files" -eq 1 ] && funit="file"
@@ -1759,26 +1759,21 @@ compact_view_shell() {
       if [ "$total_files" -gt 0 ]; then
         stamp="${total_files} ${funit}  +${ta} −${td}"
       fi
-      # Active subscription/plan leads the heading so the ledger always states
-      # which plan the session runs on; empty when unset (then the stamp alone
-      # fills the pinned line).
-      local plan="${WISP_DECK_PLAN:-}"
-
       # Place the stamp with heading_layout: right-aligned on the heading line
       # when it fits (mode inline), else moved WHOLE onto its own new row below
-      # (mode below) — the +/- block is never split across rows. The plan is the
-      # heading's only left-run text now (no branch, no ahead/behind marker), so
-      # the marker/plan-segment widths are 0. The returned head_rows counts every
+      # (mode below) — the +/- block is never split across rows. The heading has
+      # no left-run text at all now (no branch, no ahead/behind marker, no plan),
+      # so every left-segment width is 0. The returned head_rows counts every
       # screen row the pinned heading spans; +1 for the separator. Emit that total
       # as the content's first line for split_content; the renderer/click math
       # read the pinned-header offset from there so clicks/hover map to the right
       # file row.
       local mode pad head_rows
-      read -r mode pad head_rows <<< "$(heading_layout "$iw" "${#plan}" 0 0 "${#stamp}" "$w")"
+      read -r mode pad head_rows <<< "$(heading_layout "$iw" 0 0 0 "${#stamp}" "$w")"
       printf '%s\n' "$((head_rows + 1))"
 
-      # Leading space (matches heading_layout's +1), then the plan (may be empty).
-      printf " ${dim}%s${reset}" "$plan"
+      # Leading space (matches heading_layout's +1).
+      printf ' '
       # A newline before the stamp when it lives on its own row (mode below).
       [ "$mode" = "below" ] && printf "\n"
       if [ "$mode" = "inline" ] || [ "$mode" = "below" ]; then

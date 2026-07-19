@@ -607,7 +607,6 @@ func (m *LedgerModel) View() string {
 }
 
 func renderLedgerHeader(metadata ledger.Metadata, width int) []string {
-	plan := metadata.Plan
 	stamp := ""
 	if metadata.TotalFiles > 0 {
 		unit := "files"
@@ -616,11 +615,11 @@ func renderLedgerHeader(metadata ledger.Metadata, width int) []string {
 		}
 		stamp = fmt.Sprintf("%d %s  +%d −%d", metadata.TotalFiles, unit, metadata.Added, metadata.Deleted)
 	}
-	available := width - visibleRuneWidth(plan) - visibleRuneWidth(stamp) - 2
+	available := width - visibleRuneWidth(stamp) - 2
 	if available < 1 {
 		available = 1
 	}
-	line := " " + plan + strings.Repeat(" ", available) + stamp
+	line := " " + strings.Repeat(" ", available) + stamp
 	line = ledgerFitPlain(line, width)
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	lineRendered := dim.Render(line)

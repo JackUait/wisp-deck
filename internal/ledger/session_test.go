@@ -127,3 +127,168 @@ func TestSessionContextSwitcherUsesExistingFlowWithoutInterpolatingPaths(t *test
 		t.Fatalf("switcher did not reuse existing flow: %q", program)
 	}
 }
+
+func TestSessionContextParsesSubscriptionKeys(t *testing.T) {
+	directory := t.TempDir()
+	path := writeSessionFixture(t, directory, "relaunch", strings.Join([]string{
+		"tool=claude",
+		"config_pointer=/config/claude-config",
+		"configs_list=/config/claude-configs.list",
+	}, "\n"))
+
+	got, err := ParseSessionContext(path)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ConfigPointer != "/config/claude-config" || got.ConfigsList != "/config/claude-configs.list" {
+		t.Fatalf("parsed subscription keys = %#v", got)
+	}
+}
+
+func subscriptionSessionFixture(t *testing.T, directory, stampLine string) (string, *recordingProcessRunner) {
+	t.Helper()
+	pointer := writeSessionFixture(t, directory, "claude-account", "work\n")
+	list := writeSessionFixture(t, directory, "claude-accounts.list", "Work:work\nPersonal:personal\n")
+	colors := writeSessionFixture(t, directory, "claude-account-colors", "work:170\npersonal:39\n")
+	configPointer := writeSessionFixture(t, directory, "claude-config", "openai-chatgpt.json\n")
+	configsList := writeSessionFixture(t, directory, "claude-configs.list", "Zhipu GLM:zhipu-glm.json\nOpenAI / ChatGPT:openai-chatgpt.json\n")
+	writeSessionFixture(t, directory, "claude-config-colors", "openai-chatgpt.json:205\ndeleted-config.json:220\n")
+	relaunch := writeSessionFixture(t, directory, "relaunch", strings.Join([]string{
+		"tool=claude", "tools=claude", "pointer=" + pointer, "list=" + list,
+		"colors=" + colors, "config_pointer=" + configPointer, "configs_list=" + configsList,
+	}, "\n"))
+	runner := &recordingProcessRunner{run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && len(args) == 2 && args[0] == "show-environment" {
+			switch args[1] {
+			case "WISP_DECK_CLAUDE_ACCOUNT":
+				return []byte("WISP_DECK_CLAUDE_ACCOUNT=work\n"), nil
+			case "WISP_DECK_CLAUDE_CONFIG":
+				return []byte(stampLine + "\n"), nil
+			}
+		}
+		return nil, nil
+	}}
+	return relaunch, runner
+}
+
+func TestSessionPillShowsStampedSubscriptionName(t *testing.T) {
+	relaunch, runner := subscriptionSessionFixture(t, t.TempDir(), "WISP_DECK_CLAUDE_CONFIG=openai-chatgpt.json")
+	source := NewSessionSource(runner)
+
+	got, err := source.Load(context.Background(), relaunch)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Pill == nil || got.Pill.Label != "OpenAI / ChatGPT" || got.Pill.Color != 205 {
+		t.Fatalf("subscription pill = %#v", got.Pill)
+	}
+}
+
+func TestSessionPillStampedStandardShowsAccount(t *testing.T) {
+	// A stamped empty value means THIS pane runs standard Claude even though the
+	// global pointer names a subscription; the account label must win.
+	relaunch, runner := subscriptionSessionFixture(t, t.TempDir(), "WISP_DECK_CLAUDE_CONFIG=")
+	source := NewSessionSource(runner)
+
+	got, err := source.Load(context.Background(), relaunch)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Pill == nil || got.Pill.Label != "Work" || got.Pill.Color != 170 {
+		t.Fatalf("stamped-standard pill = %#v", got.Pill)
+	}
+}
+
+func TestSessionPillUnstampedFallsBackToConfigPointer(t *testing.T) {
+	// An unstamped session (tmux prints -NAME) reads the global config pointer.
+	relaunch, runner := subscriptionSessionFixture(t, t.TempDir(), "-WISP_DECK_CLAUDE_CONFIG")
+	source := NewSessionSource(runner)
+
+	got, err := source.Load(context.Background(), relaunch)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Pill == nil || got.Pill.Label != "OpenAI / ChatGPT" || got.Pill.Color != 205 {
+		t.Fatalf("pointer-fallback pill = %#v", got.Pill)
+	}
+}
+
+func TestSessionPillUnknownConfigFallsBackToBareFilename(t *testing.T) {
+	directory := t.TempDir()
+	relaunch, runner := subscriptionSessionFixture(t, directory, "WISP_DECK_CLAUDE_CONFIG=deleted-config.json")
+	source := NewSessionSource(runner)
+
+	got, err := source.Load(context.Background(), relaunch)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Pill == nil || got.Pill.Label != "deleted-config" || got.Pill.Color != 220 {
+		t.Fatalf("stale-config pill = %#v", got.Pill)
+	}
+}
+
+func TestSessionPillLegacyContextFallsBackToLaunchPlan(t *testing.T) {
+	// A legacy relaunch context (no config_pointer) uses the launch-frozen
+	// WISP_DECK_PLAN so the pill still states the subscription.
+	directory := t.TempDir()
+	list := writeSessionFixture(t, directory, "claude-accounts.list", "Work:work\nPersonal:personal\n")
+	relaunch := writeSessionFixture(t, directory, "relaunch", "tool=claude\ntools=claude\nlist="+list+"\n")
+	source := NewSessionSource(&recordingProcessRunner{}, WithSessionPlan("OpenAI / ChatGPT"))
+
+	got, err := source.Load(context.Background(), relaunch)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Pill == nil || got.Pill.Label != "OpenAI / ChatGPT" || got.Pill.Color != 111 {
+		t.Fatalf("legacy plan pill = %#v", got.Pill)
+	}
+}
+
+func TestSessionPillLegacyStandardPlanShowsAccount(t *testing.T) {
+	directory := t.TempDir()
+	pointer := writeSessionFixture(t, directory, "claude-account", "work\n")
+	list := writeSessionFixture(t, directory, "claude-accounts.list", "Work:work\nPersonal:personal\n")
+	colors := writeSessionFixture(t, directory, "claude-account-colors", "work:170\n")
+	relaunch := writeSessionFixture(t, directory, "relaunch", strings.Join([]string{
+		"tool=claude", "tools=claude", "pointer=" + pointer, "list=" + list, "colors=" + colors,
+	}, "\n"))
+	source := NewSessionSource(&recordingProcessRunner{}, WithSessionPlan("Standard Claude"))
+
+	got, err := source.Load(context.Background(), relaunch)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Pill == nil || got.Pill.Label != "Work" || got.Pill.Color != 170 {
+		t.Fatalf("standard-plan pill = %#v", got.Pill)
+	}
+}
+
+func TestSessionPillEligibleWithOnlySubscriptions(t *testing.T) {
+	// No managed accounts and a single agent, but configured subscriptions make
+	// the switcher useful — the pill must show (mirrors account_pill_enabled).
+	directory := t.TempDir()
+	configPointer := writeSessionFixture(t, directory, "claude-config", "openai-chatgpt.json\n")
+	configsList := writeSessionFixture(t, directory, "claude-configs.list", "OpenAI / ChatGPT:openai-chatgpt.json\n")
+	writeSessionFixture(t, directory, "claude-config-colors", "openai-chatgpt.json:43\n")
+	relaunch := writeSessionFixture(t, directory, "relaunch", strings.Join([]string{
+		"tool=claude", "tools=claude",
+		"config_pointer=" + configPointer, "configs_list=" + configsList,
+	}, "\n"))
+	source := NewSessionSource(&recordingProcessRunner{})
+
+	got, err := source.Load(context.Background(), relaunch)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Pill == nil || got.Pill.Label != "OpenAI / ChatGPT" || got.Pill.Color != 43 {
+		t.Fatalf("subscription-only pill = %#v", got.Pill)
+	}
+}

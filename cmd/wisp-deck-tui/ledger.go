@@ -72,13 +72,13 @@ func runLedger(_ *cobra.Command, args []string) error {
 	var sessionSource LedgerSessionSource
 	var accountSwitcher ledger.AccountSwitcher
 	if ledgerRelaunchFile != "" {
-		sessionSource = ledger.NewSessionSource(processRunner)
+		sessionSource = ledger.NewSessionSource(processRunner, ledger.WithSessionPlan(os.Getenv("WISP_DECK_PLAN")))
 		if ledgerLibDir != "" {
 			accountSwitcher = ledger.NewExecAccountSwitcher(processRunner, ledgerLibDir)
 		}
 	}
 
-	var source LedgerSnapshotSource = ledger.NewSource(runner, ledger.WithPlan(os.Getenv("WISP_DECK_PLAN")))
+	var source LedgerSnapshotSource = ledger.NewSource(runner)
 	snapshot := ledger.NewSnapshot(0, nil, ledger.Metadata{})
 	loading := true
 	if ledgerSnapshotFile != "" {
@@ -143,7 +143,6 @@ type ledgerSnapshotDocument struct {
 		Branch     string `json:"branch"`
 		Ahead      int    `json:"ahead"`
 		Behind     int    `json:"behind"`
-		Plan       string `json:"plan"`
 		TotalFiles int    `json:"total_files"`
 		Added      int    `json:"added"`
 		Deleted    int    `json:"deleted"`
@@ -187,7 +186,7 @@ func readLedgerSnapshot(path string) (ledger.Snapshot, error) {
 	}
 	metadata := ledger.Metadata{
 		Branch: document.Metadata.Branch, Ahead: document.Metadata.Ahead,
-		Behind: document.Metadata.Behind, Plan: document.Metadata.Plan,
+		Behind:     document.Metadata.Behind,
 		TotalFiles: document.Metadata.TotalFiles, Added: document.Metadata.Added,
 		Deleted: document.Metadata.Deleted,
 	}

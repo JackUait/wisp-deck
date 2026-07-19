@@ -47,7 +47,6 @@ type nativeLedgerMetadata struct {
 	Branch     string `json:"branch"`
 	Ahead      int    `json:"ahead"`
 	Behind     int    `json:"behind"`
-	Plan       string `json:"plan"`
 	TotalFiles int    `json:"total_files"`
 	Added      int    `json:"added"`
 	Deleted    int    `json:"deleted"`
@@ -130,7 +129,7 @@ func writeNativeLedgerSnapshot(t *testing.T, total int, branch string) string {
 		Generation: 1,
 		Rows:       rows,
 		Metadata: nativeLedgerMetadata{
-			Branch: branch, Ahead: 2, Behind: 1, Plan: "native parity",
+			Branch: branch, Ahead: 2, Behind: 1,
 			TotalFiles: total, Added: total * 2, Deleted: total,
 		},
 	}

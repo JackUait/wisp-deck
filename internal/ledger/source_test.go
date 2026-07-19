@@ -85,7 +85,7 @@ func TestSourceLoadsAllGroupsIntoOneSnapshot(t *testing.T) {
 		"1\t1\tmodified.go\x00",
 		"new.txt\x00image.png\x00",
 	)
-	source := NewSource(runner, WithWorkers(2), WithPlan("Max"))
+	source := NewSource(runner, WithWorkers(2))
 
 	snapshot, err := source.Load(context.Background(), repo, 42)
 
@@ -107,10 +107,6 @@ func TestSourceLoadsAllGroupsIntoOneSnapshot(t *testing.T) {
 	if snapshot.Metadata.Branch != "feature/native-ledger" || snapshot.Metadata.Ahead != 3 || snapshot.Metadata.Behind != 2 {
 		t.Fatalf("branch metadata = %#v", snapshot.Metadata)
 	}
-	if snapshot.Metadata.Plan != "Max" {
-		t.Fatalf("plan = %q, want Max", snapshot.Metadata.Plan)
-	}
-
 	paths := map[string]Row{}
 	for _, row := range snapshot.Rows {
 		if row.Kind == RowFile {

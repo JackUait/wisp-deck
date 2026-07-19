@@ -93,19 +93,11 @@ func WithInspector(inspector Inspector) SourceOption {
 	}
 }
 
-// WithPlan supplies the active plan label rendered in snapshot metadata.
-func WithPlan(plan string) SourceOption {
-	return func(source *Source) {
-		source.plan = plan
-	}
-}
-
 // Source builds immutable ledger snapshots from Git and the working tree.
 type Source struct {
 	runner    Runner
 	inspector Inspector
 	workers   int
-	plan      string
 }
 
 // NewSource creates a snapshot source.
@@ -199,7 +191,6 @@ func (s *Source) Load(ctx context.Context, dir string, generation uint64) (Snaps
 
 	metadata := Metadata{
 		Branch: strings.TrimSpace(string(outputs[queryBranch])),
-		Plan:   s.plan,
 	}
 	if metadata.Branch == "" {
 		metadata.Branch = "detached"

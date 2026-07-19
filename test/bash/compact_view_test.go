@@ -1445,10 +1445,10 @@ func TestCompactView_header_shows_changed_file_count(t *testing.T) {
 	}
 }
 
-// The branch heading must show the active subscription/plan (WISP_DECK_PLAN)
-// inline next to the branch name, so the ledger always states which plan the
-// session is running on. Shown even with no working-tree changes.
-func TestCompactView_header_shows_active_plan(t *testing.T) {
+// The subscription/plan moved to the account pill in the bottom bar; the
+// pinned header must NOT repeat it (WISP_DECK_PLAN stays exported for the
+// pill's legacy fallback, so the header has to ignore it deliberately).
+func TestCompactView_header_omits_plan(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
 		t.Skip("zsh not available")
@@ -1485,8 +1485,8 @@ func TestCompactView_header_shows_active_plan(t *testing.T) {
 	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=0.1", "TERM=xterm", "WISP_DECK_PLAN=Work Max")
 	out, _ := cmd.CombinedOutput()
 
-	if !strings.Contains(string(out), "Work Max") {
-		t.Errorf("header should show the active plan (\"Work Max\"):\n%q", string(out))
+	if strings.Contains(string(out), "Work Max") {
+		t.Errorf("header still shows the plan (\"Work Max\"):\n%q", string(out))
 	}
 }
 

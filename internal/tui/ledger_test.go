@@ -37,7 +37,7 @@ func ledgerTestSnapshot(n int) ledger.Snapshot {
 	rows = append(rows, ledger.Row{Kind: ledger.RowSpacer})
 	return ledger.NewSnapshot(1, rows, ledger.Metadata{
 		Branch: "feature/native-ledger", Ahead: 3, Behind: 2,
-		Plan: "Max", TotalFiles: n, Added: n * 12, Deleted: n * 3,
+		TotalFiles: n, Added: n * 12, Deleted: n * 3,
 	})
 }
 
@@ -99,7 +99,7 @@ func TestLedgerViewRendersFileStatesAndMetadata(t *testing.T) {
 		{Kind: ledger.RowSpacer},
 	}
 	snapshot := ledger.NewSnapshot(2, rows, ledger.Metadata{
-		Branch: "feature/perf", Ahead: 2, Behind: 1, Plan: "Max",
+		Branch: "feature/perf", Ahead: 2, Behind: 1,
 		TotalFiles: 2, Added: 12, Deleted: 3,
 	})
 	m := NewLedgerModel(fakeLedgerSource{}, snapshot, LedgerOptions{})
@@ -110,8 +110,11 @@ func TestLedgerViewRendersFileStatesAndMetadata(t *testing.T) {
 	raw := m.View()
 	plain := stripANSI(raw)
 
+	if strings.Contains(plain, "Max") {
+		t.Errorf("view still renders the subscription plan in the header:\n%s", plain)
+	}
 	for _, want := range []string{
-		"Max", "2 files", "+12", "−3", "modified", "(2)",
+		"2 files", "+12", "−3", "modified", "(2)",
 		"☑", "selected.go", "☐", "+1.5KB", "image.png",
 		"feature/perf", "↑2", "↓1",
 	} {
@@ -130,7 +133,7 @@ func TestLedgerHeaderRendersLineTotalsInDiffColors(t *testing.T) {
 	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
 
 	raw := renderLedgerHeader(ledger.Metadata{
-		Plan: "Max", TotalFiles: 8, Added: 654, Deleted: 25,
+		TotalFiles: 8, Added: 654, Deleted: 25,
 	}, 80)[0]
 
 	if !ledgerSGRActiveAt(raw, "+654", "32m") {
@@ -1106,5 +1109,21 @@ func TestLedgerAccountClickSwitchesAsyncThenReloadsContextAndSnapshot(t *testing
 	}
 	if calls, session := switcher.recorded(); calls != 1 || session.Pill == nil || session.Pill.Label != "Work" {
 		t.Fatalf("switcher calls=%d session=%#v", calls, session)
+	}
+}
+
+func TestLedgerHeaderOmitsSubscriptionPlan(t *testing.T) {
+	// The subscription moved to the account pill; the header keeps only the
+	// changed-file stamp, right-aligned.
+	raw := renderLedgerHeader(ledger.Metadata{
+		TotalFiles: 8, Added: 654, Deleted: 25,
+	}, 80)[0]
+
+	plain := stripANSI(raw)
+	if strings.Contains(plain, "OpenAI / ChatGPT") {
+		t.Fatalf("header still renders the subscription plan: %q", plain)
+	}
+	if !strings.Contains(plain, "8 files  +654 −25") {
+		t.Fatalf("header lost the changed-file stamp: %q", plain)
 	}
 }

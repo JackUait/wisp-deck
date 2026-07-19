@@ -52,7 +52,6 @@ type Metadata struct {
 	Branch     string
 	Ahead      int
 	Behind     int
-	Plan       string
 	TotalFiles int
 	Added      int
 	Deleted    int
