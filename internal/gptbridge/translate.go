@@ -173,13 +173,14 @@ func translateMessages(messages []Message, translation *Translation) error {
 	last := len(messages) - 1
 	for index, message := range messages {
 		final := index == last
-		hasResult, hasOrdinary := classifyBlocks(message.Content)
+		hasResult, _ := classifyBlocks(message.Content)
 		if final {
 			if hasResult {
-				if hasOrdinary {
-					return errors.New("final tool_result message cannot contain ordinary user content")
+				results, err := normalizedFinalToolResults(message.Content)
+				if err != nil {
+					return err
 				}
-				for _, block := range message.Content {
+				for _, block := range results {
 					name, ok := open[block.ToolUseID]
 					if !ok {
 						return fmt.Errorf("tool_result %q has no pending tool_use", block.ToolUseID)
@@ -226,6 +227,35 @@ func classifyBlocks(blocks []ContentBlock) (hasResult, hasOrdinary bool) {
 		}
 	}
 	return
+}
+
+func normalizedFinalToolResults(blocks []ContentBlock) ([]ContentBlock, error) {
+	results := make([]ContentBlock, 0, len(blocks))
+	hasOrdinary := false
+	for _, block := range blocks {
+		if block.Type == "tool_result" {
+			results = append(results, block)
+		} else {
+			hasOrdinary = true
+		}
+	}
+	if !hasOrdinary {
+		return results, nil
+	}
+	if len(results) != 1 {
+		return nil, errors.New("final user content alongside multiple tool results is ambiguous")
+	}
+
+	merged := make([]ContentBlock, 0, len(results[0].ToolContent)+len(blocks)-1)
+	for _, block := range blocks {
+		if block.Type == "tool_result" {
+			merged = append(merged, block.ToolContent...)
+		} else {
+			merged = append(merged, block)
+		}
+	}
+	results[0].ToolContent = merged
+	return results, nil
 }
 
 func translateHistoryMessage(message Message, open map[string]string, seen map[string]bool) ([]map[string]any, error) {

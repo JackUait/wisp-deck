@@ -208,6 +208,74 @@ func TestTranslatePendingToolResults(t *testing.T) {
 	}
 }
 
+func TestTranslateSkillContinuationMergesSupplementalContent(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"messages":[
+			{"role":"user","content":"Load the skill"},
+			{"role":"assistant","content":[{
+				"type":"tool_use",
+				"id":"skill_1",
+				"name":"Skill",
+				"input":{"skill":"superpowers:using-superpowers"}
+			}]},
+			{"role":"user","content":[
+				{
+					"type":"tool_result",
+					"tool_use_id":"skill_1",
+					"content":"Launching skill: superpowers:using-superpowers"
+				},
+				{"type":"text","text":"Base directory for this skill: /skills/superpowers"}
+			]}
+		]
+	}`)
+	if len(got.ToolResults) != 1 || len(got.Input) != 0 {
+		t.Fatalf("translation = %+v", got)
+	}
+	items := got.ToolResults[0].ContentItems
+	if len(items) != 2 {
+		t.Fatalf("result content = %+v", items)
+	}
+	if items[0].Type != "inputText" ||
+		items[0].Text != "Launching skill: superpowers:using-superpowers" {
+		t.Fatalf("first result content = %+v", items[0])
+	}
+	if items[1].Type != "inputText" ||
+		items[1].Text != "Base directory for this skill: /skills/superpowers" {
+		t.Fatalf("supplemental result content = %+v", items[1])
+	}
+}
+
+func TestTranslateRejectsAmbiguousMixedToolResults(t *testing.T) {
+	request, err := ParseMessagesRequest([]byte(`{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"messages":[
+			{"role":"user","content":"Run both"},
+			{"role":"assistant","content":[
+				{"type":"tool_use","id":"tool_1","name":"One","input":{}},
+				{"type":"tool_use","id":"tool_2","name":"Two","input":{}}
+			]},
+			{"role":"user","content":[
+				{"type":"tool_result","tool_use_id":"tool_1","content":"first"},
+				{"type":"text","text":"Supplemental context"},
+				{"type":"tool_result","tool_use_id":"tool_2","content":"second"}
+			]}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = TranslateRequest(request)
+	if err == nil || !strings.Contains(
+		err.Error(),
+		"final user content alongside multiple tool results is ambiguous",
+	) {
+		t.Fatalf("TranslateRequest error = %v", err)
+	}
+}
+
 func TestTranslateThinkingBudgetToReasoningEffort(t *testing.T) {
 	got := parseAndTranslate(t, `{
 		"model":"gpt-5.6-sol",
