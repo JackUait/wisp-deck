@@ -2,28 +2,13 @@
 # Notification setup — sound hooks.
 # Depends on: tui.sh (success, warn)
 
-# Play notification sound if enabled for the given AI tool.
-# Reads sound preference from features JSON and plays via afplay in background.
+# Delegate notification sound playback to the guarded Go owner.
 # Usage: play_notification_sound <ai_tool> <config_dir>
 play_notification_sound() {
   [[ "${WISP_DECK_TESTING:-}" == "1" ]] && return 0
 
   local ai_tool="$1" config_dir="$2"
-  local lock_file="$config_dir/.${ai_tool}-features.json.lock"
-  local module="${BASH_SOURCE[0]}"
-
-  # Writers use this same advisory lock. Holding it through playback makes a
-  # successful Off action a completion boundary: old-authorized audio has
-  # finished, and later playback must re-read the new value.
-  (
-    /usr/bin/lockf -k "$lock_file" /bin/bash -c '
-      source "$1"
-      sound_name="$(get_sound_name "$2" "$3")"
-      if [[ -n "$sound_name" ]]; then
-        afplay "/System/Library/Sounds/${sound_name}.aiff"
-      fi
-    ' _ "$module" "$ai_tool" "$config_dir"
-  ) >/dev/null 2>&1 &
+  wisp-deck-tui notification-sound --features-file "$config_dir/${ai_tool}-features.json" >/dev/null 2>&1 &
 }
 
 # Print two lines: explicit enabled state, then the validated sound name. A
@@ -193,6 +178,8 @@ set_sound_name() {
   local lock_file="$config_dir/.${tool}-features.json.lock"
   local module="${BASH_SOURCE[0]}"
   mkdir -p "$config_dir"
+  # Positional arguments deliberately expand inside the inner Bash process.
+  # shellcheck disable=SC2016
   /usr/bin/lockf -k "$lock_file" /bin/bash -c '
     source "$1"
     _write_sound_preference "$2" name "$3"
@@ -207,6 +194,8 @@ set_sound_feature_flag() {
   local lock_file="$config_dir/.${tool}-features.json.lock"
   local module="${BASH_SOURCE[0]}"
   mkdir -p "$config_dir"
+  # Positional arguments deliberately expand inside the inner Bash process.
+  # shellcheck disable=SC2016
   /usr/bin/lockf -k "$lock_file" /bin/bash -c '
     source "$1"
     _write_sound_preference "$2" enabled "$3"

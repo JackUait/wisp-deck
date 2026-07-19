@@ -20,7 +20,6 @@ import (
 func TestIdleSoundRuntimeSitesUseSharedLiveGate(t *testing.T) {
 	root := projectRoot(t)
 	allowed := map[string]bool{
-		filepath.Join(root, "lib", "notification-setup.sh"):            true,
 		filepath.Join(root, "cmd", "wisp-deck-tui", "host_effects.go"): true,
 	}
 	paths := []string{
@@ -75,9 +74,6 @@ func TestIdleSoundRuntimeSitesUseSharedLiveGate(t *testing.T) {
 	}
 
 	expectedCounts := map[string]map[string]int{
-		filepath.Join(root, "lib", "notification-setup.sh"): {
-			"afplay": 2, "/System/Library/Sounds": 1, "NSSound": 0, "AudioServicesPlaySystemSound": 0,
-		},
 		filepath.Join(root, "cmd", "wisp-deck-tui", "host_effects.go"): {
 			"afplay": 1, "/System/Library/Sounds": 1, "NSSound": 0, "AudioServicesPlaySystemSound": 0,
 		},
@@ -98,9 +94,8 @@ func TestIdleSoundRuntimeSitesUseSharedLiveGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(shell), `/usr/bin/lockf -k "$lock_file"`) ||
-		!strings.Contains(string(shell), `sound_name="$(get_sound_name`) {
-		t.Fatal("foreground idle playback must lock and re-read its live preference")
+	if err := validateShellNotificationOwnership(string(shell)); err != nil {
+		t.Fatal(err)
 	}
 	background, err := os.ReadFile(filepath.Join(root, "cmd", "wisp-deck-tui", "claude_background.go"))
 	if err != nil {
@@ -169,6 +164,85 @@ func TestIdleSoundRuntimeSitesUseSharedLiveGate(t *testing.T) {
 	if strings.Contains(string(codex), "writeFull(s.output(), chunk)") {
 		t.Fatal("Codex PTY still forwards the raw notification-bearing chunk")
 	}
+}
+
+func TestShellNotificationOwnershipGuardRejectsBypasses(t *testing.T) {
+	source := repositorySource(t, "lib", "notification-setup.sh")
+	if err := validateShellNotificationOwnership(source); err != nil {
+		t.Fatalf("current shell notification owner rejected: %v", err)
+	}
+	const delegate = `wisp-deck-tui notification-sound --features-file "$config_dir/${ai_tool}-features.json" >/dev/null 2>&1 &`
+	mutations := map[string]string{
+		"reintroduced afplay": strings.Replace(
+			source,
+			delegate,
+			`afplay "$config_dir/chime.aiff" >/dev/null 2>&1 &`,
+			1,
+		),
+		"reintroduced system sound": strings.Replace(
+			source,
+			delegate,
+			`printf '%s\n' "/System/Library/Sounds/Glass.aiff" >/dev/null 2>&1 &`,
+			1,
+		),
+	}
+	for name, mutated := range mutations {
+		t.Run(name, func(t *testing.T) {
+			if mutated == source {
+				t.Fatal("shell ownership mutation prerequisite was not found")
+			}
+			if err := validateShellNotificationOwnership(mutated); err == nil {
+				t.Fatal("shell host-effect owner escaped ownership validation")
+			}
+		})
+	}
+}
+
+func validateShellNotificationOwnership(source string) error {
+	if stringHasHostEffectMarker(source) {
+		return fmt.Errorf("notification shell contains a host-effect process literal")
+	}
+	if strings.Contains(strings.ToLower(source), "player") {
+		return fmt.Errorf("notification shell contains a player variable or reference")
+	}
+
+	const declaration = "play_notification_sound() {"
+	start := strings.Index(source, declaration)
+	if start < 0 {
+		return fmt.Errorf("notification shell is missing play_notification_sound")
+	}
+	body := source[start+len(declaration):]
+	end := strings.Index(body, "\n}")
+	if end < 0 {
+		return fmt.Errorf("play_notification_sound has no closing boundary")
+	}
+	var statements []string
+	for _, line := range strings.Split(body[:end], "\n") {
+		statement := strings.TrimSpace(line)
+		if statement == "" || strings.HasPrefix(statement, "#") {
+			continue
+		}
+		statements = append(statements, statement)
+	}
+	want := []string{
+		`[[ "${WISP_DECK_TESTING:-}" == "1" ]] && return 0`,
+		`local ai_tool="$1" config_dir="$2"`,
+		`wisp-deck-tui notification-sound --features-file "$config_dir/${ai_tool}-features.json" >/dev/null 2>&1 &`,
+	}
+	if len(statements) != len(want) {
+		return fmt.Errorf("play_notification_sound statements = %d, want exactly %d", len(statements), len(want))
+	}
+	for index := range want {
+		if statements[index] != want[index] {
+			return fmt.Errorf(
+				"play_notification_sound statement %d = %q, want %q",
+				index+1,
+				statements[index],
+				want[index],
+			)
+		}
+	}
+	return nil
 }
 
 func TestMainMenuSoundPreviewOwnershipGuardRejectsBypasses(t *testing.T) {

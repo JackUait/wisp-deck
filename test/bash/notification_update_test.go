@@ -171,7 +171,7 @@ func TestNotification_set_sound_feature_flag_preserves_other_keys(t *testing.T) 
 
 func TestNotificationTestModeIsSilent(t *testing.T) {
 	tmpDir := t.TempDir()
-	writeTempFile(t, tmpDir, "claude-features.json", `{"sound": false}`)
+	writeTempFile(t, tmpDir, "claude-features.json", `{"sound": true, "sound_name": "Glass"}`)
 	lockPath := filepath.Join(tmpDir, ".claude-features.json.lock")
 	calls := filepath.Join(tmpDir, "tui-calls")
 	binDir := mockCommand(t, t.TempDir(), "wisp-deck-tui",
@@ -188,6 +188,36 @@ func TestNotificationTestModeIsSilent(t *testing.T) {
 	}
 	if _, err := os.Stat(calls); !os.IsNotExist(err) {
 		t.Fatal("marked test mode invoked wisp-deck-tui")
+	}
+}
+
+func TestNotificationDelegationUsesExactFeaturesArgument(t *testing.T) {
+	configDir := filepath.Join(t.TempDir(), "config dir with spaces")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(t.TempDir(), "tui-argv")
+	snippet := notificationSnippet(t, fmt.Sprintf(`
+WISP_DECK_TESTING=0
+wisp-deck-tui() { printf '%%s\n' "$@" > %q; }
+play_notification_sound "claude" %q
+wait
+`, calls, configDir))
+
+	_, code := runBashSnippet(t, snippet, buildEnv(t, nil))
+	assertExitCode(t, code, 0)
+	data, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatalf("delegated notification command was not recorded: %v", err)
+	}
+	got := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	want := []string{
+		"notification-sound",
+		"--features-file",
+		filepath.Join(configDir, "claude-features.json"),
+	}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("notification delegation argv = %#v, want %#v", got, want)
 	}
 }
 

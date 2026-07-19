@@ -355,3 +355,116 @@ func TestNotificationTestModeGuardSource(t *testing.T) {
 	}
 	t.Fatal("play_notification_sound has no executable statement")
 }
+
+func TestWrapperTestingMarkerSourceContract(t *testing.T) {
+	source := repositorySource(t, "wrapper.sh")
+	if err := validateWrapperTestingMarkerSource(source); err != nil {
+		t.Fatalf("current wrapper testing marker contract rejected: %v", err)
+	}
+
+	mutations := map[string]string{
+		"unconditional marker": mutateWrapperTestingMarkerSource(
+			t,
+			source,
+			`if [[ "${WISP_DECK_TESTING:-}" == "1" ]]; then`,
+			"if true; then",
+		),
+		"zero marker": mutateWrapperTestingMarkerSource(
+			t,
+			source,
+			`if [[ "${WISP_DECK_TESTING:-}" == "1" ]]; then`,
+			`if [[ "${WISP_DECK_TESTING:-}" == "0" ]]; then`,
+		),
+		"stale marker": mutateWrapperTestingMarkerSource(
+			t,
+			source,
+			`if [[ "${WISP_DECK_TESTING:-}" == "1" ]]; then`,
+			`if [[ -n "${WISP_DECK_TESTING:-}" ]]; then`,
+		),
+		"arbitrary marker": mutateWrapperTestingMarkerSource(
+			t,
+			source,
+			"_wisp_deck_testing_tmux_args=(-e WISP_DECK_TESTING=1)",
+			`_wisp_deck_testing_tmux_args=(-e "WISP_DECK_TESTING=${WISP_DECK_TESTING:-}")`,
+		),
+		"missing environment flag": mutateWrapperTestingMarkerSource(
+			t,
+			source,
+			"_wisp_deck_testing_tmux_args=(-e WISP_DECK_TESTING=1)",
+			"_wisp_deck_testing_tmux_args=(WISP_DECK_TESTING=1)",
+		),
+		"unquoted array expansion": mutateWrapperTestingMarkerSource(
+			t,
+			source,
+			`"${_wisp_deck_testing_tmux_args[@]}"`,
+			`${_wisp_deck_testing_tmux_args[@]}`,
+		),
+		"spare command unsets marker": mutateWrapperTestingMarkerSource(
+			t,
+			source,
+			"env -u TMUX -u TMUX_PANE",
+			"env -u WISP_DECK_TESTING -u TMUX -u TMUX_PANE",
+		),
+	}
+	for name, mutated := range mutations {
+		t.Run(name, func(t *testing.T) {
+			if err := validateWrapperTestingMarkerSource(mutated); err == nil {
+				t.Fatal("unsafe wrapper testing marker mutation passed source validation")
+			}
+		})
+	}
+}
+
+func mutateWrapperTestingMarkerSource(
+	t *testing.T,
+	source string,
+	old string,
+	replacement string,
+) string {
+	t.Helper()
+	if count := strings.Count(source, old); count < 1 {
+		t.Fatalf("wrapper mutation prerequisite %q occurs %d times", old, count)
+	}
+	return strings.Replace(source, old, replacement, 1)
+}
+
+func validateWrapperTestingMarkerSource(source string) error {
+	const setup = `_wisp_deck_testing_tmux_args=()
+if [[ "${WISP_DECK_TESTING:-}" == "1" ]]; then
+  _wisp_deck_testing_tmux_args=(-e WISP_DECK_TESTING=1)
+fi
+
+"$TMUX_CMD" new-session`
+	if strings.Count(source, setup) != 1 {
+		return fmt.Errorf("testing marker array is not initialized immediately before new-session")
+	}
+	const expansion = `"${_wisp_deck_testing_tmux_args[@]}"`
+	if strings.Count(source, expansion) != 1 {
+		return fmt.Errorf("testing marker array must have one quoted argv expansion")
+	}
+	commandStart := strings.Index(source, `"$TMUX_CMD" new-session`)
+	if commandStart < 0 {
+		return fmt.Errorf("wrapper is missing outer tmux new-session")
+	}
+	commandEnd := strings.Index(source[commandStart:], "2>&3")
+	if commandEnd < 0 {
+		return fmt.Errorf("outer tmux new-session command has no boundary")
+	}
+	command := source[commandStart : commandStart+commandEnd]
+	if strings.Count(command, expansion) != 1 {
+		return fmt.Errorf("testing marker array is not expanded exactly once in outer new-session")
+	}
+	if strings.Count(source, "WISP_DECK_TESTING") != 2 {
+		return fmt.Errorf("wrapper contains a stale or arbitrary testing marker path")
+	}
+	for _, forbidden := range []string{
+		"unset WISP_DECK_TESTING",
+		"env -u WISP_DECK_TESTING",
+		"-u WISP_DECK_TESTING",
+	} {
+		if strings.Contains(source, forbidden) {
+			return fmt.Errorf("wrapper resets the inherited testing marker with %q", forbidden)
+		}
+	}
+	return nil
+}

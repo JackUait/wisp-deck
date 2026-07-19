@@ -9,6 +9,105 @@ import (
 	"time"
 )
 
+func recordWrapperNewSessionArgs(t *testing.T) []string {
+	t.Helper()
+	home := t.TempDir()
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recording := filepath.Join(home, "new-session-argv")
+	mocks := map[string]string{
+		"tmux": `#!/bin/bash
+if [ "$1" = "new-session" ]; then
+  printf '%s\n' "$@" > "$GT_REC"
+fi
+exit 0
+`,
+		"claude":        "#!/bin/bash\nexit 0\n",
+		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
+		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
+		"osascript":     "#!/bin/bash\nexit 1\n",
+		"open":          "#!/bin/bash\nexit 0\n",
+	}
+	for name, body := range mocks {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(body), 0o755); err != nil {
+			t.Fatalf("write mock %s: %v", name, err)
+		}
+	}
+
+	project := filepath.Join(home, "project")
+	config := filepath.Join(home, ".config", "wisp-deck")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(config, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bashEnv := filepath.Join(home, "bash-env")
+	if err := os.WriteFile(bashEnv, []byte(`function /bin/ps {
+  printf 'Thu Jul  2 01:01:01 2026\n'
+}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(config, "restore-queue"),
+		[]byte("12345|"+project+"|claude|sid-testing\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(config, "last-restore-boot"),
+		[]byte("12345\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	seedChainTicket(t, config)
+
+	env := buildEnv(t, nil,
+		"HOME="+home,
+		"GT_REC="+recording,
+		"PROJECT_NAME=",
+		"BASH_ENV="+bashEnv,
+	)
+	output, code := runBashScript(t, "wrapper.sh", []string{project}, env)
+	if code != 0 {
+		logPaths, _ := filepath.Glob(filepath.Join(config, "logs", "*"))
+		for _, logPath := range logPaths {
+			if data, err := os.ReadFile(logPath); err == nil {
+				output += "\n" + logPath + ":\n" + string(data)
+			}
+		}
+		t.Fatalf("wrapper exited %d while recording new-session argv:\n%s", code, output)
+	}
+	data, err := os.ReadFile(recording)
+	if err != nil {
+		t.Fatalf("new-session argv was not recorded: %v", err)
+	}
+	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+}
+
+func TestWrapperPropagatesExactTestingMarkerToTmux(t *testing.T) {
+	arguments := recordWrapperNewSessionArgs(t)
+	markerIndex := -1
+	markerCount := 0
+	for index, argument := range arguments {
+		if argument == "WISP_DECK_TESTING=1" {
+			markerIndex = index
+			markerCount++
+		}
+	}
+	if markerCount != 1 {
+		t.Fatalf("new-session testing markers = %d, want exactly 1\nargv: %#v", markerCount, arguments)
+	}
+	if markerIndex == 0 || arguments[markerIndex-1] != "-e" {
+		t.Fatalf("testing marker is not immediately preceded by -e\nargv: %#v", arguments)
+	}
+}
+
 // TestWrapperInteractive_pops_restore_queue_into_current_window runs the real
 // wrapper.sh with no arguments and a pending restore-queue entry, and
 // verifies the window takes over that entry instead of showing the picker:
