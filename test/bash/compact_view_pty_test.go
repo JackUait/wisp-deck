@@ -1243,12 +1243,12 @@ func TestCompactView_shows_hover_checkbox(t *testing.T) {
 	}
 }
 
-// The branch name and its push/pull commit counts must show ONLY at the BOTTOM
-// of the file-list view (below the listed files) — never in the pinned top
-// heading. Drives the real loop under zsh with an upstream two commits ahead, and
-// asserts the last content line is a branch bar reading "main ... ↑2" sitting
-// below the a.txt file row, and that "main" appears on no other line.
-func TestCompactView_shows_branch_only_at_bottom_with_push_pull(t *testing.T) {
+// The branch NAME lives in the pinned top heading (left side), while the
+// push/pull commit counts stay at the BOTTOM bar below the listed files.
+// Drives the real loop under zsh with an upstream two commits ahead, and
+// asserts the heading leads with "main", the last content line reads "↑2"
+// without repeating the branch, and the file list sits between them.
+func TestCompactView_branch_in_heading_push_pull_at_bottom(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
 		t.Skip("zsh not available")
@@ -1341,12 +1341,18 @@ func TestCompactView_shows_branch_only_at_bottom_with_push_pull(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatalf("no content rendered; frame:\n%q", frame)
 	}
-	bottom := lines[len(lines)-1]
-	if !strings.Contains(bottom, "main") || !strings.Contains(bottom, "↑2") {
-		t.Errorf("bottom line must be the branch bar with push count (\"main ... ↑2\"); got %q\nframe:\n%s", bottom, frame)
+	heading := lines[0]
+	if !strings.HasPrefix(strings.TrimRight(heading, " "), " main") {
+		t.Errorf("pinned heading must lead with the branch name (\" main\"); got %q\nframe:\n%s", heading, frame)
 	}
-	// The branch must appear ONLY at the bottom — not in the pinned top heading or
-	// anywhere else. Exactly one line may mention it.
+	bottom := lines[len(lines)-1]
+	if !strings.Contains(bottom, "↑2") {
+		t.Errorf("bottom line must keep the push count (\"↑2\"); got %q\nframe:\n%s", bottom, frame)
+	}
+	if strings.Contains(bottom, "main") {
+		t.Errorf("bottom bar must not repeat the branch name; got %q\nframe:\n%s", bottom, frame)
+	}
+	// The branch must appear ONLY in the heading — exactly one line mentions it.
 	branchLines := 0
 	for _, ln := range lines {
 		if strings.Contains(ln, "main") {
@@ -1354,7 +1360,7 @@ func TestCompactView_shows_branch_only_at_bottom_with_push_pull(t *testing.T) {
 		}
 	}
 	if branchLines != 1 {
-		t.Errorf("branch name must appear ONLY at the bottom bar (exactly 1 line); found %d:\n%s", branchLines, strings.Join(lines, "\n"))
+		t.Errorf("branch name must appear ONLY in the heading (exactly 1 line); found %d:\n%s", branchLines, strings.Join(lines, "\n"))
 	}
 	// The bottom bar must sit BELOW the file list: a.txt appears on an earlier line.
 	fileRow := -1
@@ -1365,12 +1371,12 @@ func TestCompactView_shows_branch_only_at_bottom_with_push_pull(t *testing.T) {
 		}
 	}
 	if fileRow < 0 || fileRow >= len(lines)-1 {
-		t.Errorf("a.txt (the file list) must appear above the bottom branch bar; lines:\n%s", strings.Join(lines, "\n"))
+		t.Errorf("a.txt (the file list) must appear above the bottom bar; lines:\n%s", strings.Join(lines, "\n"))
 	}
 
 	// It must sit at the VERY bottom of the pane, not just below the (short) list:
 	// the body is padded with blank rows so the bar lands on the last screen row.
-	// Keep every row (blanks included) and confirm the branch bar is the last row,
+	// Keep every row (blanks included) and confirm the ↑2 bar is the last row,
 	// with blank filler on the row directly above it.
 	var rows []string
 	for _, ln := range strings.Split(frame, "\n") {
@@ -1382,13 +1388,13 @@ func TestCompactView_shows_branch_only_at_bottom_with_push_pull(t *testing.T) {
 	for last > 0 && rows[last] == "" {
 		last--
 	}
-	if !strings.Contains(rows[last], "main") {
-		t.Errorf("the very last rendered row must be the branch bar; got %q", rows[last])
+	if !strings.Contains(rows[last], "↑2") {
+		t.Errorf("the very last rendered row must be the push/pull bar; got %q", rows[last])
 	}
 	// A 1-file list is far shorter than the 12-row pane, so there is blank filler
 	// pushing the bar down: the row directly above it is empty.
 	if last < 1 || rows[last-1] != "" {
-		t.Errorf("branch bar must be pushed to the pane bottom with blank filler above it; row above = %q\nrows:\n%s", func() string {
+		t.Errorf("push/pull bar must be pushed to the pane bottom with blank filler above it; row above = %q\nrows:\n%s", func() string {
 			if last >= 1 {
 				return rows[last-1]
 			}
@@ -1398,7 +1404,7 @@ func TestCompactView_shows_branch_only_at_bottom_with_push_pull(t *testing.T) {
 	// And the bar sits near the pane's last row (pane is 12 tall): the list is only
 	// a few rows, so without bottom-pinning the bar would be near the top.
 	if last < 9 {
-		t.Errorf("branch bar landed on row %d, expected near the pane bottom (~row 12); rows:\n%s", last+1, strings.Join(rows, "\n"))
+		t.Errorf("push/pull bar landed on row %d, expected near the pane bottom (~row 12); rows:\n%s", last+1, strings.Join(rows, "\n"))
 	}
 }
 

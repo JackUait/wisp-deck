@@ -626,29 +626,55 @@ func renderLedgerHeader(metadata ledger.Metadata, width int) []string {
 		}
 		stamp = fmt.Sprintf("%d %s  +%d −%d", metadata.TotalFiles, unit, metadata.Added, metadata.Deleted)
 	}
-	available := width - visibleRuneWidth(stamp) - 2
-	if available < 1 {
-		available = 1
+	branch := metadata.Branch
+	if branch == "" {
+		branch = "detached"
 	}
-	line := " " + strings.Repeat(" ", available) + stamp
+	// The stamp's right-aligned block wins the row: the branch takes what is
+	// left of it (leading space + 2-col gap reserved) and truncates.
+	branchMax := width - visibleRuneWidth(stamp) - 3
+	if stamp == "" {
+		branchMax = width - 1
+	}
+	if branchMax < 1 {
+		branchMax = 1
+	}
+	branch = ledgerFitPlain(branch, branchMax)
+	pad := width - 2 - visibleRuneWidth(branch) - visibleRuneWidth(stamp)
+	if pad < 1 {
+		pad = 1
+	}
+	line := " " + branch + strings.Repeat(" ", pad) + stamp
 	line = ledgerFitPlain(line, width)
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	lineRendered := dim.Render(line)
+	branchEnd := 1 + len(branch)
+	if branchEnd > len(line) {
+		branchEnd = len(line)
+	}
+	branchSeg := line[1:branchEnd]
+	rest := line[branchEnd:]
+	ns, leaf := "", branchSeg
+	if i := strings.LastIndex(branchSeg, "/"); i >= 0 {
+		ns, leaf = branchSeg[:i+1], branchSeg[i+1:]
+	}
+	bright := lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+	restRendered := dim.Render(rest)
 	if stamp != "" {
 		added := fmt.Sprintf("+%d", metadata.Added)
 		deleted := fmt.Sprintf("−%d", metadata.Deleted)
-		addedAt := strings.LastIndex(line, added)
-		deletedAt := strings.LastIndex(line, deleted)
+		addedAt := strings.LastIndex(rest, added)
+		deletedAt := strings.LastIndex(rest, deleted)
 		if addedAt >= 0 && deletedAt >= addedAt+len(added) {
 			green := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 			red := lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-			lineRendered = dim.Render(line[:addedAt]) +
+			restRendered = dim.Render(rest[:addedAt]) +
 				green.Render(added) +
-				dim.Render(line[addedAt+len(added):deletedAt]) +
+				dim.Render(rest[addedAt+len(added):deletedAt]) +
 				red.Render(deleted) +
-				dim.Render(line[deletedAt+len(deleted):])
+				dim.Render(rest[deletedAt+len(deleted):])
 		}
 	}
+	lineRendered := dim.Render(" "+ns) + bright.Render(leaf) + restRendered
 	ruleWidth := width - 2
 	if ruleWidth < 0 {
 		ruleWidth = 0
@@ -835,11 +861,7 @@ func renderLedgerFooter(state *ledger.State, width int, actionError error, pill 
 		)
 	}
 	metadata := state.Snapshot.Metadata
-	branch := metadata.Branch
-	if branch == "" {
-		branch = "detached"
-	}
-	parts := []string{" " + branch}
+	parts := []string{}
 	if metadata.Ahead > 0 {
 		parts = append(parts, fmt.Sprintf("↑%d", metadata.Ahead))
 	}
@@ -857,7 +879,10 @@ func renderLedgerFooter(state *ledger.State, width int, actionError error, pill 
 	status := strings.Join(parts, " · ")
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	if pill == nil {
-		return dim.Render(ledgerFitPlain(status, width))
+		if status == "" {
+			return ""
+		}
+		return dim.Render(ledgerFitPlain(" "+status, width))
 	}
 	pillText := ledgerPillText(pill)
 	pillStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(fmt.Sprintf("%d", pill.Color)))
@@ -865,6 +890,9 @@ func renderLedgerFooter(state *ledger.State, width int, actionError error, pill 
 		pillStyle = pillStyle.Background(lipgloss.Color("238"))
 	}
 	pillRendered := pillStyle.Render(pillText)
+	if status == "" {
+		return pillStyle.Render(ledgerFitPlain(pillText, width))
+	}
 	remaining := width - lipgloss.Width(pillRendered) - 3
 	if remaining < 0 {
 		return pillStyle.Render(ledgerFitPlain(pillText, width))
