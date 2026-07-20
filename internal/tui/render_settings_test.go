@@ -107,7 +107,7 @@ func TestSettingsItemOrder_groupsAppearanceThenSections(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	got := m.settingsItemOrder()
 	// Appearance, Tools, Notifications, Power, Account.
-	want := []int{0, 1, 3, 4, 8, 2, 9, 5, 6, 7}
+	want := []int{0, 1, 3, 4, 7, 2, 8, 5, 6}
 	if len(got) != len(want) {
 		t.Fatalf("settingsItemOrder len=%d want %d: %v", len(got), len(want), got)
 	}

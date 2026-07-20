@@ -464,8 +464,6 @@ func (m *MainMenuModel) clickSettings(idx int) (tea.Model, tea.Cmd) {
 	m.settingsSelected = idx
 	m.focus = FocusBody
 	switch {
-	case idx == rowAccount: // Login → account management
-		return m.settingsEnter()
 	case idx == rowAITools: // AI tools → install / set default
 		return m.settingsEnter()
 	case idx == rowSubscription && m.ClaudeConfigVisible():

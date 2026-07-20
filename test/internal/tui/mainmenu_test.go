@@ -1501,11 +1501,11 @@ func TestMainMenu_SettingsNavigationKeys(t *testing.T) {
 }
 
 func TestMainMenu_SettingsNavigationWraps(t *testing.T) {
-	// The settings list has 10 rows. Note the last VISUAL row is Auto-switch
-	// (handler index 7), not index 9 (Keep awake) — the visual order groups rows
+	// The settings list has 9 rows. Note the last VISUAL row is Auto-switch
+	// (handler index 6), not index 8 (Keep awake) — the visual order groups rows
 	// into sections, so position and handler index are not the same thing.
-	const numItems = 10
-	const lastVisualRow = 7 // Auto-switch accounts
+	const numItems = 9
+	const lastVisualRow = 6 // Auto-switch accounts
 
 	jKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
 	kKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}}
@@ -5126,31 +5126,31 @@ func TestAddProject_BrowserOpensAtHome(t *testing.T) {
 }
 
 func TestSettings_NavWrapsWithAllItems(t *testing.T) {
-	// claude tool shows 10 settings items (Mascot, Tab title, Sound, Theme,
-	// Usage bars, AI tools, Plan, Login, Auto-switch, Keep awake)
+	// claude tool shows 9 settings items (Mascot, Tab title, Sound, Theme,
+	// Usage bars, AI tools, Plan, Auto-switch, Keep awake)
 	m := tui.NewMainMenu(nil, []string{"claude"}, "claude", "animated")
 	m.EnterSettings()
-	// j 10 times — wraps back to 0 (vim accelerator wraps within the list)
-	for i := 0; i < 10; i++ {
+	// j 9 times — wraps back to 0 (vim accelerator wraps within the list)
+	for i := 0; i < 9; i++ {
 		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	}
 	if m.SettingsSelected() != 0 {
-		t.Errorf("expected settingsSelected=0 after wrapping past 10 items, got %d", m.SettingsSelected())
+		t.Errorf("expected settingsSelected=0 after wrapping past 9 items, got %d", m.SettingsSelected())
 	}
 }
 
 func TestSettings_NavWrapsWithAllItems_NonClaude(t *testing.T) {
-	// The Plan + Login rows are shared across agents, so opencode also shows 10
+	// The Plan row is shared across agents, so opencode also shows 9
 	// settings items (Mascot, Tab title, Sound, Theme, Usage bars, AI tools,
-	// Plan, Login, Auto-switch, Keep awake).
+	// Plan, Auto-switch, Keep awake).
 	m := tui.NewMainMenu(nil, []string{"opencode"}, "opencode", "animated")
 	m.EnterSettings()
-	// j 10 times — wraps back to 0 (vim accelerator wraps within the list)
-	for i := 0; i < 10; i++ {
+	// j 9 times — wraps back to 0 (vim accelerator wraps within the list)
+	for i := 0; i < 9; i++ {
 		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	}
 	if m.SettingsSelected() != 0 {
-		t.Errorf("expected settingsSelected=0 after wrapping past 10 items, got %d", m.SettingsSelected())
+		t.Errorf("expected settingsSelected=0 after wrapping past 9 items, got %d", m.SettingsSelected())
 	}
 }
 

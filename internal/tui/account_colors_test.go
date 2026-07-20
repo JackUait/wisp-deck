@@ -45,22 +45,6 @@ func TestAccountColors_switcherRow_usesAccountColor(t *testing.T) {
 	}
 }
 
-// The Settings "Account" row paints the active login's value in its color.
-func TestAccountColors_settingsRow_usesAccountColor(t *testing.T) {
-	prev := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(prev)
-
-	m := acctColorMenu(t, seededColors)
-	m.SetActiveClaudeAccount("personal")
-	m.SetActiveTab(TabSettings)
-	out := m.renderSettingsBox()
-	want := lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render("[Personal]")
-	if !strings.Contains(out, want) {
-		t.Fatalf("settings Account row should paint [Personal] in color 203:\n%s", out)
-	}
-}
-
 // The unified modal's LOGINS section paints each login's label in its own
 // color — both the Default row and every managed row.
 func TestAccountColors_loginPanel_usesPerAccountColor(t *testing.T) {

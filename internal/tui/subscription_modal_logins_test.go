@@ -336,21 +336,6 @@ func TestSubscriptionModalMouse_clickUseSwitchesLogin(t *testing.T) {
 	}
 }
 
-// Settings › Account now opens the unified subscription modal, focused on the
-// active login row.
-func TestSettingsEnter_onAccountOpensUnifiedModalAtLogins(t *testing.T) {
-	m := newUnifiedModalMenu(t)
-	m.SetActiveClaudeAccount("work")
-	m.settingsSelected = rowAccount
-	_, _ = m.settingsEnter()
-	if !m.subscriptionModal.open {
-		t.Fatal("Account Enter must open the unified subscription modal")
-	}
-	if got, want := m.subscriptionModal.profileCursor, m.subscriptionLoginRowStart()+1; got != want {
-		t.Fatalf("cursor = %d, want active login row %d", got, want)
-	}
-}
-
 // The 'l' shortcut opens the unified modal straight into the new-login input.
 func TestLKey_opensUnifiedModalLoginInput(t *testing.T) {
 	m := newUnifiedModalMenu(t)

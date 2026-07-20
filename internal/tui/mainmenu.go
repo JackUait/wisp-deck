@@ -1339,7 +1339,7 @@ func (m *MainMenuModel) CurrentClaudeAccountDir() string {
 
 // accountFocusable is always false: the top-of-page account switcher was removed
 // from the header, so its LOGIN row is never a focus stop. Account switching
-// lives in Settings › Account, the 'L' key, and the ledger pill instead.
+// lives in the unified subscription modal, the 'l' key, and the ledger pill.
 func (m *MainMenuModel) accountFocusable() bool {
 	return false
 }
@@ -1444,17 +1444,13 @@ const (
 	rowTheme        = 3
 	rowUsageBars    = 4
 	rowSubscription = 5
-	rowAccount      = 6
-	rowAutoSwitch   = 7
-	rowAITools      = 8
-	rowKeepAwake    = 9
+	rowAutoSwitch   = 6
+	rowAITools      = 7
+	rowKeepAwake    = 8
 )
 
 // settingsItemCount returns the number of settings rows.
 func (m *MainMenuModel) settingsItemCount() int { return rowKeepAwake + 1 }
-
-// loginRowIndex is the index of the Login row.
-func (m *MainMenuModel) loginRowIndex() int { return rowAccount }
 
 // autoSwitchRowIndex is the index of the Auto-switch toggle.
 func (m *MainMenuModel) autoSwitchRowIndex() int { return rowAutoSwitch }
@@ -1476,7 +1472,7 @@ func (m *MainMenuModel) settingsSections() []settingsSection {
 	if m.ClaudeConfigVisible() {
 		account = append(account, rowSubscription)
 	}
-	account = append(account, rowAccount, rowAutoSwitch)
+	account = append(account, rowAutoSwitch)
 	return []settingsSection{
 		{title: "Appearance", indices: appearance},
 		{title: "Tools", indices: []int{rowAITools}},
@@ -2819,9 +2815,6 @@ func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 		m.CycleUsageBars()
 	case rowSubscription:
 		return m, m.openSubscriptionModal()
-	case rowAccount:
-		// Open the unified subscription modal focused on the logins section.
-		return m, m.openSubscriptionModalAtLogins()
 	case rowAITools:
 		m.openAIToolsPanel()
 		return m, nil
@@ -2848,8 +2841,6 @@ func (m *MainMenuModel) settingsValueRight() tea.Cmd {
 		m.CycleTheme()
 	case rowUsageBars:
 		m.CycleUsageBars()
-	case rowAccount:
-		m.CycleAccount("next")
 	case m.autoSwitchRowIndex():
 		m.CycleAutoSwitch()
 	case m.keepAwakeRowIndex():
@@ -2873,8 +2864,6 @@ func (m *MainMenuModel) settingsValueLeft() tea.Cmd {
 		m.CycleThemeReverse()
 	case rowUsageBars:
 		m.CycleUsageBarsReverse()
-	case rowAccount:
-		m.CycleAccount("prev")
 	case m.autoSwitchRowIndex():
 		m.CycleAutoSwitch()
 	case m.keepAwakeRowIndex():

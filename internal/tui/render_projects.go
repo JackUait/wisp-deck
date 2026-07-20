@@ -140,8 +140,8 @@ func (m *MainMenuModel) subscriptionRowCount() int {
 }
 
 // accountRowCount is always 0: the top-of-page account switcher was removed from
-// the header. Account switching now lives only in Settings › Account, the
-// always-available 'L' key, and the mid-session ledger pill — so the header no
+// the header. Account switching now lives only in the unified subscription
+// modal, the always-available 'l' key, and the mid-session ledger pill — so the header no
 // longer carries a LOGIN row. Kept as a function (rather than deleting every
 // caller) so all the header layout math still reads a single source of truth.
 func (m *MainMenuModel) accountRowCount() int {

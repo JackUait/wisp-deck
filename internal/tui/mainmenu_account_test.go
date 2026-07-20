@@ -159,51 +159,6 @@ func TestAccount_cyclePersistsPointer(t *testing.T) {
 	}
 }
 
-// The Settings tab shows a "Account" row (the account-management entry point),
-// always present even with only the Default login.
-func TestSettingsLoginRow_shown(t *testing.T) {
-	m := acctTestMenu("claude")
-	m.SetActiveTab(TabSettings)
-	out := stripAnsi(m.renderSettingsBox())
-	if !strings.Contains(out, "Account") {
-		t.Errorf("settings box missing 'Login' row:\n%s", out)
-	}
-	if !strings.Contains(out, "Default") {
-		t.Errorf("Login row should show the active account (Default):\n%s", out)
-	}
-}
-
-// Enter on the Settings Login row opens the unified subscription modal at the
-// logins section.
-func TestSettingsLoginRow_enterOpensPanel(t *testing.T) {
-	m := acctTestMenu("claude")
-	m.SetActiveTab(TabSettings)
-	m.settingsSelected = m.loginRowIndex()
-	m.settingsEnter()
-	if !m.subscriptionModal.open {
-		t.Fatalf("Enter on Login settings row should open the unified modal")
-	}
-	if !m.subscriptionModalOnLoginRow() {
-		t.Fatalf("cursor = %d, want a login row", m.subscriptionModal.profileCursor)
-	}
-}
-
-// ←→ on the Settings Login row cycles the active account.
-func TestSettingsLoginRow_cyclesAccount(t *testing.T) {
-	m := acctTestMenu("claude")
-	m.SetClaudeAccounts([]ClaudeAccount{{Label: "Work", Dir: "work"}})
-	m.SetActiveTab(TabSettings)
-	m.settingsSelected = m.loginRowIndex()
-	m.settingsValueRight()
-	if m.CurrentClaudeAccountDir() != "work" {
-		t.Errorf("→ on Login row should switch to work, got %q", m.CurrentClaudeAccountDir())
-	}
-	m.settingsValueLeft()
-	if m.CurrentClaudeAccountDir() != "" {
-		t.Errorf("← on Login row should switch back to Default, got %q", m.CurrentClaudeAccountDir())
-	}
-}
-
 // When the LOGIN row is shown it sits above the title and shifts the body down
 // by one: top, LOGIN, title, subscription, switcher-gap, tab bar, separator,
 // leading blank (8) → first project at row 8.

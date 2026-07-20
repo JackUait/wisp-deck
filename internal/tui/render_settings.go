@@ -185,23 +185,6 @@ func (m *MainMenuModel) renderSettingsBox() string {
 		itemLines[rowSubscription] = []string{m.renderSettingsItem(rowSubscription, "Subscription", state, cfgStyle, primaryBoldStyle, leftBorder, rightBorder)}
 	}
 
-	// Login item: the active native Claude account (manage logins here — ←→
-	// switches, ⏎ adds one). Always shown as the account-management entry point,
-	// even when the top LOGIN switcher row is hidden (single login).
-	loginLabel := m.CurrentClaudeAccountLabel()
-	// The active login's value wears its own persistent account color (shared with
-	// the statusline and the login panel), falling back to the prior green/gray
-	// convention when no color is assigned.
-	var loginStyle lipgloss.Style
-	if c, ok := m.accountColor(m.CurrentClaudeAccountDir()); ok {
-		loginStyle = lipgloss.NewStyle().Foreground(c)
-	} else if m.CurrentClaudeAccountDir() != "" {
-		loginStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green for non-Default
-	} else {
-		loginStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241")) // gray for Default
-	}
-	itemLines[m.loginRowIndex()] = []string{m.renderSettingsItem(m.loginRowIndex(), "Account", "["+loginLabel+"]", loginStyle, primaryBoldStyle, leftBorder, rightBorder)}
-
 	// Auto-switch accounts item: toggles the automatic account-rotation proxy
 	// (distinct from the Login row above, which switches the active login by hand).
 	var autoColor lipgloss.Color
@@ -254,10 +237,10 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	// Separator before help
 	lines = append(lines, separator)
 
-	// Help row — ⏎ manage for the rows that open a panel (Account, AI tools),
-	// ← → cycle for everything else (Theme, Ghost, Tab, …). Keyed off the row
-	// constants: the Account arm previously matched settingsItemCount()-1, which
-	// silently retargeted when a row was appended.
+	// Help row — ⏎ manage for the rows that open a panel (Subscription, AI
+	// tools), ← → cycle for everything else (Theme, Ghost, Tab, …). Keyed off
+	// the row constants: this arm previously matched settingsItemCount()-1,
+	// which silently retargeted when a row was appended.
 	sep := dimStyle.Render(" · ")
 	var cycleOrEdit string
 	switch {
@@ -265,12 +248,6 @@ func (m *MainMenuModel) renderSettingsBox() string {
 		cycleOrEdit = helpStyle.Render("⏎ manage")
 	case m.settingsSelected == rowAITools:
 		cycleOrEdit = helpStyle.Render("⏎ manage")
-	case m.settingsSelected == rowAccount:
-		if m.accountFocusable() {
-			cycleOrEdit = helpStyle.Render("←→ switch") + sep + helpStyle.Render("⏎ manage")
-		} else {
-			cycleOrEdit = helpStyle.Render("⏎ manage")
-		}
 	default:
 		cycleOrEdit = helpStyle.Render("←→ cycle")
 	}

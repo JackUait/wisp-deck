@@ -24,7 +24,6 @@ func TestSettingsRowConstants_are_distinct_and_contiguous(t *testing.T) {
 		"theme":        rowTheme,
 		"usageBars":    rowUsageBars,
 		"subscription": rowSubscription,
-		"account":      rowAccount,
 		"autoSwitch":   rowAutoSwitch,
 		"aiTools":      rowAITools,
 		"keepAwake":    rowKeepAwake,
@@ -50,29 +49,26 @@ func TestSettingsRowConstants_are_distinct_and_contiguous(t *testing.T) {
 // silently made ↵ on Account toggle Auto-switch when a row was appended.
 func TestSettingsRowAccessors_match_constants(t *testing.T) {
 	m := rowTestMenu()
-	if got := m.loginRowIndex(); got != rowAccount {
-		t.Errorf("loginRowIndex() = %d, want rowAccount (%d)", got, rowAccount)
-	}
 	if got := m.autoSwitchRowIndex(); got != rowAutoSwitch {
 		t.Errorf("autoSwitchRowIndex() = %d, want rowAutoSwitch (%d)", got, rowAutoSwitch)
 	}
 }
 
-// Regression: ↵ on the Account row opens the unified subscription modal, not
-// the auto-switch toggle. This is the exact breakage adding a tenth row would
-// have caused.
-func TestSettingsEnter_on_account_row_opens_account_panel(t *testing.T) {
+// Regression: ↵ on the Subscription row opens the unified subscription modal
+// (the only account-management entry point now that the Account row is gone),
+// not the auto-switch toggle.
+func TestSettingsEnter_on_subscription_row_opens_unified_modal(t *testing.T) {
 	m := rowTestMenu()
-	m.settingsSelected = m.loginRowIndex()
+	m.settingsSelected = rowSubscription
 	before := m.AutoSwitchEnabled()
 
 	m.settingsEnter()
 
 	if !m.subscriptionModal.open {
-		t.Error("↵ on the Account row must open the unified subscription modal")
+		t.Error("↵ on the Subscription row must open the unified subscription modal")
 	}
 	if m.AutoSwitchEnabled() != before {
-		t.Error("↵ on the Account row must not toggle auto-switch")
+		t.Error("↵ on the Subscription row must not toggle auto-switch")
 	}
 }
 
@@ -115,7 +111,7 @@ func TestSettingsHelpRow_matches_the_focused_row(t *testing.T) {
 		want string
 	}{
 		{rowAITools, "⏎ manage"},
-		{rowAccount, "⏎ manage"},
+		{rowSubscription, "⏎ manage"},
 		{rowMascot, "←→ cycle"},
 		{rowTheme, "←→ cycle"},
 	}
