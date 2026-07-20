@@ -718,10 +718,11 @@ func lastFrame(s string) string {
 }
 
 // The pinned chrome must stay put when scrolling: the changed-file stamp is
-// pinned at the top and the branch bar at the bottom, so neither is ever pushed
-// off screen. Overflow the list, jump to the bottom with G, and assert the latest
-// frame still shows the branch (now at the bottom bar) while a top file has
-// scrolled away and a bottom file is visible.
+// pinned at the top and the bottom bar below, so neither is ever pushed off
+// screen. Overflow the list, jump to the bottom with G, and assert the latest
+// frame still shows the stamp heading — never the branch name, which lives in
+// the Claude statusline — while a top file has scrolled away and a bottom file
+// is visible.
 func TestCompactView_header_stays_pinned_when_scrolled(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
@@ -807,8 +808,11 @@ func TestCompactView_header_stays_pinned_when_scrolled(t *testing.T) {
 	frame := lastFrame(out.String())
 	mu.Unlock()
 
-	if !strings.Contains(frame, "pinnedbr") {
-		t.Errorf("branch heading must stay pinned after scrolling to bottom; frame:\n%s", frame)
+	if !strings.Contains(frame, "60 files") {
+		t.Errorf("stamp heading must stay pinned after scrolling to bottom; frame:\n%s", frame)
+	}
+	if strings.Contains(frame, "pinnedbr") {
+		t.Errorf("ledger must not name the branch anywhere; frame:\n%s", frame)
 	}
 	if !strings.Contains(frame, "f59.txt") {
 		t.Errorf("bottom of the list (f59.txt) should be visible after G; frame:\n%s", frame)
@@ -1243,12 +1247,13 @@ func TestCompactView_shows_hover_checkbox(t *testing.T) {
 	}
 }
 
-// The branch NAME lives in the pinned top heading (left side), while the
-// push/pull commit counts stay at the BOTTOM bar below the listed files.
-// Drives the real loop under zsh with an upstream two commits ahead, and
-// asserts the heading leads with "main", the last content line reads "↑2"
-// without repeating the branch, and the file list sits between them.
-func TestCompactView_branch_in_heading_push_pull_at_bottom(t *testing.T) {
+// The branch NAME lives in the Claude statusline now — the pinned top heading
+// keeps only the right-aligned changed-file stamp, while the push/pull commit
+// counts stay at the BOTTOM bar below the listed files. Drives the real loop
+// under zsh with an upstream two commits ahead, and asserts the heading is the
+// stamp alone, no line names the branch, the last content line reads "↑2", and
+// the file list sits between them.
+func TestCompactView_stamp_heading_push_pull_at_bottom(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
 		t.Skip("zsh not available")
@@ -1342,25 +1347,18 @@ func TestCompactView_branch_in_heading_push_pull_at_bottom(t *testing.T) {
 		t.Fatalf("no content rendered; frame:\n%q", frame)
 	}
 	heading := lines[0]
-	if !strings.HasPrefix(strings.TrimRight(heading, " "), " main") {
-		t.Errorf("pinned heading must lead with the branch name (\" main\"); got %q\nframe:\n%s", heading, frame)
+	if !strings.HasSuffix(strings.TrimRight(heading, " \r"), "1 file  +1 −0") {
+		t.Errorf("pinned heading must be the right-aligned stamp alone; got %q\nframe:\n%s", heading, frame)
 	}
 	bottom := lines[len(lines)-1]
 	if !strings.Contains(bottom, "↑2") {
 		t.Errorf("bottom line must keep the push count (\"↑2\"); got %q\nframe:\n%s", bottom, frame)
 	}
-	if strings.Contains(bottom, "main") {
-		t.Errorf("bottom bar must not repeat the branch name; got %q\nframe:\n%s", bottom, frame)
-	}
-	// The branch must appear ONLY in the heading — exactly one line mentions it.
-	branchLines := 0
+	// The branch must appear NOWHERE — it lives in the Claude statusline.
 	for _, ln := range lines {
 		if strings.Contains(ln, "main") {
-			branchLines++
+			t.Errorf("no ledger line may name the branch; got %q\nframe:\n%s", ln, frame)
 		}
-	}
-	if branchLines != 1 {
-		t.Errorf("branch name must appear ONLY in the heading (exactly 1 line); found %d:\n%s", branchLines, strings.Join(lines, "\n"))
 	}
 	// The bottom bar must sit BELOW the file list: a.txt appears on an earlier line.
 	fileRow := -1

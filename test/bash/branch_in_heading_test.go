@@ -10,13 +10,14 @@ import (
 	"time"
 )
 
-// The branch name lives on the pinned HEADING's left side (it moved out of the
-// bottom bar), while the bottom bar keeps the push/pull commit counts (↑N/↓M).
-// Runs the shell renderer piped (deterministic fixture path) against a repo
-// whose branch is ahead of upstream by 2, and asserts the heading line — the
-// one carrying the changed-file stamp — names the branch, while the ↑2 line
-// does not.
-func TestCompactView_branch_in_heading_push_pull_in_bottom_bar(t *testing.T) {
+// The branch name moved out of the ledger entirely — it lives in the Claude
+// statusline now. The pinned heading keeps only the right-aligned changed-file
+// stamp, and the bottom bar keeps the push/pull commit counts (↑N/↓M) without
+// naming the branch either. Runs the shell renderer piped (deterministic
+// fixture path) against a repo whose branch is ahead of upstream by 2, and
+// asserts the branch name appears NOWHERE in the frame while the stamp and ↑2
+// survive.
+func TestCompactView_heading_omits_branch_keeps_stamp(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
 		t.Skip("zsh not available")
@@ -69,6 +70,9 @@ func TestCompactView_branch_in_heading_push_pull_in_bottom_bar(t *testing.T) {
 	out, _ := cmd.CombinedOutput()
 
 	clean := ansiRE.ReplaceAllString(string(out), "")
+	if strings.Contains(clean, "hdrbranch") {
+		t.Errorf("ledger still names the branch somewhere:\n%q", clean)
+	}
 	headingLine, barLine := "", ""
 	for _, line := range strings.Split(clean, "\n") {
 		if strings.Contains(line, "1 file") && headingLine == "" {
@@ -81,16 +85,10 @@ func TestCompactView_branch_in_heading_push_pull_in_bottom_bar(t *testing.T) {
 	if headingLine == "" {
 		t.Fatalf("no heading line (\"1 file\" stamp) rendered:\n%q", clean)
 	}
-	if !strings.Contains(headingLine, "hdrbranch") {
-		t.Errorf("heading must name the branch on its left side; got %q", headingLine)
-	}
-	if !strings.HasPrefix(strings.TrimRight(headingLine, " "), " hdrbranch") {
-		t.Errorf("branch must sit at the heading's LEFT edge; got %q", headingLine)
+	if !strings.HasSuffix(strings.TrimRight(headingLine, " "), "1 file  +1 −0") {
+		t.Errorf("stamp must be right-aligned, owning the heading alone; got %q", headingLine)
 	}
 	if barLine == "" {
 		t.Fatalf("bottom bar lost the push count (\"↑2\"):\n%q", clean)
-	}
-	if strings.Contains(barLine, "hdrbranch") {
-		t.Errorf("bottom bar must not repeat the branch name; got %q", barLine)
 	}
 }

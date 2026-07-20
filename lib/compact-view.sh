@@ -1,7 +1,8 @@
 #!/bin/bash
 # shellcheck disable=SC2059  # Intentional: ANSI escape variables in printf format strings
 # Compact view: a "changeset ledger" of working-tree changes instead of lazygit.
-# Branch as a heading, net +/- stamp, aligned +/- columns with filenames.
+# Net +/- stamp as the heading, aligned +/- columns with filenames. The branch
+# name is deliberately absent — it lives in the Claude statusline.
 # Refreshes every 2 seconds. Scroll with the mouse wheel, arrows/j/k,
 # space/b (page), g/G (top/bottom) when the list overflows. Ctrl-C to exit.
 # Hover a file row to reveal a checkbox (☐) at its left edge; click the box to
@@ -481,8 +482,8 @@ ledger_empty_state() {
 # wrapped heading rows — ceil(width / pane_width), at least one — plus the
 # one-row separator beneath it. A heading exactly as wide as the pane does NOT
 # wrap (terminals park the cursor at the pending-wrap margin), so it stays one
-# row. This is the single source of truth for the body's vertical offset once a
-# long branch+plan heading can overflow a narrow pane.
+# row. This is the single source of truth for the body's vertical offset once
+# an over-wide heading can overflow a narrow pane.
 # Usage: header_rows_for <visible_width> <pane_width>
 # wrap_rows_for returns how many SCREEN rows a line of <vis> visible columns
 # occupies in a pane <pw> columns wide. A line exactly as wide as the pane does
@@ -519,100 +520,54 @@ viewport_avail() {
   printf '%d' "$avail"
 }
 
-# ahead_behind_marker builds the upstream-divergence markers ("↑N" ahead, "↓M"
-# behind) that trail branch_status's branch name. Every value shares ONE
-# separator — a dim dot — so each present marker is joined with " · " (like
-# the " · plan" separator) rather than a bare space. The arrows are colored
-# (cyan ahead, yellow behind) for the render's %b emit.
-#
-# Echoes the colored marker string on the first line and its VISIBLE column width
-# (ANSI excluded, for the heading-fit math) on the second — so the marker keeps
-# its leading space and the empty case is a blank line then "0". " · ↑N" spans
-# " · " (3) + arrow (1) + the digit count.
-# Usage: ahead_behind_marker <ahead> <behind> <dim> <cyan> <yellow> <reset>
-ahead_behind_marker() {
-  local ahead="${1:-0}" behind="${2:-0}" dim="$3" cyan="$4" yellow="$5" reset="$6"
-  local marker="" vis=0
-  if [ "$ahead" -gt 0 ] 2>/dev/null; then
-    marker=" ${dim}·${reset} ${cyan}↑${ahead}${reset}"
-    vis=$((vis + 4 + ${#ahead}))
-  fi
-  if [ "$behind" -gt 0 ] 2>/dev/null; then
-    marker="${marker} ${dim}·${reset} ${yellow}↓${behind}${reset}"
-    vis=$((vis + 4 + ${#behind}))
-  fi
-  printf '%s\n%s\n' "$marker" "$vis"
-}
-
-# branch_status renders the styled branch name — a dim namespace ("feature/")
-# with a bright leaf — followed by its upstream divergence: "↑N" commits to
-# push (ahead) and "↓M" to pull (behind), dot-separated (reusing
-# ahead_behind_marker). In sync, or with no upstream (ahead == behind == 0),
-# only the name shows — which is how the pinned HEADING calls it (0 0) to lead
-# with just the branch name. Emits real ANSI (printf interprets the \033
-# escapes).
-# Usage: branch_status <branch> <ahead> <behind>
-branch_status() {
-  local branch="$1" ahead="${2:-0}" behind="${3:-0}"
-  local dim="\033[90m" bright="\033[97m" cyan="\033[36m" yellow="\033[33m" reset="\033[0m"
-  local leaf="${branch##*/}" ns="" m marker
-  [ "$leaf" != "$branch" ] && ns="${branch%/*}/"
-  m=$(ahead_behind_marker "$ahead" "$behind" "$dim" "$cyan" "$yellow" "$reset")
-  marker=${m%$'\n'*}
-  # Branch name: dim namespace + bright leaf (colors in the format string are
-  # interpreted; the name itself is data via %s). Then the marker via %b, whose
-  # literal \033 escapes ahead_behind_marker embedded need interpreting.
-  printf " ${dim}%s${reset}${bright}%s${reset}" "$ns" "$leaf"
-  printf '%b' "$marker"
-}
-
 # heading_layout decides where the pinned ledger heading's +/- stamp goes and how
 # many SCREEN rows the heading spans (excluding the separator). The stamp (file
 # count + net +/-) is a single block that is NEVER split: it sits right-aligned on
-# the branch line when it fits, and when there is no room it moves WHOLE onto its
-# own new row below the branch — never dropped, never wrapped mid-block.
+# the heading line when it fits, and when there is no room it moves WHOLE onto its
+# own new row below — never dropped, never wrapped mid-block.
 #
-# The branch line is: leading space + headtext + ahead/behind marker (ab_vis, the
-# visible cols of "↑N"/"↓M") + plan. The marker is part of that left run, so it is
-# reserved when testing whether the stamp fits after it. The pane width <w> lets
-# an over-wide branch or stamp line count its own wrapping too.
+# The heading line is: leading space + headtext + marker (ab_vis) + plan. All
+# three widths are 0 today — the branch name that used to lead the heading
+# lives in the Claude statusline now — but the parameters keep the fit math
+# general. The pane width <w> lets an over-wide stamp line count its own
+# wrapping too.
 #
 # Echoes "<mode> <pad> <head_rows>":
-#   mode      = inline (stamp on the branch line) | below (own new row) | none
+#   mode      = inline (stamp on the heading line) | below (own new row) | none
 #   pad       = right-align spaces before the stamp on its target row
 #   head_rows = screen rows the heading occupies (excl. the separator)
 # Usage: heading_layout <iw> <headtext_w> <ab_vis> <plan_w> <stamp_w> <w>
 heading_layout() {
   local iw="$1" headtext_w="$2" ab_vis="$3" plan_w="$4" stamp_w="$5" w="$6"
-  local branch_vis=$((1 + headtext_w + ab_vis + plan_w))
+  local head_vis=$((1 + headtext_w + ab_vis + plan_w))
 
   if [ "$stamp_w" -le 0 ]; then
-    printf 'none 0 %s\n' "$(wrap_rows_for "$branch_vis" "$w")"
+    printf 'none 0 %s\n' "$(wrap_rows_for "$head_vis" "$w")"
     return 0
   fi
 
-  # Try to place the stamp inline, right-aligned after the branch+marker+plan.
+  # Try to place the stamp inline, right-aligned after the left run.
   local pad=$((iw - headtext_w - ab_vis - plan_w - stamp_w))
   if [ "$pad" -ge 1 ]; then
-    # Fits: the branch line fills exactly 1 + iw columns.
+    # Fits: the heading line fills exactly 1 + iw columns.
     printf 'inline %s %s\n' "$pad" "$(wrap_rows_for $((1 + iw)) "$w")"
     return 0
   fi
 
-  # No room on the branch line — move the whole stamp to its own row below,
-  # LEFT-aligned (one leading space, under the branch line's left edge) like text
-  # wrapping to a new line. The heading now spans the branch row(s) plus the
-  # stamp row(s).
+  # No room on the heading line — move the whole stamp to its own row below,
+  # LEFT-aligned (one leading space, under the heading line's left edge) like
+  # text wrapping to a new line. The heading now spans the first row(s) plus
+  # the stamp row(s).
   local below_pad=1
   local stamp_vis=$((below_pad + stamp_w))
-  local rows=$(( $(wrap_rows_for "$branch_vis" "$w") + $(wrap_rows_for "$stamp_vis" "$w") ))
+  local rows=$(( $(wrap_rows_for "$head_vis" "$w") + $(wrap_rows_for "$stamp_vis" "$w") ))
   printf 'below %s %s\n' "$below_pad" "$rows"
 }
 
 # body_line_for_click maps a clicked SCREEN row to a 1-based body-line index, or
 # 0 when the click landed on the pinned header, the bottom scroll-status row, or
 # past the end of the content. The header occupies <header_rows> screen rows (2
-# when the heading fits one line; more when a long branch+plan heading wraps), so
+# when the heading fits one line; more when an over-wide heading wraps), so
 # the body viewport starts at screen row header_rows+1 and view-row = row -
 # header_rows; with overflow the scroll offset is added. header_rows defaults to
 # 2 for callers that predate wrap-aware headers.
@@ -662,7 +617,7 @@ nth_line() {
 }
 
 # split_content splits the rendered ledger <content> into the pinned HEADER
-# (branch heading + separator) and the scrollable BODY, and counts the body
+# (stamp heading + separator) and the scrollable BODY, and counts the body
 # lines into BODY_TOTAL — all via globals, WITHOUT forking (no `sed`/`wc`). The
 # content's FIRST line is metadata: the number of SCREEN rows the header occupies
 # once the heading's wrapping is accounted for (see header_rows_for), captured
@@ -1283,8 +1238,8 @@ compact_view_shell() {
     discard_overlay=""
     local dot=$'\033[90m·\033[0m'
     # Bottom bar: the account pill (when shown), the upstream divergence (↑N
-    # commits to push, ↓M to pull — the branch NAME lives in the pinned
-    # heading now), and the scroll position (on overflow). Every piece is
+    # commits to push, ↓M to pull — the branch NAME lives in the Claude
+    # statusline now), and the scroll position (on overflow). Every piece is
     # optional, so the dim-dot separator is added only between present pieces —
     # never dangling. The batch-discard button and its confirm no longer live
     # here — they overlay the TOP group header (see $discard_overlay below).
@@ -1398,12 +1353,12 @@ compact_view_shell() {
   local w h content header body body_total avail mbtn draw_body frame draw_first
   local header_rows=2
   local staged unstaged untracked body_map
-  # branch/ahead/behind + ab_counts are (re)assigned every build tick below. They
+  # ahead/behind + ab_counts are (re)assigned every build tick below. They
   # MUST be declared here, ONCE, not with an in-loop `local`: under zsh (the
   # pane's shell) `local NAME` without an assignment on an already-set variable is
-  # a *display* command that dumps "NAME=value" to stdout — the branch bar blinked
+  # a *display* command that dumps "NAME=value" to stdout — the bottom bar blinked
   # a raw `ab_counts=$'8\t0'` on every tick after the first (see the NOTE above).
-  local branch ahead behind ab_counts
+  local ahead behind ab_counts
   local mterm mrest mcol mrow bl cpath prev_hover prev_scroll hover_keep
   local prev_pill_hover pill_hover_keep
   # Multi-select batch discard: SELECTED is a newline-delimited set of marked
@@ -1415,7 +1370,7 @@ compact_view_shell() {
   local SELECTED="" discard_armed=0 discard_set="" state_dirty=0
   # Bottom bar, built in loop scope (not the frame subshell) so its clickable
   # spans are known to the click handler. bar_dirty rebuilds it only when its
-  # inputs change (branch/pill/scroll/selection/armed) — never on a hover-only
+  # inputs change (divergence/pill/scroll/selection/armed) — never on a hover-only
   # repaint, since the bar no longer carries a hover hint (the checkbox lives on
   # the file row instead). $discard_overlay is spliced onto the first group header
   # (body line 1) at draw time — the "[ discard N ]" button, or the inline confirm
@@ -1452,7 +1407,7 @@ compact_view_shell() {
   # Per-build pill scratch — declared ONCE here, never with an in-loop `local`
   # (under zsh, the pane's shell, `local NAME` without assignment on an already-set
   # var is a *display* command that leaks "NAME=value" onto the frame; see the
-  # branch/ab_counts NOTE above).
+  # ab_counts NOTE above).
   local _pill_label _pill_color _pill_glyph _pill
   local _rc_relaunch="${WISP_DECK_RELAUNCH_FILE:-}"
   local _rc_pointer="" _rc_list="" _rc_colors="" _rc_default_label="" \
@@ -1736,11 +1691,10 @@ compact_view_shell() {
     # body) via $(), so both shed their trailing blank identically and the Nth
     # map line keeps describing the Nth body line.
     body_map=$(body_path_map "$staged" "$unstaged" "$untracked")
-    # Branch + upstream divergence, gathered ONCE here (on the build tick, not the
-    # hover hot path). The branch NAME leads the pinned heading; ahead (commits
-    # to push) and behind (commits to pull) feed the bottom bar's ↑N/↓M marker,
-    # built outside the content subshell.
-    branch=$(git -C "$project_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "detached")
+    # Upstream divergence, gathered ONCE here (on the build tick, not the hover
+    # hot path): ahead (commits to push) and behind (commits to pull) feed the
+    # bottom bar's ↑N/↓M marker, built outside the content subshell. The branch
+    # NAME is not gathered at all — it lives in the Claude statusline now.
     ahead=0; behind=0
     if git -C "$project_dir" rev-parse '@{u}' &>/dev/null 2>&1; then
       ab_counts=$(git -C "$project_dir" rev-list --left-right --count "HEAD...@{u}" 2>/dev/null)
@@ -1773,12 +1727,12 @@ compact_view_shell() {
       ta=${sums% *}
       td=${sums#* }
 
-      # ── Header: the branch name at the LEFT edge, then the changed-file
-      # count + net +/- stamp, right-aligned. The push/pull counts stay at the
-      # bottom bar, and the subscription/plan lives on the account pill there,
-      # so both are deliberately absent here. This whole line (plus the
-      # separator below) is PINNED by the renderer — it never scrolls — so the
-      # branch and changeset size stay in view.
+      # ── Header: the changed-file count + net +/- stamp, right-aligned,
+      # owning the row alone. The branch name lives in the Claude statusline,
+      # the push/pull counts stay at the bottom bar, and the subscription/plan
+      # lives on the account pill there, so all three are deliberately absent
+      # here. This whole line (plus the separator below) is PINNED by the
+      # renderer — it never scrolls — so the changeset size stays in view.
       local total_files=$((n_staged + n_unstaged + n_untracked))
       local funit="files"
       [ "$total_files" -eq 1 ] && funit="file"
@@ -1789,20 +1743,17 @@ compact_view_shell() {
       # Place the stamp with heading_layout: right-aligned on the heading line
       # when it fits (mode inline), else moved WHOLE onto its own new row below
       # (mode below) — the +/- block is never split across rows. The heading's
-      # left run is the branch name (no ahead/behind marker, no plan — those
-      # stay at the bottom bar). The returned head_rows counts every screen row
-      # the pinned heading spans; +1 for the separator. Emit that total as the
-      # content's first line for split_content; the renderer/click math read
-      # the pinned-header offset from there so clicks/hover map to the right
-      # file row.
+      # left run is empty (no branch, no marker, no plan), so headtext width is
+      # 0. The returned head_rows counts every screen row the pinned heading
+      # spans; +1 for the separator. Emit that total as the content's first
+      # line for split_content; the renderer/click math read the pinned-header
+      # offset from there so clicks/hover map to the right file row.
       local mode pad head_rows
-      read -r mode pad head_rows <<< "$(heading_layout "$iw" "${#branch}" 0 0 "${#stamp}" "$w")"
+      read -r mode pad head_rows <<< "$(heading_layout "$iw" 0 0 0 "${#stamp}" "$w")"
       printf '%s\n' "$((head_rows + 1))"
 
-      # Leading space + styled branch name — branch_status with 0/0 divergence
-      # renders just the dim-namespace/bright-leaf name (and its own leading
-      # space, matching heading_layout's +1).
-      branch_status "$branch" 0 0
+      # The leading space heading_layout's +1 accounts for.
+      printf ' '
       # A newline before the stamp when it lives on its own row (mode below).
       [ "$mode" = "below" ] && printf "\n"
       if [ "$mode" = "inline" ] || [ "$mode" = "below" ]; then
@@ -1848,9 +1799,9 @@ compact_view_shell() {
         ledger_empty_state "$w" "$empty_rows" "$_cv_theme"
       fi
     )
-    # The header is the branch heading + separator; it is PINNED — always drawn
+    # The header is the stamp heading + separator; it is PINNED — always drawn
     # at the top, never part of the scroll region. Only the body (the file groups)
-    # scrolls beneath it. A long branch+plan heading can WRAP onto extra screen
+    # scrolls beneath it. An over-wide heading can WRAP onto extra screen
     # rows, so header_rows (≥2) — not a fixed 2 — is the body's vertical offset.
     # Derived ONCE per build (fork-free, via split_content) — NOT per keystroke:
     # the old per-iteration `sed`×2 + `wc|tr` cost ~31ms on every mouse-motion
@@ -1884,15 +1835,15 @@ compact_view_shell() {
       _pill="$(account_pill "$_pill_label" "$_pill_color" 1 "$_pill_glyph")"
       account_pill_hover_str="${_pill%$'\n'*}"
     fi
-    # The build recomputed the branch, pill, and changeset, so the bottom bar
-    # (and its click spans) must be rebuilt on the next draw.
+    # The build recomputed the divergence, pill, and changeset, so the bottom
+    # bar (and its click spans) must be rebuilt on the next draw.
     bar_dirty=1
     fi
 
     local body_rows=$((h - header_rows))
     [ "$body_rows" -lt 1 ] && body_rows=1
     # The bottom row is reserved for the bottom bar (account pill + ↑N/↓M
-    # push/pull commit counts — the branch NAME lives in the pinned heading),
+    # push/pull commit counts — the branch NAME lives in the Claude statusline),
     # which sits at the bottom of the file-list view and also carries the
     # scroll position (on overflow). (The "[ discard N ]" button and its
     # yes/no confirm now overlay the TOP group header instead — see
