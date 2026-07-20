@@ -502,7 +502,8 @@ header_rows_for() {
 
 # viewport_avail is the single source of truth for the scrollable body viewport
 # height: the <body_rows> below the pinned header MINUS the SCREEN rows the bottom
-# bar occupies. The bottom bar is NOT a fixed one row — a long branch name wraps
+# bar occupies. The bottom bar is NOT a fixed one row — a wide bar (a long
+# account-pill label plus markers) wraps
 # it onto extra rows (wrap_rows_for of its <bar_visible_width>) — so its TRUE
 # height is reserved. Reserving only one row would let the composed frame exceed
 # the pane, which SCROLLS the pane up and shifts every file row out from under the
@@ -519,10 +520,10 @@ viewport_avail() {
 }
 
 # ahead_behind_marker builds the upstream-divergence markers ("↑N" ahead, "↓M"
-# behind) that trail the branch name in the ledger heading. Every value in the
-# heading shares ONE separator — a dim dot — so each present marker is joined
-# with " · " (like the " · plan" separator) rather than a bare space. The arrows
-# are colored (cyan ahead, yellow behind) for the render's %b emit.
+# behind) that trail branch_status's branch name. Every value shares ONE
+# separator — a dim dot — so each present marker is joined with " · " (like
+# the " · plan" separator) rather than a bare space. The arrows are colored
+# (cyan ahead, yellow behind) for the render's %b emit.
 #
 # Echoes the colored marker string on the first line and its VISIBLE column width
 # (ANSI excluded, for the heading-fit math) on the second — so the marker keeps
@@ -543,12 +544,13 @@ ahead_behind_marker() {
   printf '%s\n%s\n' "$marker" "$vis"
 }
 
-# branch_status renders the bottom-bar branch indicator: the branch name followed
-# by its upstream divergence — "↑N" commits to push (ahead) and "↓M" to pull
-# (behind) — dot-separated exactly like the top heading (reusing
-# ahead_behind_marker). In sync, or with no upstream (ahead == behind == 0), only
-# the name shows. A dim namespace ("feature/") with a bright leaf mirrors the
-# heading's branch styling. Emits real ANSI (printf interprets the \033 escapes).
+# branch_status renders the styled branch name — a dim namespace ("feature/")
+# with a bright leaf — followed by its upstream divergence: "↑N" commits to
+# push (ahead) and "↓M" to pull (behind), dot-separated (reusing
+# ahead_behind_marker). In sync, or with no upstream (ahead == behind == 0),
+# only the name shows — which is how the pinned HEADING calls it (0 0) to lead
+# with just the branch name. Emits real ANSI (printf interprets the \033
+# escapes).
 # Usage: branch_status <branch> <ahead> <behind>
 branch_status() {
   local branch="$1" ahead="${2:-0}" behind="${3:-0}"
@@ -1271,8 +1273,8 @@ compact_view_shell() {
   # the clickable column spans on it (row $h). While a discard is armed the row is
   # the confirm — "Discard N file(s)? [ yes ] [ no ]" — and confirm_{yes,no}_*
   # bound its two buttons. Otherwise the row leads with the account pill (when
-  # shown), then the branch bar, the scroll position (on overflow), and — when 1+
-  # files are marked — the right-hand "[ discard N ]" button, whose span is
+  # shown), then the ↑N/↓M push/pull marker, the scroll position (on overflow),
+  # and — when 1+ files are marked — the right-hand "[ discard N ]" button, whose span is
   # discard_btn_start..discard_btn_end (0 when unmarked). Reads the loop-scope
   # state via dynamic scope; called on the draw path only when bar_dirty.
   build_bottom_bar() {
@@ -1889,12 +1891,13 @@ compact_view_shell() {
 
     local body_rows=$((h - header_rows))
     [ "$body_rows" -lt 1 ] && body_rows=1
-    # The bottom row is reserved for the branch bar (branch name + push/pull commit
-    # counts), which sits at the bottom of the file-list view and also carries the
-    # scroll position (on overflow) and the account pill. (The "[ discard N ]" button
-    # and its yes/no confirm now overlay the TOP group header instead — see
-    # $discard_overlay.) That bar is NOT always one row: a long branch name wraps it
-    # onto extra rows (Image: "feat/…register-lookup" spilling to a second line).
+    # The bottom row is reserved for the bottom bar (account pill + ↑N/↓M
+    # push/pull commit counts — the branch NAME lives in the pinned heading),
+    # which sits at the bottom of the file-list view and also carries the
+    # scroll position (on overflow). (The "[ discard N ]" button and its
+    # yes/no confirm now overlay the TOP group header instead — see
+    # $discard_overlay.) That bar is NOT always one row: a wide bar (a long
+    # account-pill label plus markers) wraps onto extra rows.
     # Reserve its ACTUAL height so the composed frame never exceeds the pane — an
     # overflow scrolls the pane up and shifts every file row out from under the
     # top-anchored hover mapping, lighting the WRONG file under the cursor. Rebuild
