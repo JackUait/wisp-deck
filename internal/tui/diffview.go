@@ -1091,6 +1091,12 @@ func (m DiffViewModel) bodyContent() string {
 	if m.loadErr != nil {
 		return diffDelStyle.Render(" could not load diff · " + m.loadErr.Error())
 	}
+	// An empty text diff (binary change with no textual hunks, or an upstream
+	// pipeline that produced nothing) used to render as a silent blank box —
+	// indistinguishable from the popup not opening. Say what happened instead.
+	if !m.isImage && strings.TrimSpace(m.content) == "" {
+		return diffGutterStyle.Render(" no textual changes to show — binary file or empty diff")
+	}
 	if m.compact && m.collapsible {
 		return collapseContext(m.highlighted, diffContextLines)
 	}
@@ -1154,7 +1160,46 @@ func (m DiffViewModel) layout() (mh, mv, contentW, contentH int) {
 	return mh, mv, contentW, contentH
 }
 
+// safeRender runs a render function and converts a panic into the fallback
+// screen. The pager is the last stop before the user's eyes: a panic here used
+// to kill the process before first paint, so the popup silently never opened
+// (a fixed-width itoa buffer did exactly that for every lockfile-sized diff).
+// Degrading to an error screen keeps the popup visible and closable no matter
+// what a future rendering bug does.
+func safeRender(render func() string, fallback func(any) string) (out string) {
+	defer func() {
+		if r := recover(); r != nil {
+			out = fallback(r)
+		}
+	}()
+	return render()
+}
+
+// safeUpdate runs an update step and converts a panic into "nothing happened":
+// the prior model is returned unchanged, so the popup stays open and quit keys
+// keep working instead of the whole pager dying mid-session.
+func safeUpdate(update func() (tea.Model, tea.Cmd), prior tea.Model) (model tea.Model, cmd tea.Cmd) {
+	defer func() {
+		if r := recover(); r != nil {
+			model, cmd = prior, nil
+		}
+	}()
+	return update()
+}
+
+// renderPanicScreen is the render-panic fallback: plain unstyled text (nothing
+// here may panic again) naming the file, the failure, and the way out.
+func (m DiffViewModel) renderPanicScreen(r any) string {
+	return fmt.Sprintf("%s\n\npreview failed to render: %v\n\npress q or Esc to close", m.title, r)
+}
+
+// Update guards the real update step: a panic leaves the model unchanged
+// instead of killing the popup.
 func (m DiffViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	return safeUpdate(func() (tea.Model, tea.Cmd) { return m.update(msg) }, m)
+}
+
+func (m DiffViewModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case diffLoadedMsg:
 		if msg.err != nil {
@@ -1489,7 +1534,13 @@ func (m DiffViewModel) statusBadge() string {
 	return diffStatusBadgeStyle.Background(color).Render(strings.ToUpper(m.status))
 }
 
+// View guards the real renderer: a panic degrades to renderPanicScreen so the
+// popup always paints something closable.
 func (m DiffViewModel) View() string {
+	return safeRender(m.render, m.renderPanicScreen)
+}
+
+func (m DiffViewModel) render() string {
 	if m.quitting {
 		return ""
 	}

@@ -798,6 +798,107 @@ func TestGapLine_roundtrips(t *testing.T) {
 	}
 }
 
+// A panic anywhere in the pager used to kill the process before first paint,
+// so the popup silently never opened (the yarn.lock bug). View and Update now
+// route through recover guards: a render panic degrades to a visible error
+// screen, an update panic leaves the model unchanged — the popup always opens
+// and q/Esc still close it.
+func TestSafeRender_turns_panic_into_fallback(t *testing.T) {
+	got := safeRender(func() string { panic("boom") }, func(r any) string { return "fallback: " + fmt.Sprint(r) })
+	if got != "fallback: boom" {
+		t.Errorf("panicking render should yield the fallback screen, got %q", got)
+	}
+	if got := safeRender(func() string { return "ok" }, func(any) string { return "fallback" }); got != "ok" {
+		t.Errorf("healthy render must pass through untouched, got %q", got)
+	}
+}
+
+func TestSafeUpdate_turns_panic_into_unchanged_model(t *testing.T) {
+	m := NewDiffView("f.go", "+x\n")
+	model, cmd := safeUpdate(func() (tea.Model, tea.Cmd) { panic("boom") }, m)
+	if cmd != nil {
+		t.Error("a panicking update must not emit a command")
+	}
+	if _, ok := model.(DiffViewModel); !ok {
+		t.Fatalf("a panicking update must return the prior model, got %T", model)
+	}
+}
+
+// The render-panic fallback is the last line of defense; it must never panic
+// itself and must tell the user how to get out.
+func TestRenderPanicScreen_mentions_close_keys(t *testing.T) {
+	m := NewDiffView("yarn.lock", "+x\n")
+	out := m.renderPanicScreen("boom")
+	if !strings.Contains(out, "yarn.lock") || !strings.Contains(out, "q") {
+		t.Errorf("panic screen should name the file and the close key, got %q", out)
+	}
+}
+
+// A file whose diff has no text lines (binary change, or a pipeline that
+// produced nothing) used to open as a silent blank box — indistinguishable
+// from "didn't open". The body must say what happened instead.
+func TestBodyContent_empty_diff_explains_itself(t *testing.T) {
+	m := NewDiffView("some.bin", "")
+	if body := m.bodyContent(); !strings.Contains(body, "no textual changes") {
+		t.Errorf("empty diff body should explain itself, got %q", body)
+	}
+}
+
+// Property net: the pager must render SOMETHING for any input — huge one-change
+// diffs (the yarn.lock shape), giant all-adds, binary notes, CRLF, kilometer
+// lines, ANSI, wide unicode, gap-sentinel lookalikes — across view modes and
+// pathological window sizes. A panic fails the test with its stack.
+func TestDiffView_pathological_inputs_always_render(t *testing.T) {
+	giantGap := func() string {
+		var b strings.Builder
+		b.WriteString("+changed\n")
+		for i := 0; i < 15000; i++ {
+			b.WriteString(" context\n")
+		}
+		return b.String()
+	}
+	giantAdd := func() string {
+		var b strings.Builder
+		for i := 0; i < 12000; i++ {
+			b.WriteString("+added\n")
+		}
+		return b.String()
+	}
+	cases := map[string]string{
+		"giant_gap_one_change": giantGap(),
+		"giant_all_adds":       giantAdd(),
+		"empty":                "",
+		"binary_note":          "Binary files a/x.bin and b/x.bin differ\n",
+		"no_newline_marker":    "+x\n\\ No newline at end of file\n",
+		"crlf":                 " a\r\n+b\r\n-c\r\n",
+		"kilometer_line":       "+" + strings.Repeat("x", 100000) + "\n",
+		"ansi_in_content":      "+\x1b[31mred\x1b[0m\n \x1b[1mbold\x1b[m\n",
+		"wide_unicode":         "+日本語テキスト\n-👩‍👩‍👧‍👦 family\n čá\n",
+		"gap_lookalike":        "+\x00GAP:99\n \x00GAP:x\n",
+		"no_trailing_newline":  "+tail",
+	}
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			// Drive the UNGUARDED render/update paths directly: View and Update
+			// recover from panics by design, which would let a real bug hide
+			// behind the fallback screen. Here a panic must fail the test.
+			step := func(m DiffViewModel, msg tea.Msg) DiffViewModel {
+				updated, _ := m.update(msg)
+				return updated.(DiffViewModel)
+			}
+			m := step(NewDiffView(name, content), tea.WindowSizeMsg{Width: 100, Height: 30})
+			if m.render() == "" {
+				t.Fatal("sized pager rendered an empty view")
+			}
+			_ = step(m, tea.KeyMsg{Type: tea.KeyTab}).render()
+			_ = step(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}}).render()
+			for _, w := range []int{1, 5, 300} {
+				_ = step(m, tea.WindowSizeMsg{Width: w, Height: 4}).render()
+			}
+		})
+	}
+}
+
 // itoa must handle counts of any magnitude: gap sentinels carry the number of
 // collapsed unchanged lines, and a lockfile-sized diff (yarn.lock with one
 // small change) hides five-plus-digit runs. A fixed small buffer overflowed on
