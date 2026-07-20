@@ -722,8 +722,9 @@ fi`)
 // switcherRelaunchCtx writes a relaunch-context file for the switcher tests.
 func switcherRelaunchCtx(t *testing.T, dir string) string {
 	t.Helper()
+	claudeCmd := filepath.Join(mockCommand(t, dir, "claude", "exit 0"), "claude")
 	return writeTempFile(t, dir, "relaunch", strings.Join([]string{
-		"tool=claude", "tool_cmd=claude",
+		"tool=claude", "tool_cmd=" + claudeCmd, "tools=claude", "claude_cmd=" + claudeCmd,
 		"settings=", "filter=", "project_dir=/proj",
 		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
 		"pointer=" + filepath.Join(dir, "claude-account"),
@@ -743,6 +744,9 @@ func switcherRelaunchCtx(t *testing.T, dir string) string {
 func switcherMockTmux(t *testing.T, dir, pointer, sessionAcct, chosen, rec string) string {
 	t.Helper()
 	return mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "show-environment" ] && [ -z "${2:-}" ]; then
+  printf 'WISP_DECK_CLAUDE_ACCOUNT=%s\nWISP_DECK_CLAUDE_CONFIG=\n'; exit 0
+fi
 if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_ACCOUNT" ]; then
   printf 'WISP_DECK_CLAUDE_ACCOUNT=%s\n'; exit 0
 fi
@@ -756,7 +760,7 @@ if [ "$1" = "display-popup" ]; then
   exit 0
 fi
 printf '%%s\n' "$*" >> %q`,
-		sessionAcct, chosen, chosen, chosen, pointer, chosen, pointer, rec))
+		sessionAcct, sessionAcct, chosen, chosen, chosen, pointer, chosen, pointer, rec))
 }
 
 // THE mid-session revert bug: the pane runs "personal", but the GLOBAL pointer was
@@ -818,6 +822,34 @@ func TestOpenAccountSwitcher_skips_relaunch_on_cancel(t *testing.T) {
 	assertNotContains(t, logOut, "respawn-pane")
 }
 
+func TestOpenAccountSwitcher_rejects_account_deleted_while_popup_is_open(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	writeTempFile(t, filepath.Join(dir, "claude-accounts", "ghost"), ".keep", "")
+	pointer := writeTempFile(t, dir, "claude-account", "work\n")
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherMockTmux(t, dir, pointer, "work", "ghost", rec)
+	mockSwitcherBinary(t, dir)
+	relaunch := switcherRelaunchCtx(t, dir)
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
+
+	if code == 0 {
+		t.Fatal("popup accepted an account deleted before confirmation")
+	}
+	body, err := os.ReadFile(pointer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(body)); got != "work" {
+		t.Fatalf("rejected popup choice left pointer at %q, want prior account work", got)
+	}
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q 2>/dev/null || true", rec), nil)
+	assertNotContains(t, logOut, "respawn-pane")
+}
+
 // The switcher popup must be told which account THIS pane runs (--active) and
 // where to report the user's choice (--result-file) — the pointer can't carry
 // either: it is global and display-popup swallows the popup's stdout.
@@ -827,6 +859,9 @@ func TestOpenAccountSwitcher_passes_active_and_result_file(t *testing.T) {
 	pointer := filepath.Join(dir, "claude-account")
 	rec := filepath.Join(dir, "popup.log")
 	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "show-environment" ] && [ -z "${2:-}" ]; then
+  printf 'WISP_DECK_CLAUDE_ACCOUNT=personal\nWISP_DECK_CLAUDE_CONFIG=\n'; exit 0
+fi
 if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_ACCOUNT" ]; then
   printf 'WISP_DECK_CLAUDE_ACCOUNT=personal\n'; exit 0
 fi
@@ -956,6 +991,50 @@ func TestSwitcherSupportsSessionFlags_missing_binary_counts_as_supported(t *test
 	_, code := runBashSnippet(t, accountSwitchSnippet(t,
 		"switcher_supports_session_flags"), env)
 	assertExitCode(t, code, 0)
+}
+
+// The standalone shell fallback asks about three feature flags, but all live in
+// the same help text. One switch must exec the Go binary once, not three times.
+func TestSwitcherCapabilityChecksShareOneHelpProbe(t *testing.T) {
+	dir := t.TempDir()
+	countFile := filepath.Join(dir, "probe-count")
+	bin := mockCommand(t, dir, "wisp-deck-tui", fmt.Sprintf(`
+	printf 'x\n' >> %q
+	printf 'claude-account-switch\n  --result-file string\n  --tools string\n  --active-config string\n'
+`, countFile))
+	env := buildEnv(t, []string{bin})
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		"switcher_supports_session_flags && switcher_supports_agent_rows && switcher_supports_subscription_rows"), env)
+
+	assertExitCode(t, code, 0)
+	data, err := os.ReadFile(countFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(strings.Fields(string(data))); got != 1 {
+		t.Fatalf("capability help probes = %d, want 1", got)
+	}
+}
+
+// Capability parsing is on the standalone fallback's click path. The help text
+// is already in memory, so parsing it must not fork grep for each supported flag.
+func TestSwitcherCapabilityChecksDoNotForkGrep(t *testing.T) {
+	dir := t.TempDir()
+	grepLog := filepath.Join(dir, "grep.log")
+	bin := mockCommand(t, dir, "wisp-deck-tui", `
+printf 'claude-account-switch\n  --result-file string\n  --tools string\n  --active-config string\n'
+`)
+	mockCommand(t, dir, "grep", fmt.Sprintf(`printf 'called\n' >> %q; exit 99`, grepLog))
+	env := buildEnv(t, []string{bin})
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		"switcher_supports_session_flags && switcher_supports_agent_rows && switcher_supports_subscription_rows"), env)
+
+	assertExitCode(t, code, 0)
+	if data, err := os.ReadFile(grepLog); err == nil && len(data) > 0 {
+		t.Fatalf("capability parsing forked grep:\n%s", data)
+	}
 }
 
 // wrapper.sh must stamp the launch account into the tmux session env so the
@@ -1373,6 +1452,31 @@ func switcherToolCtx(t *testing.T, dir, tool, tools string) string {
 	}, "\n"))
 }
 
+func switcherExecutableToolCtx(t *testing.T, dir, tool, tools string) string {
+	t.Helper()
+	claudeCmd := filepath.Join(mockCommand(t, dir, "claude", "exit 0"), "claude")
+	opencodeCmd := filepath.Join(mockCommand(t, dir, "opencode", "exit 0"), "opencode")
+	codexCmd := filepath.Join(mockCommand(t, dir, "codex", "exit 0"), "codex")
+	toolCmd := map[string]string{
+		"claude":   claudeCmd,
+		"opencode": opencodeCmd,
+		"codex":    codexCmd,
+	}[tool]
+	return writeTempFile(t, dir, "relaunch", strings.Join([]string{
+		"tool=" + tool, "tool_cmd=" + toolCmd,
+		"settings=", "filter=", "project_dir=/proj",
+		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
+		"pointer=" + filepath.Join(dir, "claude-account"),
+		"list=" + filepath.Join(dir, "claude-accounts.list"),
+		"colors=" + filepath.Join(dir, "claude-account-colors"),
+		"default_label=" + filepath.Join(dir, "claude-account-default-label"),
+		"tools=" + tools,
+		"claude_cmd=" + claudeCmd, "opencode_cmd=" + opencodeCmd, "codex_cmd=" + codexCmd,
+		"tool_pref=" + filepath.Join(dir, "ai-tool"),
+		"",
+	}, "\n"))
+}
+
 // mockSwitcherBinary mocks wisp-deck-tui so the capability probes see a binary
 // supporting the session AND agent-row flags — the developer machine's real
 // (possibly older) binary must not decide what these tests exercise.
@@ -1389,6 +1493,9 @@ func mockSwitcherBinary(t *testing.T, dir string) string {
 func switcherToolMockTmux(t *testing.T, dir, sessionAcctLine, chosen, rec string) string {
 	t.Helper()
 	return mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "show-environment" ] && [ -z "${2:-}" ]; then
+  printf '%%s\nWISP_DECK_CLAUDE_CONFIG=\n' %q; exit 0
+fi
 if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_ACCOUNT" ]; then
   printf '%%s\n' %q; exit 0
 fi
@@ -1400,7 +1507,7 @@ if [ "$1" = "display-popup" ]; then
   [ -n "$rf" ] && printf '%%s\n' %q > "$rf"
   exit 0
 fi
-printf '%%s\n' "$*" >> %q`, sessionAcctLine, chosen, rec))
+printf '%%s\n' "$*" >> %q`, sessionAcctLine, sessionAcctLine, chosen, rec))
 }
 
 // The popup must be told which OTHER agents exist (--tools) and which tool the
@@ -1413,7 +1520,7 @@ if [ "$1" = "show-environment" ]; then printf -- '-WISP_DECK_CLAUDE_ACCOUNT\n'; 
 if [ "$1" = "display-popup" ]; then printf '%%s\n' "$*" >> %q; exit 0; fi
 exit 0`, rec))
 	mockSwitcherBinary(t, dir)
-	relaunch := switcherToolCtx(t, dir, "codex", "claude opencode codex")
+	relaunch := switcherExecutableToolCtx(t, dir, "codex", "claude opencode codex")
 	env := buildEnv(t, []string{bin}, "HOME="+dir)
 	_, code := runBashSnippet(t, accountSwitchSnippet(t,
 		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
@@ -1421,6 +1528,62 @@ exit 0`, rec))
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
 	assertContains(t, logOut, "--tools claude,opencode,codex")
 	assertContains(t, logOut, "--active-tool codex")
+}
+
+// The native ledger has already selected the tool in-process, so its explicit
+// apply path must respawn directly without invoking the standalone popup.
+func TestApplyAccountSwitchChoice_tool_relaunches_without_popup(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherToolMockTmux(t, dir, "WISP_DECK_CLAUDE_ACCOUNT=", "CANCEL", rec)
+	relaunch := switcherExecutableToolCtx(t, dir, "claude", "claude codex")
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("apply_account_switch_choice tmux %q tool codex", relaunch)), env)
+
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "respawn-pane")
+	assertContains(t, logOut, filepath.Join(dir, "bin", "codex"))
+	assertNotContains(t, logOut, "display-popup")
+}
+
+func TestApplyAccountSwitchChoice_tool_rejects_choice_removed_since_load(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherToolMockTmux(t, dir, "WISP_DECK_CLAUDE_ACCOUNT=", "CANCEL", rec)
+	relaunch := switcherExecutableToolCtx(t, dir, "claude", "claude")
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("apply_account_switch_choice tmux %q tool codex", relaunch)), env)
+
+	if code == 0 {
+		t.Fatal("stale tool choice succeeded after it disappeared from the relaunch context")
+	}
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q 2>/dev/null || true", rec), nil)
+	assertNotContains(t, logOut, "respawn-pane")
+}
+
+func TestApplyAccountSwitchChoice_tool_rejects_command_removed_since_load(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherToolMockTmux(t, dir, "WISP_DECK_CLAUDE_ACCOUNT=", "CANCEL", rec)
+	relaunch := switcherExecutableToolCtx(t, dir, "claude", "claude codex")
+	if err := os.Remove(filepath.Join(dir, "bin", "codex")); err != nil {
+		t.Fatal(err)
+	}
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("apply_account_switch_choice tmux %q tool codex", relaunch)), env)
+
+	if code == 0 {
+		t.Fatal("stale tool choice succeeded after its configured executable disappeared")
+	}
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q 2>/dev/null || true", rec), nil)
+	assertNotContains(t, logOut, "respawn-pane")
 }
 
 // Picking an agent row relaunches the AI pane under that tool's binary, stamps
@@ -1433,14 +1596,14 @@ func TestOpenAccountSwitcher_tool_result_switches_agent(t *testing.T) {
 	mockSwitcherBinary(t, dir)
 	// The user's saved launcher preference before the switch.
 	writeTempFile(t, dir, "ai-tool", "claude\n")
-	relaunch := switcherToolCtx(t, dir, "claude", "claude codex")
+	relaunch := switcherExecutableToolCtx(t, dir, "claude", "claude codex")
 	env := buildEnv(t, []string{bin}, "HOME="+dir)
 	_, code := runBashSnippet(t, accountSwitchSnippet(t,
 		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
 	assertExitCode(t, code, 0)
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
 	assertContains(t, logOut, "respawn-pane")
-	assertContains(t, logOut, "/opt/codex")
+	assertContains(t, logOut, filepath.Join(dir, "bin", "codex"))
 	assertContains(t, logOut, "set-environment WISP_DECK_TOOL codex")
 	// The switch is session-scoped: the launcher's ai-tool preference (read for
 	// the NEXT launch and by OTHER sessions) must NOT be steered to codex.
@@ -1449,7 +1612,7 @@ func TestOpenAccountSwitcher_tool_result_switches_agent(t *testing.T) {
 	assertNotContains(t, pref, "codex")
 	ctx, _ := runBashSnippet(t, fmt.Sprintf("cat %q", relaunch), nil)
 	assertContains(t, ctx, "tool=codex")
-	assertContains(t, ctx, "tool_cmd=/opt/codex")
+	assertContains(t, ctx, "tool_cmd="+filepath.Join(dir, "bin", "codex"))
 }
 
 // Picking the agent the pane already runs is a no-op — relaunching would kill
@@ -1459,7 +1622,7 @@ func TestOpenAccountSwitcher_tool_result_same_agent_skips(t *testing.T) {
 	rec := filepath.Join(dir, "tmux.log")
 	bin := switcherToolMockTmux(t, dir, "-WISP_DECK_CLAUDE_ACCOUNT", "tool:codex", rec)
 	mockSwitcherBinary(t, dir)
-	relaunch := switcherToolCtx(t, dir, "codex", "claude codex")
+	relaunch := switcherExecutableToolCtx(t, dir, "codex", "claude codex")
 	env := buildEnv(t, []string{bin}, "HOME="+dir)
 	_, code := runBashSnippet(t, accountSwitchSnippet(t,
 		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
@@ -1472,18 +1635,19 @@ func TestOpenAccountSwitcher_tool_result_same_agent_skips(t *testing.T) {
 // claude under that login — the account rows are claude, whatever runs now.
 func TestOpenAccountSwitcher_account_pick_on_other_agent_switches_to_claude(t *testing.T) {
 	dir := t.TempDir()
+	writeTempFile(t, dir, "claude-accounts.list", "Personal:personal\n")
 	writeTempFile(t, filepath.Join(dir, "claude-accounts", "personal"), ".keep", "")
 	rec := filepath.Join(dir, "tmux.log")
 	bin := switcherToolMockTmux(t, dir, "-WISP_DECK_CLAUDE_ACCOUNT", "personal", rec)
 	mockSwitcherBinary(t, dir)
-	relaunch := switcherToolCtx(t, dir, "codex", "claude codex")
+	relaunch := switcherExecutableToolCtx(t, dir, "codex", "claude codex")
 	env := buildEnv(t, []string{bin}, "HOME="+dir)
 	_, code := runBashSnippet(t, accountSwitchSnippet(t,
 		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
 	assertExitCode(t, code, 0)
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
 	assertContains(t, logOut, "respawn-pane")
-	assertContains(t, logOut, "/opt/claude")
+	assertContains(t, logOut, filepath.Join(dir, "bin", "claude"))
 	assertContains(t, logOut, `CLAUDE_CONFIG_DIR="`+filepath.Join(dir, "claude-accounts", "personal")+`"`)
 	assertContains(t, logOut, "set-environment WISP_DECK_TOOL claude")
 	assertContains(t, logOut, "set-environment WISP_DECK_CLAUDE_ACCOUNT personal")

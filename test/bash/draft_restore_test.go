@@ -337,12 +337,11 @@ if [ "$1" = "display-popup" ]; then eval "${@: -1}" >/dev/null 2>&1 || true; fi`
 	if err := os.MkdirAll(filepath.Join(accountsDir, "work"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	claudeCmd := filepath.Join(mockCommand(t, dir, "claude", "exit 0"), "claude")
 	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
-		// claude_cmd is what wrapper.sh stamps in a real context. Without it
-		// _tool_cmd_for falls back to `command -v claude`, so the switch would
-		// respawn only on a machine that happens to have claude installed —
-		// green on a dev laptop, silently broken on CI.
-		"tool=opencode", "tool_cmd=npx opencode-ai@latest", "claude_cmd=claude",
+		"tool=opencode", "tool_cmd=npx opencode-ai@latest", "tools=claude opencode",
+		"claude_cmd=" + claudeCmd,
 		"settings=", "filter=", "project_dir=/proj",
 		"accounts_dir=" + accountsDir,
 		"pointer=" + filepath.Join(dir, "claude-account"),

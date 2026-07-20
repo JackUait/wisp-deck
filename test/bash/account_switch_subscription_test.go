@@ -12,8 +12,9 @@ import (
 // subscription (claude-config) keys the backend switch needs.
 func subscriptionRelaunchCtx(t *testing.T, dir string) string {
 	t.Helper()
+	claudeCmd := filepath.Join(mockCommand(t, dir, "claude", "exit 0"), "claude")
 	return writeTempFile(t, dir, "relaunch", strings.Join([]string{
-		"tool=claude", "tool_cmd=claude",
+		"tool=claude", "tool_cmd=" + claudeCmd, "tools=claude", "claude_cmd=" + claudeCmd,
 		"settings=", "settings_source=", "filter=", "project_dir=/proj",
 		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
 		"pointer=" + filepath.Join(dir, "claude-account"),
@@ -33,6 +34,9 @@ func subscriptionRelaunchCtx(t *testing.T, dir string) string {
 func switcherResultMockTmux(t *testing.T, dir, sessionAcct, sessionConfig, resultLine, rec string) string {
 	t.Helper()
 	return mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "show-environment" ] && [ -z "${2:-}" ]; then
+  printf 'WISP_DECK_CLAUDE_ACCOUNT=%s\nWISP_DECK_CLAUDE_CONFIG=%s\n'; exit 0
+fi
 if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_ACCOUNT" ]; then printf 'WISP_DECK_CLAUDE_ACCOUNT=%s\n'; exit 0; fi
 if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_CONFIG" ]; then printf 'WISP_DECK_CLAUDE_CONFIG=%s\n'; exit 0; fi
 if [ "$1" = "show-environment" ]; then printf -- '-WISP_DECK_CLAUDE_SESSION\n'; exit 0; fi
@@ -45,7 +49,7 @@ if [ "$1" = "display-popup" ]; then
   exit 0
 fi
 printf '%%s\n' "$*" >> %q`,
-		sessionAcct, sessionConfig, resultLine, resultLine, rec))
+		sessionAcct, sessionConfig, sessionAcct, sessionConfig, resultLine, resultLine, rec))
 }
 
 // claude_config_name resolves a config filename to its display name, falling
@@ -321,6 +325,18 @@ func TestSetRelaunchKv_replaces_existing_and_appends_missing(t *testing.T) {
 	assertContains(t, body, "tool=claude")
 }
 
+func TestSetRelaunchKv_updates_two_keys_in_one_rewrite(t *testing.T) {
+	dir := t.TempDir()
+	f := writeTempFile(t, dir, "relaunch", "tool=claude\nsettings_source=/old-source.json\nsettings=/old.json\n")
+	_, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+		`_set_relaunch_kv %q settings_source /new.json settings /new.json`, f)), nil)
+	assertExitCode(t, code, 0)
+	body, _ := runBashSnippet(t, fmt.Sprintf("cat %q", f), nil)
+	assertContains(t, body, "settings_source=/new.json")
+	assertContains(t, body, "settings=/new.json")
+	assertNotContains(t, body, "/old")
+}
+
 // With a subscription configured and a capable binary, the popup command must
 // carry the backend flags so the popup can render and mark them.
 func TestOpenAccountSwitcher_passes_subscription_flags(t *testing.T) {
@@ -350,6 +366,72 @@ exit 0`, rec))
 	assertContains(t, logOut, "--active-config")
 }
 
+func TestCurrentSessionIdentities_legacy_stamps_fall_back_with_one_tmux_query(t *testing.T) {
+	dir := t.TempDir()
+	accountPointer := writeTempFile(t, dir, "claude-account", "work\n")
+	configPointer := writeTempFile(t, dir, "claude-config", "glm.json\n")
+	rec := filepath.Join(dir, "tmux.log")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+printf '%%s\n' "$*" >> %q
+if [ "$1" = "show-environment" ] && [ -z "${2:-}" ]; then
+  printf -- '-WISP_DECK_CLAUDE_ACCOUNT\n-WISP_DECK_CLAUDE_CONFIG\n'
+  exit 0
+fi
+if [ "$1" = "show-environment" ]; then
+  printf -- '-%%s\n' "$2"
+  exit 0
+fi
+`, rec))
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+
+	out, code := runBashSnippet(t, accountSwitchSnippet(t, fmt.Sprintf(
+		`session_acct=""; session_config=""; _current_session_identities tmux %q %q; printf '%%s|%%s\n' "$session_acct" "$session_config"`,
+		accountPointer, configPointer)), env)
+
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "work|glm.json")
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	if got := strings.Count(logOut, "show-environment"); got != 1 {
+		t.Fatalf("legacy session identity queries = %d, want 1:\n%s", got, logOut)
+	}
+}
+
+func TestOpenAccountSwitcher_reads_session_identities_once(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+printf '%%s\n' "$*" >> %q
+if [ "$1" = "show-environment" ] && [ -z "${2:-}" ]; then
+  printf 'WISP_DECK_CLAUDE_ACCOUNT=work\nWISP_DECK_CLAUDE_CONFIG=\n'
+  exit 0
+fi
+if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_ACCOUNT" ]; then
+  printf 'WISP_DECK_CLAUDE_ACCOUNT=work\n'
+  exit 0
+fi
+if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_CONFIG" ]; then
+  printf 'WISP_DECK_CLAUDE_CONFIG=\n'
+  exit 0
+fi
+if [ "$1" = "display-message" ]; then printf '80 24\n'; exit 0; fi
+if [ "$1" = "list-panes" ]; then exit 0; fi
+if [ "$1" = "display-popup" ]; then exit 0; fi
+`, rec))
+	mockCommand(t, dir, "wisp-deck-tui",
+		`printf 'claude-account-switch\n  --result-file string\n  --tools string\n  --active-config string\n'`)
+	relaunch := subscriptionRelaunchCtx(t, dir)
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
+
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	if got := strings.Count(logOut, "show-environment"); got != 1 {
+		t.Fatalf("fallback session identity queries = %d, want 1:\n%s", got, logOut)
+	}
+}
+
 // Choosing a subscription relaunches the pane on that backend: the global
 // pointer flips, the pane's per-session stamp follows, and claude respawns.
 func TestOpenAccountSwitcher_config_result_switches_backend(t *testing.T) {
@@ -374,6 +456,306 @@ func TestOpenAccountSwitcher_config_result_switches_backend(t *testing.T) {
 		t.Fatalf("config pointer = %q, want glm.json", ptr)
 	}
 	assertContains(t, logOut, "WISP_DECK_CLAUDE_CONFIG glm.json")
+}
+
+// The native ledger has already collected the user's choice in-process. Applying
+// it must bypass the standalone popup and its capability probes, then reuse the
+// exact backend relaunch path.
+func TestApplyAccountSwitchChoice_subscription_relaunches_without_popup(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	writeTempFile(t, filepath.Join(dir, "claude-accounts", "work"), ".keep", "")
+	writeTempFile(t, filepath.Join(dir, "claude-configs"), "glm.json",
+		`{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"zhipu","ANTHROPIC_AUTH_TOKEN":"sk-x"}}`)
+	writeTempFile(t, dir, "claude-configs.list", "GLM:glm.json\n")
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherResultMockTmux(t, dir, "work", "", "CANCEL", rec)
+	relaunch := subscriptionRelaunchCtx(t, dir)
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("apply_account_switch_choice tmux %q subscription glm.json", relaunch)), env)
+
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "respawn-pane")
+	assertNotContains(t, logOut, "display-popup")
+	ptr, _ := runBashSnippet(t, fmt.Sprintf("cat %q", filepath.Join(dir, "claude-config")), nil)
+	if strings.TrimSpace(ptr) != "glm.json" {
+		t.Fatalf("config pointer = %q, want glm.json", ptr)
+	}
+}
+
+func TestApplyAccountSwitchChoice_reads_session_identities_once(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, filepath.Join(dir, "claude-accounts", "work"), ".keep", "")
+	writeTempFile(t, filepath.Join(dir, "claude-configs"), "glm.json",
+		`{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"zhipu","ANTHROPIC_AUTH_TOKEN":"sk-x"}}`)
+	writeTempFile(t, dir, "claude-configs.list", "GLM:glm.json\n")
+	rec := filepath.Join(dir, "tmux.log")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+printf '%%s\n' "$*" >> %q
+if [ "$1" = "show-environment" ] && [ -z "${2:-}" ]; then
+  printf 'WISP_DECK_CLAUDE_ACCOUNT=work\nWISP_DECK_CLAUDE_CONFIG=glm.json\n'
+  exit 0
+fi
+if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_ACCOUNT" ]; then
+  printf 'WISP_DECK_CLAUDE_ACCOUNT=work\n'
+  exit 0
+fi
+if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_CONFIG" ]; then
+  printf 'WISP_DECK_CLAUDE_CONFIG=glm.json\n'
+  exit 0
+fi
+`, rec))
+	relaunch := subscriptionRelaunchCtx(t, dir)
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("apply_account_switch_choice tmux %q subscription glm.json", relaunch)), env)
+
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	if got := strings.Count(logOut, "show-environment"); got != 1 {
+		t.Fatalf("session identity queries = %d, want 1:\n%s", got, logOut)
+	}
+}
+
+// Native-ledger account choices use the same explicit apply entrypoint. Default
+// is represented by an empty value: it removes the pointer and respawns without
+// ever reopening the standalone popup.
+func TestApplyAccountSwitchChoice_account_switches_to_default_without_popup(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	writeTempFile(t, filepath.Join(dir, "claude-accounts", "work"), ".keep", "")
+	pointer := writeTempFile(t, dir, "claude-account", "work\n")
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherResultMockTmux(t, dir, "work", "", "CANCEL", rec)
+	relaunch := subscriptionRelaunchCtx(t, dir)
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("apply_account_switch_choice tmux %q account ''", relaunch)), env)
+
+	assertExitCode(t, code, 0)
+	if _, err := os.Stat(pointer); !os.IsNotExist(err) {
+		t.Fatalf("default choice left account pointer behind: %v", err)
+	}
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "respawn-pane")
+	assertNotContains(t, logOut, "display-popup")
+}
+
+func TestApplyAccountSwitchChoice_account_from_other_agent_resets_subscription(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	writeTempFile(t, filepath.Join(dir, "claude-accounts", "work"), ".keep", "")
+	writeTempFile(t, filepath.Join(dir, "claude-configs"), "glm.json",
+		`{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"zhipu","ANTHROPIC_AUTH_TOKEN":"sk-x"}}`)
+	writeTempFile(t, dir, "claude-configs.list", "GLM:glm.json\n")
+	configPointer := writeTempFile(t, dir, "claude-config", "glm.json\n")
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherResultMockTmux(t, dir, "work", "glm.json", "CANCEL", rec)
+	relaunch := subscriptionRelaunchCtx(t, dir)
+	body, err := os.ReadFile(relaunch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = []byte(strings.Replace(string(body),
+		"tool=claude\ntool_cmd="+filepath.Join(dir, "bin", "claude")+"\n",
+		"tool=codex\ntool_cmd=/opt/codex\ncodex_cmd=/opt/codex\n", 1))
+	if err := os.WriteFile(relaunch, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("apply_account_switch_choice tmux %q account work", relaunch)), env)
+
+	assertExitCode(t, code, 0)
+	if _, err := os.Stat(configPointer); !os.IsNotExist(err) {
+		t.Fatalf("account choice from another agent left subscription active: %v", err)
+	}
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "respawn-pane")
+	assertContains(t, logOut, filepath.Join(dir, "bin", "claude"))
+	assertContains(t, logOut, "WISP_DECK_CLAUDE_CONFIG ")
+}
+
+func TestApplyAccountSwitchChoice_account_rejects_when_claude_is_unavailable(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, filepath.Join(dir, "claude-accounts", "work"), ".keep", "")
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherResultMockTmux(t, dir, "", "", "CANCEL", rec)
+	relaunch := subscriptionRelaunchCtx(t, dir)
+	body, err := os.ReadFile(relaunch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = []byte(strings.ReplaceAll(string(body), "tool=claude", "tool=codex"))
+	body = []byte(strings.ReplaceAll(string(body), "tools=claude", "tools=codex"))
+	if err := os.WriteFile(relaunch, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("apply_account_switch_choice tmux %q account work", relaunch)), env)
+
+	if code == 0 {
+		t.Fatal("account switch succeeded after Claude disappeared")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "claude-account")); !os.IsNotExist(err) {
+		t.Fatalf("rejected account switch mutated pointer: %v", err)
+	}
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q 2>/dev/null || true", rec), nil)
+	assertNotContains(t, logOut, "respawn-pane")
+}
+
+func TestApplyAccountSwitchChoice_subscription_rejects_when_claude_command_disappears(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, filepath.Join(dir, "claude-accounts", "work"), ".keep", "")
+	writeTempFile(t, filepath.Join(dir, "claude-configs"), "chatgpt.json",
+		`{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"openai-chatgpt"}}`)
+	writeTempFile(t, dir, "claude-configs.list", "ChatGPT:chatgpt.json\n")
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherResultMockTmux(t, dir, "work", "", "CANCEL", rec)
+	relaunch := subscriptionRelaunchCtx(t, dir)
+	if err := os.Remove(filepath.Join(dir, "bin", "claude")); err != nil {
+		t.Fatal(err)
+	}
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("apply_account_switch_choice tmux %q subscription chatgpt.json", relaunch)), env)
+
+	if code == 0 {
+		t.Fatal("subscription switch succeeded after the Claude executable disappeared")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "claude-config")); !os.IsNotExist(err) {
+		t.Fatalf("rejected subscription switch mutated pointer: %v", err)
+	}
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q 2>/dev/null || true", rec), nil)
+	assertNotContains(t, logOut, "respawn-pane")
+}
+
+func TestApplyAccountSwitchChoice_chatgpt_uses_hidden_codex_bridge(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, filepath.Join(dir, "claude-accounts", "work"), ".keep", "")
+	writeTempFile(t, filepath.Join(dir, "claude-configs"), "chatgpt.json",
+		`{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"openai-chatgpt"}}`)
+	writeTempFile(t, dir, "claude-configs.list", "ChatGPT:chatgpt.json\n")
+	codexCmd := filepath.Join(mockCommand(t, dir, "codex", "exit 0"), "codex")
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherResultMockTmux(t, dir, "work", "", "CANCEL", rec)
+	relaunch := subscriptionRelaunchCtx(t, dir)
+	body, err := os.ReadFile(relaunch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = []byte(strings.Replace(string(body), "tools=claude\n",
+		"tools=claude\ncodex_cmd="+codexCmd+"\n", 1))
+	if err := os.WriteFile(relaunch, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("apply_account_switch_choice tmux %q subscription chatgpt.json", relaunch)), env)
+
+	assertExitCode(t, code, 0)
+	config, err := os.ReadFile(filepath.Join(dir, "claude-config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(config)) != "chatgpt.json" {
+		t.Fatalf("config pointer = %q, want chatgpt.json", config)
+	}
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q 2>/dev/null || true", rec), nil)
+	assertContains(t, logOut, "respawn-pane")
+}
+
+func TestApplyAccountSwitchChoice_chatgpt_rejects_when_codex_command_disappears(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, filepath.Join(dir, "claude-accounts", "work"), ".keep", "")
+	writeTempFile(t, filepath.Join(dir, "claude-configs"), "chatgpt.json",
+		`{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"openai-chatgpt"}}`)
+	writeTempFile(t, dir, "claude-configs.list", "ChatGPT:chatgpt.json\n")
+	codexCmd := filepath.Join(mockCommand(t, dir, "codex", "exit 0"), "codex")
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherResultMockTmux(t, dir, "work", "", "CANCEL", rec)
+	relaunch := subscriptionRelaunchCtx(t, dir)
+	body, err := os.ReadFile(relaunch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = []byte(strings.Replace(string(body), "tools=claude\n",
+		"tools=claude codex\ncodex_cmd="+codexCmd+"\n", 1))
+	if err := os.WriteFile(relaunch, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(codexCmd); err != nil {
+		t.Fatal(err)
+	}
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("apply_account_switch_choice tmux %q subscription chatgpt.json", relaunch)), env)
+
+	if code == 0 {
+		t.Fatal("ChatGPT switch succeeded after the Codex executable disappeared")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "claude-config")); !os.IsNotExist(err) {
+		t.Fatalf("rejected ChatGPT switch mutated pointer: %v", err)
+	}
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q 2>/dev/null || true", rec), nil)
+	assertNotContains(t, logOut, "respawn-pane")
+}
+
+func TestApplyAccountSwitchChoice_subscription_rejects_deleted_choice(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, filepath.Join(dir, "claude-accounts", "work"), ".keep", "")
+	writeTempFile(t, dir, "claude-configs.list", "GLM:glm.json\n")
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherResultMockTmux(t, dir, "work", "", "CANCEL", rec)
+	relaunch := subscriptionRelaunchCtx(t, dir)
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("apply_account_switch_choice tmux %q subscription glm.json", relaunch)), env)
+
+	if code == 0 {
+		t.Fatal("subscription switch accepted a deleted config")
+	}
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q 2>/dev/null || true", rec), nil)
+	assertNotContains(t, logOut, "respawn-pane")
+	if _, err := os.Stat(filepath.Join(dir, "claude-config")); !os.IsNotExist(err) {
+		t.Fatalf("rejected switch mutated config pointer: %v", err)
+	}
+}
+
+func TestApplyAccountSwitchChoice_subscription_rejects_missing_session_account(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "claude-accounts.list", "Work:work\n")
+	writeTempFile(t, filepath.Join(dir, "claude-configs"), "glm.json",
+		`{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"zhipu","ANTHROPIC_AUTH_TOKEN":"sk-x"}}`)
+	writeTempFile(t, dir, "claude-configs.list", "GLM:glm.json\n")
+	rec := filepath.Join(dir, "tmux.log")
+	bin := switcherResultMockTmux(t, dir, "deleted", "", "CANCEL", rec)
+	relaunch := subscriptionRelaunchCtx(t, dir)
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("apply_account_switch_choice tmux %q subscription glm.json", relaunch)), env)
+
+	if code == 0 {
+		t.Fatal("subscription switch accepted a deleted session account")
+	}
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q 2>/dev/null || true", rec), nil)
+	assertNotContains(t, logOut, "respawn-pane")
+	if _, err := os.Stat(filepath.Join(dir, "claude-config")); !os.IsNotExist(err) {
+		t.Fatalf("rejected switch mutated config pointer: %v", err)
+	}
 }
 
 // Picking an account while a subscription is active returns the pane to the

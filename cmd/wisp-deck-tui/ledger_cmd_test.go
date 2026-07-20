@@ -168,6 +168,9 @@ func TestLedgerCommandLoadsDeterministicSnapshotSeam(t *testing.T) {
 }
 
 func TestLedgerAccountCommandWiresSessionAndPopupAdapters(t *testing.T) {
+	// Exercise the fixture account, not the launch plan inherited from this Wisp pane.
+	t.Setenv("WISP_DECK_PLAN", "Standard Claude")
+
 	repo := t.TempDir()
 	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v\n%s", err, out)
@@ -233,13 +236,20 @@ func TestLedgerAccountCommandWiresSessionAndPopupAdapters(t *testing.T) {
 		if view := ledgerModel.View(); !strings.Contains(view, "Work") {
 			t.Fatalf("session pill not wired:\n%s", view)
 		}
-		_, switchCommand := ledgerModel.Update(tea.MouseMsg{
+		_, openCommand := ledgerModel.Update(tea.MouseMsg{
 			X: 1, Y: 13, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
 		})
-		if switchCommand == nil {
-			t.Fatal("account pill has no switch command")
+		if openCommand != nil {
+			t.Fatal("account pill started a process before the in-process selection")
 		}
-		ledgerModel.Update(tea.MouseMsg{X: 12, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+		if view := ledgerModel.View(); !strings.Contains(view, "Switch agent") || !strings.Contains(view, "OpenCode") {
+			t.Fatalf("account pill did not paint the in-process chooser:\n%s", view)
+		}
+		ledgerModel.Update(tea.KeyMsg{Type: tea.KeyDown})
+		_, switchCommand := ledgerModel.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if switchCommand == nil {
+			t.Fatal("confirmed account choice has no asynchronous apply command")
+		}
 		return model, nil
 	}
 

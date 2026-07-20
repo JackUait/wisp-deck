@@ -82,17 +82,36 @@ reload_switcher_lib() {
 # way, and the current binary is the norm). Cached per process ($$-keyed would
 # be overkill: reload_switcher_lib re-sources this file, so keep the cache in a
 # var this file does not reset).
-switcher_supports_session_flags() {
-  if [ -z "${_GT_SWITCHER_FLAGS_PROBE:-}" ]; then
-    local help
-    help="$(wisp-deck-tui claude-account-switch --help 2>&1)" || help=""
-    if printf '%s' "$help" | grep -q 'claude-account-switch' \
-       && ! printf '%s' "$help" | grep -q -- '--result-file'; then
-      _GT_SWITCHER_FLAGS_PROBE=legacy
-    else
-      _GT_SWITCHER_FLAGS_PROBE=ok
-    fi
+_probe_switcher_capabilities() {
+  if [ -n "${_GT_SWITCHER_FLAGS_PROBE:-}" ] \
+     && [ -n "${_GT_SWITCHER_TOOLS_PROBE:-}" ] \
+     && [ -n "${_GT_SWITCHER_CONFIGS_PROBE:-}" ]; then
+    return 0
   fi
+  local help has_command=0
+  help="$(wisp-deck-tui claude-account-switch --help 2>&1)" || help=""
+  case "$help" in
+    *claude-account-switch*) has_command=1 ;;
+  esac
+  case "$has_command:$help" in
+    1:*--result-file*) _GT_SWITCHER_FLAGS_PROBE=ok ;;
+    1:*) _GT_SWITCHER_FLAGS_PROBE=legacy ;;
+    *) _GT_SWITCHER_FLAGS_PROBE=ok ;;
+  esac
+  case "$has_command:$help" in
+    1:*--tools*) _GT_SWITCHER_TOOLS_PROBE=ok ;;
+    1:*) _GT_SWITCHER_TOOLS_PROBE=legacy ;;
+    *) _GT_SWITCHER_TOOLS_PROBE=ok ;;
+  esac
+  case "$has_command:$help" in
+    1:*--active-config*) _GT_SWITCHER_CONFIGS_PROBE=ok ;;
+    1:*) _GT_SWITCHER_CONFIGS_PROBE=legacy ;;
+    *) _GT_SWITCHER_CONFIGS_PROBE=ok ;;
+  esac
+}
+
+switcher_supports_session_flags() {
+  _probe_switcher_capabilities
   [ "$_GT_SWITCHER_FLAGS_PROBE" = ok ]
 }
 
@@ -101,16 +120,7 @@ switcher_supports_session_flags() {
 # legacy-detection contract as switcher_supports_session_flags: only a help
 # output that positively shows the command WITHOUT --tools counts as legacy.
 switcher_supports_agent_rows() {
-  if [ -z "${_GT_SWITCHER_TOOLS_PROBE:-}" ]; then
-    local help
-    help="$(wisp-deck-tui claude-account-switch --help 2>&1)" || help=""
-    if printf '%s' "$help" | grep -q 'claude-account-switch' \
-       && ! printf '%s' "$help" | grep -q -- '--tools'; then
-      _GT_SWITCHER_TOOLS_PROBE=legacy
-    else
-      _GT_SWITCHER_TOOLS_PROBE=ok
-    fi
-  fi
+  _probe_switcher_capabilities
   [ "$_GT_SWITCHER_TOOLS_PROBE" = ok ]
 }
 
@@ -119,16 +129,7 @@ switcher_supports_agent_rows() {
 # Same legacy-detection contract as the probes above: only a help output that
 # positively shows the command WITHOUT --active-config counts as legacy.
 switcher_supports_subscription_rows() {
-  if [ -z "${_GT_SWITCHER_CONFIGS_PROBE:-}" ]; then
-    local help
-    help="$(wisp-deck-tui claude-account-switch --help 2>&1)" || help=""
-    if printf '%s' "$help" | grep -q 'claude-account-switch' \
-       && ! printf '%s' "$help" | grep -q -- '--active-config'; then
-      _GT_SWITCHER_CONFIGS_PROBE=legacy
-    else
-      _GT_SWITCHER_CONFIGS_PROBE=ok
-    fi
-  fi
+  _probe_switcher_capabilities
   [ "$_GT_SWITCHER_CONFIGS_PROBE" = ok ]
 }
 
@@ -250,15 +251,55 @@ account_pill() {
 # value means the Default login and must NOT fall back; only an UNSTAMPED
 # session (pre-stamp launch: tmux prints `-NAME`) falls back to the pointer.
 current_session_account() {
-  local tmux_cmd="$1" pointer_file="$2" line
-  line="$("$tmux_cmd" show-environment WISP_DECK_CLAUDE_ACCOUNT 2>/dev/null)" || line=""
-  case "$line" in
-    WISP_DECK_CLAUDE_ACCOUNT=*)
-      printf '%s\n' "${line#WISP_DECK_CLAUDE_ACCOUNT=}"
-      return 0
-      ;;
-  esac
+  local tmux_cmd="$1" pointer_file="$2" session_env="" line
+  if [ "$#" -ge 3 ]; then
+    session_env="$3"
+  else
+    session_env="$("$tmux_cmd" show-environment WISP_DECK_CLAUDE_ACCOUNT 2>/dev/null)" \
+      || session_env=""
+  fi
+  while IFS= read -r line; do
+    case "$line" in
+      WISP_DECK_CLAUDE_ACCOUNT=*)
+        printf '%s\n' "${line#WISP_DECK_CLAUDE_ACCOUNT=}"
+        return 0
+        ;;
+    esac
+  done <<< "$session_env"
   get_active_claude_account "$pointer_file"
+}
+
+# _current_session_identities <tmux_cmd> <account_pointer> <config_pointer>
+# Set the caller-local session_acct/session_config after reading both stamps with
+# one tmux client. A missing stamp falls back to its global pointer; a stamped
+# empty remains authoritative. Uses the same dynamic-scoping contract as
+# _read_relaunch_ctx, avoiding a command-substitution subshell.
+_current_session_identities() {
+  local tmux_cmd="$1" account_pointer="$2" config_pointer="$3"
+  local session_env="" account="" config="" account_stamped=0 config_stamped=0 line
+  session_env="$("$tmux_cmd" show-environment 2>/dev/null)" || session_env=""
+  while IFS= read -r line; do
+    case "$line" in
+      WISP_DECK_CLAUDE_ACCOUNT=*)
+        account="${line#WISP_DECK_CLAUDE_ACCOUNT=}"
+        account_stamped=1
+        ;;
+      WISP_DECK_CLAUDE_CONFIG=*)
+        config="${line#WISP_DECK_CLAUDE_CONFIG=}"
+        config_stamped=1
+        ;;
+    esac
+  done <<< "$session_env"
+  if [ "$account_stamped" = 1 ]; then
+    session_acct="$account"
+  else
+    session_acct="$(current_session_account "$tmux_cmd" "$account_pointer" "$session_env")"
+  fi
+  if [ "$config_stamped" = 1 ]; then
+    session_config="$config"
+  else
+    session_config="$(current_session_config "$tmux_cmd" "$config_pointer" "$session_env")"
+  fi
 }
 
 # current_session_config <tmux_cmd> <config_pointer> — print the subscription
@@ -268,14 +309,21 @@ current_session_account() {
 # env (WISP_DECK_CLAUDE_CONFIG). A stamped value — including a stamped empty
 # (standard) — wins; only an UNSTAMPED session falls back to the pointer.
 current_session_config() {
-  local tmux_cmd="$1" pointer_file="$2" line
-  line="$("$tmux_cmd" show-environment WISP_DECK_CLAUDE_CONFIG 2>/dev/null)" || line=""
-  case "$line" in
-    WISP_DECK_CLAUDE_CONFIG=*)
-      printf '%s\n' "${line#WISP_DECK_CLAUDE_CONFIG=}"
-      return 0
-      ;;
-  esac
+  local tmux_cmd="$1" pointer_file="$2" session_env="" line
+  if [ "$#" -ge 3 ]; then
+    session_env="$3"
+  else
+    session_env="$("$tmux_cmd" show-environment WISP_DECK_CLAUDE_CONFIG 2>/dev/null)" \
+      || session_env=""
+  fi
+  while IFS= read -r line; do
+    case "$line" in
+      WISP_DECK_CLAUDE_CONFIG=*)
+        printf '%s\n' "${line#WISP_DECK_CLAUDE_CONFIG=}"
+        return 0
+        ;;
+    esac
+  done <<< "$session_env"
   get_active_claude_config "$pointer_file"
 }
 
@@ -608,12 +656,13 @@ _read_relaunch_ctx() {
   done < "$file"
 }
 
-# _set_relaunch_kv <file> <key> <value> — rewrite <key>=<value> in the relaunch
-# context, replacing an existing line in place or appending a missing one, and
-# leaving every other line byte-for-byte. A backend switch uses it to swap the
-# pane's settings source so the relaunch (which re-reads the file) picks it up.
+# _set_relaunch_kv <file> <key> <value> [<key2> <value2>] — rewrite one
+# or two key/value pairs in a single pass, appending missing keys and leaving
+# every other line byte-for-byte. Backend switches update settings_source and
+# settings together to avoid scanning and renaming the relaunch file twice.
 _set_relaunch_kv() {
-  local file="$1" key="$2" value="$3" tmp found=0 line k
+  local file="$1" key="$2" value="$3" key2="${4:-}" value2="${5:-}"
+  local tmp found=0 found2=0 line k
   [ -f "$file" ] || return 1
   tmp="$(mktemp "${file}.XXXXXX")" || return 1
   while IFS= read -r line || [ -n "$line" ]; do
@@ -621,11 +670,17 @@ _set_relaunch_kv() {
     if [ "$k" = "$key" ]; then
       printf '%s=%s\n' "$key" "$value"
       found=1
+    elif [ -n "$key2" ] && [ "$k" = "$key2" ]; then
+      printf '%s=%s\n' "$key2" "$value2"
+      found2=1
     else
       printf '%s\n' "$line"
     fi
   done < "$file" > "$tmp"
   [ "$found" = 1 ] || printf '%s=%s\n' "$key" "$value" >> "$tmp"
+  if [ -n "$key2" ] && [ "$found2" != 1 ]; then
+    printf '%s=%s\n' "$key2" "$value2" >> "$tmp"
+  fi
   mv -f "$tmp" "$file"
 }
 
@@ -645,8 +700,7 @@ _apply_subscription() {
   set_active_claude_config "$_rc_config_pointer" "$config_file"
   new_source="$(resolve_claude_config_path "$_rc_configs_dir" "$_rc_config_pointer")"
   new_provider="$(get_claude_config_provider "$new_source")"
-  _set_relaunch_kv "$relaunch_file" settings_source "$new_source"
-  _set_relaunch_kv "$relaunch_file" settings "$new_source"
+  _set_relaunch_kv "$relaunch_file" settings_source "$new_source" settings "$new_source"
   export WISP_DECK_CLAUDE_PROVIDER="$new_provider"
   "$tmux_cmd" set-environment WISP_DECK_CLAUDE_CONFIG "$stamp" 2>/dev/null || true
   "$tmux_cmd" set-environment WISP_DECK_CLAUDE_PROVIDER "$new_provider" 2>/dev/null || true
@@ -1048,6 +1102,9 @@ _tool_cmd_for() {
     opencode) cmd="${_rc_opencode_cmd:-}" ;;
     codex) cmd="${_rc_codex_cmd:-}" ;;
   esac
+  if [ -z "$cmd" ] && [ "$tool" = "${_rc_tool:-}" ]; then
+    cmd="${_rc_tool_cmd:-}"
+  fi
   # OpenCode is the one tool that can run without a binary on PATH (via npx), so
   # a plain `command -v` returns empty for exactly the users who most need the
   # fallback. It is also the tool wrapper.sh deliberately leaves unresolved in a
@@ -1060,6 +1117,46 @@ _tool_cmd_for() {
   fi
   [ -n "$cmd" ] || cmd="$(command -v "$tool" 2>/dev/null)" || cmd=""
   printf '%s\n' "$cmd"
+}
+
+# _tool_command_ready <tool> — validate a configured tool executable without
+# requiring that tool to be selectable. ChatGPT subscriptions use Codex as a
+# hidden bridge even when Codex is disabled as an agent.
+_tool_command_ready() {
+  local target="$1" tool_cmd=""
+  case "$target" in
+    claude|opencode|codex) ;;
+    *) return 1 ;;
+  esac
+
+  tool_cmd="$(_tool_cmd_for "$target")"
+  [ -n "$tool_cmd" ] || return 1
+  case "$target:$tool_cmd" in
+    opencode:npx\ --no-install\ opencode-ai|opencode:npx\ --prefer-offline\ opencode-ai@latest)
+      command -v npx >/dev/null 2>&1
+      ;;
+    opencode:opencode)
+      command -v opencode >/dev/null 2>&1
+      ;;
+    *:/*|*:*/*)
+      [ -x "$tool_cmd" ]
+      ;;
+    *)
+      command -v "$tool_cmd" >/dev/null 2>&1
+      ;;
+  esac
+}
+
+# _tool_choice_ready <tool> — revalidate an in-process choice against the latest
+# relaunch context immediately before it can mutate or respawn the pane.
+_tool_choice_ready() {
+  local target="$1"
+  case " ${_rc_tools:-} " in
+    *" $target "*) ;;
+    "  ") [ "$target" = "${_rc_tool:-}" ] || return 1 ;;
+    *) return 1 ;;
+  esac
+  _tool_command_ready "$target"
 }
 
 # relaunch_switch_tool <tmux_cmd> <relaunch_file> <target_tool> [chosen_account]
@@ -1269,6 +1366,157 @@ auto_switch_relaunch() {
   return 0
 }
 
+# _account_choice_ready <account-dir> - revalidate a preloaded managed-account
+# row against both sources of truth. Deletion removes the list entry before the
+# directory, so existence alone can accept an account already being removed.
+# Empty/default is the virtual Keychain account and is always available.
+_account_choice_ready() {
+  local wanted="${1:-}" label="" dir=""
+  [ -z "$wanted" ] || [ "$wanted" = "default" ] && return 0
+  [ -d "$_rc_accounts_dir/$wanted" ] && [ -f "$_rc_list" ] || return 1
+  while IFS=: read -r label dir; do
+    case "$label" in
+      ""|\#*) continue ;;
+    esac
+    [ "$dir" = "$wanted" ] && return 0
+  done < "$_rc_list"
+  return 1
+}
+
+# _subscription_choice_ready <config-file> - revalidate a preloaded chooser row
+# immediately before mutation. The list/file/disabled checks catch concurrent
+# config edits; ChatGPT additionally requires its Codex bridge executable, while
+# API providers still require their stored Anthropic token.
+_subscription_choice_ready() {
+  local wanted="$1" name="" file="" selected_name="" config_path="" provider="" lower disabled line
+  [ -n "$wanted" ] && [ -f "$_rc_configs_list" ] || return 1
+  while IFS=: read -r name file; do
+    case "$name" in
+      ""|\#*) continue ;;
+    esac
+    if [ "$file" = "$wanted" ]; then
+      selected_name="$name"
+      break
+    fi
+  done < "$_rc_configs_list"
+  [ -n "$selected_name" ] || return 1
+
+  disabled="${_rc_configs_list%/*}/claude-configs.disabled"
+  if [ -f "$disabled" ]; then
+    while IFS= read -r line; do
+      [ "$line" = "$wanted" ] && return 1
+    done < "$disabled"
+  fi
+
+  config_path="$_rc_configs_dir/$wanted"
+  [ -f "$config_path" ] || return 1
+  provider="$(get_claude_config_provider "$config_path")"
+  if [ -z "$provider" ]; then
+    lower="$(printf '%s' "$selected_name" | tr '[:upper:]' '[:lower:]')"
+    case "$lower" in
+      *"openai gpt"*|*chatgpt*) provider=openai-chatgpt ;;
+      *mimo*|*xiaomi*) provider=mimo ;;
+      *moonshot*|*kimi*) provider=moonshot ;;
+      *) provider=zhipu ;;
+    esac
+  fi
+  if [ "$provider" = "openai-chatgpt" ]; then
+    _tool_command_ready codex
+    return
+  fi
+  command -v jq >/dev/null 2>&1 || return 1
+  jq -er '.env.ANTHROPIC_AUTH_TOKEN | select(type == "string" and length > 0)' "$config_path" >/dev/null 2>&1
+}
+
+# _apply_account_switch_choice_loaded <tmux_cmd> <relaunch_file>
+#   <account|subscription|tool> <value> <session-account> <session-config>
+# Dispatch one exact switch choice after the caller has loaded _rc_* and, when
+# needed, resolved the pane's session-scoped identities. Shared by the native
+# in-process chooser and the standalone compatibility popup.
+_apply_account_switch_choice_loaded() {
+  local tmux_cmd="$1" relaunch_file="$2" kind="$3" value="${4:-}"
+  local session_acct="${5:-}" session_config="${6:-}"
+  case "$kind" in
+    tool)
+      _tool_choice_ready "$value" || return 1
+      [ "$value" = "$_rc_tool" ] \
+        || relaunch_switch_tool "$tmux_cmd" "$relaunch_file" "$value"
+      ;;
+    subscription)
+      [ -n "$value" ] || return 1
+      _subscription_choice_ready "$value" || return 1
+      if [ -n "$session_acct" ] && [ ! -d "$_rc_accounts_dir/$session_acct" ]; then
+        return 1
+      fi
+      _tool_choice_ready claude || return 1
+      if [ "$value" != "$session_config" ]; then
+        _apply_subscription "$tmux_cmd" "$relaunch_file" "$value"
+        if [ "$_rc_tool" != "claude" ]; then
+          relaunch_switch_tool "$tmux_cmd" "$relaunch_file" claude "$session_acct"
+        else
+          _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" "$session_acct" "$session_acct"
+        fi
+      fi
+      ;;
+    account)
+      _account_choice_ready "$value" || return 1
+      _tool_choice_ready claude || return 1
+      set_active_claude_account "$_rc_pointer" "$value" || return 1
+      if [ "$_rc_tool" != "claude" ]; then
+        if [ -n "$session_config" ]; then
+          _apply_subscription "$tmux_cmd" "$relaunch_file" standard
+        fi
+        relaunch_switch_tool "$tmux_cmd" "$relaunch_file" claude "$value"
+      elif [ -n "$session_config" ]; then
+        _apply_subscription "$tmux_cmd" "$relaunch_file" standard
+        _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" "$session_acct" "$value"
+      elif [ "$value" != "$session_acct" ]; then
+        _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" "$session_acct" "$value"
+      fi
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+# apply_account_switch_choice <tmux_cmd> <relaunch_file>
+#   <account|subscription|tool> <value>
+# Apply a choice already collected by an in-process caller. This is the native
+# ledger's hot path: no popup, backdrop capture, TUI exec, or capability probe
+# runs before the relaunch. Tool choices skip account/config tmux queries they
+# cannot use. The existing draft/session/generation machinery remains the sole
+# owner of the actual pane transition.
+apply_account_switch_choice() {
+  local tmux_cmd="$1" relaunch_file="$2" kind="$3" value="${4:-}"
+  local _rc_tool="" _rc_tool_cmd="" _rc_settings="" _rc_settings_source="" \
+    _rc_filter="" _rc_project_dir="" _rc_accounts_dir="" _rc_pointer="" \
+    _rc_list="" _rc_colors="" _rc_default_label="" \
+    _rc_tools="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_codex_cmd="" \
+    _rc_tool_pref="" _rc_attention_root="" _rc_attention_descriptor="" \
+    _rc_config_pointer="" _rc_configs_dir="" _rc_configs_list=""
+  [ -f "$relaunch_file" ] || return 1
+  _read_relaunch_ctx "$relaunch_file"
+
+  local session_acct="" session_config=""
+  case "$kind" in
+    tool)
+      ;;
+    subscription)
+      _current_session_identities "$tmux_cmd" "$_rc_pointer" "$_rc_config_pointer"
+      ;;
+    account)
+      _current_session_identities "$tmux_cmd" "$_rc_pointer" "$_rc_config_pointer"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  _apply_account_switch_choice_loaded "$tmux_cmd" "$relaunch_file" "$kind" \
+    "$value" "$session_acct" "$session_config"
+}
+
 # open_account_switcher <tmux_cmd> <relaunch_file> — the click handler entry point.
 # Float the account switcher popup (which writes the global pointer on select),
 # then relaunch the AI pane only if the choice differs from the account THIS
@@ -1295,9 +1543,8 @@ open_account_switcher() {
   # NOT created — its existence after the popup is the "user picked something"
   # signal. An older binary rejects the new flags (see
   # switcher_supports_session_flags); it gets the legacy pointer-diff flow.
-  local session_acct session_config result_file session_flags=""
-  session_acct="$(current_session_account "$tmux_cmd" "$_rc_pointer")"
-  session_config="$(current_session_config "$tmux_cmd" "$_rc_config_pointer")"
+  local session_acct="" session_config="" result_file session_flags=""
+  _current_session_identities "$tmux_cmd" "$_rc_pointer" "$_rc_config_pointer"
   result_file=""
   if switcher_supports_session_flags; then
     result_file=$(mktemp "${TMPDIR:-/tmp}/gtswitchsel.XXXXXX" 2>/dev/null) || result_file=""
@@ -1366,45 +1613,23 @@ ${session_flags}${backdrop_arg}" 2>/dev/null || true
     if [ -f "$result_file" ]; then
       IFS= read -r chosen < "$result_file" || chosen=""
       rm -f "$result_file"
+      local kind=account value="$chosen"
       case "$chosen" in
         tool:*)
-          # An agent row: switch the pane to that tool (no-op when it already
-          # runs it — relaunching would kill the running tool for nothing).
-          [ "${chosen#tool:}" != "$_rc_tool" ] \
-            && relaunch_switch_tool "$tmux_cmd" "$relaunch_file" "${chosen#tool:}"
+          kind=tool
+          value="${chosen#tool:}"
           ;;
         config:*)
-          # A subscription row: retarget the Claude backend (no-op when the pane
-          # already runs it). Keep the current account; a pane on another agent
-          # switches to claude on that backend.
-          local cfg_file="${chosen#config:}"
-          if [ "$cfg_file" != "$session_config" ]; then
-            _apply_subscription "$tmux_cmd" "$relaunch_file" "$cfg_file"
-            if [ "$_rc_tool" != "claude" ]; then
-              relaunch_switch_tool "$tmux_cmd" "$relaunch_file" claude "$session_acct"
-            else
-              _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" "$session_acct" "$session_acct"
-            fi
-          fi
-          ;;
-        *)
-          if [ "$_rc_tool" != "claude" ]; then
-            # A claude login picked while another agent runs: switch back to
-            # claude under that login, whatever the stamped account says.
-            relaunch_switch_tool "$tmux_cmd" "$relaunch_file" claude "$chosen"
-          elif [ -n "$session_config" ]; then
-            # An account picked while a subscription runs means "standard Claude
-            # on that account": reset the backend to standard, then relaunch —
-            # always, since the backend is changing even if the account isn't.
-            _apply_subscription "$tmux_cmd" "$relaunch_file" standard
-            _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" "$session_acct" "$chosen"
-          else
-            # Hand the CHOICE itself to the relaunch: re-resolving the global
-            # pointer there would race another session's concurrent switch.
-            [ "$chosen" != "$session_acct" ] && _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" "$session_acct" "$chosen"
-          fi
+          kind=subscription
+          value="${chosen#config:}"
           ;;
       esac
+      if ! _apply_account_switch_choice_loaded "$tmux_cmd" "$relaunch_file" \
+        "$kind" "$value" "$session_acct" "$session_config"; then
+        [ "$kind" = "account" ] \
+          && set_active_claude_account "$_rc_pointer" "$before" >/dev/null 2>&1 || true
+        return 1
+      fi
     fi
   else
     # Legacy binary (no result-file contract): fall back to the pointer-diff

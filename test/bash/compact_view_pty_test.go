@@ -1009,7 +1009,13 @@ func TestCompactView_mouse_marks_and_discards(t *testing.T) {
 		time.Sleep(180 * time.Millisecond)
 	}
 
-	time.Sleep(700 * time.Millisecond) // first frame
+	deadline := time.Now().Add(6 * time.Second)
+	for !strings.Contains(frame(), "modified") && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !strings.Contains(frame(), "modified") {
+		t.Fatalf("ledger did not paint before mouse input:\n%s", frame())
+	}
 
 	// Body: row 3 = "modified" header, row 4 = a.txt, row 5 = b.txt, row 6 = c.txt.
 	// The checkbox lives in the left indent (cols 1-3), so a click at col 2 toggles
@@ -1700,8 +1706,19 @@ func TestCompactView_idle_frames_are_stable_no_blink(t *testing.T) {
 		}
 	}()
 
-	// Idle: no keystrokes. Observe many refresh ticks (interval 0.1s).
-	time.Sleep(1200 * time.Millisecond)
+	// Idle: no keystrokes. Wait for enough refresh ticks to evaluate the
+	// between-frame output. Native-binary startup varies under parallel load, so
+	// do not spend the observation budget before the first paint exists.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		mu.Lock()
+		homes := bytes.Count(out.Bytes(), []byte("\x1b[H"))
+		mu.Unlock()
+		if homes >= 5 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
 	time.Sleep(200 * time.Millisecond)
 
@@ -1825,7 +1842,8 @@ func hoverPillScenario(t *testing.T, pathPrefix string) {
 		env = append(env, e)
 	}
 	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=5", "TERM=xterm",
-		"WISP_DECK_LIB_DIR="+lib, "WISP_DECK_RELAUNCH_FILE="+relaunch)
+		"WISP_DECK_LIB_DIR="+lib, "WISP_DECK_RELAUNCH_FILE="+relaunch,
+		"WISP_DECK_PLAN=Standard Claude")
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 12, Cols: 60})
 	if err != nil {
@@ -1858,9 +1876,8 @@ func hoverPillScenario(t *testing.T, pathPrefix string) {
 		return s
 	}
 
-	time.Sleep(700 * time.Millisecond) // idle first frame
-	idle := read()
-	if !strings.Contains(idle, "\U000f0004") {
+	idle, _, ok := waitForFrame(read, "\U000f0004", 6*time.Second)
+	if !ok {
 		t.Fatalf("account pill (󰀄) never rendered — hover test cannot run; got:\n%q", idle)
 	}
 	if strings.Contains(idle, "48;5;238") {

@@ -70,6 +70,8 @@ type LedgerModel struct {
 	sessionLoading      bool
 	accountSwitcher     ledger.AccountSwitcher
 	accountHover        bool
+	accountSwitchOpen   bool
+	accountSwitchCursor int
 	switchingAccount    bool
 	accountCancel       context.CancelFunc
 	discardArmed        bool
@@ -161,8 +163,14 @@ func (m *LedgerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.state.Resize(msg.Width, msg.Height, ledgerHeaderHeight, ledgerFooterHeight)
 		return m, nil
 	case tea.MouseMsg:
+		if m.accountSwitchOpen {
+			return m, m.handleAccountSwitchMouse(msg)
+		}
 		return m, m.handleLedgerMouse(msg)
 	case tea.KeyMsg:
+		if m.accountSwitchOpen {
+			return m, m.handleAccountSwitchKey(msg)
+		}
 		return m, m.handleLedgerKey(msg)
 	case ledgerRefreshTickMsg:
 		return m, m.startLoad()
@@ -299,7 +307,8 @@ func (m *LedgerModel) handleLedgerMouse(msg tea.MouseMsg) tea.Cmd {
 		return nil
 	}
 	if m.ledgerAccountHit(msg.X, msg.Y) {
-		return m.startAccountSwitch()
+		m.openAccountSwitch()
+		return nil
 	}
 	if cmd, handled := m.handleLedgerDiscardClick(msg); handled {
 		return cmd
@@ -349,17 +358,35 @@ func (m *LedgerModel) ledgerAccountHit(x, y int) bool {
 	return width > 0 && y == m.height-1 && x >= 0 && x < width
 }
 
-func (m *LedgerModel) startAccountSwitch() tea.Cmd {
-	if m.accountSwitcher == nil || m.session.Pill == nil || m.switchingAccount {
+func (m *LedgerModel) openAccountSwitch() {
+	if m.accountSwitcher == nil || m.session.Pill == nil || m.switchingAccount ||
+		len(m.session.SwitchOptions) == 0 {
+		return
+	}
+	m.accountSwitchCursor = 0
+	for index, option := range m.session.SwitchOptions {
+		if option.Active {
+			m.accountSwitchCursor = index
+			break
+		}
+	}
+	m.accountSwitchOpen = true
+	m.accountHover = false
+	m.actionError = nil
+}
+
+func (m *LedgerModel) applyAccountSwitch(choice ledger.SwitchChoice) tea.Cmd {
+	if m.accountSwitcher == nil || m.switchingAccount {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.accountCancel = cancel
+	m.accountSwitchOpen = false
 	m.switchingAccount = true
 	m.actionError = nil
 	session := m.session
 	return func() tea.Msg {
-		return ledgerAccountSwitchDoneMsg{err: m.accountSwitcher.Switch(ctx, session)}
+		return ledgerAccountSwitchDoneMsg{err: m.accountSwitcher.Switch(ctx, session, choice)}
 	}
 }
 
@@ -614,7 +641,11 @@ func (m *LedgerModel) View() string {
 		bodyLines++
 	}
 	lines = append(lines, renderLedgerFooter(m.state, width, m.actionError, m.session.Pill, m.accountHover))
-	return strings.Join(lines, "\n")
+	view := strings.Join(lines, "\n")
+	if m.accountSwitchOpen {
+		return m.overlayAccountSwitch(view)
+	}
+	return view
 }
 
 func renderLedgerHeader(metadata ledger.Metadata, width int) []string {

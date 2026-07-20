@@ -982,15 +982,17 @@ type fakeAccountSwitcher struct {
 	mu      sync.Mutex
 	calls   int
 	session ledger.SessionContext
+	choice  ledger.SwitchChoice
 	started chan struct{}
 	release chan struct{}
 	err     error
 }
 
-func (s *fakeAccountSwitcher) Switch(ctx context.Context, session ledger.SessionContext) error {
+func (s *fakeAccountSwitcher) Switch(ctx context.Context, session ledger.SessionContext, choice ledger.SwitchChoice) error {
 	s.mu.Lock()
 	s.calls++
 	s.session = session
+	s.choice = choice
 	s.mu.Unlock()
 	if s.started != nil {
 		select {
@@ -1008,10 +1010,10 @@ func (s *fakeAccountSwitcher) Switch(ctx context.Context, session ledger.Session
 	return s.err
 }
 
-func (s *fakeAccountSwitcher) recorded() (int, ledger.SessionContext) {
+func (s *fakeAccountSwitcher) recorded() (int, ledger.SessionContext, ledger.SwitchChoice) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.calls, s.session
+	return s.calls, s.session, s.choice
 }
 
 func TestLedgerAccountPillHidesWhenIneligible(t *testing.T) {
@@ -1052,7 +1054,7 @@ func TestLedgerAccountPillRendersColorAndExactHoverSpan(t *testing.T) {
 	}
 }
 
-func TestLedgerAccountClickSwitchesAsyncThenReloadsContextAndSnapshot(t *testing.T) {
+func TestLedgerAccountClickPaintsInProcessThenAppliesChoiceAsync(t *testing.T) {
 	snapshot := ledgerTestSnapshot(3)
 	source := &recordingLedgerSource{snapshot: snapshot}
 	sessionSource := &fakeLedgerSessionSource{session: ledger.SessionContext{
@@ -1066,14 +1068,30 @@ func TestLedgerAccountClickSwitchesAsyncThenReloadsContextAndSnapshot(t *testing
 	m.session = ledger.SessionContext{
 		RelaunchFile: "/tmp/relaunch", Tool: "claude",
 		Pill: &ledger.SessionPill{Label: "Work", Color: 170},
+		SwitchOptions: []ledger.SwitchOption{
+			{Choice: ledger.SwitchChoice{Kind: ledger.SwitchAccount, Value: "work"}, Label: "Work", Color: 170, Ready: true, Active: true},
+			{Choice: ledger.SwitchChoice{Kind: ledger.SwitchSubscription, Value: "chatgpt.json"}, Label: "ChatGPT", Color: 205, Glyph: "✦", Ready: true},
+		},
 	}
 
-	_, cmd := m.Update(tea.MouseMsg{X: 1, Y: m.height - 1, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	_, openCmd := m.Update(tea.MouseMsg{X: 1, Y: m.height - 1, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 
-	if cmd == nil || !m.switchingAccount {
-		t.Fatalf("account click cmd=%v switching=%v", cmd, m.switchingAccount)
+	if openCmd != nil || !m.accountSwitchOpen || m.switchingAccount {
+		t.Fatalf("account click cmd=%v open=%v switching=%v", openCmd, m.accountSwitchOpen, m.switchingAccount)
 	}
-	if calls, _ := switcher.recorded(); calls != 0 {
+	if calls, _, _ := switcher.recorded(); calls != 0 {
+		t.Fatal("account click started a process before selection")
+	}
+	if view := stripANSI(m.View()); !strings.Contains(view, "Switch agent") || !strings.Contains(view, "ChatGPT") {
+		t.Fatalf("in-process switcher did not paint immediately:\n%s", view)
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil || m.accountSwitchOpen || !m.switchingAccount {
+		t.Fatalf("selection cmd=%v open=%v switching=%v", cmd, m.accountSwitchOpen, m.switchingAccount)
+	}
+	if calls, _, _ := switcher.recorded(); calls != 0 {
 		t.Fatal("account switch ran synchronously")
 	}
 	done := make(chan tea.Msg, 1)
@@ -1107,8 +1125,101 @@ func TestLedgerAccountClickSwitchesAsyncThenReloadsContextAndSnapshot(t *testing
 	if m.session.Pill == nil || m.session.Pill.Label != "Personal" {
 		t.Fatalf("reloaded session = %#v", m.session)
 	}
-	if calls, session := switcher.recorded(); calls != 1 || session.Pill == nil || session.Pill.Label != "Work" {
-		t.Fatalf("switcher calls=%d session=%#v", calls, session)
+	if calls, session, choice := switcher.recorded(); calls != 1 ||
+		session.Pill == nil || session.Pill.Label != "Work" ||
+		choice != (ledger.SwitchChoice{Kind: ledger.SwitchSubscription, Value: "chatgpt.json"}) {
+		t.Fatalf("switcher calls=%d session=%#v choice=%#v", calls, session, choice)
+	}
+}
+
+func TestLedgerAccountSwitcherConfirmsStaleActiveRow(t *testing.T) {
+	switcher := &fakeAccountSwitcher{}
+	m := NewLedgerModel(nil, ledgerTestSnapshot(3), LedgerOptions{AccountSwitcher: switcher})
+	sizeLedger(m, 80, 14)
+	m.session = ledger.SessionContext{
+		RelaunchFile: "/tmp/relaunch",
+		Pill:         &ledger.SessionPill{Label: "Work", Color: 170},
+		SwitchOptions: []ledger.SwitchOption{{
+			Choice: ledger.SwitchChoice{Kind: ledger.SwitchAccount, Value: "work"},
+			Label:  "Work",
+			Color:  170,
+			Ready:  true,
+			Active: true,
+		}},
+	}
+	m.openAccountSwitch()
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if cmd == nil {
+		t.Fatal("confirming a row from a stale session snapshot must verify the exact choice")
+	}
+	if message := cmd(); message == nil {
+		t.Fatal("stale active-row confirmation returned no completion message")
+	}
+	if calls, _, choice := switcher.recorded(); calls != 1 ||
+		choice != (ledger.SwitchChoice{Kind: ledger.SwitchAccount, Value: "work"}) {
+		t.Fatalf("switcher calls=%d choice=%#v", calls, choice)
+	}
+}
+
+func TestLedgerAccountSwitcherMouseConfirmsStaleActiveRow(t *testing.T) {
+	switcher := &fakeAccountSwitcher{}
+	m := NewLedgerModel(nil, ledgerTestSnapshot(3), LedgerOptions{AccountSwitcher: switcher})
+	sizeLedger(m, 80, 14)
+	m.session = ledger.SessionContext{
+		RelaunchFile: "/tmp/relaunch",
+		Pill:         &ledger.SessionPill{Label: "Work", Color: 170},
+		SwitchOptions: []ledger.SwitchOption{{
+			Choice: ledger.SwitchChoice{Kind: ledger.SwitchAccount, Value: "work"},
+			Label:  "Work",
+			Color:  170,
+			Ready:  true,
+			Active: true,
+		}},
+	}
+	m.openAccountSwitch()
+	card := m.accountSwitchCard()
+	left, top := ledgerCenteredCard(m.width, m.height, card)
+
+	_, cmd := m.Update(tea.MouseMsg{
+		X: left + 3, Y: top + 4, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+	})
+
+	if cmd == nil {
+		t.Fatal("mouse-confirming a row from a stale snapshot must verify the exact choice")
+	}
+	if message := cmd(); message == nil {
+		t.Fatal("mouse stale active-row confirmation returned no completion message")
+	}
+	if calls, _, choice := switcher.recorded(); calls != 1 ||
+		choice != (ledger.SwitchChoice{Kind: ledger.SwitchAccount, Value: "work"}) {
+		t.Fatalf("switcher calls=%d choice=%#v", calls, choice)
+	}
+}
+
+func TestLedgerAccountSwitcherMouseHoverMovesCursorWithoutStartingProcess(t *testing.T) {
+	switcher := &fakeAccountSwitcher{}
+	m := NewLedgerModel(nil, ledgerTestSnapshot(3), LedgerOptions{AccountSwitcher: switcher})
+	sizeLedger(m, 80, 14)
+	m.session = ledger.SessionContext{
+		Pill: &ledger.SessionPill{Label: "Work", Color: 170},
+		SwitchOptions: []ledger.SwitchOption{
+			{Choice: ledger.SwitchChoice{Kind: ledger.SwitchAccount, Value: "work"}, Label: "Work", Color: 170, Ready: true, Active: true},
+			{Choice: ledger.SwitchChoice{Kind: ledger.SwitchSubscription, Value: "chatgpt.json"}, Label: "ChatGPT", Color: 205, Ready: true},
+		},
+	}
+	m.openAccountSwitch()
+	card := m.accountSwitchCard()
+	left, top := ledgerCenteredCard(m.width, m.height, card)
+
+	m.Update(tea.MouseMsg{X: left + 3, Y: top + 5, Action: tea.MouseActionMotion})
+
+	if m.accountSwitchCursor != 1 {
+		t.Fatalf("hover cursor = %d, want 1", m.accountSwitchCursor)
+	}
+	if calls, _, _ := switcher.recorded(); calls != 0 {
+		t.Fatal("hover started an external switch process")
 	}
 }
 

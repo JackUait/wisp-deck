@@ -219,6 +219,7 @@ func wrapperHomeWithMocks(t *testing.T) (home, confDir, tuiRec string) {
 	mocks := map[string]string{
 		"tmux":          "#!/bin/bash\nexit 0\n",
 		"claude":        "#!/bin/bash\nexit 0\n",
+		"opencode":      "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nprintf '%s\\n' \"$*\" >> \"$GT_TUI_REC\"\nexit 1\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
 	}

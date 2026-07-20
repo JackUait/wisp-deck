@@ -23,6 +23,10 @@ import (
 // display-popup (which needs the pty-attached client), the result-file
 // contract, the relaunch decision, respawn-pane, and the re-stamp.
 func TestAccountSwitch_endToEnd_realTmux_relaunches_when_pointer_matches_choice(t *testing.T) {
+	// This test exercises the ordinary Claude path, not a subscription adapter
+	// inherited from whichever Wisp session launched the test suite.
+	t.Setenv("WISP_DECK_CLAUDE_PROVIDER", "")
+
 	tmuxBin, err := exec.LookPath("tmux")
 	if err != nil {
 		t.Skip("tmux not available")
