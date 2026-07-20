@@ -2414,7 +2414,14 @@ func (m *MainMenuModel) renderSubscriptionModalCard() string {
 		}
 	}
 
-	help := "↑↓ profile · → details · x disable · Tab pane · Enter action · Esc close"
+	// x mirrors toggleSubscriptionProfileDisabled's bounds: cursor 0 is Standard
+	// Claude and cursors past the profiles are add/login rows, where x is a noop.
+	xLabel := "x disable"
+	if profiles, cursor := m.subscriptionProfiles(), m.subscriptionModal.profileCursor; cursor > 0 &&
+		cursor < len(profiles) && profiles[cursor].Disabled {
+		xLabel = "x enable"
+	}
+	help := "↑↓ profile · → details · " + xLabel + " · Tab pane · Enter action · Esc close"
 	if m.subscriptionModal.mode == subscriptionAddProvider {
 		help = "↑↓ provider · Enter choose · Esc cancel"
 	} else if m.subscriptionModal.mode != subscriptionBrowse {
