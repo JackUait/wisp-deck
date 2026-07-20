@@ -19,6 +19,7 @@ type fakeEngineRPC struct {
 	mu          sync.Mutex
 	nextThread  int
 	calls       []string
+	callParams  []json.RawMessage
 	responses   []fakeResponse
 	onTurnStart func(threadID, turnID string)
 	onRespond   func(count int)
@@ -38,8 +39,10 @@ func newFakeEngineRPC() *fakeEngineRPC {
 }
 
 func (f *fakeEngineRPC) Call(_ context.Context, method string, params, target any) error {
+	raw, _ := json.Marshal(params)
 	f.mu.Lock()
 	f.calls = append(f.calls, method)
+	f.callParams = append(f.callParams, raw)
 	f.mu.Unlock()
 	switch method {
 	case "thread/start":
@@ -363,6 +366,185 @@ func TestEngineCancellationInterruptsAndDeletesTurn(t *testing.T) {
 	rpc.mu.Unlock()
 	if !strings.Contains(calls, "turn/interrupt") || !strings.Contains(calls, "thread/delete") {
 		t.Fatalf("cleanup calls = %s", calls)
+	}
+}
+
+func TestEngineRecoversExpiredContinuationFromValidatedHistory(t *testing.T) {
+	rpc := newFakeEngineRPC()
+	starts := 0
+	rpc.onTurnStart = func(threadID, turnID string) {
+		starts++
+		if starts == 1 {
+			rpc.requests <- ServerRequest{
+				ID:     fakeRequestID("rpc-expired-recovery"),
+				Method: "item/tool/call",
+				Params: json.RawMessage(fmt.Sprintf(
+					`{"threadId":%q,"turnId":%q,"callId":"call","tool":"Echo","arguments":{}}`,
+					threadID, turnID,
+				)),
+			}
+			return
+		}
+		completeTextTurn(rpc, threadID, turnID, "recovered")
+	}
+	engine, err := NewEngine(rpc, EngineOptions{
+		PrivateCWD: t.TempDir(), ToolBatchWindow: time.Millisecond,
+		PendingTTL: 15 * time.Millisecond, Models: []string{"gpt-test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+
+	first, err := engine.Execute(context.Background(), testTranslation("run tool"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := first.Content[0].ID
+	deadline := time.Now().Add(time.Second)
+	for engine.PendingTurns() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if engine.PendingTurns() != 0 {
+		t.Fatal("expired pending turn remained in memory")
+	}
+
+	continuation := testTranslation("")
+	continuation.Input = nil
+	continuation.History = []map[string]any{{
+		"type": "function_call", "call_id": id,
+		"name": "Echo", "arguments": `{}`,
+	}}
+	continuation.ToolResults = []TranslatedToolResult{{
+		ToolUseID: id, Success: true,
+		ContentItems: []ToolOutputItem{{Type: "inputText", Text: "tool finished"}},
+	}}
+	message, err := engine.Execute(context.Background(), continuation, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(message.Content) != 1 || message.Content[0].Text != "recovered" {
+		t.Fatalf("recovered response = %+v", message)
+	}
+
+	rpc.mu.Lock()
+	calls := append([]string(nil), rpc.calls...)
+	params := append([]json.RawMessage(nil), rpc.callParams...)
+	responses := append([]fakeResponse(nil), rpc.responses...)
+	rpc.mu.Unlock()
+	var injected string
+	for index, method := range calls {
+		if method == "thread/inject_items" {
+			injected += string(params[index])
+		}
+	}
+	if !strings.Contains(injected, `"type":"function_call_output"`) ||
+		!strings.Contains(injected, `"call_id":"`+id+`"`) ||
+		!strings.Contains(injected, "tool finished") {
+		t.Fatalf("recovery history = %s", injected)
+	}
+	if len(responses) != 0 {
+		t.Fatalf("expired app-server request was answered again: %+v", responses)
+	}
+	var turnInputs string
+	for index, method := range calls {
+		if method == "turn/start" {
+			turnInputs += string(params[index])
+		}
+	}
+	if !strings.Contains(turnInputs, "tool results above are complete") {
+		t.Fatalf("recovery turn/start is missing the synthetic continuation input: %s", turnInputs)
+	}
+}
+
+func TestEngineRecoveryRefusedWithoutHistoryStaysInvalidContinuation(t *testing.T) {
+	// The 400 mapping in writeExecutionError depends on the refused-recovery
+	// error still being an invalidContinuationError; a bare unknown error would
+	// silently become a retryable 502 again.
+	rpc := newFakeEngineRPC()
+	engine := newTestEngine(t, rpc)
+	_, err := engine.Execute(context.Background(), Translation{
+		Model: "gpt-test", MaxTokens: 100,
+		ToolResults: []TranslatedToolResult{{ToolUseID: "toolu_wisp_gone", Success: true}},
+	}, nil)
+	var invalid invalidContinuationError
+	if !errors.As(err, &invalid) || !strings.Contains(err.Error(), "unknown or expired") {
+		t.Fatalf("refused recovery error = %v, want invalidContinuationError", err)
+	}
+}
+
+func TestEngineRecoveryCleansUpLiveTurnFromMixedContinuation(t *testing.T) {
+	// A replayed continuation can pair an expired bridge ID with one that still
+	// owns a live suspended turn. Recovery must interrupt/delete that live turn
+	// instead of leaking its Codex thread and unanswered request for the TTL.
+	rpc := newFakeEngineRPC()
+	rpc.onTurnStart = func(threadID, turnID string) {
+		if threadID != "thread-1" && threadID != "thread-2" {
+			completeTextTurn(rpc, threadID, turnID, "recovered")
+			return
+		}
+		rpc.requests <- ServerRequest{
+			ID:     fakeRequestID("rpc-" + threadID),
+			Method: "item/tool/call",
+			Params: json.RawMessage(fmt.Sprintf(
+				`{"threadId":%q,"turnId":%q,"callId":"call","tool":"Echo","arguments":{}}`,
+				threadID, turnID,
+			)),
+		}
+	}
+	// A long TTL keeps expiry timers out of the picture: only the recovery path
+	// itself may clean up the orphaned live turn.
+	engine, err := NewEngine(rpc, EngineOptions{
+		PrivateCWD: t.TempDir(), ToolBatchWindow: 5 * time.Millisecond,
+		PendingTTL: time.Hour, Models: []string{"gpt-test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+
+	first, err := engine.Execute(context.Background(), testTranslation("one"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := engine.Execute(context.Background(), testTranslation("two"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveID := second.Content[0].ID
+	_ = first
+
+	staleID := "toolu_wisp_already_consumed"
+	continuation := testTranslation("")
+	continuation.Input = nil
+	continuation.History = []map[string]any{
+		{"type": "function_call", "call_id": staleID, "name": "Echo", "arguments": `{}`},
+		{"type": "function_call", "call_id": liveID, "name": "Echo", "arguments": `{}`},
+	}
+	continuation.ToolResults = []TranslatedToolResult{
+		{ToolUseID: staleID, Success: true},
+		{ToolUseID: liveID, Success: true},
+	}
+	message, err := engine.Execute(context.Background(), continuation, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(message.Content) != 1 || message.Content[0].Text != "recovered" {
+		t.Fatalf("recovered response = %+v", message)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for engine.PendingTurns() > 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := engine.PendingTurns(); got != 1 {
+		t.Fatalf("pending turns after recovery = %d, want only the untouched first turn", got)
+	}
+	rpc.mu.Lock()
+	calls := strings.Join(rpc.calls, ",")
+	rpc.mu.Unlock()
+	if !strings.Contains(calls, "turn/interrupt") {
+		t.Fatalf("live orphaned turn was not interrupted: %s", calls)
 	}
 }
 

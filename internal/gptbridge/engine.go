@@ -74,12 +74,19 @@ type engineTurn struct {
 	cleanupOnce sync.Once
 }
 
-// invalidContinuationError marks a tool continuation the bridge can never
-// satisfy (state consumed or expired); the client must not retry it.
+// invalidContinuationError marks a tool continuation the bridge could not
+// satisfy or recover; the client must not retry it. Unknown/expired IDs first
+// get a history-based recovery attempt in Execute before surfacing this way.
 type invalidContinuationError struct{ err error }
 
 func (e invalidContinuationError) Error() string { return e.err.Error() }
 func (e invalidContinuationError) Unwrap() error { return e.err }
+
+type unknownContinuationError struct{ id string }
+
+func (e unknownContinuationError) Error() string {
+	return fmt.Sprintf("unknown or expired tool_result %q", e.id)
+}
 
 type pendingDynamicTool struct {
 	request ServerRequest
@@ -124,12 +131,101 @@ func (e *Engine) Execute(
 		return AnthropicMessage{}, fmt.Errorf("model %q is not available", translation.Model)
 	}
 	if len(translation.ToolResults) > 0 {
-		return e.resume(ctx, translation, emit)
+		message, err := e.resume(ctx, translation, emit)
+		var unknown unknownContinuationError
+		if !errors.As(err, &unknown) {
+			return message, err
+		}
+		recovery, ok := recoverContinuationFromHistory(translation)
+		if !ok {
+			return message, err
+		}
+		e.cleanupContinuationOwners(translation.ToolResults)
+		return e.start(ctx, recovery, emit)
 	}
 	if len(translation.Input) == 0 {
 		return AnthropicMessage{}, errors.New("new bridge turn requires user input")
 	}
 	return e.start(ctx, translation, emit)
+}
+
+// Claude can replay a continuation after replacing an in-flight request (Skill
+// meta injections do this). Rebuild from validated history so the one-shot
+// app-server request ID cannot poison the rest of the conversation.
+func recoverContinuationFromHistory(translation Translation) (Translation, bool) {
+	calls := make(map[string]bool, len(translation.ToolResults))
+	for _, item := range translation.History {
+		if item["type"] == "function_call" {
+			if id, ok := item["call_id"].(string); ok {
+				calls[id] = true
+			}
+		}
+	}
+	for _, result := range translation.ToolResults {
+		if !calls[result.ToolUseID] {
+			return Translation{}, false
+		}
+	}
+
+	recovery := translation
+	recovery.ToolResults = nil
+	recovery.History = append([]map[string]any(nil), translation.History...)
+	for _, result := range translation.ToolResults {
+		output, ok := translatedToolHistoryOutput(result.ContentItems)
+		if !ok {
+			return Translation{}, false
+		}
+		recovery.History = append(recovery.History, map[string]any{
+			"type": "function_call_output", "call_id": result.ToolUseID,
+			"output": output,
+		})
+	}
+	recovery.Input = []UserInput{{
+		Type: "text",
+		Text: "[bridge] The tool results above are complete; continue the interrupted response.",
+	}}
+	return recovery, true
+}
+
+// cleanupContinuationOwners interrupts and deletes any still-live suspended
+// turn a replayed continuation references, so recovery does not leak its Codex
+// thread and unanswered app-server request until the TTL fires.
+func (e *Engine) cleanupContinuationOwners(results []TranslatedToolResult) {
+	e.mu.Lock()
+	owners := make(map[*engineTurn]bool)
+	for _, result := range results {
+		if owner := e.toolIndex[result.ToolUseID]; owner != nil {
+			owners[owner] = true
+		}
+	}
+	e.mu.Unlock()
+	for owner := range owners {
+		e.cleanupTurn(owner, true)
+	}
+}
+
+// translatedToolHistoryOutput mirrors historyToolOutput's shapes; like normal
+// replayed history, the Success/is_error flag is intentionally dropped.
+func translatedToolHistoryOutput(items []ToolOutputItem) (any, bool) {
+	if len(items) == 1 && items[0].Type == "inputText" {
+		return items[0].Text, true
+	}
+	output := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		switch item.Type {
+		case "inputText":
+			output = append(output, map[string]any{
+				"type": "input_text", "text": item.Text,
+			})
+		case "inputImage":
+			output = append(output, map[string]any{
+				"type": "input_image", "image_url": item.ImageURL, "detail": "auto",
+			})
+		default:
+			return nil, false
+		}
+	}
+	return output, true
 }
 
 func (e *Engine) start(
@@ -287,7 +383,7 @@ func (e *Engine) validateContinuation(results []TranslatedToolResult) (*engineTu
 		seen[result.ToolUseID] = true
 		owner, ok := e.toolIndex[result.ToolUseID]
 		if !ok {
-			return nil, fmt.Errorf("unknown or expired tool_result %q", result.ToolUseID)
+			return nil, unknownContinuationError{id: result.ToolUseID}
 		}
 		if state == nil {
 			state = owner

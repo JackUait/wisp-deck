@@ -305,6 +305,91 @@ func TestHandlerUsesBearerKeyForSDKCompatibility(t *testing.T) {
 	}
 }
 
+func TestReplayedContinuationWithHistoryRecoversOverHTTP(t *testing.T) {
+	// Regression for the wrong-tab-killing 400 in the wild: Claude Code can
+	// replay a continuation (Skill meta injection, post-error retry) after the
+	// bridge's one-shot tool ID was consumed or expired. Because the stale ID
+	// stays in Claude's history, a 400 here poisons the conversation forever.
+	// Over HTTP the replay must recover to a 200 completion, never surface
+	// "unknown or expired tool_result".
+	rpc := newFakeEngineRPC()
+	starts := 0
+	rpc.onTurnStart = func(threadID, turnID string) {
+		starts++
+		if starts == 1 {
+			rpc.requests <- ServerRequest{
+				ID:     fakeRequestID("rpc-http-replay"),
+				Method: "item/tool/call",
+				Params: json.RawMessage(fmt.Sprintf(
+					`{"threadId":%q,"turnId":%q,"callId":"call","tool":"Echo","arguments":{}}`,
+					threadID, turnID,
+				)),
+			}
+			return
+		}
+		completeTextTurn(rpc, threadID, turnID, "conversation continues")
+	}
+	engine, err := NewEngine(rpc, EngineOptions{
+		PrivateCWD: t.TempDir(), ToolBatchWindow: time.Millisecond,
+		PendingTTL: 15 * time.Millisecond, Models: []string{"gpt-test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	handler, err := NewHandler(engine, "secret", ServerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	first, err := engine.Execute(context.Background(), Translation{
+		Model: "gpt-test", MaxTokens: 100,
+		Input: []UserInput{{Type: "text", Text: "run the tool"}},
+		DynamicTools: []DynamicTool{{
+			Type: "function", Name: "Echo", Description: "echo",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := first.Content[0].ID
+	deadline := time.Now().Add(time.Second)
+	for engine.PendingTurns() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if engine.PendingTurns() != 0 {
+		t.Fatal("expired pending turn remained in memory")
+	}
+
+	replay := fmt.Sprintf(`{
+		"model":"gpt-test",
+		"max_tokens":100,
+		"tools":[{"name":"Echo","description":"echo","input_schema":{"type":"object"}}],
+		"messages":[
+			{"role":"user","content":"run the tool"},
+			{"role":"assistant","content":[
+				{"type":"tool_use","id":%q,"name":"Echo","input":{}}
+			]},
+			{"role":"user","content":[
+				{"type":"tool_result","tool_use_id":%q,"content":"tool finished"}
+			]}
+		]
+	}`, id, id)
+	response := requestBridge(t, server.Client(), http.MethodPost, server.URL+"/v1/messages", "secret", replay)
+	if response.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(response.Body)
+		t.Fatalf("replayed continuation status = %d, want 200: %s", response.StatusCode, data)
+	}
+	var message AnthropicMessage
+	decodeBody(t, response, &message)
+	if len(message.Content) != 1 || message.Content[0].Text != "conversation continues" {
+		t.Fatalf("recovered message = %+v", message)
+	}
+}
+
 func TestStaleToolResultErrorIsNonRetryableInvalidRequest(t *testing.T) {
 	// Regression: an expired tool continuation was surfaced as a retryable 502,
 	// so Claude Code burned its full retry ladder against state the bridge had
