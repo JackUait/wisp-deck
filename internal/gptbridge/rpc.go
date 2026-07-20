@@ -178,7 +178,7 @@ func (c *RPCClient) Call(ctx context.Context, method string, params, target any)
 		}
 		return nil
 	case <-ctx.Done():
-		c.removePending(key)
+		c.abandonPending(key)
 		return ctx.Err()
 	case <-c.done:
 		err := c.Err()
@@ -235,6 +235,18 @@ func (c *RPCClient) Close() {
 func (c *RPCClient) removePending(key string) {
 	c.mu.Lock()
 	delete(c.pending, key)
+	c.mu.Unlock()
+}
+
+// abandonPending marks a cancelled call so its late response is discarded
+// instead of failing the whole connection as an unknown response id. The nil
+// tombstone stays until the response arrives; app-server answers every
+// request, so abandoned entries do not accumulate.
+func (c *RPCClient) abandonPending(key string) {
+	c.mu.Lock()
+	if _, ok := c.pending[key]; ok {
+		c.pending[key] = nil
+	}
 	c.mu.Unlock()
 }
 
@@ -309,6 +321,9 @@ func (c *RPCClient) dispatch(payload []byte) error {
 		if !ok {
 			return fmt.Errorf("unknown response id %s", envelope.id.String())
 		}
+		if pending == nil {
+			return nil // late response to an abandoned call
+		}
 		pending <- rpcResponse{result: envelope.result, err: envelope.rpcErr}
 	case envelopeNotification:
 		select {
@@ -373,17 +388,8 @@ func decodeEnvelope(payload []byte) (decodedEnvelope, error) {
 	if fields == nil {
 		return decodedEnvelope{}, errors.New("app-server message must be an object")
 	}
-	if _, ok := fields["jsonrpc"]; ok {
-		return decodedEnvelope{}, errors.New("unexpected jsonrpc field in app-server message")
-	}
-	for key := range fields {
-		switch key {
-		case "id", "method", "params", "result", "error", "trace":
-		default:
-			return decodedEnvelope{}, fmt.Errorf("unexpected app-server message field %q", key)
-		}
-	}
-
+	// Unknown envelope fields (including jsonrpc framing) are ignored: a Codex
+	// update that adds fields must not kill the connection.
 	rawID, hasID := fields["id"]
 	rawMethod, hasMethod := fields["method"]
 	result, hasResult := fields["result"]

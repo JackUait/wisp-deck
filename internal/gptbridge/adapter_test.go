@@ -251,6 +251,52 @@ touch "$CLAUDE_LAUNCHED"
 	}
 }
 
+func TestBuildAppServerBundleIsRepeatableAfterDeath(t *testing.T) {
+	dir := t.TempDir()
+	codex := filepath.Join(dir, "codex")
+	codexScript := `#!/bin/sh
+set -eu
+read init
+printf '{"id":1,"result":{"userAgent":"fake","codexHome":"/tmp","platformFamily":"unix","platformOs":"macos"}}\n'
+read initialized
+read account
+printf '{"id":2,"result":{"account":{"type":"chatgpt","email":null,"planType":"plus"},"requiresOpenaiAuth":true}}\n'
+read models
+printf '{"id":3,"result":{"data":[{"id":"gpt-test","model":"gpt-test","displayName":"GPT Test","description":"test","hidden":false,"isDefault":true,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[]}]}}\n'
+while read line; do :; done
+`
+	if err := os.WriteFile(codex, []byte(codexScript), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	options := AdapterOptions{CodexPath: codex, ClientVersion: "test"}
+
+	first, err := buildAppServerBundle(ctx, options, dir, 5*time.Second, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Close()
+	select {
+	case <-first.Dead():
+	case <-time.After(2 * time.Second):
+		t.Fatal("closed bundle did not report death")
+	}
+
+	// The restart path must be able to build a fresh healthy bundle without
+	// any interactive login.
+	second, err := buildAppServerBundle(ctx, options, dir, 5*time.Second, time.Second)
+	if err != nil {
+		t.Fatalf("rebuild after death failed: %v", err)
+	}
+	defer second.Close()
+	select {
+	case <-second.Dead():
+		t.Fatal("fresh bundle is already dead")
+	default:
+	}
+}
+
 func TestOpenChatGPTAuthURLWaitsForBrowserOpener(t *testing.T) {
 	dir := t.TempDir()
 	opener := filepath.Join(dir, "open")

@@ -117,6 +117,93 @@ func appendNoProxy(existing string, values ...string) string {
 	return strings.Join(result, ",")
 }
 
+// appServerBundle pairs one app-server process with its engine so the
+// resilient executor can replace both together when the connection dies.
+type appServerBundle struct {
+	server   *AppServer
+	engine   *Engine
+	shutdown time.Duration
+}
+
+func (b *appServerBundle) Execute(
+	ctx context.Context, translation Translation, emit func([]StreamEvent) error,
+) (AnthropicMessage, error) {
+	return b.engine.Execute(ctx, translation, emit)
+}
+
+func (b *appServerBundle) Dead() <-chan struct{} { return b.server.RPC.Done() }
+
+func (b *appServerBundle) Close() {
+	b.engine.Close()
+	closeContext, cancel := context.WithTimeout(context.Background(), b.shutdown)
+	defer cancel()
+	_ = b.server.Close(closeContext)
+}
+
+// subscriptionModelNames flattens the visible subscription model identifiers.
+func subscriptionModelNames(models []Model) []string {
+	names := make([]string, 0, len(models)*2)
+	seen := make(map[string]bool)
+	for _, model := range models {
+		for _, name := range []string{model.ID, model.Model} {
+			if name != "" && !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
+	}
+	return names
+}
+
+// buildAppServerBundle starts a fresh app-server + engine without any
+// interactive login, so bridge restarts mid-session stay non-interactive.
+func buildAppServerBundle(
+	ctx context.Context,
+	options AdapterOptions,
+	privateCWD string,
+	startupTimeout, shutdownTimeout time.Duration,
+) (*appServerBundle, error) {
+	startupContext, cancelStartup := context.WithTimeout(ctx, startupTimeout)
+	server, err := StartAppServer(startupContext, AppServerOptions{
+		CodexPath: options.CodexPath, ClientVersion: options.ClientVersion,
+		ShutdownTimeout: shutdownTimeout,
+	})
+	cancelStartup()
+	if err != nil {
+		return nil, err
+	}
+	bundle, err := finishAppServerBundle(server, privateCWD, shutdownTimeout)
+	if err != nil {
+		closeContext, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		_ = server.Close(closeContext)
+		return nil, err
+	}
+	return bundle, nil
+}
+
+// finishAppServerBundle validates the account and wires the engine for an
+// already-started (and possibly just-logged-in) app-server. The caller keeps
+// ownership of server until this succeeds.
+func finishAppServerBundle(
+	server *AppServer, privateCWD string, shutdownTimeout time.Duration,
+) (*appServerBundle, error) {
+	if err := ValidateChatGPTSubscription(server.Account); err != nil {
+		return nil, err
+	}
+	models := subscriptionModelNames(server.Models)
+	if len(models) == 0 {
+		return nil, errors.New("Codex reported no ChatGPT subscription models; update Codex and verify `codex login status`")
+	}
+	engine, err := NewEngine(server.RPC, EngineOptions{
+		PrivateCWD: privateCWD, Models: models,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &appServerBundle{server: server, engine: engine, shutdown: shutdownTimeout}, nil
+}
+
 // RunAdapter owns app-server, the loopback API, and the Claude child for one
 // Wisp Deck pane.
 func RunAdapter(ctx context.Context, options AdapterOptions) (AdapterResult, error) {
@@ -153,11 +240,11 @@ func RunAdapter(ctx context.Context, options AdapterOptions) (AdapterResult, err
 	if err != nil {
 		return AdapterResult{}, fmt.Errorf("start ChatGPT subscription bridge: %w", err)
 	}
-	defer func() {
+	closeAppServer := func() {
 		closeContext, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		_ = appServer.Close(closeContext)
-	}()
+	}
 	if appServer.Account.Account == nil {
 		loginTimeout := options.LoginTimeout
 		if loginTimeout <= 0 {
@@ -182,42 +269,28 @@ func RunAdapter(ctx context.Context, options AdapterOptions) (AdapterResult, err
 		})
 		cancelLogin()
 		if err != nil {
+			closeAppServer()
 			if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 				return AdapterResult{}, fmt.Errorf("ChatGPT sign-in timed out after %s; relaunch the session to try again", loginTimeout)
 			}
 			return AdapterResult{}, err
 		}
 	}
-	if err := ValidateChatGPTSubscription(appServer.Account); err != nil {
-		return AdapterResult{}, err
-	}
-	models := make([]string, 0, len(appServer.Models)*2)
-	seenModel := make(map[string]bool)
-	for _, model := range appServer.Models {
-		for _, name := range []string{model.ID, model.Model} {
-			if name != "" && !seenModel[name] {
-				seenModel[name] = true
-				models = append(models, name)
-			}
-		}
-	}
-	if len(models) == 0 {
-		return AdapterResult{}, errors.New("Codex reported no ChatGPT subscription models; update Codex and verify `codex login status`")
-	}
-
-	engine, err := NewEngine(appServer.RPC, EngineOptions{
-		PrivateCWD: privateCWD, Models: models,
-	})
+	bundle, err := finishAppServerBundle(appServer, privateCWD, shutdownTimeout)
 	if err != nil {
+		closeAppServer()
 		return AdapterResult{}, err
 	}
-	defer engine.Close()
+	executor := NewResilientExecutor(bundle, func() (EngineBundle, error) {
+		return buildAppServerBundle(ctx, options, privateCWD, startupTimeout, shutdownTimeout)
+	}, 0, nil)
+	defer executor.Close()
 
 	bridgeKey, err := randomBridgeID("sk-wisp-")
 	if err != nil {
 		return AdapterResult{}, err
 	}
-	httpBridge, err := StartLoopbackServer(engine, bridgeKey, ServerOptions{})
+	httpBridge, err := StartLoopbackServer(executor, bridgeKey, ServerOptions{})
 	if err != nil {
 		return AdapterResult{}, err
 	}

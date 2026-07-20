@@ -186,6 +186,46 @@ func TestRPCCloseUnblocksPendingCall(t *testing.T) {
 	}
 }
 
+func TestRPCSurvivesLateResponseToCancelledCall(t *testing.T) {
+	h := newRPCHarness(t, 1<<20)
+
+	// A call is abandoned mid-flight (Claude Code cancels the HTTP request,
+	// or a cleanup call outlives its timeout)...
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		var result any
+		errCh <- h.client.Call(ctx, "turn/start", map[string]any{}, &result)
+	}()
+	request := h.readObject(t)
+	cancel()
+	if err := <-errCh; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled call error = %v, want context.Canceled", err)
+	}
+
+	// ...then app-server's response for it arrives late. This must NOT kill
+	// the client: the next turn's thread/start has to keep working.
+	h.writeLine(t, fmt.Sprintf(`{"id":%s,"result":{"turn":{"id":"t1"}}}`, request["id"]))
+
+	callCtx, callCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer callCancel()
+	nextErr := make(chan error, 1)
+	go func() {
+		var result any
+		nextErr <- h.client.Call(callCtx, "thread/start", map[string]any{}, &result)
+	}()
+	next := h.readObject(t)
+	h.writeLine(t, fmt.Sprintf(`{"id":%s,"result":{"thread":{"id":"th1"}}}`, next["id"]))
+	if err := <-nextErr; err != nil {
+		t.Fatalf("call after late response failed: %v (client poisoned)", err)
+	}
+	select {
+	case <-h.client.Done():
+		t.Fatalf("late response to cancelled call closed the client: %v", h.client.Err())
+	default:
+	}
+}
+
 func TestRPCFailsClosedOnDuplicateResponse(t *testing.T) {
 	h := newRPCHarness(t, 1<<20)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -227,14 +267,51 @@ func TestRPCRejectsOversizedMessage(t *testing.T) {
 
 func TestRPCRejectsMalformedEnvelope(t *testing.T) {
 	h := newRPCHarness(t, 1<<20)
-	h.writeLine(t, `{"jsonrpc":"2.0","method":"event"}`)
+	h.writeLine(t, `{"result":{}}`)
 	select {
 	case <-h.client.Done():
-		if err := h.client.Err(); err == nil || !strings.Contains(err.Error(), "jsonrpc") {
+		if err := h.client.Err(); err == nil || !strings.Contains(err.Error(), "malformed") {
 			t.Fatalf("client error = %v", err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("malformed envelope did not close client")
+	}
+}
+
+func TestRPCToleratesFieldsAddedByFutureCodexVersions(t *testing.T) {
+	h := newRPCHarness(t, 1<<20)
+
+	// A Codex update that adds envelope fields (or standard jsonrpc framing)
+	// must not kill the connection: additive protocol changes are not errors.
+	h.writeLine(t, `{"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"delta":"hi"},"meta":{"v":2}}`)
+	select {
+	case got := <-h.client.Notifications():
+		if got.Method != "item/agentMessage/delta" {
+			t.Fatalf("notification = %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("notification with extra fields was not delivered")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	errCh := make(chan error, 1)
+	var result struct {
+		Value string `json:"value"`
+	}
+	go func() { errCh <- h.client.Call(ctx, "ping", nil, &result) }()
+	request := h.readObject(t)
+	h.writeLine(t, fmt.Sprintf(`{"id":%s,"result":{"value":"ok"},"future_field":true}`, request["id"]))
+	if err := <-errCh; err != nil {
+		t.Fatalf("response with extra fields failed the call: %v", err)
+	}
+	if result.Value != "ok" {
+		t.Fatalf("result = %+v", result)
+	}
+	select {
+	case <-h.client.Done():
+		t.Fatalf("extra envelope fields closed the client: %v", h.client.Err())
+	default:
 	}
 }
 
