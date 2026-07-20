@@ -5,6 +5,7 @@ import (
 	"image"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -1637,17 +1638,8 @@ func maxInt(a, b int) int {
 	return b
 }
 
-// itoa avoids pulling in strconv for a single small non-negative int.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [4]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
-}
+// itoa formats a count for the pager's chrome. Counts can be huge — a gap
+// sentinel in a lockfile-sized diff hides tens of thousands of lines — so this
+// must never assume a digit budget (a fixed 4-byte buffer here once panicked
+// the pager on any count ≥ 10000, killing the popup before it painted).
+func itoa(n int) string { return strconv.Itoa(n) }

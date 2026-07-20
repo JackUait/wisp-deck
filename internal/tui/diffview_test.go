@@ -798,6 +798,36 @@ func TestGapLine_roundtrips(t *testing.T) {
 	}
 }
 
+// itoa must handle counts of any magnitude: gap sentinels carry the number of
+// collapsed unchanged lines, and a lockfile-sized diff (yarn.lock with one
+// small change) hides five-plus-digit runs. A fixed small buffer overflowed on
+// ≥10000 and panicked the pager, so the popup closed before it ever painted.
+func TestItoa_five_plus_digit_counts(t *testing.T) {
+	cases := map[int]string{0: "0", 7: "7", 9999: "9999", 10000: "10000", 1234567: "1234567"}
+	for n, want := range cases {
+		if got := itoa(n); got != want {
+			t.Errorf("itoa(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
+
+// Regression: opening a huge file with a tiny change (yarn.lock) collapsed a
+// >9999-line context run, gapLine(hidden) panicked in itoa, and diff-view died
+// with the popup never becoming visible. The changes-only body must build and
+// carry the exact hidden-line count.
+func TestCollapseContext_huge_gap_does_not_panic(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("+X\n")
+	for i := 0; i < 12000; i++ {
+		b.WriteString(" ctx\n")
+	}
+	m := NewDiffView("yarn.lock", b.String())
+	body := m.bodyContent()
+	if !strings.Contains(body, "\x00GAP:11997") {
+		t.Errorf("changes-only body should hide 11997 lines behind one gap sentinel, got %q…", body[:min(len(body), 120)])
+	}
+}
+
 // collapseContext keeps every changed line plus ctx unchanged lines around it,
 // and replaces each longer run of unchanged context with a single gap sentinel
 // encoding how many lines it hid.
