@@ -147,6 +147,13 @@ func (h *bridgeHandler) handleMessages(writer http.ResponseWriter, request *http
 		writeAnthropicError(writer, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
+	if window, known := modelContextWindow(translation.Model); known {
+		if estimate := estimatePromptTokens(messages); estimate > window {
+			writeAnthropicError(writer, http.StatusBadRequest, "invalid_request_error",
+				fmt.Sprintf("prompt is too long: %d tokens > %d maximum", estimate, window))
+			return
+		}
+	}
 	if !messages.Stream {
 		response, err := h.executor.Execute(request.Context(), translation, nil)
 		if err != nil {
@@ -176,7 +183,11 @@ func (h *bridgeHandler) handleMessages(writer http.ResponseWriter, request *http
 		return
 	}
 	if started {
-		_ = WriteSSE(writer, []StreamEvent{AnthropicErrorEvent("api_error", err.Error())})
+		errorType, message := "api_error", err.Error()
+		if isContextOverflowMessage(message) {
+			errorType, message = "invalid_request_error", "prompt is too long: "+message
+		}
+		_ = WriteSSE(writer, []StreamEvent{AnthropicErrorEvent(errorType, message)})
 		return
 	}
 	writeExecutionError(writer, request, err)
@@ -218,13 +229,19 @@ func writeExecutionError(writer http.ResponseWriter, request *http.Request, err 
 	}
 	status := http.StatusBadGateway
 	errorType := "api_error"
+	message := err.Error()
 	var invalidContinuation invalidContinuationError
-	if errors.As(err, &invalidContinuation) ||
-		(strings.Contains(err.Error(), "model ") && strings.Contains(err.Error(), "not available")) {
+	switch {
+	case isContextOverflowMessage(message):
+		status = http.StatusBadRequest
+		errorType = "invalid_request_error"
+		message = "prompt is too long: " + message
+	case errors.As(err, &invalidContinuation) ||
+		(strings.Contains(message, "model ") && strings.Contains(message, "not available")):
 		status = http.StatusBadRequest
 		errorType = "invalid_request_error"
 	}
-	writeAnthropicError(writer, status, errorType, err.Error())
+	writeAnthropicError(writer, status, errorType, message)
 }
 
 func writeAnthropicError(writer http.ResponseWriter, status int, errorType, message string) {
