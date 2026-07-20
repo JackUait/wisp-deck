@@ -232,7 +232,7 @@ Expected: PASS.
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit, rebase, push, and verify remote state**
+- [x] **Step 5: Commit, rebase, push, and verify remote state**
 
 ```bash
 git add cmd/wisp-deck-tui/ledger_cmd_test.go internal/ledger/session.go internal/ledger/session_test.go internal/tui/ledger.go internal/tui/ledger_switcher.go internal/tui/ledger_test.go lib/account-switch.sh test/bash/account_switch_subscription_test.go test/bash/account_switch_test.go docs/superpowers/specs/2026-07-20-fast-account-switching-design.md docs/superpowers/plans/2026-07-20-fast-account-switching.md
