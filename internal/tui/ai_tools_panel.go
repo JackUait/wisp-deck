@@ -495,8 +495,12 @@ func (m *MainMenuModel) renderAIToolsPanel() string {
 	}
 
 	lines = append(lines, separator)
+	xLabel := "x disable"
+	if tool := m.focusedTool(); tool != nil && tool.Disabled {
+		xLabel = "x enable"
+	}
 	help := helpStyle.Render("⏎ install") + sep + helpStyle.Render("d default") + sep +
-		helpStyle.Render("x disable") + sep + helpStyle.Render("r remove") + sep + helpStyle.Render("esc close")
+		helpStyle.Render(xLabel) + sep + helpStyle.Render("r remove") + sep + helpStyle.Render("esc close")
 	lines = append(lines, row(help, ""), bottomBorder)
 	return strings.Join(lines, "\n")
 }

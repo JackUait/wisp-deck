@@ -72,6 +72,25 @@ func TestAIToolsPanel_render_shows_disabled_tag(t *testing.T) {
 	}
 }
 
+func TestAIToolsPanel_help_shows_enable_when_focused_tool_disabled(t *testing.T) {
+	m := panelMenu(t, models.AITool{Name: "codex", Installed: true, Disabled: true})
+	out := stripAnsi(m.renderAIToolsPanel())
+	if !strings.Contains(out, "x enable") {
+		t.Errorf("help must offer 'x enable' on a disabled focused tool, got:\n%s", out)
+	}
+	if strings.Contains(out, "x disable") {
+		t.Errorf("help must not still say 'x disable', got:\n%s", out)
+	}
+}
+
+func TestAIToolsPanel_help_shows_disable_when_focused_tool_enabled(t *testing.T) {
+	m := panelMenu(t, models.AITool{Name: "codex", Installed: true})
+	out := stripAnsi(m.renderAIToolsPanel())
+	if !strings.Contains(out, "x disable") {
+		t.Errorf("help must offer 'x disable' on an enabled focused tool, got:\n%s", out)
+	}
+}
+
 func TestAIToolsPanel_detect_overlays_disabled_state(t *testing.T) {
 	m := panelMenu(t)
 	m.disabledToolsFile = filepath.Join(t.TempDir(), "disabled-tools")
