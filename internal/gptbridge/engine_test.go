@@ -455,6 +455,13 @@ func TestEngineRecoversExpiredContinuationFromValidatedHistory(t *testing.T) {
 	if !strings.Contains(turnInputs, "tool results above are complete") {
 		t.Fatalf("recovery turn/start is missing the synthetic continuation input: %s", turnInputs)
 	}
+	// A recovered turn replays the whole conversation on a fresh thread; without
+	// an explicit directive the model re-runs completed tools and re-asks
+	// already-answered questions (observed live: duplicate Skill launches and a
+	// repeated AskUserQuestion after its answer was already in history).
+	if !strings.Contains(turnInputs, "Do not repeat tool calls that already have results above") {
+		t.Fatalf("recovery turn/start is missing the no-repeat directive: %s", turnInputs)
+	}
 }
 
 func TestEngineRecoveryRefusedWithoutHistoryStaysInvalidContinuation(t *testing.T) {

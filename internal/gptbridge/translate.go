@@ -229,32 +229,36 @@ func classifyBlocks(blocks []ContentBlock) (hasResult, hasOrdinary bool) {
 	return
 }
 
+// normalizedFinalToolResults folds ordinary user content into the adjacent
+// tool result so a suspended app-server turn (whose only inbound channel is
+// the per-call tool response) still receives it. Claude Code routinely builds
+// this shape: Skill content, system reminders, and post-error typed input all
+// share the final user message with pending tool results. Blocks before the
+// first result prepend to it; blocks after a result append to that result.
 func normalizedFinalToolResults(blocks []ContentBlock) ([]ContentBlock, error) {
 	results := make([]ContentBlock, 0, len(blocks))
-	hasOrdinary := false
+	var leading []ContentBlock
 	for _, block := range blocks {
 		if block.Type == "tool_result" {
+			block.ToolContent = append(
+				append([]ContentBlock(nil), leading...), block.ToolContent...,
+			)
+			leading = nil
 			results = append(results, block)
-		} else {
-			hasOrdinary = true
+			continue
 		}
-	}
-	if !hasOrdinary {
-		return results, nil
-	}
-	if len(results) != 1 {
-		return nil, errors.New("final user content alongside multiple tool results is ambiguous")
-	}
-
-	merged := make([]ContentBlock, 0, len(results[0].ToolContent)+len(blocks)-1)
-	for _, block := range blocks {
-		if block.Type == "tool_result" {
-			merged = append(merged, block.ToolContent...)
-		} else {
-			merged = append(merged, block)
+		if len(results) == 0 {
+			leading = append(leading, block)
+			continue
 		}
+		last := &results[len(results)-1]
+		last.ToolContent = append(last.ToolContent, block)
 	}
-	results[0].ToolContent = merged
+	if len(leading) != 0 {
+		// Unreachable in practice: the caller only enters this path when the
+		// message contains at least one tool_result.
+		return nil, errors.New("final user content has no tool result to attach to")
+	}
 	return results, nil
 }
 

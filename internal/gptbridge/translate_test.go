@@ -247,8 +247,14 @@ func TestTranslateSkillContinuationMergesSupplementalContent(t *testing.T) {
 	}
 }
 
-func TestTranslateRejectsAmbiguousMixedToolResults(t *testing.T) {
-	request, err := ParseMessagesRequest([]byte(`{
+// Claude Code routinely interleaves ordinary text with several tool results in
+// the final user message: Skill calls inject their content as text blocks,
+// system reminders ride along, and after an API error the user's typed input
+// merges into the still-pending tool-result message. Rejecting that shape
+// wedges the session permanently, because the client replays the same message
+// on every retry.
+func TestTranslateMergesTextAcrossMultipleToolResults(t *testing.T) {
+	got := parseAndTranslate(t, `{
 		"model":"gpt-5.6-terra",
 		"max_tokens":100,
 		"messages":[
@@ -259,20 +265,131 @@ func TestTranslateRejectsAmbiguousMixedToolResults(t *testing.T) {
 			]},
 			{"role":"user","content":[
 				{"type":"tool_result","tool_use_id":"tool_1","content":"first"},
-				{"type":"text","text":"Supplemental context"},
+				{"type":"text","text":"Base directory for this skill: /skills/x"},
+				{"type":"tool_result","tool_use_id":"tool_2","content":"second"},
+				{"type":"text","text":"continue"}
+			]}
+		]
+	}`)
+	if len(got.ToolResults) != 2 || len(got.Input) != 0 {
+		t.Fatalf("translation = %+v", got)
+	}
+	first := got.ToolResults[0]
+	if first.ToolUseID != "tool_1" || len(first.ContentItems) != 2 ||
+		first.ContentItems[0].Text != "first" ||
+		first.ContentItems[1].Text != "Base directory for this skill: /skills/x" {
+		t.Fatalf("first result = %+v", first)
+	}
+	second := got.ToolResults[1]
+	if second.ToolUseID != "tool_2" || len(second.ContentItems) != 2 ||
+		second.ContentItems[0].Text != "second" ||
+		second.ContentItems[1].Text != "continue" {
+		t.Fatalf("second result = %+v", second)
+	}
+}
+
+func TestTranslateMergesLeadingTextIntoFirstToolResult(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"messages":[
+			{"role":"user","content":"Run both"},
+			{"role":"assistant","content":[
+				{"type":"tool_use","id":"tool_1","name":"One","input":{}},
+				{"type":"tool_use","id":"tool_2","name":"Two","input":{}}
+			]},
+			{"role":"user","content":[
+				{"type":"text","text":"<system-reminder>note</system-reminder>"},
+				{"type":"tool_result","tool_use_id":"tool_1","content":"first"},
 				{"type":"tool_result","tool_use_id":"tool_2","content":"second"}
 			]}
 		]
-	}`))
-	if err != nil {
-		t.Fatal(err)
+	}`)
+	if len(got.ToolResults) != 2 {
+		t.Fatalf("translation = %+v", got)
 	}
-	_, err = TranslateRequest(request)
-	if err == nil || !strings.Contains(
-		err.Error(),
-		"final user content alongside multiple tool results is ambiguous",
-	) {
-		t.Fatalf("TranslateRequest error = %v", err)
+	first := got.ToolResults[0]
+	if len(first.ContentItems) != 2 ||
+		first.ContentItems[0].Text != "<system-reminder>note</system-reminder>" ||
+		first.ContentItems[1].Text != "first" {
+		t.Fatalf("first result = %+v", first)
+	}
+	if len(got.ToolResults[1].ContentItems) != 1 ||
+		got.ToolResults[1].ContentItems[0].Text != "second" {
+		t.Fatalf("second result = %+v", got.ToolResults[1])
+	}
+}
+
+// Class guard for the 2026-07-20 wedge: Claude Code may compose the final user
+// message from ANY interleaving of ordinary blocks and tool results (skill
+// text injections, system reminders, post-error typed input, parallel tool
+// batches). A translate-path rejection of such a shape is unrecoverable — the
+// client replays the identical message on every retry, including after new
+// user input — so every producible interleaving must translate, and no block's
+// content may be dropped. This tests the property, not the one shipped
+// instance; it catches whatever shape the next offender turns out to be.
+func TestTranslateNeverRejectsAnyFinalUserBlockInterleaving(t *testing.T) {
+	const maxBlocks = 4
+	kinds := []string{"text", "image", "tool_result"}
+	var cases [][]string
+	var build func(prefix []string)
+	build = func(prefix []string) {
+		if len(prefix) > 0 {
+			cases = append(cases, append([]string(nil), prefix...))
+		}
+		if len(prefix) == maxBlocks {
+			return
+		}
+		for _, kind := range kinds {
+			build(append(prefix, kind))
+		}
+	}
+	build(nil)
+
+	const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABh6FO1AAAAABJRU5ErkJggg=="
+	for _, shape := range cases {
+		t.Run(strings.Join(shape, "-"), func(t *testing.T) {
+			var uses, finals []string
+			var markers []string
+			results := 0
+			for index, kind := range shape {
+				switch kind {
+				case "text":
+					marker := "txt_marker_" + strings.Repeat("x", index+1)
+					markers = append(markers, marker)
+					finals = append(finals, `{"type":"text","text":"`+marker+`"}`)
+				case "image":
+					finals = append(finals, `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"`+pixel+`"}}`)
+				case "tool_result":
+					results++
+					id := "tool_" + strings.Repeat("i", results)
+					marker := "result_marker_" + strings.Repeat("y", results)
+					markers = append(markers, marker)
+					uses = append(uses, `{"type":"tool_use","id":"`+id+`","name":"Run","input":{}}`)
+					finals = append(finals, `{"type":"tool_result","tool_use_id":"`+id+`","content":"`+marker+`"}`)
+				}
+			}
+			messages := `[{"role":"user","content":"start"}`
+			if len(uses) > 0 {
+				messages += `,{"role":"assistant","content":[` + strings.Join(uses, ",") + `]}`
+			}
+			messages += `,{"role":"user","content":[` + strings.Join(finals, ",") + `]}]`
+			body := `{"model":"gpt-5.6-terra","max_tokens":100,"messages":` + messages + `}`
+
+			got := parseAndTranslate(t, body)
+			if len(got.ToolResults) != results {
+				t.Fatalf("tool results = %d, want %d", len(got.ToolResults), results)
+			}
+			flattened, err := json.Marshal(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, marker := range markers {
+				if !strings.Contains(string(flattened), marker) {
+					t.Fatalf("content %q was dropped: %s", marker, flattened)
+				}
+			}
+		})
 	}
 }
 

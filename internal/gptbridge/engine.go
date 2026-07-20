@@ -182,7 +182,9 @@ func recoverContinuationFromHistory(translation Translation) (Translation, bool)
 	}
 	recovery.Input = []UserInput{{
 		Type: "text",
-		Text: "[bridge] The tool results above are complete; continue the interrupted response.",
+		Text: "[bridge] The tool results above are complete; continue the interrupted response. " +
+			"Do not repeat tool calls that already have results above, and do not " +
+			"re-ask questions whose answers already appear above.",
 	}}
 	return recovery, true
 }
