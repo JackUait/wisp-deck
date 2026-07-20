@@ -465,6 +465,9 @@ func (m *MainMenuModel) renderAIToolsPanel() string {
 		bullet := grayStyle.Render("○")
 		if tool.Installed {
 			bullet = greenStyle.Render("●")
+			if tool.Disabled {
+				bullet = grayStyle.Render("●")
+			}
 		}
 		name := models.DisplayName(tool.Name)
 		if tool.Disabled {

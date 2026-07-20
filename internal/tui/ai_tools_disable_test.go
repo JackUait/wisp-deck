@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/jackuait/wisp-deck/internal/models"
+	"github.com/muesli/termenv"
 )
 
 // --- Disable toggle (x) ---
@@ -69,6 +71,29 @@ func TestAIToolsPanel_render_shows_disabled_tag(t *testing.T) {
 	out := m.renderAIToolsPanel()
 	if !strings.Contains(out, "disabled") {
 		t.Errorf("panel must tag a disabled row, got:\n%s", out)
+	}
+}
+
+func TestAIToolsPanel_disabled_tool_bullet_is_not_green(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+
+	greenBullet := lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Render("●")
+	grayBullet := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("●")
+
+	m := panelMenu(t, models.AITool{Name: "codex", Installed: true, Disabled: true})
+	out := m.renderAIToolsPanel()
+	if strings.Contains(out, greenBullet) {
+		t.Error("a disabled tool must not show the green installed bullet")
+	}
+	if !strings.Contains(out, grayBullet) {
+		t.Error("a disabled tool must show a gray bullet")
+	}
+
+	m = panelMenu(t, models.AITool{Name: "codex", Installed: true})
+	if out := m.renderAIToolsPanel(); !strings.Contains(out, greenBullet) {
+		t.Error("an enabled installed tool must keep the green bullet")
 	}
 }
 
