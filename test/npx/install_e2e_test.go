@@ -168,21 +168,24 @@ func pkgVersion(t *testing.T, pkg string) string {
 // assertInstalled checks the install produced a workspace a user can actually
 // use. os.Stat follows symlinks, so a link to a file npm never published fails
 // here — which is exactly how a broken install used to report success.
-func assertInstalled(t *testing.T, home, out string) {
+func assertInstalled(t *testing.T, home, out, version string) {
 	t.Helper()
 	if !strings.Contains(out, "Setup complete") {
 		t.Errorf("installer did not report completion:\n%s", out)
 	}
 
-	for _, rel := range []string{
+	expected := []string{
 		".local/bin/wisp-deck",                  // the config CLI the installer tells users to run
 		".config/wisp-deck/wrapper.sh",          // what Ghostty launches
 		".config/wisp-deck/lib",                 // libs the wrapper sources
 		".config/wisp-deck/ai-tool",             // the selected tool
 		".config/wisp-deck/claude-configs.list", // seeded from defaults/
-		".config/wisp-deck/claude-configs/openai-gpt.json",
 		".config/ghostty/config",
-	} {
+	}
+	if versionShipsOpenAIGPTConfig(version) {
+		expected = append(expected, ".config/wisp-deck/claude-configs/openai-gpt.json")
+	}
+	for _, rel := range expected {
 		if _, err := os.Stat(filepath.Join(home, rel)); err != nil {
 			t.Errorf("post-install ~/%s is missing or unresolvable: %v", rel, err)
 		}
@@ -192,7 +195,8 @@ func assertInstalled(t *testing.T, home, out string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(configList), "OpenAI GPT:openai-gpt.json") {
+	if versionShipsOpenAIGPTConfig(version) &&
+		!strings.Contains(string(configList), "OpenAI GPT:openai-gpt.json") {
 		t.Errorf("installed subscription list is missing OpenAI GPT:\n%s", configList)
 	}
 
@@ -237,7 +241,7 @@ func TestInstall_e2e_from_packed_tarball(t *testing.T) {
 	sb.mockTUI(t, sb.mockBin, pkgVersion(t, pkg))
 
 	out := sb.run(t, pkg, "WISP_DECK_SKIP_TUI_DOWNLOAD=1")
-	assertInstalled(t, sb.home, out)
+	assertInstalled(t, sb.home, out, pkgVersion(t, pkg))
 }
 
 // TestInstall_e2e_from_npm_registry installs the version real users get from npm,
@@ -274,23 +278,33 @@ func TestInstall_e2e_from_npm_registry(t *testing.T) {
 	if got, want := strings.TrimSpace(string(verOut)), "wisp-deck-tui version "+version; got != want {
 		t.Errorf("released wisp-deck-tui reports %q, want %q", got, want)
 	}
-	capOut, err := exec.Command(tui, "capabilities", "--require-production").Output()
-	if err != nil {
-		t.Fatalf("released wisp-deck-tui lacks the production capability boundary: %v", err)
-	}
-	var capabilities map[string]any
-	if err := json.Unmarshal(capOut, &capabilities); err != nil {
-		t.Fatalf("released wisp-deck-tui returned malformed capabilities: %v", err)
-	}
-	if capabilities["host_effects_compiled"] != true ||
-		capabilities["sound_preview_compiled"] != true ||
-		capabilities["host_effects_boundary"] != float64(1) {
-		t.Fatalf("released wisp-deck-tui returned invalid production capabilities: %#v", capabilities)
+	// Versions before 2.23.1 were built without the capability boundary and can
+	// never pass this check; demanding it of them would keep the scheduled
+	// published-package run red until the next release with no regression
+	// anywhere. New releases are still held to it: release.sh verifies the
+	// stamped ldflags in preflight, and the `release: published` trigger of
+	// this workflow re-runs this test against the fresh version.
+	if versionShipsProductionBoundary(version) {
+		capOut, err := exec.Command(tui, "capabilities", "--require-production").Output()
+		if err != nil {
+			t.Fatalf("released wisp-deck-tui lacks the production capability boundary: %v", err)
+		}
+		var capabilities map[string]any
+		if err := json.Unmarshal(capOut, &capabilities); err != nil {
+			t.Fatalf("released wisp-deck-tui returned malformed capabilities: %v", err)
+		}
+		if capabilities["host_effects_compiled"] != true ||
+			capabilities["sound_preview_compiled"] != true ||
+			capabilities["host_effects_boundary"] != float64(1) {
+			t.Fatalf("released wisp-deck-tui returned invalid production capabilities: %#v", capabilities)
+		}
+	} else {
+		t.Logf("published version %s predates the production capability boundary (first in 2.23.1); skipping the boundary check", version)
 	}
 
 	// Phase 2: swap in a scriptable TUI (same path, same version) so the picker
 	// answers itself, then run the installer through to completion.
 	sb.mockTUI(t, filepath.Dir(tui), version)
 	out := sb.run(t, pkg, "WISP_DECK_SKIP_TUI_DOWNLOAD=1")
-	assertInstalled(t, sb.home, out)
+	assertInstalled(t, sb.home, out, version)
 }

@@ -106,7 +106,7 @@ func TestInstall_e2e_into_home_with_space(t *testing.T) {
 	sb.mockTUI(t, sb.mockBin, pkgVersion(t, pkg))
 
 	out := sb.run(t, pkg, "WISP_DECK_SKIP_TUI_DOWNLOAD=1")
-	assertInstalled(t, sb.home, out)
+	assertInstalled(t, sb.home, out, pkgVersion(t, pkg))
 
 	// The Ghostty command line must name the wrapper inside the spaced HOME.
 	cfg, err := os.ReadFile(filepath.Join(sb.home, ".config", "ghostty", "config"))
@@ -128,10 +128,10 @@ func TestInstall_e2e_is_idempotent(t *testing.T) {
 	sb.mockTUI(t, sb.mockBin, pkgVersion(t, pkg))
 
 	first := sb.run(t, pkg, "WISP_DECK_SKIP_TUI_DOWNLOAD=1")
-	assertInstalled(t, sb.home, first)
+	assertInstalled(t, sb.home, first, pkgVersion(t, pkg))
 
 	second := sb.run(t, pkg, "WISP_DECK_SKIP_TUI_DOWNLOAD=1")
-	assertInstalled(t, sb.home, second)
+	assertInstalled(t, sb.home, second, pkgVersion(t, pkg))
 
 	cfgPath := filepath.Join(sb.home, ".config", "ghostty", "config")
 	cfg, err := os.ReadFile(cfgPath)
