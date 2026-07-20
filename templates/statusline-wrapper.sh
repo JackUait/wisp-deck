@@ -12,7 +12,24 @@ type gt_stamp_claude_session &>/dev/null && gt_stamp_claude_session "$input"
 # a mid-session account switch after /new does not resume the just-closed one.
 type gt_stamp_claude_live_session &>/dev/null && gt_stamp_claude_live_session "$input"
 git_info=$(echo "$input" | bash ~/.claude/statusline-command.sh)
-context_pct=$(echo "$input" | npx ccstatusline 2>/dev/null)
+# Resolved once, shared by the context rewrite just below and the subscription
+# usage refresher further down.
+_gt_tui_bin="$(command -v wisp-deck-tui 2>/dev/null || true)"
+[ -z "$_gt_tui_bin" ] && [ -x "$HOME/.local/bin/wisp-deck-tui" ] \
+  && _gt_tui_bin="$HOME/.local/bin/wisp-deck-tui"
+# Subscription panes run third-party models whose real context window Claude
+# Code doesn't know — it hardcodes its own models' sizes (200K/1M) and derives
+# used_percentage from that guess. Pipe the JSON through the catalog-backed
+# rewriter so ccstatusline renders the REAL context usage; on any failure the
+# original input stands so the percentage never blanks. $input itself stays
+# untouched — everything below the ccstatusline call still reads Claude's
+# original figures (session stamps, native rate limits, auto-switch).
+_gt_ctx_input="$input"
+if [ -n "${WISP_DECK_CLAUDE_CONFIG:-}" ] && [ -n "$_gt_tui_bin" ]; then
+  _gt_ctx_rewritten=$(printf '%s' "$input" | "$_gt_tui_bin" statusline-context 2>/dev/null)
+  [ -n "$_gt_ctx_rewritten" ] && _gt_ctx_input="$_gt_ctx_rewritten"
+fi
+context_pct=$(echo "$_gt_ctx_input" | npx ccstatusline 2>/dev/null)
 model_name=$(echo "$input" | sed -n 's/.*"display_name":"\([^"]*\)".*/\1/p')
 # Reasoning effort (low/medium/high/xhigh/max). Conditionally present in the
 # statusline JSON — only when the current model supports the effort parameter —
@@ -113,9 +130,6 @@ fi
 # subscription quota must never bounce the account).
 if [ -n "${WISP_DECK_CLAUDE_CONFIG:-}" ]; then
   _gt_sub_cache="$_gt_accounts_root/subscription-usage/$WISP_DECK_CLAUDE_CONFIG"
-  _gt_tui_bin="$(command -v wisp-deck-tui 2>/dev/null || true)"
-  [ -z "$_gt_tui_bin" ] && [ -x "$HOME/.local/bin/wisp-deck-tui" ] \
-    && _gt_tui_bin="$HOME/.local/bin/wisp-deck-tui"
   if [ -n "$_gt_tui_bin" ]; then
     "$_gt_tui_bin" subscription-usage \
       --configs-dir "$_gt_accounts_root/claude-configs" \

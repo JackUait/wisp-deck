@@ -61,7 +61,7 @@ func TestWrapperPublishesClaudeProviderAndCodexPathBeforeLaunch(t *testing.T) {
 		t.Fatal("wrapper must resolve the trusted provider marker before building the launch")
 	}
 	for _, want := range []string{
-		`export WISP_DECK_CLAUDE_PROVIDER WISP_DECK_CODEX_CMD`,
+		`export WISP_DECK_CLAUDE_PROVIDER WISP_DECK_CLAUDE_CONFIG WISP_DECK_CODEX_CMD`,
 		`-e "WISP_DECK_CLAUDE_PROVIDER=$WISP_DECK_CLAUDE_PROVIDER"`,
 		`-e "WISP_DECK_CODEX_CMD=$WISP_DECK_CODEX_CMD"`,
 	} {
