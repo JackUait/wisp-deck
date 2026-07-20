@@ -570,6 +570,33 @@ func TestEngineRejectsCodexOwnedTools(t *testing.T) {
 	}
 }
 
+// contextCompaction is a thread-lifecycle item, not a Codex-owned tool: the
+// app-server emits it when the turn's own context fills up and it compacts
+// itself. It grants the model no host capability, so it must never abort the
+// turn — long GPT sessions hit it routinely.
+func TestEngineToleratesContextCompactionItem(t *testing.T) {
+	rpc := newFakeEngineRPC()
+	rpc.onTurnStart = func(threadID, turnID string) {
+		rpc.notifications <- notification(
+			"item/started", threadID, turnID,
+			`"startedAtMs":1,"item":{"id":"compact","type":"contextCompaction"}`,
+		)
+		rpc.notifications <- notification(
+			"item/completed", threadID, turnID,
+			`"item":{"id":"compact","type":"contextCompaction"}`,
+		)
+		completeTextTurn(rpc, threadID, turnID, "survived")
+	}
+	engine := newTestEngine(t, rpc)
+	message, err := engine.Execute(context.Background(), testTranslation("long"), nil)
+	if err != nil {
+		t.Fatalf("compaction aborted the turn: %v", err)
+	}
+	if len(message.Content) != 1 || message.Content[0].Text != "survived" {
+		t.Fatalf("message = %+v", message)
+	}
+}
+
 func TestEnginePendingToolTurnExpires(t *testing.T) {
 	rpc := newFakeEngineRPC()
 	rpc.onTurnStart = func(threadID, turnID string) {

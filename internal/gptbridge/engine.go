@@ -569,6 +569,14 @@ func rejectCodexOwnedItem(notification Notification) error {
 	switch params.Item.Type {
 	case "userMessage", "agentMessage", "reasoning", "dynamicToolCall":
 		return nil
+	case "contextCompaction":
+		// Not a tool: the app-server emits this when it compacts its own
+		// thread mid-turn. It confers no host capability and needs no host
+		// action, and the reducer ignores it. Claude owns the transcript
+		// (every Execute opens a fresh thread and injects the full history),
+		// so Codex compacting its private copy is invisible to us. Aborting
+		// here 502'd every sufficiently long turn.
+		return nil
 	default:
 		return fmt.Errorf("forbidden Codex-owned tool item %q", params.Item.Type)
 	}
