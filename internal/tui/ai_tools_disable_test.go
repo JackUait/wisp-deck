@@ -16,11 +16,16 @@ import (
 // --- Disable toggle (x) ---
 
 func TestAIToolsPanel_x_toggles_disabled_and_persists(t *testing.T) {
-	m := panelMenu(t, models.AITool{Name: "codex", Installed: true})
+	// claude stays enabled so codex is never the last enabled tool.
+	m := panelMenu(t,
+		models.AITool{Name: "claude", Installed: true},
+		models.AITool{Name: "codex", Installed: true},
+	)
 	m.disabledToolsFile = filepath.Join(t.TempDir(), "disabled-tools")
 
+	m.aiToolsCursor = 1
 	m.updateAIToolsPanel(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	if !m.aiToolRows[0].Disabled {
+	if !m.aiToolRows[1].Disabled {
 		t.Error("x must mark the focused tool disabled")
 	}
 	if !models.LoadDisabledTools(m.disabledToolsFile)["codex"] {
@@ -28,7 +33,7 @@ func TestAIToolsPanel_x_toggles_disabled_and_persists(t *testing.T) {
 	}
 
 	m.updateAIToolsPanel(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	if m.aiToolRows[0].Disabled {
+	if m.aiToolRows[1].Disabled {
 		t.Error("x again must re-enable the tool")
 	}
 	if models.LoadDisabledTools(m.disabledToolsFile)["codex"] {
