@@ -233,21 +233,24 @@ func TestWrapper_default_panel_is_compact(t *testing.T) {
 	}
 }
 
-// TestWrapper_selects_ai_pane_geometrically verifies the wrapper leaves the
-// AI pane focused via its CAPTURED pane id (%1 from the recording mock's -P
-// reply). tmux routes external drag-drops (e.g. a screenshot) to the ACTIVE
-// pane, so the AI pane must end up active for a dropped screenshot to land in
-// the AI tool. Fixed indices (select-pane -t 0 / -t 2) silently target the
-// wrong pane under a non-zero pane-base-index, and directional selection
-// (-L/-R) races the focus watcher between the two launch batches; the id
-// captured at creation is immune to both.
+// TestWrapper_selects_ai_pane_geometrically verifies the wrapper focuses panes
+// by direction (-L / -R) instead of fixed indices, within the single
+// layout-building batch. tmux routes external drag-drops (e.g. a screenshot)
+// to the ACTIVE pane, so the AI pane must end up active for a dropped
+// screenshot to land in the AI tool. Fixed indices (select-pane -t 0 / -t 2)
+// silently target the wrong pane under a non-zero pane-base-index;
+// directional selection is robust to any base-index and safe here because it
+// runs inside the same batch that built the panes.
 func TestWrapper_selects_ai_pane_geometrically(t *testing.T) {
 	got := recordWrapperNewSession(t)
-	if !strings.Contains(got, "select-pane -t %1") {
-		t.Errorf("expected 'select-pane -t %%1' to leave the AI pane (captured id) active; got:\n%s", got)
+	if !strings.Contains(got, "select-pane -L") {
+		t.Errorf("expected directional 'select-pane -L' to focus the left column; got:\n%s", got)
+	}
+	if !strings.Contains(got, "select-pane -R") {
+		t.Errorf("expected directional 'select-pane -R' to leave the AI (right) pane active; got:\n%s", got)
 	}
 	if strings.Contains(got, "select-pane -t 0") || strings.Contains(got, "select-pane -t 2") {
-		t.Errorf("fixed-index select-pane breaks under non-zero pane-base-index; target the captured pane id. got:\n%s", got)
+		t.Errorf("fixed-index select-pane breaks under non-zero pane-base-index; use directional selection. got:\n%s", got)
 	}
 }
 
@@ -266,7 +269,7 @@ func TestWrapperBuildsDetachedSessionBeforeAttach(t *testing.T) {
 
 	horizontal := strings.Index(got, "split-window -h -p 75")
 	vertical := strings.Index(got, "split-window -v -p 45")
-	focusAI := strings.LastIndex(got, "select-pane -t %1")
+	focusAI := strings.LastIndex(got, "select-pane -R")
 	attach := strings.Index(got, "attach-session")
 	exitUnattached := strings.Index(got, "set-option exit-unattached on")
 	if horizontal < 0 || vertical < 0 || focusAI < 0 || attach < 0 || exitUnattached < 0 {
@@ -295,6 +298,34 @@ func TestWrapper_spare_pane_runs_tabbed_tmux(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("expected new-session chain to contain %q; got:\n%s", want, got)
+		}
+	}
+}
+
+// TestWrapper_creates_all_three_panes_in_one_batch: the session-creating tmux
+// call must build the COMPLETE pane layout (ledger, AI, spare). Splitting the
+// spare pane in a later client call left a 2-pane window exposed for the whole
+// launch tail, and the heal watcher (gt_ensure_panes_watch) correctly read
+// that as "the spare split failed" and rebuilt it — the user got TWO spare
+// consoles when the deferred split then landed as well.
+func TestWrapper_creates_all_three_panes_in_one_batch(t *testing.T) {
+	got := recordWrapperNewSession(t)
+	var newSessionLine string
+	for _, line := range strings.Split(got, "\n") {
+		if strings.HasPrefix(line, "new-session") {
+			newSessionLine = line
+			break
+		}
+	}
+	if newSessionLine == "" {
+		t.Fatalf("no new-session invocation recorded:\n%s", got)
+	}
+	for _, want := range []string{"split-window -h -p 75", "split-window -v -p 45"} {
+		if !strings.Contains(newSessionLine, want) {
+			t.Errorf("the new-session batch is missing %q — every pane must exist "+
+				"before the batch returns, or the heal watcher races the deferred "+
+				"split and duplicates the pane. new-session invocation:\n%s",
+				want, newSessionLine)
 		}
 	}
 }

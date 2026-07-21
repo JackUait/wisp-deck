@@ -75,14 +75,17 @@ func TestLaunchPostPickPath_reaches_tmux_without_blocking_on_any_subprocess(t *t
 		"exit 0\n")
 	writeExecutable(t, filepath.Join(bin, "sysctl"), "#!/bin/bash\n"+
 		"echo \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n")
-	// On new-session, record whether the launch tail's artifacts (spare-tabs
-	// conf, relaunch context) already exist: the AI pane must be spawned
-	// BEFORE that tail work, so the agent's own multi-second boot overlaps it
-	// instead of waiting behind it.
+	// On new-session, record whether the launch tail's artifacts (the
+	// relaunch context) already exist: the AI pane must be spawned BEFORE
+	// that tail work, so the agent's own multi-second boot overlaps it
+	// instead of waiting behind it. (The spare-tabs conf is deliberately NOT
+	// a tail marker: the spare split must ride in the new-session batch — a
+	// deferred split exposes a 2-pane window the heal watcher "fixes" into a
+	// duplicate pane — so its ~100ms prep legitimately precedes the launch.)
 	writeExecutable(t, filepath.Join(bin, "tmux"), "#!/bin/bash\n"+
 		"if [ \"$1\" = \"new-session\" ]; then\n"+
 		"  tail_done=no\n"+
-		"  for f in "+strconv.Quote(cfg)+"/spare-*.conf "+strconv.Quote(cfg)+"/relaunch-*; do\n"+
+		"  for f in "+strconv.Quote(cfg)+"/relaunch-*; do\n"+
 		"    [ -e \"$f\" ] && tail_done=yes\n"+
 		"  done\n"+
 		"  echo \"tmux-new-session tail_done=$tail_done\" >> "+strconv.Quote(calls)+"\n"+

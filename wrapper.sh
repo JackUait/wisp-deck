@@ -581,15 +581,42 @@ if [ "$RESTORE_MODE" -eq 1 ]; then
   esac
 fi
 
-# Launch the session and the AI pane FIRST — before any of the remaining
-# setup (relaunch context, watchers, spare-tabs config). The agent takes
-# multiple seconds to boot; every millisecond of tail work done before this
-# call is dead screen time, while tail work done after it runs in the shadow
-# of that boot. -P prints the two pane ids (into a file in the private
-# attention root, which attention_cleanup removes) so the second batch below
-# can target panes explicitly — the focus watcher may move the active pane in
-# between, so positional targeting is no longer safe.
+# Spare pane: a nested tmux whose top status bar is a tab bar (project name on
+# the first tab, numbered extras, a [ + ] add button and per-tab × close). The
+# config is written ahead of time; the pane execs the inner server. See
+# lib/spare-tabs.sh. Ledger routing enables outer mouse mode but preserves the
+# normal send-keys -M path, so clicks still reach the inner tmux. Prepared
+# BEFORE the launch because the spare split must ride in the same tmux batch
+# as new-session: a deferred split leaves a 2-pane window that the heal
+# watcher reads as a failed spare split and rebuilds — the duplicate-spare
+# bug. The prep is ~100ms of bash; the expensive tail stays after the launch.
+_spare_label="$(spare_tabs_socket "$SESSION_NAME")"
+mkdir -p "$SHARE_DIR"
+_spare_conf="$SHARE_DIR/spare-${SESSION_NAME}.conf"
+spare_tabs_config "$PROJECT_NAME" "$PROJECT_DIR" "$_WRAPPER_DIR/lib/spare-tabs.sh" "$_spare_label" "$_gt_accent" > "$_spare_conf"
+# Minimal cwd-only prompt for the spare shell (drops user@host and conda's
+# "(base)"). Echoes empty for non-zsh shells, leaving them untouched.
+_spare_zdotdir="$(spare_prompt_zdotdir "$SHARE_DIR" "$SESSION_NAME" "$SHELL" "${ZDOTDIR:-$HOME}")"
+_spare_cmd="$(spare_tabs_launch_cmd "$_spare_label" "$_spare_conf" "$PROJECT_DIR" "$_spare_zdotdir")"
+_spare_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/spare-tabs.sh\" && spare_tabs_close_current \"$_spare_label\"'"
+
+# Launch the session with the COMPLETE three-pane layout FIRST — before any of
+# the remaining setup (relaunch context, watchers, hover routing). The agent
+# takes multiple seconds to boot; every millisecond of tail work done before
+# this call is dead screen time, while tail work done after it runs in the
+# shadow of that boot. All panes ride in this one batch so the heal watcher
+# never observes a partial layout. -P prints the ledger and AI pane ids (into
+# a file in the private attention root, which attention_cleanup removes) so
+# the second batch below can name the ledger pane explicitly.
 _gt_panes_file="$WISP_DECK_ATTENTION_ROOT/launch-panes"
+
+# Layout self-heal: tmux runs every command of a chain even when one fails, so
+# a failed split (any future cause, not just the pty-size race _sane_term_size
+# closes) would strand this tab on a lone full-width ledger. The watcher
+# rebuilds missing panes once the window has real space and exits the moment
+# the three-pane layout exists.
+gt_ensure_panes_watch "$TMUX_CMD" "$SESSION_NAME" "$PROJECT_DIR" \
+  "$AI_LAUNCH_CMD" "$_spare_cmd" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
 
 _wisp_deck_testing_tmux_args=()
 if [[ "${WISP_DECK_TESTING:-}" == "1" ]]; then
@@ -607,7 +634,10 @@ env -u WISP_DECK_TESTING "$TMUX_CMD" new-session -d -P -F '#{pane_id}' -x "$_tmu
   set-option pane-active-border-style "fg=colour${_gt_accent}" \; \
   split-window -h -p "$_pane0_pct" -P -F '#{pane_id}' -c "$PROJECT_DIR" \
   "$AI_LAUNCH_CMD; exec bash" \; \
-  set-option -p @gt_ai 1 > "$_gt_panes_file" 2>&3
+  set-option -p @gt_ai 1 \; \
+  select-pane -L \; \
+  split-window -v -p 45 -c "$PROJECT_DIR" "$_spare_cmd" \; \
+  select-pane -R > "$_gt_panes_file" 2>&3
 _gt_ledger_pane=""
 _gt_ai_pane=""
 { { read -r _gt_ledger_pane; read -r _gt_ai_pane; } < "$_gt_panes_file"; } 2>/dev/null || true
@@ -662,21 +692,6 @@ _screenshot_bind="bash -c 'source \"$_WRAPPER_DIR/lib/screenshot.sh\" && gt_past
 # held the spare split and attach hostage for that long.
 _ledger_hover_setup="bash -c 'source \"$_WRAPPER_DIR/lib/ledger-hover.sh\" && ledger_hover_install \"\$1\" \"\$2\" \"\$3\" || true' ledger-hover \"$TMUX_CMD\" \"$SESSION_NAME\" \"$_gt_ledger_pane\""
 
-# Spare pane: a nested tmux whose top status bar is a tab bar (project name on
-# the first tab, numbered extras, a [ + ] add button and per-tab × close). The
-# config is written ahead of time; the pane execs the inner server. See
-# lib/spare-tabs.sh. Ledger routing enables outer mouse mode but preserves the
-# normal send-keys -M path, so clicks still reach the inner tmux.
-_spare_label="$(spare_tabs_socket "$SESSION_NAME")"
-mkdir -p "$SHARE_DIR"
-_spare_conf="$SHARE_DIR/spare-${SESSION_NAME}.conf"
-spare_tabs_config "$PROJECT_NAME" "$PROJECT_DIR" "$_WRAPPER_DIR/lib/spare-tabs.sh" "$_spare_label" "$_gt_accent" > "$_spare_conf"
-# Minimal cwd-only prompt for the spare shell (drops user@host and conda's
-# "(base)"). Echoes empty for non-zsh shells, leaving them untouched.
-_spare_zdotdir="$(spare_prompt_zdotdir "$SHARE_DIR" "$SESSION_NAME" "$SHELL" "${ZDOTDIR:-$HOME}")"
-_spare_cmd="$(spare_tabs_launch_cmd "$_spare_label" "$_spare_conf" "$PROJECT_DIR" "$_spare_zdotdir")"
-_spare_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/spare-tabs.sh\" && spare_tabs_close_current \"$_spare_label\"'"
-
 # Restore: replay the captured pane geometry over the just-built panes. The
 # build order (ledger, AI, spare) is deterministic and identical to capture
 # time, so the panes line up with the layout's cells. MUST be backgrounded
@@ -690,22 +705,13 @@ if [ "$RESTORE_MODE" -eq 1 ] && [ -n "${WISP_DECK_RESUME_LAYOUT:-}" ]; then
   restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$WISP_DECK_RESUME_LAYOUT" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
 fi
 
-# Layout self-heal: tmux runs every command of a chain even when one fails, so
-# a failed split (any future cause, not just the pty-size race _sane_term_size
-# closes) would strand this tab on a lone full-width ledger. The watcher
-# rebuilds missing panes once the window has real space and exits the moment
-# the three-pane layout exists.
-gt_ensure_panes_watch "$TMUX_CMD" "$SESSION_NAME" "$PROJECT_DIR" \
-  "$AI_LAUNCH_CMD" "$_spare_cmd" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
-
-# Second batch: key binds, hover routing, the spare split, then the attach.
-# The spare split targets the captured ledger pane id and the final focus the
-# captured AI pane id — never positions, which the focus watcher may have
-# changed since the first batch. If a capture is empty (the AI split failed,
-# e.g. a tiny pre-resize pty), the targeted commands fail while tmux still
-# runs the rest of the chain — the attach proceeds and the heal watcher above
-# rebuilds the missing panes. The server already exists (started by the
-# sanitized new-session client above), so this client needs no env scrub.
+# Second batch: key binds and hover routing, then the attach. The pane layout
+# is already complete (built whole in the new-session batch above, so the
+# heal watcher never sees a partial layout it would "fix" into duplicate
+# panes); the hover install names the captured ledger pane id rather than a
+# position, which the focus watcher may have changed since the first batch.
+# The server already exists (started by the sanitized new-session client
+# above), so this client needs no env scrub.
 "$TMUX_CMD" \
   bind-key i run-shell "$_screenshot_bind" \; \
   bind-key t run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label new-window -c \"$PROJECT_DIR\"" \; \
@@ -713,7 +719,5 @@ gt_ensure_panes_watch "$TMUX_CMD" "$SESSION_NAME" "$PROJECT_DIR" \
   bind-key Tab run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label next-window" \; \
   bind-key BTab run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label previous-window" \; \
   run-shell -b "$_ledger_hover_setup" \; \
-  split-window -v -p 45 -c "$PROJECT_DIR" -t "$_gt_ledger_pane" "$_spare_cmd" \; \
-  select-pane -t "$_gt_ai_pane" \; \
   attach-session -t "$SESSION_NAME" \; \
   set-option exit-unattached on 2>&3
