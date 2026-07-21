@@ -62,3 +62,53 @@ stack_session_files_cleanup() {
     "$cfg/proxy-${s}.log" "$cfg/proxy-account-${s}"
   rm -rf "$cfg/spare-zdotdir-${s}"
 }
+
+# stack_bar_chips <project_name> <self_session> <accent> <session>...
+# The outer status-left for one session of a stack. With a single session the
+# bar is exactly today's " ⬡ project " so the common case looks unchanged.
+# The bar's base style stays fg=white,bg=colour236,bold (status-left-style set
+# at launch); chips restore it after their own colours.
+stack_bar_chips() {
+  local project="$1" self="$2" accent="$3"
+  shift 3
+  local out=" ⬡ ${project} " i=0 s
+  if [ "$#" -le 1 ]; then
+    printf '%s' "$out"
+    return 0
+  fi
+  for s in "$@"; do
+    i=$((i + 1))
+    if [ "$s" = "$self" ]; then
+      out="${out}#[fg=colour235,bg=colour${accent},bold] ${i} #[default]#[fg=white,bg=colour236,bold] "
+    else
+      out="${out}#[fg=colour245] ${i} #[default]#[fg=white,bg=colour236,bold] "
+    fi
+  done
+  printf '%s' "$out"
+}
+
+# stack_repaint <tmux_cmd> <cfg_root> <project_name> <project_dir>
+# Rebuild every project session's status-left. Each session's bar marks its
+# OWN chip active (the visible bar always belongs to the current session), in
+# the accent of that session's tool — honouring the user theme preset when
+# lib/theme.sh is loaded.
+stack_repaint() {
+  local tmux_cmd="$1" cfg="$2" project="$3" dir="$4"
+  local sessions=() s tool pref accent chips
+  while IFS= read -r s; do
+    [ -n "$s" ] && sessions+=("$s")
+  done < <(stack_sessions_for_project "$tmux_cmd" "$dir")
+  [ "${#sessions[@]}" -gt 0 ] || return 0
+  pref="$(grep '^theme=' "$cfg/settings" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+  for s in "${sessions[@]}"; do
+    tool="$("$tmux_cmd" show-environment -t "$s" WISP_DECK_TOOL 2>/dev/null | cut -d= -f2-)"
+    accent=209
+    if command -v get_theme_accent >/dev/null 2>&1 \
+      && command -v gt_resolve_theme >/dev/null 2>&1; then
+      accent="$(get_theme_accent "$(gt_resolve_theme "$pref" "$tool")")"
+    fi
+    chips="$(stack_bar_chips "$project" "$s" "$accent" "${sessions[@]}")"
+    "$tmux_cmd" set-option -t "$s" status-left "$chips" 2>/dev/null || true
+  done
+  return 0
+}

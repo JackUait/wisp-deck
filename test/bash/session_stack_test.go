@@ -124,3 +124,40 @@ ls %q
 		assertNotContains(t, out, f)
 	}
 }
+
+func TestStackBarChips_single_session_is_plain_project_chip(t *testing.T) {
+	out, code := runBashFunc(t, "lib/session-stack.sh", "stack_bar_chips",
+		[]string{"app", "dev-app-1", "209", "dev-app-1"}, nil)
+	assertExitCode(t, code, 0)
+	if out != " ⬡ app " {
+		t.Errorf("single-session bar must equal today's default, got %q", out)
+	}
+}
+
+func TestStackBarChips_marks_self_with_accent(t *testing.T) {
+	out, code := runBashFunc(t, "lib/session-stack.sh", "stack_bar_chips",
+		[]string{"app", "dev-app-2", "141", "dev-app-1", "dev-app-2"}, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "bg=colour141,bold] 2 ")   // self chip, accented
+	assertContains(t, out, "#[fg=colour245] 1 ")      // other chip, plain
+	assertContains(t, out, "⬡ app")
+}
+
+func TestStackRepaint_sets_status_left_per_session_with_self_active(t *testing.T) {
+	dir := t.TempDir()
+	cfg := t.TempDir()
+	bin := mockTmux(t, dir, "100 dev-app-111\n300 dev-app-333\n", stackEnvTwoApps)
+	body := fmt.Sprintf(`
+stack_repaint %q %q "app" "/tmp/app"
+cat %q/tmux.log
+`, filepath.Join(bin, "tmux"), cfg, dir)
+	script := stackSnippet(t, body)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "set-option -t dev-app-111 status-left")
+	assertContains(t, out, "set-option -t dev-app-333 status-left")
+	// dev-app-111's own bar must accent chip 1; dev-app-333's chip 2.
+	for _, want := range []string{"bold] 1 ", "bold] 2 "} {
+		assertContains(t, out, want)
+	}
+}
