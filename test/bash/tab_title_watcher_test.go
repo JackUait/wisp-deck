@@ -538,7 +538,7 @@ esac
 		"TMUX_CALLS="+calls, "TMUX_PANES="+panes, "WISP_DECK_WATCH_INTERVAL=0.05")
 	script := tabTitleSnippet(t, fmt.Sprintf(`
 set_tab_title() { printf '%%s\n' "$*" >> %q; }
-set_tab_title_waiting() { :; }
+set_tab_title_waiting() { set_tab_title "🔔 $1"; }
 play_notification_sound() { printf '%%s\n' "$1" >> %q; }
 start_tab_title_watcher sess-late project model %q %q %q
 for _i in 1 2 3 4 5 6 7 8 9 10; do [ -s %q ] && break; sleep 0.05; done
@@ -564,7 +564,7 @@ stop_tab_title_watcher
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertContains(t, string(titleData), "Late task title")
+	assertContains(t, string(titleData), "🔔 Late task title")
 	callData, err := os.ReadFile(calls)
 	if err != nil {
 		t.Fatal(err)
@@ -665,9 +665,10 @@ func TestTabTitleWatcher_apply_tab_title_modes(t *testing.T) {
 	tests := []struct {
 		name, state, mode, want, unwanted string
 	}{
-		{"full active", "active", "full", "myproj · claude", "●"},
-		{"full waiting", "waiting", "full", "myproj · claude", "●"},
-		{"project", "active", "project", "myproj", "claude"},
+		{"full active", "active", "full", "myproj · claude", "🔔"},
+		{"full waiting", "waiting", "full", "🔔 myproj · claude", "●"},
+		{"project active", "active", "project", "myproj", "claude"},
+		{"project waiting", "waiting", "project", "🔔 myproj", "claude"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -685,6 +686,49 @@ func TestTabTitleWatcher_apply_tab_title_modes(t *testing.T) {
 		if strings.TrimSpace(out) != "" {
 			t.Errorf("model/%s wrote %q", state, out)
 		}
+	}
+}
+
+// In model mode the per-tick re-emit mirrors the AI tool's own pane title into
+// the tab; during the attention phase it must carry the bell prefix, and drop
+// it once the agent is working again.
+func TestTabTitleWatcher_model_mode_tick_prepends_bell_on_attention(t *testing.T) {
+	tests := []struct{ name, phase, reason, want string }{
+		{"attention rings", "attention", "question", "title:🔔 Fixing tests"},
+		{"working is plain", "working", "-", "title:Fixing tests"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			generation := "generation.modelbell1"
+			state := writeAttentionState(t, root, generation, "1", tt.phase, tt.reason)
+			descriptor := writeAttentionDescriptor(t, root, generation, "claude", state)
+			binDir := mockCommand(t, root, "tmux", `
+case "$1" in
+  list-panes) printf '%%7\t1\n' ;;
+  display-message) printf 'Fixing tests\n' ;;
+esac
+`)
+			tmuxPath := filepath.Join(binDir, "tmux")
+			logFile := filepath.Join(root, "titles")
+			script := tabTitleSnippet(t, fmt.Sprintf(`
+set_tab_title() { printf 'title:%%s\n' "$1" >> %q; }
+attention_watcher_reset
+attention_watcher_tick s p model %q %q %q
+`, logFile, tmuxPath, descriptor, root))
+
+			_, code := runBashSnippet(t, script, buildEnv(t, []string{binDir}))
+			assertExitCode(t, code, 0)
+			data, err := os.ReadFile(logFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := string(data)
+			assertContains(t, got, tt.want+"\n")
+			if tt.phase == "working" {
+				assertNotContains(t, got, "🔔")
+			}
+		})
 	}
 }
 

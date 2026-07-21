@@ -292,10 +292,10 @@ model_tab_title() {
 
 # Write the terminal tab title for the given state, honoring the title mode.
 # Usage: apply_tab_title <state> <mode> <project> <tool>
-#   state: "waiting" (idle) or "active" — both render the plain title; the
-#          waiting cue is Ghostty's native bell icon, not a text dot
+#   state: "waiting" (needs attention — bell emoji prefixed) or "active" (plain)
 #   mode:  "full" (project · tool), "project" (project only), or
-#          "model" (leave the AI tool's own title alone — it set the title itself)
+#          "model" (leave the AI tool's own title alone — it set the title
+#          itself; the per-tick model re-emit carries the bell instead)
 apply_tab_title() {
   local state="$1" mode="$2" project="$3" tool="$4"
   case "$mode" in
@@ -460,9 +460,14 @@ attention_watcher_tick() {
   fi
 
   if [ "$current_title" = "model" ] && [ -n "$current_pane" ]; then
-    local pane_title
+    local pane_title model_title
     pane_title="$("$tmux_cmd" display-message -p -t "$current_pane" '#{pane_title}' 2>/dev/null)"
-    set_tab_title "$(model_tab_title "$pane_title" "$_ATTENTION_WATCH_HOST" "$project_name")"
+    model_title="$(model_tab_title "$pane_title" "$_ATTENTION_WATCH_HOST" "$project_name")"
+    if [ "$title_state" = "waiting" ]; then
+      set_tab_title_waiting "$model_title"
+    else
+      set_tab_title "$model_title"
+    fi
   fi
 
   if [ "$phase" != "$_ATTENTION_WATCH_LAST_PRESENT_PHASE" ] \

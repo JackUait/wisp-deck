@@ -60,11 +60,10 @@ set_tab_title() {
   fi
 }
 
-# Set terminal/tab title for the waiting state. Identical to set_tab_title — no
-# dot prefix. Ghostty's native bell icon (terminal_bell notif channel) is the
-# sole waiting indicator, so a separate text dot would be redundant clutter.
+# Set terminal/tab title for the waiting state: the plain title with a bell
+# emoji prefixed, the visual cue that the session needs the user's attention.
 set_tab_title_waiting() {
-  set_tab_title "$@"
+  set_tab_title "🔔 $1" "${2:-}"
 }
 
 # Extended TUI variables for interactive full-screen UIs.
