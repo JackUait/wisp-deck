@@ -249,3 +249,56 @@ cat %q/tmux.log 2>/dev/null || true
 	assertContains(t, out, "STACK:")
 	assertNotContains(t, out, "STACK:dev-web-222") // deregistered: entry removed, list now empty
 }
+
+func TestStackRequest_write_then_claim_roundtrip(t *testing.T) {
+	dir := t.TempDir()
+	cfg := t.TempDir()
+	proj := t.TempDir()
+	env := fmt.Sprintf(`
+      "dev-app-111") all='WISP_DECK=1\nWISP_DECK_PATH=%s\n' ;;
+`, proj)
+	bin := mockTmux(t, dir, "100 dev-app-111\n", env)
+	body := fmt.Sprintf(`
+restore_trigger_tab() { return 0; }   # stub the osascript Cmd+T
+stack_request_new %q %q "dev-app-111" || echo "WRITE-FAILED"
+stack_request_claim %q
+stack_request_claim %q || echo "SECOND-CLAIM-FAILS"
+`, filepath.Join(bin, "tmux"), cfg, cfg, cfg)
+	script := stackSnippet(t, body)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertNotContains(t, out, "WRITE-FAILED")
+	assertContains(t, out, proj)
+	assertContains(t, out, "SECOND-CLAIM-FAILS") // one-shot
+}
+
+func TestStackRequestClaim_rejects_stale_request(t *testing.T) {
+	cfg := t.TempDir()
+	proj := t.TempDir()
+	writeTempFile(t, cfg, "stack-request", fmt.Sprintf("100|%s\n", proj)) // epoch 100 = ancient
+	body := fmt.Sprintf(`
+stack_request_claim %q || echo "STALE-REJECTED"
+`, cfg)
+	script := stackSnippet(t, body)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "STALE-REJECTED")
+	assertNotContains(t, out, proj)
+}
+
+func TestStackRequestNew_failed_trigger_removes_request(t *testing.T) {
+	dir := t.TempDir()
+	cfg := t.TempDir()
+	bin := mockTmux(t, dir, "100 dev-app-111\n", stackEnvTwoApps)
+	body := fmt.Sprintf(`
+restore_trigger_tab() { return 1; }
+stack_request_new %q %q "dev-app-111" && echo "UNEXPECTED-OK"
+[ -f %q/stack-request ] && echo "REQUEST-LEFT-BEHIND"
+true
+`, filepath.Join(bin, "tmux"), cfg, cfg)
+	script := stackSnippet(t, body)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertNotContains(t, out, "UNEXPECTED-OK")
+	assertNotContains(t, out, "REQUEST-LEFT-BEHIND")
+}
