@@ -58,6 +58,45 @@ func TestSubscriptionModal_x_is_noop_on_login_rows(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModal_x_refuses_to_disable_the_last_enabled_managed_profile(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	for _, i := range []int{1, 2} {
+		m.selectSubscriptionProfile(i)
+		m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	}
+
+	m.selectSubscriptionProfile(3) // last enabled managed profile
+	file := m.subscriptionModalProfile().File
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	if m.subscriptionProfiles()[3].Disabled {
+		t.Error("the last enabled managed subscription must not become disabled")
+	}
+	if claudeconfig.LoadDisabled(claudeconfig.DisabledFile(m.claudeConfigsList))[file] {
+		t.Error("the sidecar file must stay untouched")
+	}
+	if m.subscriptionModal.err == nil ||
+		!strings.Contains(m.subscriptionModal.err.Error(), "At least one subscription must stay enabled") {
+		t.Errorf("err = %v, want the last-enabled message", m.subscriptionModal.err)
+	}
+}
+
+func TestSubscriptionModal_x_always_reenables_managed_profiles(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.openSubscriptionModal()
+	for _, i := range []int{1, 2} {
+		m.selectSubscriptionProfile(i)
+		m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	}
+
+	m.selectSubscriptionProfile(1)
+	m = subscriptionModalKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if m.subscriptionProfiles()[1].Disabled {
+		t.Error("re-enabling must never be blocked")
+	}
+}
+
 func TestSubscriptionModal_help_shows_enable_when_focused_profile_disabled(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	m.openSubscriptionModal()

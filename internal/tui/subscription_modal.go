@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -717,6 +718,18 @@ func (m *MainMenuModel) toggleSubscriptionProfileDisabled() {
 	profiles := m.subscriptionProfiles()
 	if cursor <= 0 || cursor >= len(profiles) || m.claudeConfigsList == "" {
 		return
+	}
+	if !profiles[cursor].Disabled {
+		enabled := 0
+		for _, p := range profiles[1:] { // managed profiles only; Standard can't be disabled
+			if !p.Disabled {
+				enabled++
+			}
+		}
+		if enabled <= 1 {
+			m.subscriptionModal.err = errors.New("At least one subscription must stay enabled")
+			return
+		}
 	}
 	if _, err := claudeconfig.ToggleDisabled(
 		claudeconfig.DisabledFile(m.claudeConfigsList), profiles[cursor].File,
