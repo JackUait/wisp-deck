@@ -152,11 +152,7 @@ gt_ai_pane() {
 # and would otherwise re-focus the wrong pane just after launch.
 gt_focus_ai_pane_when_ready() {
   local tmux_cmd="$1" session="$2" pane content
-  # Bounded, not `while true`: an AI pane that never paints a prompt (crash,
-  # mocked tmux in tests) must not leave this loop spinning forever — a
-  # --stack-new builder exits without killing the watcher, so the bound is
-  # the only thing that ends it then.
-  for _ in $(seq 1 240); do
+  while true; do
     sleep 0.5
     pane="$(gt_ai_pane "$tmux_cmd" "$session")"
     content="$("$tmux_cmd" capture-pane -t "${session}:0.${pane}" -p 2>/dev/null)"
@@ -166,7 +162,6 @@ gt_focus_ai_pane_when_ready() {
       break
     fi
   done
-  return 0
 }
 
 # gt_paste_latest_screenshot <session> [pane] — inject the latest screenshot's

@@ -70,7 +70,7 @@ if [ ! -d "$_WRAPPER_DIR/lib" ]; then
   exit 1
 fi
 
-_gt_libs=(theme ai-tools projects process input tui install menu-tui project-actions ledger-hover tmux-session settings-json notification-setup keep-awake tab-title-watcher terminals/ghostty session-restore session-stack claude-configs claude-accounts claude-shared-settings auto-switch attention account-switch compact-view screenshot spare-tabs)
+_gt_libs=(theme ai-tools projects process input tui install menu-tui project-actions ledger-hover tmux-session settings-json notification-setup keep-awake tab-title-watcher terminals/ghostty session-restore claude-configs claude-accounts claude-shared-settings auto-switch attention account-switch compact-view screenshot spare-tabs)
 for _gt_lib in "${_gt_libs[@]}"; do
   if [ ! -f "$_WRAPPER_DIR/lib/${_gt_lib}.sh" ]; then
     printf '\033[31mError:\033[0m Missing library %s/lib/%s.sh\n' "$_WRAPPER_DIR" "$_gt_lib" >&2
@@ -144,37 +144,8 @@ sync_all_claude_accounts_state "$HOME/.claude" "$SHARE_DIR/claude-accounts"
 # makes the AI tool resume its conversation (WISP_DECK_RESUME).
 RESTORE_MODE=0
 
-# In-place stack build: `wrapper.sh --stack-new <owner_session> <client>`,
-# run by the prefix+S bind (run-shell -b, so no tty and TMUX is set in the
-# environment). Builds one full session for the owner tab's project, registers
-# it in the OWNER's stack, switches the pressing client to it, and exits —
-# the session's lifetime belongs to the owner wrapper (and the orphan reaper),
-# not to this short-lived builder process.
-WISP_DECK_STACK_BUILD=0
-_stack_owner=""
-_stack_client=""
-_stack_owner_pid=""
-if [ "${1:-}" = "--stack-new" ]; then
-  WISP_DECK_STACK_BUILD=1
-  _stack_owner="${2:-}"
-  _stack_client="${3:-}"
-  shift $#
-  # run-shell spawned us with the server's TMUX in the environment; the
-  # new-session below would refuse to nest. The builder never needs it.
-  unset TMUX TMUX_PANE
-fi
-
 # Select working directory
-if [ "$WISP_DECK_STACK_BUILD" = "1" ]; then
-  _stack_dir="$("$TMUX_CMD" show-environment -t "$_stack_owner" WISP_DECK_PATH 2>/dev/null | cut -d= -f2-)"
-  _stack_owner_pid="$("$TMUX_CMD" show-environment -t "$_stack_owner" WISP_DECK_OWNER_PID 2>/dev/null | cut -d= -f2-)"
-  # Refuse to build for an owner that is gone or predates the stacking
-  # protocol (no owner-pid stamp): nothing could ever clean the session up.
-  [ -n "$_stack_dir" ] && [ -d "$_stack_dir" ] || exit 1
-  case "$_stack_owner_pid" in '' | *[!0-9]*) exit 1 ;; esac
-  cd "$_stack_dir" || exit 1
-  PROJECT_NAME="$(basename "$_stack_dir")"
-elif [ -n "$1" ] && [ -d "$1" ]; then
+if [ -n "$1" ] && [ -d "$1" ]; then
   cd "$1" || exit 1
   shift
 else
@@ -237,6 +208,7 @@ else
     type stop_loading_screen &>/dev/null && stop_loading_screen
     exit 0
   fi
+
   # Use TUI for project selection
   printf '\033]0;󰊠  Wisp Deck\007'
 
@@ -272,7 +244,6 @@ else
           PROJECT_NAME="$_selected_project_name"
           # shellcheck disable=SC2154
           cd "$_selected_project_path" || exit 1
-          _gt_consolidate=1
           break
           ;;
         plain-terminal)
@@ -315,32 +286,6 @@ else
       exit 0
     fi
   done
-  fi
-fi
-
-# Same-project stack already open in another tab? Then this pick ADDS a
-# session to that tab instead of replacing it: the fresh session is built
-# in-place into the existing owner's stack (exactly like prefix+S) and this
-# picker tab closes itself. Unlike prefix+S, the owner tab's client is NOT
-# switched (_stack_client stays empty): the user is looking at that tab's
-# current session, and yanking the view to the fresh conversation read as
-# "my session was closed and replaced". The new session announces itself as
-# a chip on the session bar instead, one prefix+n away. Opening a project
-# twice never closes existing tabs. Detection is tmux + registry files only
-# — this sits on the post-pick critical path. Gated: interactive picks only;
-# a restored tab must never consolidate (the restore chain relies on one tab
-# per queue entry). Only owners whose sessions carry the WISP_DECK_OWNER_PID
-# stamp qualify: a pre-stacking tab cannot host or clean up a stacked
-# session, so those keep their own tabs and this pick opens a normal fresh
-# tab alongside them.
-if [ "${_gt_consolidate:-0}" = "1" ] && [ "$RESTORE_MODE" -eq 0 ]; then
-  IFS=$'\t' read -r _stack_owner _stack_owner_pid < <(
-    stack_live_owner_for_project "$TMUX_CMD" "$SHARE_DIR" "$(pwd)"
-  ) || true
-  if [ -n "$_stack_owner" ] && [ -n "$_stack_owner_pid" ]; then
-    WISP_DECK_STACK_BUILD=1
-  else
-    _stack_owner="" _stack_owner_pid=""
   fi
 fi
 
@@ -424,7 +369,7 @@ fi
 # otherwise be the session terminal, where the AI tool is drawing a full-screen
 # UI, and these jobs keep running for the whole session. Nothing reads it.
 # (stderr already goes to the session log — see gt_mute_terminal_stderr above.)
-gt_focus_ai_pane_when_ready "$TMUX_CMD" "$SESSION_NAME" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" 3>&- &
+gt_focus_ai_pane_when_ready "$TMUX_CMD" "$SESSION_NAME" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
 WATCHER_PID=$!
 
 # Reap holders left by sessions that died without running their trap (SIGKILL,
@@ -439,35 +384,10 @@ cleanup() {
   if [ -n "${_WD_ERROR_LOG:-}" ] && [ ! -s "$_WD_ERROR_LOG" ]; then
     rm -f "$_WD_ERROR_LOG"
   fi
-  [ -n "${HEARTBEAT_PID:-}" ] && kill_tree "$HEARTBEAT_PID" TERM 2>/dev/null || true
-  [ -n "${STACK_REAPER_PID:-}" ] && kill "$STACK_REAPER_PID" 2>/dev/null || true
-  if [ "${WISP_DECK_STACK_BUILD:-0}" = "1" ]; then
-    # A successful --stack-new disarms this trap before exiting, so reaching
-    # here means the build FAILED partway: unwind the partial session and
-    # anything already registered to the owner. The owner tab is untouched.
-    [ -n "${_stack_owner:-}" ] && [ -n "${SESSION_NAME:-}" ] \
-      && stack_remove_entry "$SHARE_DIR" "$_stack_owner" "$SESSION_NAME"
-    [ -n "${SESSION_NAME:-}" ] && cleanup_tmux_session "$SESSION_NAME" "${WATCHER_PID:-}" "$TMUX_CMD"
-    attention_cleanup "${WISP_DECK_ATTENTION_ROOT:-}" 2>/dev/null || true
-    keep_awake_drop "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" "$SESSION_NAME" 2>/dev/null || true
-    stack_session_files_cleanup "$SHARE_DIR" "$SESSION_NAME"
-    return 0
-  fi
-  if stack_adopted_away "$TMUX_CMD" "$SESSION_NAME"; then
-    # A newer tab adopted this tab's sessions: they live on. Kill only
-    # wrapper-local jobs; the sessions, their SHARE_DIR files, their
-    # attention roots and keep-awake holders now belong to the adopter
-    # (its stack file covers every one of them).
-    kill "$WATCHER_PID" 2>/dev/null || true
-    rm -f "$SHARE_DIR/stacks/$SESSION_NAME"
-    return 0
-  fi
   # Release before anything else: whatever follows may fail, and leaving the
   # machine unable to sleep is worse than leaving a temp file behind.
   keep_awake_drop "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" "$SESSION_NAME" 2>/dev/null || true
-  # Adopted sessions first (their attention roots are read from session env
-  # before the kill), then this tab's own session via the existing path.
-  stack_owner_teardown "$TMUX_CMD" "$SHARE_DIR" "$SESSION_NAME"
+  [ -n "${HEARTBEAT_PID:-}" ] && kill_tree "$HEARTBEAT_PID" TERM 2>/dev/null || true
   cleanup_tmux_session "$SESSION_NAME" "$WATCHER_PID" "$TMUX_CMD"
   attention_cleanup "${WISP_DECK_ATTENTION_ROOT:-}" 2>/dev/null || true
   rm -f "$SHARE_DIR/spare-${SESSION_NAME}.conf"
@@ -641,9 +561,6 @@ _pane0_pct=75
 # hue: purple for OpenCode, orange for claude. Mirrors the Go theme's Primary.
 _gt_theme_pref="$(grep '^theme=' "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
 _gt_accent="$(get_theme_accent "$(gt_resolve_theme "$_gt_theme_pref" "$SELECTED_AI_TOOL")")"
-# The session bar for a fresh single-session tab: project label + the
-# clickable + button (stack_repaint takes over the moment the stack changes).
-_gt_stack_bar="$(stack_bar_chips "$PROJECT_NAME" "$SESSION_NAME" "$_gt_accent" "$SESSION_NAME")"
 
 if ! declare -f _sane_term_size >/dev/null 2>&1; then
   # shellcheck disable=SC1091  # Runtime library path
@@ -653,15 +570,7 @@ fi
 # before Ghostty delivers the tab's real size, and a tiny -x/-y makes the
 # split-window commands below fail — the tab then sits attached to a lone
 # full-width ledger pane (the stuck-launch bug).
-# A --stack-new builder has no tty (run-shell): size comes from the owner
-# tab's attached client instead, falling back to _sane_term_size's defaults.
-_tmux_rows="" _tmux_cols=""
-if [ "$WISP_DECK_STACK_BUILD" = "1" ]; then
-  read -r _tmux_cols _tmux_rows <<< "$("$TMUX_CMD" list-clients -t "$_stack_owner" -F '#{client_width} #{client_height}' 2>/dev/null | head -n 1)"
-fi
-if [ -z "${_tmux_cols:-}" ] || [ -z "${_tmux_rows:-}" ]; then
-  read -r _tmux_rows _tmux_cols <<< "$(_sane_term_size)"
-fi
+read -r _tmux_rows _tmux_cols <<< "$(_sane_term_size)"
 
 WISP_DECK_CLAUDE_SESSION=""
 WISP_DECK_CODEX_SESSION=""
@@ -707,26 +616,20 @@ _gt_panes_file="$WISP_DECK_ATTENTION_ROOT/launch-panes"
 # rebuilds missing panes once the window has real space and exits the moment
 # the three-pane layout exists.
 gt_ensure_panes_watch "$TMUX_CMD" "$SESSION_NAME" "$PROJECT_DIR" \
-  "$AI_LAUNCH_CMD" "$_spare_cmd" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" 3>&- &
+  "$AI_LAUNCH_CMD" "$_spare_cmd" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
 
-# The chain below sets `exit-unattached off` explicitly: pre-stacking wrappers
-# set it ON server-wide, and a still-running server keeps that fossil — one
-# all-clients-detached moment would then kill every background stack session.
-# Dropping the old `on` was not enough; the off must be written.
 _wisp_deck_testing_tmux_args=()
 if [[ "${WISP_DECK_TESTING:-}" == "1" ]]; then
   _wisp_deck_testing_tmux_args=(-e WISP_DECK_TESTING=1)
 fi
 
-env -u WISP_DECK_TESTING "$TMUX_CMD" new-session -d -P -F '#{pane_id}' -x "$_tmux_cols" -y "$_tmux_rows" -s "$SESSION_NAME" "${_wisp_deck_testing_tmux_args[@]}" -e "PATH=$PATH" -e "WISP_DECK_ATTENTION_ROOT=$WISP_DECK_ATTENTION_ROOT" -e "WISP_DECK_ATTENTION_DESCRIPTOR=$WISP_DECK_ATTENTION_DESCRIPTOR" -e "WISP_DECK_ATTENTION_GENERATION=$WISP_DECK_ATTENTION_GENERATION" -e "WISP_DECK_ATTENTION_FILE=$WISP_DECK_ATTENTION_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=$WISP_DECK_CLAUDE_SESSION" -e "WISP_DECK_CODEX_SESSION=$WISP_DECK_CODEX_SESSION" -e "WISP_DECK_CODEX_SESSION_FILE=$WISP_DECK_CODEX_SESSION_FILE" -e "WISP_DECK_CLAUDE_PROVIDER=$WISP_DECK_CLAUDE_PROVIDER" -e "WISP_DECK_CLAUDE_CONFIG=$WISP_DECK_CLAUDE_CONFIG" -e "WISP_DECK_CODEX_CMD=$WISP_DECK_CODEX_CMD" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$SHARE_DIR/relaunch-${SESSION_NAME}" -e "WISP_DECK_CLAUDE_ACCOUNT=${WISP_DECK_CLAUDE_ACCOUNT_DIR##*/}" -e "WISP_DECK_SEQ=${_wd_launch_seq}" -e "WISP_DECK_OWNER_PID=$$" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
+env -u WISP_DECK_TESTING "$TMUX_CMD" new-session -d -P -F '#{pane_id}' -x "$_tmux_cols" -y "$_tmux_rows" -s "$SESSION_NAME" "${_wisp_deck_testing_tmux_args[@]}" -e "PATH=$PATH" -e "WISP_DECK_ATTENTION_ROOT=$WISP_DECK_ATTENTION_ROOT" -e "WISP_DECK_ATTENTION_DESCRIPTOR=$WISP_DECK_ATTENTION_DESCRIPTOR" -e "WISP_DECK_ATTENTION_GENERATION=$WISP_DECK_ATTENTION_GENERATION" -e "WISP_DECK_ATTENTION_FILE=$WISP_DECK_ATTENTION_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=$WISP_DECK_CLAUDE_SESSION" -e "WISP_DECK_CODEX_SESSION=$WISP_DECK_CODEX_SESSION" -e "WISP_DECK_CODEX_SESSION_FILE=$WISP_DECK_CODEX_SESSION_FILE" -e "WISP_DECK_CLAUDE_PROVIDER=$WISP_DECK_CLAUDE_PROVIDER" -e "WISP_DECK_CLAUDE_CONFIG=$WISP_DECK_CLAUDE_CONFIG" -e "WISP_DECK_CODEX_CMD=$WISP_DECK_CODEX_CMD" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$SHARE_DIR/relaunch-${SESSION_NAME}" -e "WISP_DECK_CLAUDE_ACCOUNT=${WISP_DECK_CLAUDE_ACCOUNT_DIR##*/}" -e "WISP_DECK_SEQ=${_wd_launch_seq}" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
   "$_pane0_cmd" \; \
-  set-option status-left "$_gt_stack_bar" \; \
+  set-option status-left " ⬡ ${PROJECT_NAME} " \; \
   set-option status-left-style "fg=white,bg=colour236,bold" \; \
-  set-option status on \; \
   set-option status-style "bg=colour235" \; \
   set-option status-right "" \; \
   set-option set-titles off \; \
-  set-option exit-unattached off \; \
   set-option pane-border-style "fg=colour238" \; \
   set-option pane-active-border-style "fg=colour${_gt_accent}" \; \
   split-window -h -p "$_pane0_pct" -P -F '#{pane_id}' -c "$PROJECT_DIR" \
@@ -757,37 +660,6 @@ write_relaunch_context "$WISP_DECK_RELAUNCH_FILE" "$SELECTED_AI_TOOL" \
   "$WISP_DECK_CLAUDE_SETTINGS_SOURCE"
 export WISP_DECK_RELAUNCH_FILE
 
-# In-place stack build — reached by prefix+S (--stack-new) AND by an
-# interactive pick of an already-open project: the session is complete —
-# hand it to the owner tab and get out of the way. ORDER IS THE NO-ZOMBIE
-# INVARIANT: the session enters the OWNER's stack file (so the owner tab's
-# close will kill it) BEFORE its owner-pid stamp flips from this builder to
-# the owner wrapper (which stops the orphan reaper from tying its life to
-# this exiting process). A crash between the two leaves the session doubly
-# covered, never orphaned. Binds are server-global and already installed by
-# the owner tab's launch; the hover routing is per-session and is installed
-# here. No attach — prefix+S switches the pressing client to the new session
-# (_stack_client), while an interactive re-pick leaves the owner tab's view
-# alone (empty _stack_client; the new session is a background bar chip) and
-# closes its picker tab on the exit below.
-if [ "$WISP_DECK_STACK_BUILD" = "1" ]; then
-  stack_add "$SHARE_DIR" "$_stack_owner" "$SESSION_NAME"
-  "$TMUX_CMD" set-environment -t "$SESSION_NAME" WISP_DECK_OWNER_PID "$_stack_owner_pid" 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}"
-  stack_repaint "$TMUX_CMD" "$SHARE_DIR" "$PROJECT_NAME" "$PROJECT_DIR"
-  _ledger_hover_setup="bash -c 'source \"$_WRAPPER_DIR/lib/ledger-hover.sh\" && ledger_hover_install \"\$1\" \"\$2\" \"\$3\" || true' ledger-hover \"$TMUX_CMD\" \"$SESSION_NAME\" \"$_gt_ledger_pane\""
-  "$TMUX_CMD" run-shell -b "$_ledger_hover_setup" 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" || true
-  if [ -n "$_stack_client" ]; then
-    "$TMUX_CMD" switch-client -c "$_stack_client" -t "$SESSION_NAME" 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" || true
-  fi
-  trap - EXIT HUP TERM INT
-  exit 0
-fi
-
-# Register this tab's own session in its own stack file. (A pick of an
-# already-open project never reaches here — it exits above after building
-# into the existing tab's stack.)
-stack_add "$SHARE_DIR" "$SESSION_NAME" "$SESSION_NAME"
-
 # Start the descriptor consumer before the attach (which blocks until the
 # session ends).
 start_tab_title_watcher "$SESSION_NAME" "$PROJECT_NAME" "$_tab_title_setting" "$TMUX_CMD" "$WISP_DECK_ATTENTION_DESCRIPTOR" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
@@ -796,14 +668,8 @@ start_tab_title_watcher "$SESSION_NAME" "$PROJECT_NAME" "$_tab_title_setting" "$
 # Wisp Deck sessions. Backgrounded lib function, not an inline loop: each tick
 # re-sources the lib in a throwaway bash, so snapshot fixes reach sessions
 # already running.
-run_snapshot_heartbeat "$_WRAPPER_DIR" "$TMUX_CMD" "$WISP_DECK_SNAPSHOT" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" 3>&- &
+run_snapshot_heartbeat "$_WRAPPER_DIR" "$TMUX_CMD" "$WISP_DECK_SNAPSHOT" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
 HEARTBEAT_PID=$!
-
-# Orphan GC for the stacking world (replaces the server-wide teardown option
-# that used to kill unattached sessions): reap sessions whose owning wrapper
-# died without its trap.
-stack_reaper_watch "$TMUX_CMD" "$SHARE_DIR" 30 >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" 3>&- &
-STACK_REAPER_PID=$!
 
 # Drag-dropping a screenshot onto a specific tmux pane is unreliable: tmux
 # delivers the paste to the *active* pane, not the pane under the cursor (an
@@ -815,30 +681,6 @@ STACK_REAPER_PID=$!
 #   2. prefix+i injects the most recent screenshot straight into the AI pane
 #      regardless of which pane is active. See lib/screenshot.sh.
 _screenshot_bind="bash -c 'source \"$_WRAPPER_DIR/lib/screenshot.sh\" && gt_paste_latest_screenshot'"
-
-# Session-stack binds. #{q:session_name} expands at KEY PRESS with the
-# pressing client's session — never bake a session name into a server-global
-# bind.
-# SESSION_NAME derives from an unsanitized project-folder basename, so it may
-# contain an apostrophe or other shell metacharacter; embedding the raw format
-# inside the single-quoted `bash -c '...'` body would let it terminate the
-# quote early and corrupt the bind. The `q:` format modifier backslash-escapes
-# shell-special characters (spaces and quotes included), so the dynamic text
-# rides OUTSIDE the quoted body as a positional arg, mirroring how
-# `_ledger_hover_setup` below passes its dynamic values after the body.
-_stack_lib_src="source \"$_WRAPPER_DIR/lib/session-stack.sh\""
-_stack_next_bind="bash -c '$_stack_lib_src && stack_cycle \"\$1\" \"\$2\" next' stack-cycle \"$TMUX_CMD\" #{q:session_name}"
-_stack_prev_bind="bash -c '$_stack_lib_src && stack_cycle \"\$1\" \"\$2\" prev' stack-cycle \"$TMUX_CMD\" #{q:session_name}"
-_stack_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/process.sh\"; source \"$_WRAPPER_DIR/lib/ledger-hover.sh\"; source \"$_WRAPPER_DIR/lib/spare-tabs.sh\"; source \"$_WRAPPER_DIR/lib/tmux-session.sh\"; source \"$_WRAPPER_DIR/lib/attention.sh\"; source \"$_WRAPPER_DIR/lib/keep-awake.sh\"; source \"$_WRAPPER_DIR/lib/theme.sh\"; $_stack_lib_src && stack_close_current \"$TMUX_CMD\" \"$SHARE_DIR\" \"\$1\"' stack-close #{q:session_name}"
-# In-place: the builder runs wrapper.sh in --stack-new mode, constructing the
-# fresh session inside THIS tab's stack and switching the pressing client to
-# it — no new Ghostty tab, no adoption handoff, no tab churn.
-_stack_new_bind="bash -c '\"$_WRAPPER_DIR/wrapper.sh\" --stack-new \"\$1\" \"\$2\" || \"$TMUX_CMD\" display-message \"Wisp: could not open a stack session\"' stack-new #{q:session_name} #{q:client_name}"
-# The session bar's + button: same in-place builder, triggered by a click.
-# MouseDown1Status fires for ANY status-line click, so the handler gates
-# itself on the wisp-stack-new range name (expanded at press time, like the
-# session/client formats) and stays inert for every other status click.
-_stack_plus_bind="bash -c '[ \"\$3\" = \"wisp-stack-new\" ] || exit 0; \"$_WRAPPER_DIR/wrapper.sh\" --stack-new \"\$1\" \"\$2\" || \"$TMUX_CMD\" display-message \"Wisp: could not open a stack session\"' stack-new #{q:session_name} #{q:client_name} #{q:mouse_status_range}"
 
 # tmux normally delivers pointer motion only to the pane underneath it, so the
 # ledger cannot observe the event that enters its neighbour. Install a private
@@ -860,7 +702,7 @@ _ledger_hover_setup="bash -c 'source \"$_WRAPPER_DIR/lib/ledger-hover.sh\" && le
 # corrupting the split) and exits once the window size settles.
 # Skipped when no layout was captured (old snapshot) — the default split stays.
 if [ "$RESTORE_MODE" -eq 1 ] && [ -n "${WISP_DECK_RESUME_LAYOUT:-}" ]; then
-  restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$WISP_DECK_RESUME_LAYOUT" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" 3>&- &
+  restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$WISP_DECK_RESUME_LAYOUT" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
 fi
 
 # Second batch: key binds and hover routing, then the attach. The pane layout
@@ -876,10 +718,6 @@ fi
   bind-key w run-shell "$_spare_close_bind" \; \
   bind-key Tab run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label next-window" \; \
   bind-key BTab run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label previous-window" \; \
-  bind-key n run-shell -b "$_stack_next_bind" \; \
-  bind-key p run-shell -b "$_stack_prev_bind" \; \
-  bind-key X run-shell -b "$_stack_close_bind" \; \
-  bind-key S run-shell -b "$_stack_new_bind" \; \
-  bind-key -T root MouseDown1Status run-shell -b "$_stack_plus_bind" \; \
   run-shell -b "$_ledger_hover_setup" \; \
-  attach-session -t "$SESSION_NAME" 2>&3
+  attach-session -t "$SESSION_NAME" \; \
+  set-option exit-unattached on 2>&3

@@ -7205,6 +7205,7 @@ func TestShellProductionHostEffectOwnershipGuardRejectsBypasses(t *testing.T) {
 	})
 	t.Run("wrapper OSC0 title moved into helper", func(t *testing.T) {
 		const allowed = `  fi
+
   # Use TUI for project selection
   printf '\033]0;󰊠  Wisp Deck\007'
 
@@ -7413,6 +7414,7 @@ func validateShellProductionHostEffectOwnership(
 func sanitizeExactWrapperTitleOwnership(source string) (string, error) {
 	const exactLine = `  printf '\033]0;󰊠  Wisp Deck\007'`
 	const exactOwner = `  fi
+
   # Use TUI for project selection
   printf '\033]0;󰊠  Wisp Deck\007'
 
