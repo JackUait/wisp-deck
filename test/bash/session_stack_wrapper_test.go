@@ -42,12 +42,23 @@ func TestWrapper_loads_session_stack_lib_and_starts_reaper(t *testing.T) {
 	}
 }
 
+// SESSION_NAME derives from an unsanitized project-folder basename, so it may
+// contain an apostrophe or other shell metacharacter. Interpolating the raw
+// #{session_name} format INSIDE a single-quoted `bash -c '...'` body lets
+// such a character terminate the quote early and corrupt the bind. The `q:`
+// format modifier backslash-escapes shell-special characters for exactly this
+// case, so the dynamic session name must ride outside the quoted body as
+// #{q:session_name} (a positional arg), never as a bare #{session_name}
+// baked into the quoted body.
 func TestWrapper_binds_use_session_format_not_baked_names(t *testing.T) {
 	src := wrapperSource(t)
 	for _, fn := range []string{"stack_cycle", "stack_close_current", "stack_request_new"} {
-		re := regexp.MustCompile(fn + `[^\n]*#\{session_name\}`)
+		re := regexp.MustCompile(fn + `[^\n]*#\{q:session_name\}`)
 		if !re.MatchString(src) {
-			t.Fatalf("wrapper.sh bind for %s must pass #{session_name} (bind-key is server-global; a baked name acts on the wrong session)", fn)
+			t.Fatalf("wrapper.sh bind for %s must pass #{q:session_name} (bind-key is server-global and SESSION_NAME is unsanitized; a baked or unescaped name acts on the wrong session or breaks the quoting)", fn)
 		}
+	}
+	if regexp.MustCompile(`#\{session_name\}`).MatchString(src) {
+		t.Fatal("wrapper.sh uses bare #{session_name} (unescaped) — SESSION_NAME may contain shell metacharacters (e.g. an apostrophe from the project folder name); use #{q:session_name} instead")
 	}
 }

@@ -689,13 +689,21 @@ STACK_REAPER_PID=$!
 #      regardless of which pane is active. See lib/screenshot.sh.
 _screenshot_bind="bash -c 'source \"$_WRAPPER_DIR/lib/screenshot.sh\" && gt_paste_latest_screenshot'"
 
-# Session-stack binds. #{session_name} expands at KEY PRESS with the pressing
-# client's session — never bake a session name into a server-global bind.
+# Session-stack binds. #{q:session_name} expands at KEY PRESS with the
+# pressing client's session — never bake a session name into a server-global
+# bind.
+# SESSION_NAME derives from an unsanitized project-folder basename, so it may
+# contain an apostrophe or other shell metacharacter; embedding the raw format
+# inside the single-quoted `bash -c '...'` body would let it terminate the
+# quote early and corrupt the bind. The `q:` format modifier backslash-escapes
+# shell-special characters (spaces and quotes included), so the dynamic text
+# rides OUTSIDE the quoted body as a positional arg, mirroring how
+# `_ledger_hover_setup` below passes its dynamic values after the body.
 _stack_lib_src="source \"$_WRAPPER_DIR/lib/session-stack.sh\""
-_stack_next_bind="bash -c '$_stack_lib_src && stack_cycle \"$TMUX_CMD\" \"#{session_name}\" next'"
-_stack_prev_bind="bash -c '$_stack_lib_src && stack_cycle \"$TMUX_CMD\" \"#{session_name}\" prev'"
-_stack_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/process.sh\"; source \"$_WRAPPER_DIR/lib/ledger-hover.sh\"; source \"$_WRAPPER_DIR/lib/spare-tabs.sh\"; source \"$_WRAPPER_DIR/lib/tmux-session.sh\"; source \"$_WRAPPER_DIR/lib/attention.sh\"; source \"$_WRAPPER_DIR/lib/keep-awake.sh\"; source \"$_WRAPPER_DIR/lib/theme.sh\"; $_stack_lib_src && stack_close_current \"$TMUX_CMD\" \"$SHARE_DIR\" \"#{session_name}\"'"
-_stack_new_bind="bash -c 'source \"$_WRAPPER_DIR/lib/session-restore.sh\"; $_stack_lib_src && stack_request_new \"$TMUX_CMD\" \"$SHARE_DIR\" \"#{session_name}\" || \"$TMUX_CMD\" display-message \"Wisp: could not open a tab (Ghostty Accessibility permission?)\"'"
+_stack_next_bind="bash -c '$_stack_lib_src && stack_cycle \"\$1\" \"\$2\" next' stack-cycle \"$TMUX_CMD\" #{q:session_name}"
+_stack_prev_bind="bash -c '$_stack_lib_src && stack_cycle \"\$1\" \"\$2\" prev' stack-cycle \"$TMUX_CMD\" #{q:session_name}"
+_stack_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/process.sh\"; source \"$_WRAPPER_DIR/lib/ledger-hover.sh\"; source \"$_WRAPPER_DIR/lib/spare-tabs.sh\"; source \"$_WRAPPER_DIR/lib/tmux-session.sh\"; source \"$_WRAPPER_DIR/lib/attention.sh\"; source \"$_WRAPPER_DIR/lib/keep-awake.sh\"; source \"$_WRAPPER_DIR/lib/theme.sh\"; $_stack_lib_src && stack_close_current \"$TMUX_CMD\" \"$SHARE_DIR\" \"\$1\"' stack-close #{q:session_name}"
+_stack_new_bind="bash -c 'source \"$_WRAPPER_DIR/lib/session-restore.sh\"; $_stack_lib_src && stack_request_new \"$TMUX_CMD\" \"$SHARE_DIR\" \"\$1\" || \"$TMUX_CMD\" display-message \"Wisp: could not open a tab (Ghostty Accessibility permission?)\"' stack-new #{q:session_name}"
 
 # tmux normally delivers pointer motion only to the pane underneath it, so the
 # ledger cannot observe the event that enters its neighbour. Install a private
