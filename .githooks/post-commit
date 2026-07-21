@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Wired via `git config core.hooksPath .githooks`. Keeps the installed
+# wisp-deck-tui binary in sync with committed Go changes; see the script
+# header for why this must never be skipped.
+exec bash "$(git rev-parse --show-toplevel)/scripts/post-commit-rebuild-tui.sh"
