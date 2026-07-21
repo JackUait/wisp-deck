@@ -2,6 +2,7 @@ package bash_test
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -193,13 +194,13 @@ func TestStackCloseCurrent_switches_then_kills_and_deregisters(t *testing.T) {
 	cfg := t.TempDir()
 	bin := mockTmux(t, dir, "100 dev-app-111\n300 dev-app-333\n", stackEnvTwoApps)
 	body := fmt.Sprintf(`
-cleanup_tmux_session() { echo "CLEANUP:$1" ; }   # stub the heavy teardown
+cleanup_tmux_session() { echo "CLEANUP:$1" >> %q/tmux.log ; }   # stub the heavy teardown, same log as tmux
 stack_add %q "dev-app-111" "dev-app-111"
 stack_add %q "dev-app-111" "dev-app-333"
 stack_close_current %q %q "dev-app-333"
 echo "STACK:$(stack_list %q dev-app-111 | tr '\n' ',')"
 cat %q/tmux.log
-`, cfg, cfg, filepath.Join(bin, "tmux"), cfg, cfg, dir)
+`, dir, cfg, cfg, filepath.Join(bin, "tmux"), cfg, cfg, dir)
 	script := stackSnippet(t, body)
 	out, code := runBashSnippet(t, script, nil)
 	assertExitCode(t, code, 0)
@@ -207,4 +208,41 @@ cat %q/tmux.log
 	assertContains(t, out, "CLEANUP:dev-app-333")
 	assertContains(t, out, "STACK:dev-app-111,")
 	assertNotContains(t, out, "dev-app-333,")
+
+	logBytes, err := os.ReadFile(filepath.Join(dir, "tmux.log"))
+	log := string(logBytes)
+	if err != nil {
+		t.Fatalf("reading tmux.log: %v", err)
+	}
+	switchIdx := strings.Index(log, "switch-client -t dev-app-111")
+	cleanupIdx := strings.Index(log, "CLEANUP:dev-app-333")
+	if switchIdx < 0 || cleanupIdx < 0 {
+		t.Fatalf("expected both markers in tmux.log, got %q", log)
+	}
+	if switchIdx >= cleanupIdx {
+		t.Errorf("expected switch-client BEFORE kill (session must not die out from under the client): switch@%d, cleanup@%d, log=%q", switchIdx, cleanupIdx, log)
+	}
+}
+
+// TestStackCloseCurrent_last_session_skips_switch_and_repaint covers the
+// spec's headline invariant: with zero neighbours the client dies with the
+// session, so stack_close_current must NOT switch-client and must NOT
+// repaint (there is nothing left to repaint) — but teardown must still run.
+func TestStackCloseCurrent_last_session_skips_switch_and_repaint(t *testing.T) {
+	dir := t.TempDir()
+	cfg := t.TempDir()
+	bin := mockTmux(t, dir, "200 dev-web-222\n", stackEnvTwoApps)
+	body := fmt.Sprintf(`
+cleanup_tmux_session() { echo "CLEANUP:$1" ; }   # stub the heavy teardown
+stack_repaint() { echo "REPAINT-CALLED" ; }       # must never be invoked
+stack_add %q "dev-web-222" "dev-web-222"
+stack_close_current %q %q "dev-web-222"
+cat %q/tmux.log 2>/dev/null || true
+`, cfg, cfg, filepath.Join(bin, "tmux"), dir)
+	script := stackSnippet(t, body)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "CLEANUP:dev-web-222")
+	assertNotContains(t, out, "switch-client")
+	assertNotContains(t, out, "REPAINT-CALLED")
 }
