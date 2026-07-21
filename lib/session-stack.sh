@@ -119,12 +119,12 @@ stack_repaint() {
 # the key was pressed in (bind-key is server-global — never bake a name).
 stack_cycle() {
   local tmux_cmd="$1" current="$2" direction="${3:-next}"
-  local path sessions=() s idx=-1 i n target
-  path="$("$tmux_cmd" show-environment -t "$current" WISP_DECK_PATH 2>/dev/null | cut -d= -f2-)"
-  [ -n "$path" ] || return 0
+  local proj_dir sessions=() s idx=-1 i n target
+  proj_dir="$("$tmux_cmd" show-environment -t "$current" WISP_DECK_PATH 2>/dev/null | cut -d= -f2-)"
+  [ -n "$proj_dir" ] || return 0
   while IFS= read -r s; do
     [ -n "$s" ] && sessions+=("$s")
-  done < <(stack_sessions_for_project "$tmux_cmd" "$path")
+  done < <(stack_sessions_for_project "$tmux_cmd" "$proj_dir")
   n=${#sessions[@]}
   [ "$n" -gt 1 ] || return 0
   for ((i = 0; i < n; i++)); do
@@ -147,14 +147,14 @@ stack_cycle() {
 # session and the owning wrapper's cleanup unwinds the tab.
 stack_close_current() {
   local tmux_cmd="$1" cfg="$2" current="$3"
-  local path project sessions=() s neighbour="" root f
-  path="$("$tmux_cmd" show-environment -t "$current" WISP_DECK_PATH 2>/dev/null | cut -d= -f2-)"
+  local proj_dir project sessions=() s neighbour="" root f
+  proj_dir="$("$tmux_cmd" show-environment -t "$current" WISP_DECK_PATH 2>/dev/null | cut -d= -f2-)"
   project="$("$tmux_cmd" show-environment -t "$current" WISP_DECK_PROJECT 2>/dev/null | cut -d= -f2-)"
   root="$("$tmux_cmd" show-environment -t "$current" WISP_DECK_ATTENTION_ROOT 2>/dev/null | cut -d= -f2-)"
-  if [ -n "$path" ]; then
+  if [ -n "$proj_dir" ]; then
     while IFS= read -r s; do
       [ -n "$s" ] && [ "$s" != "$current" ] && sessions+=("$s")
-    done < <(stack_sessions_for_project "$tmux_cmd" "$path")
+    done < <(stack_sessions_for_project "$tmux_cmd" "$proj_dir")
   fi
   [ "${#sessions[@]}" -gt 0 ] && neighbour="${sessions[0]}"
   [ -n "$neighbour" ] && "$tmux_cmd" switch-client -t "$neighbour" 2>/dev/null
@@ -166,7 +166,7 @@ stack_close_current() {
     [ -f "$f" ] || continue
     stack_remove_entry "$cfg" "${f##*/}" "$current"
   done
-  [ -n "$neighbour" ] && stack_repaint "$tmux_cmd" "$cfg" "$project" "$path"
+  [ -n "$neighbour" ] && stack_repaint "$tmux_cmd" "$cfg" "$project" "$proj_dir"
   return 0
 }
 
