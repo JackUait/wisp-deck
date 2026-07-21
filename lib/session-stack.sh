@@ -25,3 +25,40 @@ stack_sessions_for_project() {
     done
   return 0
 }
+
+# Stack registry: <cfg_root>/stacks/<owner_session> lists every session that
+# tab owns (including its own). The owning wrapper's cleanup kills exactly
+# this list; adoption edits it. Single writer per file in practice (the
+# owning wrapper and the close/adopt helpers it spawns), no locking.
+
+stack_add() {
+  local cfg="$1" owner="$2" session="$3" f
+  mkdir -p "$cfg/stacks" 2>/dev/null || return 1
+  f="$cfg/stacks/$owner"
+  grep -qxF "$session" "$f" 2>/dev/null && return 0
+  printf '%s\n' "$session" >> "$f"
+}
+
+stack_remove_entry() {
+  local cfg="$1" owner="$2" session="$3" f tmp
+  f="$cfg/stacks/$owner"
+  [ -f "$f" ] || return 0
+  tmp="$f.tmp.$$"
+  grep -vxF "$session" "$f" > "$tmp" 2>/dev/null || true
+  mv "$tmp" "$f"
+}
+
+stack_list() {
+  cat "$1/stacks/$2" 2>/dev/null
+  return 0
+}
+
+# Remove the SHARE_DIR files wrapper.sh creates per session (mirrors the rm
+# lines in its cleanup()). Used for adopted sessions, whose original wrapper
+# is gone by the time they die.
+stack_session_files_cleanup() {
+  local cfg="$1" s="$2"
+  rm -f "$cfg/spare-${s}.conf" "$cfg/relaunch-${s}" \
+    "$cfg/proxy-${s}.log" "$cfg/proxy-account-${s}"
+  rm -rf "$cfg/spare-zdotdir-${s}"
+}

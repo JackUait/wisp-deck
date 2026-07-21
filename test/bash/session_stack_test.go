@@ -43,6 +43,14 @@ const stackEnvTwoApps = `
       "dev-app-333") all='WISP_DECK=1\nWISP_DECK_PATH=/tmp/app\nWISP_DECK_PROJECT=app\nWISP_DECK_TOOL=codex\n' ;;
 `
 
+// stackSnippet builds a bash snippet that sources session-stack.sh then runs body.
+func stackSnippet(t *testing.T, body string) string {
+	t.Helper()
+	root := projectRoot(t)
+	stackPath := filepath.Join(root, "lib", "session-stack.sh")
+	return fmt.Sprintf("source %q && %s", stackPath, body)
+}
+
 func TestStackSessionsForProject_matches_only_project_sessions_in_creation_order(t *testing.T) {
 	dir := t.TempDir()
 	bin := mockTmux(t, dir,
@@ -74,5 +82,45 @@ func TestStackSessionsForProject_no_server_prints_nothing_exit_zero(t *testing.T
 	assertExitCode(t, code, 0)
 	if strings.TrimSpace(out) != "" {
 		t.Errorf("expected empty output, got %q", out)
+	}
+}
+
+func TestStackRegistry_add_list_remove_roundtrip(t *testing.T) {
+	cfg := t.TempDir()
+	body := fmt.Sprintf(`
+stack_add %q "dev-app-1" "dev-app-1"
+stack_add %q "dev-app-1" "dev-app-2"
+stack_add %q "dev-app-1" "dev-app-2"   # idempotent
+stack_list %q "dev-app-1"
+echo ---
+stack_remove_entry %q "dev-app-1" "dev-app-2"
+stack_list %q "dev-app-1"
+`, cfg, cfg, cfg, cfg, cfg, cfg)
+	script := stackSnippet(t, body)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	if !strings.Contains(out, "dev-app-1\ndev-app-2\n---") {
+		t.Errorf("add/list wrong (dup or order): %q", out)
+	}
+	after := out[strings.Index(out, "---"):]
+	assertNotContains(t, after, "dev-app-2")
+}
+
+func TestStackSessionFilesCleanup_removes_all_per_session_files(t *testing.T) {
+	cfg := t.TempDir()
+	s := "dev-app-42"
+	for _, f := range []string{"spare-" + s + ".conf", "relaunch-" + s, "proxy-" + s + ".log", "proxy-account-" + s} {
+		writeTempFile(t, cfg, f, "x")
+	}
+	body := fmt.Sprintf(`
+mkdir -p %q/spare-zdotdir-%s
+stack_session_files_cleanup %q %q
+ls %q
+`, cfg, s, cfg, s, cfg)
+	script := stackSnippet(t, body)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	for _, f := range []string{"spare-", "relaunch-", "proxy-"} {
+		assertNotContains(t, out, f)
 	}
 }
