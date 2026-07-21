@@ -510,3 +510,19 @@ stack_reap_orphans %q %q
 	assertExitCode(t, code, 0)
 	assertNotContains(t, out, "CLEANUP:")
 }
+
+// session-stack code runs on the launch critical path (detection) and inside
+// bound keys. It must stay tmux-and-filesystem only — no runtime boots, no
+// network.
+func TestSessionStackLib_spawns_no_expensive_commands(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "lib", "session-stack.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	for _, banned := range []string{"npx", "node ", "curl", "brew ", "npm "} {
+		if strings.Contains(src, banned) {
+			t.Fatalf("lib/session-stack.sh contains %q — expensive spawns are banned on the launch path", banned)
+		}
+	}
+}
