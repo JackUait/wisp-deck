@@ -449,6 +449,52 @@ stack_reap_orphans tmux_mock %q
 	assertNotContains(t, out, "CLEANUP:")
 }
 
+func TestStackReapOrphans_live_owner_clears_stale_mark(t *testing.T) {
+	cfg := t.TempDir()
+	// Spawn a long-lived process so we have a live PID to embed
+	script := fmt.Sprintf(`
+sleep 300 &
+live_pid=$!
+trap "kill $live_pid 2>/dev/null || true" EXIT
+
+cd %q
+source lib/session-stack.sh
+
+# Mock tmux function that returns env with the live PID
+tmux_mock() {
+  case "$1" in
+    list-sessions)
+      printf '100 dev-app-111\n' ;;
+    show-environment)
+      case "$3" in
+        dev-app-111)
+          printf '%%b' "WISP_DECK=1\nWISP_DECK_PATH=/tmp/app\nWISP_DECK_OWNER_PID=$live_pid\n" ;;
+      esac ;;
+    has-session)
+      printf '100 dev-app-111\n' | grep -qF " $3" ;;
+  esac
+}
+
+cleanup_tmux_session() { echo "CLEANUP:$1"; }
+
+# Simulate a prior strike from a launch race: session already marked.
+mkdir -p %q/stacks
+printf 'dev-app-111\n' > %q/stacks/.reap-marks
+
+stack_reap_orphans tmux_mock %q
+
+if grep -qxF "dev-app-111" %q/stacks/.reap-marks 2>/dev/null; then
+  echo "MARKS:still-present"
+else
+  echo "MARKS:cleared"
+fi
+`, projectRoot(t), cfg, cfg, cfg, cfg)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertNotContains(t, out, "CLEANUP:")
+	assertContains(t, out, "MARKS:cleared")
+}
+
 func TestStackReapOrphans_ignores_sessions_without_owner_pid(t *testing.T) {
 	dir := t.TempDir()
 	cfg := t.TempDir()
