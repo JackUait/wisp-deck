@@ -256,12 +256,16 @@ func TestWrapper_selects_ai_pane_geometrically(t *testing.T) {
 
 // TestWrapperBuildsDetachedSessionBeforeAttach locks down the startup frame:
 // tmux must finish the complete workspace off-screen, focus the AI pane, and
-// only then attach the client. exit-unattached is deliberately enabled after
-// attachment because setting it on a clientless detached session kills it.
+// only then attach the client. The server-wide exit-unattached arm-on-attach
+// step this test used to check for is gone: session stacking needs background
+// stack sessions to survive with no attached client, so wrapper.sh no longer
+// sets it at all (see TestWrapper_never_sets_server_exit_unattached in
+// session_stack_wrapper_test.go) — an orphan reaper owns leak GC instead
+// (stack_reap_orphans in lib/session-stack.sh).
 func TestWrapperBuildsDetachedSessionBeforeAttach(t *testing.T) {
 	got := recordWrapperNewSession(t)
 
-	for _, want := range []string{"new-session -d", "-x 173", "-y 47"} {
+	for _, want := range []string{"new-session -d", "-x 173", "-y 47", "-e WISP_DECK_OWNER_PID="} {
 		if !strings.Contains(got, want) {
 			t.Errorf("detached launch is missing %q:\n%s", want, got)
 		}
@@ -271,12 +275,11 @@ func TestWrapperBuildsDetachedSessionBeforeAttach(t *testing.T) {
 	vertical := strings.Index(got, "split-window -v -p 45")
 	focusAI := strings.LastIndex(got, "select-pane -R")
 	attach := strings.Index(got, "attach-session")
-	exitUnattached := strings.Index(got, "set-option exit-unattached on")
-	if horizontal < 0 || vertical < 0 || focusAI < 0 || attach < 0 || exitUnattached < 0 {
+	if horizontal < 0 || vertical < 0 || focusAI < 0 || attach < 0 {
 		t.Fatalf("launch queue is missing a required lifecycle command:\n%s", got)
 	}
-	if !(horizontal < vertical && vertical < focusAI && focusAI < attach && attach < exitUnattached) {
-		t.Fatalf("workspace must be built and focused before attach, then arm teardown:\n%s", got)
+	if !(horizontal < vertical && vertical < focusAI && focusAI < attach) {
+		t.Fatalf("workspace must be built and focused before attach:\n%s", got)
 	}
 }
 
