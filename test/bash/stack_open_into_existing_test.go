@@ -35,7 +35,7 @@ exit 0
 	return mockCommand(t, dir, "tmux", body)
 }
 
-func TestStackLiveOwnerForProject_prints_owner_pid_and_client(t *testing.T) {
+func TestStackLiveOwnerForProject_prints_owner_and_pid(t *testing.T) {
 	dir := t.TempDir()
 	cfg := t.TempDir()
 	writeTempFile(t, cfg, "stacks/dev-app-111", "dev-app-111\n")
@@ -44,7 +44,7 @@ func TestStackLiveOwnerForProject_prints_owner_pid_and_client(t *testing.T) {
 	out, code := runBashFunc(t, "lib/session-stack.sh", "stack_live_owner_for_project",
 		[]string{filepath.Join(bin, "tmux"), cfg, "/tmp/app"}, nil)
 	assertExitCode(t, code, 0)
-	want := fmt.Sprintf("dev-app-111\t%d\tclient7", os.Getpid())
+	want := fmt.Sprintf("dev-app-111\t%d", os.Getpid())
 	if got := strings.TrimSpace(out); got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -110,9 +110,11 @@ exit 0
 // End-to-end: an interactive pick of a project that is already open in a live
 // tab builds the fresh session INTO that tab's stack — registered in the
 // existing owner's registry file, owner-pid restamped to the existing owner's
-// wrapper, the owner tab's client switched to the new session — and exits 0
-// without attaching. No existing tab is touched: no detach-client, no
-// kill-session.
+// wrapper — and exits 0 without attaching. The existing tab is left exactly
+// as the user sees it: its client is NOT switched (the new session appears as
+// a background chip on the session bar; yanking the view to the fresh
+// conversation read as "my session was closed and replaced"), no
+// detach-client, no kill-session.
 func TestWrapperInteractivePick_builds_into_existing_tab_stack(t *testing.T) {
 	projParent := t.TempDir()
 	projDir := filepath.Join(projParent, "app")
@@ -186,8 +188,8 @@ exit 0
 	if !strings.Contains(logs, fmt.Sprintf("WISP_DECK_OWNER_PID %d", ownerPid)) {
 		t.Errorf("ownership must be restamped to the EXISTING tab's wrapper pid; tmux log:\n%s", logs)
 	}
-	if !strings.Contains(logs, "switch-client -c client7") {
-		t.Errorf("the existing tab's client must be switched to the new session; tmux log:\n%s", logs)
+	if strings.Contains(logs, "switch-client") {
+		t.Errorf("the existing tab's client must NOT be switched (the current session stays on screen; the new one is a background chip); tmux log:\n%s", logs)
 	}
 	if strings.Contains(logs, "attach-session") {
 		t.Errorf("the picker tab must close itself, never attach; tmux log:\n%s", logs)

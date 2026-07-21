@@ -49,14 +49,19 @@ and never closes any existing tab:
 2. If one exists, the picker tab becomes an in-place builder (the same path
    as prefix+S): it constructs the full fresh session, registers it in the
    EXISTING owner's stack file, restamps its owner-pid to the existing
-   owner's wrapper (register-before-restamp ordering), switches the owner
-   tab's client to the new session, and exits — which closes the picker tab.
+   owner's wrapper (register-before-restamp ordering), and exits — which
+   closes the picker tab. Unlike prefix+S, the owner tab's client is NOT
+   switched: the user is looking at that tab's current session, and yanking
+   the view to the fresh conversation read as "my session was closed and
+   replaced". The new session announces itself as a chip on the session bar,
+   one prefix+n away.
 3. If none exists (no session, dead owner, or a pre-stacking tab without the
    owner-pid stamp), the pick launches a normal fresh tab.
 
-Result: the existing tab shows the fresh conversation, with the old one a
-switch away on its session bar; the surplus picker tab closes itself. One
-tab per project remains — the tab the user already had. The adoption
+Result: the existing tab keeps showing what the user was looking at, with
+the fresh conversation booting behind a new bar chip; the surplus picker
+tab closes itself. One tab per project remains — the tab the user already
+had. The adoption
 handoff (`stack_adopt_all` / `stack_finalize_adoption`, and its
 detach-clients finalizer) is removed; `WISP_DECK_ADOPTED_BY` is no longer
 written, though the cleanup still honours it as an upgrade-boundary defense

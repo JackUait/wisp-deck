@@ -47,17 +47,15 @@ stack_adoptable_sessions_for_project() {
 }
 
 # stack_live_owner_for_project <tmux_cmd> <cfg_root> <project_dir>
-# Print "owner<TAB>pid<TAB>client" for the live tab already hosting this
-# project's stack: owner = the registry file naming that tab's stack, pid =
-# the owning wrapper (checked alive), client = a tmux client attached to any
-# session of that stack (may be empty if the tab is momentarily unattached).
-# Prints nothing when no such tab exists — pre-stacking sessions (no
-# owner-pid stamp), dead owners, sessions no registry lists — and the caller
-# then launches a normal fresh tab. Tmux + registry files only: this runs on
-# the post-pick critical path.
+# Print "owner<TAB>pid" for the live tab already hosting this project's
+# stack: owner = the registry file naming that tab's stack, pid = the owning
+# wrapper (checked alive). Prints nothing when no such tab exists —
+# pre-stacking sessions (no owner-pid stamp), dead owners, sessions no
+# registry lists — and the caller then launches a normal fresh tab. Tmux +
+# registry files only: this runs on the post-pick critical path.
 stack_live_owner_for_project() {
   local tmux_cmd="$1" cfg="$2" project_dir="$3"
-  local s pid f owner member client
+  local s pid f owner
   while IFS= read -r s; do
     [ -n "$s" ] || continue
     pid="$("$tmux_cmd" show-environment -t "$s" WISP_DECK_OWNER_PID 2>/dev/null | cut -d= -f2-)"
@@ -68,13 +66,7 @@ stack_live_owner_for_project() {
       owner="${f##*/}"
       [ "$owner" = ".reap-marks" ] && continue
       grep -qxF "$s" "$f" 2>/dev/null || continue
-      client=""
-      while IFS= read -r member; do
-        [ -n "$member" ] || continue
-        client="$("$tmux_cmd" list-clients -t "$member" -F '#{client_name}' 2>/dev/null | head -n 1)"
-        [ -n "$client" ] && break
-      done < "$f"
-      printf '%s\t%s\t%s\n' "$owner" "$pid" "$client"
+      printf '%s\t%s\n' "$owner" "$pid"
       return 0
     done
   done < <(stack_adoptable_sessions_for_project "$tmux_cmd" "$project_dir")

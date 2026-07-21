@@ -320,23 +320,27 @@ fi
 
 # Same-project stack already open in another tab? Then this pick ADDS a
 # session to that tab instead of replacing it: the fresh session is built
-# in-place into the existing owner's stack (exactly like prefix+S), the
-# owner tab's client is switched to it, and this picker tab closes itself.
-# Opening a project twice never closes existing tabs. Detection is tmux +
-# registry files only — this sits on the post-pick critical path. Gated:
-# interactive picks only; a restored tab must never consolidate (the restore
-# chain relies on one tab per queue entry). Only owners whose sessions carry
-# the WISP_DECK_OWNER_PID stamp qualify: a pre-stacking tab cannot host or
-# clean up a stacked session, so those keep their own tabs and this pick
-# opens a normal fresh tab alongside them.
+# in-place into the existing owner's stack (exactly like prefix+S) and this
+# picker tab closes itself. Unlike prefix+S, the owner tab's client is NOT
+# switched (_stack_client stays empty): the user is looking at that tab's
+# current session, and yanking the view to the fresh conversation read as
+# "my session was closed and replaced". The new session announces itself as
+# a chip on the session bar instead, one prefix+n away. Opening a project
+# twice never closes existing tabs. Detection is tmux + registry files only
+# — this sits on the post-pick critical path. Gated: interactive picks only;
+# a restored tab must never consolidate (the restore chain relies on one tab
+# per queue entry). Only owners whose sessions carry the WISP_DECK_OWNER_PID
+# stamp qualify: a pre-stacking tab cannot host or clean up a stacked
+# session, so those keep their own tabs and this pick opens a normal fresh
+# tab alongside them.
 if [ "${_gt_consolidate:-0}" = "1" ] && [ "$RESTORE_MODE" -eq 0 ]; then
-  IFS=$'\t' read -r _stack_owner _stack_owner_pid _stack_client < <(
+  IFS=$'\t' read -r _stack_owner _stack_owner_pid < <(
     stack_live_owner_for_project "$TMUX_CMD" "$SHARE_DIR" "$(pwd)"
   ) || true
   if [ -n "$_stack_owner" ] && [ -n "$_stack_owner_pid" ]; then
     WISP_DECK_STACK_BUILD=1
   else
-    _stack_owner="" _stack_owner_pid="" _stack_client=""
+    _stack_owner="" _stack_owner_pid=""
   fi
 fi
 
@@ -758,8 +762,10 @@ export WISP_DECK_RELAUNCH_FILE
 # this exiting process). A crash between the two leaves the session doubly
 # covered, never orphaned. Binds are server-global and already installed by
 # the owner tab's launch; the hover routing is per-session and is installed
-# here. No attach — the owner tab's client is switched instead, and an
-# interactive picker tab closes itself on the exit below.
+# here. No attach — prefix+S switches the pressing client to the new session
+# (_stack_client), while an interactive re-pick leaves the owner tab's view
+# alone (empty _stack_client; the new session is a background bar chip) and
+# closes its picker tab on the exit below.
 if [ "$WISP_DECK_STACK_BUILD" = "1" ]; then
   stack_add "$SHARE_DIR" "$_stack_owner" "$SESSION_NAME"
   "$TMUX_CMD" set-environment -t "$SESSION_NAME" WISP_DECK_OWNER_PID "$_stack_owner_pid" 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}"
