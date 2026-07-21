@@ -161,3 +161,50 @@ cat %q/tmux.log
 		assertContains(t, out, want)
 	}
 }
+
+func TestStackCycle_switches_to_next_and_wraps(t *testing.T) {
+	dir := t.TempDir()
+	bin := mockTmux(t, dir, "100 dev-app-111\n300 dev-app-333\n", stackEnvTwoApps)
+	body := fmt.Sprintf(`
+stack_cycle %q "dev-app-333" next
+cat %q/tmux.log
+`, filepath.Join(bin, "tmux"), dir)
+	script := stackSnippet(t, body)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "switch-client -t dev-app-111") // wraps from last to first
+}
+
+func TestStackCycle_single_session_is_noop(t *testing.T) {
+	dir := t.TempDir()
+	bin := mockTmux(t, dir, "200 dev-web-222\n", stackEnvTwoApps)
+	body := fmt.Sprintf(`
+stack_cycle %q "dev-web-222" next
+cat %q/tmux.log 2>/dev/null || true
+`, filepath.Join(bin, "tmux"), dir)
+	script := stackSnippet(t, body)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertNotContains(t, out, "switch-client")
+}
+
+func TestStackCloseCurrent_switches_then_kills_and_deregisters(t *testing.T) {
+	dir := t.TempDir()
+	cfg := t.TempDir()
+	bin := mockTmux(t, dir, "100 dev-app-111\n300 dev-app-333\n", stackEnvTwoApps)
+	body := fmt.Sprintf(`
+cleanup_tmux_session() { echo "CLEANUP:$1" ; }   # stub the heavy teardown
+stack_add %q "dev-app-111" "dev-app-111"
+stack_add %q "dev-app-111" "dev-app-333"
+stack_close_current %q %q "dev-app-333"
+echo "STACK:$(stack_list %q dev-app-111 | tr '\n' ',')"
+cat %q/tmux.log
+`, cfg, cfg, filepath.Join(bin, "tmux"), cfg, cfg, dir)
+	script := stackSnippet(t, body)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "switch-client -t dev-app-111")
+	assertContains(t, out, "CLEANUP:dev-app-333")
+	assertContains(t, out, "STACK:dev-app-111,")
+	assertNotContains(t, out, "dev-app-333,")
+}

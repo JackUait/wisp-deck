@@ -112,3 +112,60 @@ stack_repaint() {
   done
   return 0
 }
+
+# stack_cycle <tmux_cmd> <current_session> <next|prev>
+# Move the pressing client to the neighbouring session of the same project.
+# Bound in wrapper.sh with #{session_name} so it always acts on the session
+# the key was pressed in (bind-key is server-global — never bake a name).
+stack_cycle() {
+  local tmux_cmd="$1" current="$2" direction="${3:-next}"
+  local path sessions=() s idx=-1 i n target
+  path="$("$tmux_cmd" show-environment -t "$current" WISP_DECK_PATH 2>/dev/null | cut -d= -f2-)"
+  [ -n "$path" ] || return 0
+  while IFS= read -r s; do
+    [ -n "$s" ] && sessions+=("$s")
+  done < <(stack_sessions_for_project "$tmux_cmd" "$path")
+  n=${#sessions[@]}
+  [ "$n" -gt 1 ] || return 0
+  for ((i = 0; i < n; i++)); do
+    [ "${sessions[$i]}" = "$current" ] && idx=$i
+  done
+  [ "$idx" -ge 0 ] || return 0
+  if [ "$direction" = "prev" ]; then
+    target="${sessions[$(((idx - 1 + n) % n))]}"
+  else
+    target="${sessions[$(((idx + 1) % n))]}"
+  fi
+  "$tmux_cmd" switch-client -t "$target"
+}
+
+# stack_close_current <tmux_cmd> <cfg_root> <current_session>
+# Close ONLY the current stack session: move the client to a neighbour first
+# (killing the session under the client would end the whole tab), then full
+# per-session teardown, then deregister from whichever stack file holds it.
+# Closing the LAST session skips the switch — the client dies with the
+# session and the owning wrapper's cleanup unwinds the tab.
+stack_close_current() {
+  local tmux_cmd="$1" cfg="$2" current="$3"
+  local path project sessions=() s neighbour="" root f
+  path="$("$tmux_cmd" show-environment -t "$current" WISP_DECK_PATH 2>/dev/null | cut -d= -f2-)"
+  project="$("$tmux_cmd" show-environment -t "$current" WISP_DECK_PROJECT 2>/dev/null | cut -d= -f2-)"
+  root="$("$tmux_cmd" show-environment -t "$current" WISP_DECK_ATTENTION_ROOT 2>/dev/null | cut -d= -f2-)"
+  if [ -n "$path" ]; then
+    while IFS= read -r s; do
+      [ -n "$s" ] && [ "$s" != "$current" ] && sessions+=("$s")
+    done < <(stack_sessions_for_project "$tmux_cmd" "$path")
+  fi
+  [ "${#sessions[@]}" -gt 0 ] && neighbour="${sessions[0]}"
+  [ -n "$neighbour" ] && "$tmux_cmd" switch-client -t "$neighbour" 2>/dev/null
+  cleanup_tmux_session "$current" "" "$tmux_cmd"
+  command -v attention_cleanup >/dev/null 2>&1 && attention_cleanup "$root" 2>/dev/null
+  command -v keep_awake_drop >/dev/null 2>&1 && keep_awake_drop "$cfg" "$current" 2>/dev/null
+  stack_session_files_cleanup "$cfg" "$current"
+  for f in "$cfg"/stacks/*; do
+    [ -f "$f" ] || continue
+    stack_remove_entry "$cfg" "${f##*/}" "$current"
+  done
+  [ -n "$neighbour" ] && stack_repaint "$tmux_cmd" "$cfg" "$project" "$path"
+  return 0
+}
