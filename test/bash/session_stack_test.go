@@ -391,3 +391,76 @@ true
 	assertNotContains(t, out, "CLEANUP:dev-owner-9")  // own session left to wrapper
 	assertNotContains(t, out, "STACKFILE-LEFT")
 }
+
+func TestStackReapOrphans_two_strikes_then_kill(t *testing.T) {
+	dir := t.TempDir()
+	cfg := t.TempDir()
+	envCase := `
+      "dev-app-111") all='WISP_DECK=1\nWISP_DECK_PATH=/tmp/app\nWISP_DECK_OWNER_PID=999999\n' ;;
+`
+	bin := mockTmux(t, dir, "100 dev-app-111\n", envCase) // pid 999999: guaranteed dead
+	script := fmt.Sprintf(`
+cd %q
+source lib/session-stack.sh
+cleanup_tmux_session() { echo "CLEANUP:$1"; }
+stack_reap_orphans %q %q
+echo "AFTER-FIRST"
+stack_reap_orphans %q %q
+`, projectRoot(t), filepath.Join(bin, "tmux"), cfg, filepath.Join(bin, "tmux"), cfg)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	first := out[:strings.Index(out, "AFTER-FIRST")]
+	assertNotContains(t, first, "CLEANUP:")            // strike one: marked only
+	assertContains(t, out, "CLEANUP:dev-app-111")      // strike two: reaped
+}
+
+func TestStackReapOrphans_live_owner_never_reaped(t *testing.T) {
+	cfg := t.TempDir()
+	// Spawn a long-lived process so we have a live PID to embed
+	script := fmt.Sprintf(`
+sleep 300 &
+live_pid=$!
+trap "kill $live_pid 2>/dev/null || true" EXIT
+
+cd %q
+source lib/session-stack.sh
+
+# Mock tmux function that returns env with the live PID
+tmux_mock() {
+  case "$1" in
+    list-sessions)
+      printf '100 dev-app-111\n' ;;
+    show-environment)
+      case "$3" in
+        dev-app-111)
+          printf '%%b' "WISP_DECK=1\nWISP_DECK_PATH=/tmp/app\nWISP_DECK_OWNER_PID=$live_pid\n" ;;
+      esac ;;
+    has-session)
+      printf '100 dev-app-111\n' | grep -qF " $3" ;;
+  esac
+}
+
+cleanup_tmux_session() { echo "CLEANUP:$1"; }
+stack_reap_orphans tmux_mock %q
+stack_reap_orphans tmux_mock %q
+`, projectRoot(t), cfg, cfg)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertNotContains(t, out, "CLEANUP:")
+}
+
+func TestStackReapOrphans_ignores_sessions_without_owner_pid(t *testing.T) {
+	dir := t.TempDir()
+	cfg := t.TempDir()
+	bin := mockTmux(t, dir, "100 dev-app-111\n", stackEnvTwoApps) // no OWNER_PID in env
+	script := fmt.Sprintf(`
+cd %q
+source lib/session-stack.sh
+cleanup_tmux_session() { echo "CLEANUP:$1"; }
+stack_reap_orphans %q %q
+stack_reap_orphans %q %q
+`, projectRoot(t), filepath.Join(bin, "tmux"), cfg, filepath.Join(bin, "tmux"), cfg)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertNotContains(t, out, "CLEANUP:")
+}

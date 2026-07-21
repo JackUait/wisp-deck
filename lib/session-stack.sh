@@ -273,3 +273,51 @@ stack_owner_teardown() {
   rm -f "$cfg/stacks/$owner"
   return 0
 }
+
+# Orphan GC. The wrapper used to end its tmux chain with the SERVER-wide
+# `set-option exit-unattached on` — fatal under stacking, where background
+# stack sessions legitimately have no attached client. This reaper replaces
+# it: every wisp session carries its owning wrapper's pid in session env
+# (stamped at launch, restamped on adoption), and a session whose owner died
+# without running its trap (SIGKILL, panic) is torn down. Two-strike so a
+# launch racing between new-session and the env stamp is never hit.
+
+# stack_reap_orphans <tmux_cmd> <cfg_root>
+stack_reap_orphans() {
+  local tmux_cmd="$1" cfg="$2"
+  local marks="$cfg/stacks/.reap-marks" s env pid
+  mkdir -p "$cfg/stacks" 2>/dev/null || return 0
+  while IFS=' ' read -r _ s; do
+    [ -n "$s" ] || continue
+    env="$("$tmux_cmd" show-environment -t "$s" 2>/dev/null)" || continue
+    printf '%s\n' "$env" | grep -qx 'WISP_DECK=1' || continue
+    pid="$(printf '%s\n' "$env" | sed -n 's/^WISP_DECK_OWNER_PID=//p' | head -n 1)"
+    case "$pid" in '' | *[!0-9]*) continue ;; esac
+    if kill -0 "$pid" 2>/dev/null; then
+      if grep -qxF "$s" "$marks" 2>/dev/null; then
+        grep -vxF "$s" "$marks" > "$marks.tmp.$$" 2>/dev/null || true
+        mv "$marks.tmp.$$" "$marks" 2>/dev/null || rm -f "$marks.tmp.$$"
+      fi
+      continue
+    fi
+    if grep -qxF "$s" "$marks" 2>/dev/null; then
+      cleanup_tmux_session "$s" "" "$tmux_cmd"
+      stack_session_files_cleanup "$cfg" "$s"
+      grep -vxF "$s" "$marks" > "$marks.tmp.$$" 2>/dev/null || true
+      mv "$marks.tmp.$$" "$marks" 2>/dev/null || rm -f "$marks.tmp.$$"
+    else
+      printf '%s\n' "$s" >> "$marks"
+    fi
+  done < <("$tmux_cmd" list-sessions -F '#{session_created} #{session_name}' 2>/dev/null)
+  return 0
+}
+
+# stack_reaper_watch <tmux_cmd> <cfg_root> [interval]
+stack_reaper_watch() {
+  local tmux_cmd="$1" cfg="$2" interval="${3:-30}"
+  while "$tmux_cmd" has-session 2>/dev/null; do
+    stack_reap_orphans "$tmux_cmd" "$cfg"
+    sleep "$interval"
+  done
+  return 0
+}
