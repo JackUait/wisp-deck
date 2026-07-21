@@ -237,12 +237,15 @@ cleanup_tmux_session() { echo "CLEANUP:$1" ; }   # stub the heavy teardown
 stack_repaint() { echo "REPAINT-CALLED" ; }       # must never be invoked
 stack_add %q "dev-web-222" "dev-web-222"
 stack_close_current %q %q "dev-web-222"
+echo "STACK:$(stack_list %q dev-web-222 | tr '\n' ',')"
 cat %q/tmux.log 2>/dev/null || true
-`, cfg, cfg, filepath.Join(bin, "tmux"), dir)
+`, cfg, filepath.Join(bin, "tmux"), cfg, cfg, dir)
 	script := stackSnippet(t, body)
 	out, code := runBashSnippet(t, script, nil)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "CLEANUP:dev-web-222")
 	assertNotContains(t, out, "switch-client")
 	assertNotContains(t, out, "REPAINT-CALLED")
+	assertContains(t, out, "STACK:")
+	assertNotContains(t, out, "STACK:dev-web-222") // deregistered: entry removed, list now empty
 }
