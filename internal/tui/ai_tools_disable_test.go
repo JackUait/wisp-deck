@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -71,6 +72,62 @@ func TestAIToolsPanel_render_shows_disabled_tag(t *testing.T) {
 	out := m.renderAIToolsPanel()
 	if !strings.Contains(out, "disabled") {
 		t.Errorf("panel must tag a disabled row, got:\n%s", out)
+	}
+}
+
+func TestAIToolsPanel_x_refuses_to_disable_the_last_enabled_tool(t *testing.T) {
+	m := panelMenu(t,
+		models.AITool{Name: "claude", Installed: true},
+		models.AITool{Name: "codex", Installed: true, Disabled: true},
+	)
+	m.disabledToolsFile = filepath.Join(t.TempDir(), "disabled-tools")
+	if err := os.WriteFile(m.disabledToolsFile, []byte("codex\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m.aiToolsCursor = 0 // claude: the last enabled installed tool
+	m.updateAIToolsPanel(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	if m.aiToolRows[0].Disabled {
+		t.Error("the last enabled tool must not become disabled")
+	}
+	if models.LoadDisabledTools(m.disabledToolsFile)["claude"] {
+		t.Error("the sidecar file must stay untouched")
+	}
+	if m.aiToolsErr == nil || !strings.Contains(m.aiToolsErr.Error(), "At least one AI tool must stay enabled") {
+		t.Errorf("aiToolsErr = %v, want the last-enabled message", m.aiToolsErr)
+	}
+}
+
+func TestAIToolsPanel_x_still_disables_with_an_enabled_peer(t *testing.T) {
+	m := panelMenu(t,
+		models.AITool{Name: "claude", Installed: true},
+		models.AITool{Name: "codex", Installed: true},
+	)
+	m.disabledToolsFile = filepath.Join(t.TempDir(), "disabled-tools")
+
+	m.aiToolsCursor = 1
+	m.updateAIToolsPanel(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	if !m.aiToolRows[1].Disabled {
+		t.Error("disabling with another enabled tool present must work")
+	}
+	if m.aiToolsErr != nil {
+		t.Errorf("unexpected error: %v", m.aiToolsErr)
+	}
+}
+
+func TestAIToolsPanel_x_always_reenables(t *testing.T) {
+	m := panelMenu(t, models.AITool{Name: "codex", Installed: true, Disabled: true})
+	m.disabledToolsFile = filepath.Join(t.TempDir(), "disabled-tools")
+	if err := os.WriteFile(m.disabledToolsFile, []byte("codex\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m.updateAIToolsPanel(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	if m.aiToolRows[0].Disabled {
+		t.Error("re-enabling must never be blocked")
 	}
 }
 

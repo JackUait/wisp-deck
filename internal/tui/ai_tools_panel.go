@@ -227,6 +227,18 @@ func (m *MainMenuModel) toggleFocusedToolDisabled() {
 	if tool == nil || m.disabledToolsFile == "" {
 		return
 	}
+	if !tool.Disabled && tool.Installed {
+		enabled := 0
+		for _, r := range m.aiToolRows {
+			if r.Installed && !r.Disabled {
+				enabled++
+			}
+		}
+		if enabled <= 1 {
+			m.aiToolsErr = errors.New("At least one AI tool must stay enabled")
+			return
+		}
+	}
 	nowDisabled, err := models.ToggleDisabledTool(m.disabledToolsFile, tool.Name)
 	if err != nil {
 		m.aiToolsErr = err
