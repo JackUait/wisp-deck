@@ -6,7 +6,7 @@ Wisp Deck snapshots alive tmux sessions (`lib/session-restore.sh`) so a reboot
 reopens them as ordered tabs. Each snapshot line records
 `boot_id|project|path|tool|terminal|claude_session_id` — but **nothing about
 pane geometry**. On restore, `wrapper.sh` always rebuilds the three panes with
-hardcoded split percentages (`_pane0_pct` = 75 for compact / 50 for lazygit,
+hardcoded split percentages (`_pane0_pct` = 75 for compact / 50 legacy,
 spare pane = 45%). Any manual resize the user made before closing is lost: the
 window comes back at the defaults, not "the exact same positions."
 

@@ -6,7 +6,7 @@
 ## Problem
 
 Wisp Deck launches each "tab" as a terminal window → `wrapper.sh` → a tmux
-session with three panes (lazygit / AI tool / spare shell). The tmux server
+session with three panes (changeset ledger / AI tool / spare shell). The tmux server
 holds all session state in memory. A computer reboot kills the server and every
 session; nothing is saved. Users lose their working set — the projects they had
 open and the AI conversations in progress.
@@ -163,6 +163,6 @@ next interactive launch
 
 - Auto-launch at macOS login (LaunchAgent). Recovery is triggered when the user
   opens Wisp Deck, not at boot.
-- Restoring in-pane visual state (scrollback, lazygit cursor, editor buffers).
+- Restoring in-pane visual state (scrollback, ledger cursor, editor buffers).
   Only layout + cwd + relaunched program + AI conversation come back.
 - Vendoring tmux-resurrect / tmux-continuum.
