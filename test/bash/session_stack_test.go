@@ -511,6 +511,35 @@ stack_reap_orphans %q %q
 	assertNotContains(t, out, "CLEANUP:")
 }
 
+// TestStackReapOrphans_prunes_dead_owner_registry_files covers the reaper's
+// second job: the per-owner stack registry file itself is a leak if the
+// owning tab's session is gone (crashed wrapper, killed session) — nothing
+// else ever cleans up $cfg/stacks/<owner>. A live owner's file must survive.
+func TestStackReapOrphans_prunes_dead_owner_registry_files(t *testing.T) {
+	dir := t.TempDir()
+	cfg := t.TempDir()
+	// dev-app-111 is the only live session; dev-owner-dead and dev-owner-live
+	// are stack *registry files* (owner session names), not live sessions.
+	bin := mockTmux(t, dir, "100 dev-app-111\n300 dev-owner-live\n", stackEnvTwoApps)
+	if err := os.MkdirAll(filepath.Join(cfg, "stacks"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTempFile(t, filepath.Join(cfg, "stacks"), "dev-owner-dead", "dev-app-111\n")
+	writeTempFile(t, filepath.Join(cfg, "stacks"), "dev-owner-live", "dev-app-111\n")
+	writeTempFile(t, filepath.Join(cfg, "stacks"), ".reap-marks", "dev-app-111\n")
+	script := fmt.Sprintf(`
+cd %q
+source lib/session-stack.sh
+stack_reap_orphans %q %q
+ls -a %q/stacks
+`, projectRoot(t), filepath.Join(bin, "tmux"), cfg, cfg)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertNotContains(t, out, "dev-owner-dead")
+	assertContains(t, out, "dev-owner-live")
+	assertContains(t, out, ".reap-marks") // never treated as an owner file
+}
+
 // session-stack code runs on the launch critical path (detection) and inside
 // bound keys. It must stay tmux-and-filesystem only — no runtime boots, no
 // network.

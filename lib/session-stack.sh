@@ -285,7 +285,7 @@ stack_owner_teardown() {
 # stack_reap_orphans <tmux_cmd> <cfg_root>
 stack_reap_orphans() {
   local tmux_cmd="$1" cfg="$2"
-  local marks="$cfg/stacks/.reap-marks" s env pid
+  local marks="$cfg/stacks/.reap-marks" s env pid f
   mkdir -p "$cfg/stacks" 2>/dev/null || return 0
   while IFS=' ' read -r _ s; do
     [ -n "$s" ] || continue
@@ -309,6 +309,17 @@ stack_reap_orphans() {
       printf '%s\n' "$s" >> "$marks"
     fi
   done < <("$tmux_cmd" list-sessions -F '#{session_created} #{session_name}' 2>/dev/null)
+
+  # Prune registry files whose owner (the tab that created them) is gone.
+  # Nothing else ever cleans up $cfg/stacks/<owner> once the owning wrapper's
+  # session dies without running its trap.
+  for f in "$cfg"/stacks/*; do
+    [ -f "$f" ] || continue
+    s="${f##*/}"
+    [ "$s" = ".reap-marks" ] && continue
+    "$tmux_cmd" has-session -t "$s" 2>/dev/null && continue
+    rm -f "$f"
+  done
   return 0
 }
 
