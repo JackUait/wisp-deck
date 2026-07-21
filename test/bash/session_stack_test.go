@@ -76,6 +76,26 @@ func TestStackSessionsForProject_excludes_named_session(t *testing.T) {
 	assertContains(t, out, "dev-app-333")
 }
 
+// TestStackSessionsForProject_handles_spaces_in_session_and_project_names
+// guards the invariant documented at the top of the file: session names (and
+// the WISP_DECK_PATH values they carry) may contain spaces, so the matcher
+// must iterate line-wise, never word-split. A regression that switched to
+// word-splitting would silently drop this session from the stack.
+func TestStackSessionsForProject_handles_spaces_in_session_and_project_names(t *testing.T) {
+	dir := t.TempDir()
+	proj := "/tmp/my app"
+	envCase := fmt.Sprintf(`
+      "dev-my app-42") all='WISP_DECK=1\nWISP_DECK_PATH=%s\nWISP_DECK_PROJECT=my app\nWISP_DECK_TOOL=claude\n' ;;
+`, proj)
+	bin := mockTmux(t, dir, "100 dev-my app-42\n", envCase)
+	out, code := runBashFunc(t, "lib/session-stack.sh", "stack_sessions_for_project",
+		[]string{filepath.Join(bin, "tmux"), proj}, nil)
+	assertExitCode(t, code, 0)
+	if got := strings.TrimSpace(out); got != "dev-my app-42" {
+		t.Errorf("got %q, want the space-containing session name intact", got)
+	}
+}
+
 func TestStackSessionsForProject_no_server_prints_nothing_exit_zero(t *testing.T) {
 	dir := t.TempDir()
 	bin := mockCommand(t, dir, "tmux", `exit 1`)
@@ -175,6 +195,31 @@ cat %q/tmux.log
 	out, code := runBashSnippet(t, script, nil)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "switch-client -t dev-app-111") // wraps from last to first
+}
+
+// TestStackCycle_prev_wraps_from_first_to_last covers the "prev" direction:
+// pressing prev on the FIRST session of the stack must wrap around to the
+// LAST one, mirroring the "next" wraparound already covered above.
+func TestStackCycle_prev_wraps_from_first_to_last(t *testing.T) {
+	dir := t.TempDir()
+	// Three same-project sessions so next vs. prev from the first session
+	// disagree (with only two, both directions land on the same neighbour
+	// and the test can't tell a swapped direction from a correct one).
+	envCase := `
+      "dev-app-111") all='WISP_DECK=1\nWISP_DECK_PATH=/tmp/app\n' ;;
+      "dev-app-222") all='WISP_DECK=1\nWISP_DECK_PATH=/tmp/app\n' ;;
+      "dev-app-333") all='WISP_DECK=1\nWISP_DECK_PATH=/tmp/app\n' ;;
+`
+	bin := mockTmux(t, dir, "100 dev-app-111\n200 dev-app-222\n300 dev-app-333\n", envCase)
+	body := fmt.Sprintf(`
+stack_cycle %q "dev-app-111" prev
+cat %q/tmux.log
+`, filepath.Join(bin, "tmux"), dir)
+	script := stackSnippet(t, body)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "switch-client -t dev-app-333") // wraps from first to last
+	assertNotContains(t, out, "switch-client -t dev-app-222")
 }
 
 func TestStackCycle_single_session_is_noop(t *testing.T) {
@@ -392,6 +437,33 @@ true
 	assertNotContains(t, out, "STACKFILE-LEFT")
 }
 
+// TestStackOwnerTeardown_kills_entry_adopted_by_self covers a value the
+// adopted-away skip must NOT trip on: an entry whose WISP_DECK_ADOPTED_BY
+// equals the OWNER doing the teardown (its own most-recent adoption, or a
+// session that was adopted back into the same tab). Only a DIFFERENT owner's
+// mark should protect a session; self-marks must still be killed, or the
+// session leaks forever once its stack file is removed at the end of
+// teardown.
+func TestStackOwnerTeardown_kills_entry_adopted_by_self(t *testing.T) {
+	dir := t.TempDir()
+	cfg := t.TempDir()
+	envCase := `
+      "dev-app-111") all='WISP_DECK=1\nWISP_DECK_PATH=/tmp/app\nWISP_DECK_ADOPTED_BY=dev-owner-9\n' ;;
+`
+	bin := mockTmux(t, dir, "100 dev-app-111\n", envCase)
+	script := fmt.Sprintf(`
+cd %q
+source lib/session-stack.sh
+cleanup_tmux_session() { echo "CLEANUP:$1"; }
+stack_add %q "dev-owner-9" "dev-owner-9"
+stack_add %q "dev-owner-9" "dev-app-111"
+stack_owner_teardown %q %q "dev-owner-9"
+`, projectRoot(t), cfg, cfg, filepath.Join(bin, "tmux"), cfg)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "CLEANUP:dev-app-111") // adopted by SELF must still be killed
+}
+
 func TestStackReapOrphans_two_strikes_then_kill(t *testing.T) {
 	dir := t.TempDir()
 	cfg := t.TempDir()
@@ -493,6 +565,39 @@ fi
 	assertExitCode(t, code, 0)
 	assertNotContains(t, out, "CLEANUP:")
 	assertContains(t, out, "MARKS:cleared")
+}
+
+// TestStackReapOrphans_mixed_table_only_reaps_the_valid_dead_owner exercises
+// three sessions side by side: one reapable dead-owner (numeric PID,
+// guaranteed dead), one with a garbage WISP_DECK_OWNER_PID that must never
+// crash `kill -0` or be treated as reapable, and one non-wisp session that
+// must be skipped before either check runs. Only the first gets CLEANUP,
+// and only after two strikes.
+func TestStackReapOrphans_mixed_table_only_reaps_the_valid_dead_owner(t *testing.T) {
+	dir := t.TempDir()
+	cfg := t.TempDir()
+	envCase := `
+      "dev-app-dead") all='WISP_DECK=1\nWISP_DECK_PATH=/tmp/app\nWISP_DECK_OWNER_PID=999999\n' ;;
+      "dev-app-garbage") all='WISP_DECK=1\nWISP_DECK_PATH=/tmp/app\nWISP_DECK_OWNER_PID=abc\n' ;;
+      "dev-not-wisp") all='SOME_OTHER_VAR=1\n' ;;
+`
+	bin := mockTmux(t, dir,
+		"100 dev-app-dead\n200 dev-app-garbage\n300 dev-not-wisp\n", envCase)
+	script := fmt.Sprintf(`
+cd %q
+source lib/session-stack.sh
+cleanup_tmux_session() { echo "CLEANUP:$1"; }
+stack_reap_orphans %q %q
+echo "AFTER-FIRST"
+stack_reap_orphans %q %q
+`, projectRoot(t), filepath.Join(bin, "tmux"), cfg, filepath.Join(bin, "tmux"), cfg)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	first := out[:strings.Index(out, "AFTER-FIRST")]
+	assertNotContains(t, first, "CLEANUP:") // strike one on the dead owner: marked only
+	assertContains(t, out, "CLEANUP:dev-app-dead")
+	assertNotContains(t, out, "CLEANUP:dev-app-garbage")
+	assertNotContains(t, out, "CLEANUP:dev-not-wisp")
 }
 
 func TestStackReapOrphans_ignores_sessions_without_owner_pid(t *testing.T) {
