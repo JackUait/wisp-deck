@@ -147,13 +147,16 @@ ls %q
 	}
 }
 
-func TestStackBarChips_single_session_is_plain_project_chip(t *testing.T) {
+func TestStackBarChips_single_session_has_project_chip_and_plus_button(t *testing.T) {
 	out, code := runBashFunc(t, "lib/session-stack.sh", "stack_bar_chips",
 		[]string{"app", "dev-app-1", "209", "dev-app-1"}, nil)
 	assertExitCode(t, code, 0)
-	if out != " ⬡ app " {
-		t.Errorf("single-session bar must equal today's default, got %q", out)
-	}
+	assertContains(t, out, " ⬡ app ")
+	// The + button opens a new session in this project; it is a named status
+	// range so a MouseDown1Status bind can identify the click target.
+	assertContains(t, out, "#[range=user|wisp-stack-new]")
+	assertContains(t, out, "#[norange]")
+	assertContains(t, out, " + ")
 }
 
 func TestStackBarChips_marks_self_with_accent(t *testing.T) {
@@ -163,6 +166,7 @@ func TestStackBarChips_marks_self_with_accent(t *testing.T) {
 	assertContains(t, out, "bg=colour141,bold] 2 ")   // self chip, accented
 	assertContains(t, out, "#[fg=colour245] 1 ")      // other chip, plain
 	assertContains(t, out, "⬡ app")
+	assertContains(t, out, "#[range=user|wisp-stack-new]") // + button rides after the chips
 }
 
 func TestStackRepaint_sets_status_left_per_session_with_self_active(t *testing.T) {
@@ -182,6 +186,27 @@ cat %q/tmux.log
 	for _, want := range []string{"bold] 1 ", "bold] 2 "} {
 		assertContains(t, out, want)
 	}
+	// The bar must be forced visible per session: the user's own ~/.tmux.conf
+	// may carry a global `status off`, which would otherwise leave painted
+	// chips (and the + button) nobody can see — a background-added session
+	// then looks like nothing happened.
+	assertContains(t, out, "set-option -t dev-app-111 status on")
+	assertContains(t, out, "set-option -t dev-app-333 status on")
+}
+
+// The bar is always visible, single session included — it hosts the + button.
+func TestStackRepaint_single_session_bar_stays_visible(t *testing.T) {
+	dir := t.TempDir()
+	cfg := t.TempDir()
+	bin := mockTmux(t, dir, "100 dev-app-111\n", stackEnvTwoApps)
+	body := fmt.Sprintf(`
+stack_repaint %q %q "app" "/tmp/app"
+cat %q/tmux.log
+`, filepath.Join(bin, "tmux"), cfg, dir)
+	script := stackSnippet(t, body)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "set-option -t dev-app-111 status on")
 }
 
 func TestStackCycle_switches_to_next_and_wraps(t *testing.T) {

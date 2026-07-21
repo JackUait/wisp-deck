@@ -75,11 +75,14 @@ against adoption-era wrappers still running in memory.
   tab-bar aesthetic.
 - Chip content: index + AI tool + a short identity hint (age or first-prompt
   snippet; exact content is an implementation detail).
-- The bar is always visible when the stack has ≥ 2 sessions. Whether it shows
-  for a single-session tab is an implementation choice (prefer hidden, so the
-  common case looks like today).
+- The bar is ALWAYS visible, single-session tabs included — it hosts the
+  clickable **+** button that opens a fresh session for the project.
+  Visibility is enforced with a session-level `status on` (written by the
+  launch chain and re-asserted by every repaint), because the user's own
+  `~/.tmux.conf` may hide the status bar globally (`set -g status off`),
+  which would leave the stack invisible and unnavigable.
 
-### Switching and stack management (keyboard-only in v1)
+### Switching and stack management
 
 - A hotkey cycles to the next session in the stack (`tmux switch-client`);
   the bar shows the new position.
@@ -95,8 +98,13 @@ against adoption-era wrappers still running in memory.
 - A hotkey closes the **current** session only: kills that session's process
   tree (existing grace-period logic), drops it from the stack, switches to a
   neighbour. Closing the last session closes the tab.
-- Clicks are out: the outer tmux deliberately keeps mouse off so clicks fall
-  through to the spare pane's inner tmux tab bar. v1 must not change that.
+- The bar's **+** button triggers the same `--stack-new` builder by mouse: a
+  server-global `MouseDown1Status` root bind whose handler gates itself on
+  the `wisp-stack-new` status range (`#{q:mouse_status_range}`, expanded at
+  press time) and stays inert for every other status click. Pane clicks are
+  untouched — they still route to the spare pane's inner tmux tab bar; only
+  the status LINE (outside any pane) gained a click target. Chip clicks for
+  switching remain a possible follow-up; cycling is keyboard-only.
 
 ### Ownership & cleanup (stack-aware)
 

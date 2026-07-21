@@ -111,16 +111,20 @@ stack_session_files_cleanup() {
 }
 
 # stack_bar_chips <project_name> <self_session> <accent> <session>...
-# The outer status-left for one session of a stack. With a single session the
-# bar is exactly today's " ⬡ project " so the common case looks unchanged.
-# The bar's base style stays fg=white,bg=colour236,bold (status-left-style set
-# at launch); chips restore it after their own colours.
+# The outer status-left for one session of a stack: the project label, one
+# chip per session when the stack has ≥2, and always a trailing + button
+# that opens a fresh session for this project. The + rides in a named status
+# range so the MouseDown1Status bind can identify the click target
+# (#{mouse_status_range}). The bar's base style stays
+# fg=white,bg=colour236,bold (status-left-style set at launch); chips restore
+# it after their own colours.
 stack_bar_chips() {
   local project="$1" self="$2" accent="$3"
   shift 3
   local out=" ⬡ ${project} " i=0 s
+  local plus="#[range=user|wisp-stack-new]#[fg=colour245] + #[norange]#[default]#[fg=white,bg=colour236,bold] "
   if [ "$#" -le 1 ]; then
-    printf '%s' "$out"
+    printf '%s' "${out}${plus}"
     return 0
   fi
   for s in "$@"; do
@@ -131,7 +135,7 @@ stack_bar_chips() {
       out="${out}#[fg=colour245] ${i} #[default]#[fg=white,bg=colour236,bold] "
     fi
   done
-  printf '%s' "$out"
+  printf '%s' "${out}${plus}"
 }
 
 # stack_repaint <tmux_cmd> <cfg_root> <project_name> <project_dir>
@@ -156,6 +160,12 @@ stack_repaint() {
     fi
     chips="$(stack_bar_chips "$project" "$s" "$accent" "${sessions[@]}")"
     "$tmux_cmd" set-option -t "$s" status-left "$chips" 2>/dev/null || true
+    # The bar is the stack's only navigation surface and hosts the + button,
+    # and the user's own ~/.tmux.conf may hide the status bar globally
+    # (`set -g status off`) — painted chips nobody can see make a
+    # background-added session look like nothing happened. Always force the
+    # session-level bar visible.
+    "$tmux_cmd" set-option -t "$s" status on 2>/dev/null || true
   done
   return 0
 }

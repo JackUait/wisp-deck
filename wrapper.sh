@@ -641,6 +641,9 @@ _pane0_pct=75
 # hue: purple for OpenCode, orange for claude. Mirrors the Go theme's Primary.
 _gt_theme_pref="$(grep '^theme=' "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
 _gt_accent="$(get_theme_accent "$(gt_resolve_theme "$_gt_theme_pref" "$SELECTED_AI_TOOL")")"
+# The session bar for a fresh single-session tab: project label + the
+# clickable + button (stack_repaint takes over the moment the stack changes).
+_gt_stack_bar="$(stack_bar_chips "$PROJECT_NAME" "$SESSION_NAME" "$_gt_accent" "$SESSION_NAME")"
 
 if ! declare -f _sane_term_size >/dev/null 2>&1; then
   # shellcheck disable=SC1091  # Runtime library path
@@ -717,8 +720,9 @@ fi
 
 env -u WISP_DECK_TESTING "$TMUX_CMD" new-session -d -P -F '#{pane_id}' -x "$_tmux_cols" -y "$_tmux_rows" -s "$SESSION_NAME" "${_wisp_deck_testing_tmux_args[@]}" -e "PATH=$PATH" -e "WISP_DECK_ATTENTION_ROOT=$WISP_DECK_ATTENTION_ROOT" -e "WISP_DECK_ATTENTION_DESCRIPTOR=$WISP_DECK_ATTENTION_DESCRIPTOR" -e "WISP_DECK_ATTENTION_GENERATION=$WISP_DECK_ATTENTION_GENERATION" -e "WISP_DECK_ATTENTION_FILE=$WISP_DECK_ATTENTION_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=$WISP_DECK_CLAUDE_SESSION" -e "WISP_DECK_CODEX_SESSION=$WISP_DECK_CODEX_SESSION" -e "WISP_DECK_CODEX_SESSION_FILE=$WISP_DECK_CODEX_SESSION_FILE" -e "WISP_DECK_CLAUDE_PROVIDER=$WISP_DECK_CLAUDE_PROVIDER" -e "WISP_DECK_CLAUDE_CONFIG=$WISP_DECK_CLAUDE_CONFIG" -e "WISP_DECK_CODEX_CMD=$WISP_DECK_CODEX_CMD" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$SHARE_DIR/relaunch-${SESSION_NAME}" -e "WISP_DECK_CLAUDE_ACCOUNT=${WISP_DECK_CLAUDE_ACCOUNT_DIR##*/}" -e "WISP_DECK_SEQ=${_wd_launch_seq}" -e "WISP_DECK_OWNER_PID=$$" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
   "$_pane0_cmd" \; \
-  set-option status-left " ⬡ ${PROJECT_NAME} " \; \
+  set-option status-left "$_gt_stack_bar" \; \
   set-option status-left-style "fg=white,bg=colour236,bold" \; \
+  set-option status on \; \
   set-option status-style "bg=colour235" \; \
   set-option status-right "" \; \
   set-option set-titles off \; \
@@ -830,6 +834,11 @@ _stack_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/process.sh\"; source \"$_
 # fresh session inside THIS tab's stack and switching the pressing client to
 # it — no new Ghostty tab, no adoption handoff, no tab churn.
 _stack_new_bind="bash -c '\"$_WRAPPER_DIR/wrapper.sh\" --stack-new \"\$1\" \"\$2\" || \"$TMUX_CMD\" display-message \"Wisp: could not open a stack session\"' stack-new #{q:session_name} #{q:client_name}"
+# The session bar's + button: same in-place builder, triggered by a click.
+# MouseDown1Status fires for ANY status-line click, so the handler gates
+# itself on the wisp-stack-new range name (expanded at press time, like the
+# session/client formats) and stays inert for every other status click.
+_stack_plus_bind="bash -c '[ \"\$3\" = \"wisp-stack-new\" ] || exit 0; \"$_WRAPPER_DIR/wrapper.sh\" --stack-new \"\$1\" \"\$2\" || \"$TMUX_CMD\" display-message \"Wisp: could not open a stack session\"' stack-new #{q:session_name} #{q:client_name} #{q:mouse_status_range}"
 
 # tmux normally delivers pointer motion only to the pane underneath it, so the
 # ledger cannot observe the event that enters its neighbour. Install a private
@@ -871,5 +880,6 @@ fi
   bind-key p run-shell -b "$_stack_prev_bind" \; \
   bind-key X run-shell -b "$_stack_close_bind" \; \
   bind-key S run-shell -b "$_stack_new_bind" \; \
+  bind-key -T root MouseDown1Status run-shell -b "$_stack_plus_bind" \; \
   run-shell -b "$_ledger_hover_setup" \; \
   attach-session -t "$SESSION_NAME" 2>&3

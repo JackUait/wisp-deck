@@ -129,6 +129,37 @@ func TestWrapper_cleanup_is_stack_aware(t *testing.T) {
 	}
 }
 
+// The session bar is always visible (it hosts the + button), so the launch
+// chain must write a session-level `status on` — the user's own ~/.tmux.conf
+// may hide the status bar globally.
+func TestWrapper_launch_chain_forces_status_bar_on(t *testing.T) {
+	src := wrapperSource(t)
+	if !strings.Contains(src, "set-option status on") {
+		t.Fatal("wrapper.sh's launch chain must set the session-level `status on` (a global `status off` in the user's ~/.tmux.conf would hide the session bar and its + button)")
+	}
+}
+
+// Clicking the bar's + button opens a new session in the same project via the
+// --stack-new in-place builder. The bind rides MouseDown1Status and must
+// gate itself on the wisp-stack-new status range (other status clicks stay
+// inert) using expanded-at-press formats, never baked names.
+func TestWrapper_binds_status_plus_click_to_stack_new(t *testing.T) {
+	src := wrapperSource(t)
+	if !strings.Contains(src, "MouseDown1Status") {
+		t.Fatal("wrapper.sh must bind MouseDown1Status for the session bar's + button")
+	}
+	idx := strings.Index(src, "_stack_plus_bind=")
+	if idx < 0 {
+		t.Fatal("wrapper.sh must define _stack_plus_bind for the + button click")
+	}
+	line := src[idx : idx+strings.Index(src[idx:], "\n")]
+	for _, want := range []string{"#{q:mouse_status_range}", "#{q:session_name}", "#{q:client_name}", "--stack-new", "wisp-stack-new"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("_stack_plus_bind must contain %s (range-gated, press-time-expanded --stack-new); got: %s", want, line)
+		}
+	}
+}
+
 func TestWrapper_registers_own_session_in_own_stack_file(t *testing.T) {
 	src := wrapperSource(t)
 	if !regexp.MustCompile(`stack_add "\$SHARE_DIR" "\$SESSION_NAME" "\$SESSION_NAME"`).MatchString(src) {
