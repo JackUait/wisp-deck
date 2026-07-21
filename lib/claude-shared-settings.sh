@@ -176,8 +176,17 @@ sync_claude_shared_state() {
       _wd_drain_state_aside "$src" "$aside"
     done
     # Steady state: already linked to the store — leave it strictly alone.
-    if [ -L "$dest" ] && [ "$(readlink "$dest" 2>/dev/null)" = "$src" ]; then
-      continue
+    # `-ef` is a test builtin (no fork): true when the link resolves to the
+    # same file as the store item. This runs per item per account on the
+    # launch critical path, where a readlink subprocess each was ~0.2s per
+    # launch. readlink remains only as the fallback that recognizes a
+    # correct-but-dangling link (store item not created yet), which -ef
+    # cannot see; that path is rare and may fork.
+    if [ -L "$dest" ]; then
+      if [ "$dest" -ef "$src" ] \
+         || { [ ! -e "$src" ] && [ "$(readlink "$dest" 2>/dev/null)" = "$src" ]; }; then
+        continue
+      fi
     fi
     if [ -e "$dest" ] && [ ! -L "$dest" ]; then
       aside="$dest.migrating.$$"

@@ -75,17 +75,35 @@ func TestLaunchPostPickPath_reaches_tmux_without_blocking_on_any_subprocess(t *t
 		"exit 0\n")
 	writeExecutable(t, filepath.Join(bin, "sysctl"), "#!/bin/bash\n"+
 		"echo \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n")
+	// On new-session, record whether the launch tail's artifacts (spare-tabs
+	// conf, relaunch context) already exist: the AI pane must be spawned
+	// BEFORE that tail work, so the agent's own multi-second boot overlaps it
+	// instead of waiting behind it.
 	writeExecutable(t, filepath.Join(bin, "tmux"), "#!/bin/bash\n"+
-		"if [ \"$1\" = \"new-session\" ]; then echo \"tmux-new-session\" >> "+strconv.Quote(calls)+"; fi\n"+
+		"if [ \"$1\" = \"new-session\" ]; then\n"+
+		"  tail_done=no\n"+
+		"  for f in "+strconv.Quote(cfg)+"/spare-*.conf "+strconv.Quote(cfg)+"/relaunch-*; do\n"+
+		"    [ -e \"$f\" ] && tail_done=yes\n"+
+		"  done\n"+
+		"  echo \"tmux-new-session tail_done=$tail_done\" >> "+strconv.Quote(calls)+"\n"+
+		"fi\n"+
 		"exit 0\n")
 	writeExecutable(t, filepath.Join(bin, "claude"), "#!/bin/bash\nexit 0\n")
 	writeExecutable(t, filepath.Join(bin, "wisp-deck-tui"), "#!/bin/bash\n"+
 		"echo \"wisp-deck-tui $*\" >> "+strconv.Quote(calls)+"\n"+
 		"exit 0\n")
+	// pmset is real-world slow (~130ms per -g probe, more under load) and is
+	// reached via an absolute path (WISP_DECK_PMSET), not PATH — so it needs
+	// its own slow spy: keep-awake reconciliation must never block the launch.
+	writeExecutable(t, filepath.Join(bin, "pmset"), "#!/bin/bash\n"+
+		"echo \"pmset $*\" >> "+strconv.Quote(calls)+"\n"+
+		"sleep "+strconv.Itoa(int(expensiveCommandDelay.Seconds()))+"\n"+
+		"exit 0\n")
 
 	env := buildEnv(t, []string{bin},
 		"HOME="+home,
 		"XDG_CONFIG_HOME="+filepath.Join(home, ".config"),
+		"WISP_DECK_PMSET="+filepath.Join(bin, "pmset"),
 	)
 	assertSpiesAreReachable(t, env, bin)
 
@@ -106,6 +124,13 @@ func TestLaunchPostPickPath_reaches_tmux_without_blocking_on_any_subprocess(t *t
 			"These expensive commands were invoked:\n%s",
 			elapsed.Round(time.Millisecond), criticalPathBudget,
 			indent(blockingCalls(string(logged))))
+	}
+
+	if strings.Contains(string(logged), "tail_done=yes") {
+		t.Errorf("tmux new-session was issued AFTER the launch tail (spare conf / " +
+			"relaunch context) was built. The session and AI pane must be created " +
+			"first so the agent's own boot overlaps the remaining setup — every " +
+			"millisecond of tail work before new-session is dead screen time.")
 	}
 
 	pythonSpawns := strings.Count(string(logged), "python3 ")

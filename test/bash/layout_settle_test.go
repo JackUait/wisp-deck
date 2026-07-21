@@ -191,9 +191,16 @@ func TestWrapperRestore_replays_layout_while_session_alive(t *testing.T) {
 
 	layoutRec := filepath.Join(home, "layout-rec")
 	duringRec := filepath.Join(home, "during-rec")
+	// The blocking client call is the batch that ends in attach-session (the
+	// launch is two tmux client calls now; new-session returns immediately).
+	// The replay watcher must have started before that attach, so the
+	// select-layout record must appear while the attach is still blocked.
 	tmuxMock := `#!/bin/bash
 case "$1" in
   new-session)
+    exit 0
+    ;;
+  bind-key)
     for _ in $(seq 1 100); do
       if [ -f "$GT_LAYOUT_REC" ]; then echo yes > "$GT_DURING_REC"; break; fi
       sleep 0.1

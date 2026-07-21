@@ -29,10 +29,19 @@ func seedRestoreQueue(t *testing.T, home, projDir, tool string) {
 	seedChainTicket(t, confDir)
 }
 
+// recordingTmuxMock is the shared wrapper-launch tmux spy: it appends every
+// invocation's arg string to $GT_REC (the launch is now TWO client calls —
+// new-session+AI split first, then binds/spare/attach — so recording only the
+// new-session call would hide the second batch), and answers -P pane-id
+// prints for the new-session batch with the fake ids %0 (ledger) and %1 (AI)
+// so the wrapper's captured-id targeting is observable in the record.
+const recordingTmuxMock = "#!/bin/bash\n" +
+	"printf '%s\\n' \"$*\" >> \"$GT_REC\"\n" +
+	"if [ \"$1\" = \"new-session\" ]; then printf '%s\\n' '%0' '%1'; fi\n" +
+	"exit 0\n"
+
 // TestWrapper_terminal_pane_is_45_percent verifies the left column's vertical
-// split gives the bottom terminal pane 45% of the height. The whole
-// "new-session ... \; split-window ..." chain is one tmux invocation, so the
-// mock records all of it via $* and we can assert the split percentage.
+// split gives the bottom terminal pane 45% of the height.
 func TestWrapper_terminal_pane_is_45_percent(t *testing.T) {
 	home := t.TempDir()
 	binDir := filepath.Join(home, ".local", "bin")
@@ -42,7 +51,7 @@ func TestWrapper_terminal_pane_is_45_percent(t *testing.T) {
 
 	recPath := filepath.Join(home, "rec")
 	mocks := map[string]string{
-		"tmux":          "#!/bin/bash\nif [ \"$1\" = \"new-session\" ]; then printf '%s\\n' \"$*\" > \"$GT_REC\"; exit 0; fi\nexit 0\n",
+		"tmux":          recordingTmuxMock,
 		"claude":        "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
@@ -86,7 +95,7 @@ func recordWrapperNewSession(t *testing.T) string {
 	}
 	recPath := filepath.Join(home, "rec")
 	mocks := map[string]string{
-		"tmux":          "#!/bin/bash\nif [ \"$1\" = \"new-session\" ]; then printf '%s\\n' \"$*\" > \"$GT_REC\"; exit 0; fi\nexit 0\n",
+		"tmux":          recordingTmuxMock,
 		"claude":        "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
@@ -132,7 +141,7 @@ func recordWrapperNewSessionForTool(t *testing.T, tool string) string {
 	}
 	recPath := filepath.Join(home, "rec")
 	mocks := map[string]string{
-		"tmux":          "#!/bin/bash\nif [ \"$1\" = \"new-session\" ]; then printf '%s\\n' \"$*\" > \"$GT_REC\"; exit 0; fi\nexit 0\n",
+		"tmux":          recordingTmuxMock,
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
 		tool:            "#!/bin/bash\nexit 0\n",
@@ -224,22 +233,21 @@ func TestWrapper_default_panel_is_compact(t *testing.T) {
 	}
 }
 
-// TestWrapper_selects_ai_pane_geometrically verifies the wrapper focuses panes
-// by direction (-L / -R) instead of fixed indices. tmux routes external
-// drag-drops (e.g. a screenshot) to the ACTIVE pane, so the AI pane must end up
-// active for a dropped screenshot to land in the AI tool. Fixed indices
-// (select-pane -t 0 / -t 2) silently target the wrong pane under a non-zero
-// pane-base-index; directional selection is robust to any base-index.
+// TestWrapper_selects_ai_pane_geometrically verifies the wrapper leaves the
+// AI pane focused via its CAPTURED pane id (%1 from the recording mock's -P
+// reply). tmux routes external drag-drops (e.g. a screenshot) to the ACTIVE
+// pane, so the AI pane must end up active for a dropped screenshot to land in
+// the AI tool. Fixed indices (select-pane -t 0 / -t 2) silently target the
+// wrong pane under a non-zero pane-base-index, and directional selection
+// (-L/-R) races the focus watcher between the two launch batches; the id
+// captured at creation is immune to both.
 func TestWrapper_selects_ai_pane_geometrically(t *testing.T) {
 	got := recordWrapperNewSession(t)
-	if !strings.Contains(got, "select-pane -L") {
-		t.Errorf("expected directional 'select-pane -L' to focus the left column; got:\n%s", got)
-	}
-	if !strings.Contains(got, "select-pane -R") {
-		t.Errorf("expected directional 'select-pane -R' to leave the AI (right) pane active; got:\n%s", got)
+	if !strings.Contains(got, "select-pane -t %1") {
+		t.Errorf("expected 'select-pane -t %%1' to leave the AI pane (captured id) active; got:\n%s", got)
 	}
 	if strings.Contains(got, "select-pane -t 0") || strings.Contains(got, "select-pane -t 2") {
-		t.Errorf("fixed-index select-pane breaks under non-zero pane-base-index; use directional selection. got:\n%s", got)
+		t.Errorf("fixed-index select-pane breaks under non-zero pane-base-index; target the captured pane id. got:\n%s", got)
 	}
 }
 
@@ -258,7 +266,7 @@ func TestWrapperBuildsDetachedSessionBeforeAttach(t *testing.T) {
 
 	horizontal := strings.Index(got, "split-window -h -p 75")
 	vertical := strings.Index(got, "split-window -v -p 45")
-	focusAI := strings.LastIndex(got, "select-pane -R")
+	focusAI := strings.LastIndex(got, "select-pane -t %1")
 	attach := strings.Index(got, "attach-session")
 	exitUnattached := strings.Index(got, "set-option exit-unattached on")
 	if horizontal < 0 || vertical < 0 || focusAI < 0 || attach < 0 || exitUnattached < 0 {

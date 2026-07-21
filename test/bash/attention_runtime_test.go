@@ -855,10 +855,14 @@ func TestAttentionRuntimeWrapperLifecycleOrdering(t *testing.T) {
 	if newSessionLine == "" {
 		t.Fatal("tmux new-session line not found")
 	}
+	// The watcher is a 0.5s polling consumer, so it may start after the
+	// session (and the agent) exist — but it MUST start before the attach,
+	// which blocks until the session ends: a watcher started after it would
+	// never run while the session is alive.
 	startWatcher := strings.Index(wrapper, "start_tab_title_watcher")
-	newSession := strings.Index(wrapper, `"$TMUX_CMD" new-session`)
-	if startWatcher < 0 || newSession < 0 || startWatcher > newSession {
-		t.Fatalf("tab-title watcher must start before tmux new-session: watcher=%d new-session=%d", startWatcher, newSession)
+	attach := strings.Index(wrapper, "attach-session")
+	if startWatcher < 0 || attach < 0 || startWatcher > attach {
+		t.Fatalf("tab-title watcher must start before the blocking attach: watcher=%d attach=%d", startWatcher, attach)
 	}
 	for _, name := range []string{
 		"WISP_DECK_ATTENTION_ROOT",

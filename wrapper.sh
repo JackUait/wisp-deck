@@ -547,89 +547,21 @@ case "$SELECTED_AI_TOOL" in
     ;;
 esac
 
-# Mid-session agent/account switch: for EVERY session (any tool), persist the
-# launch context so the compact-view ledger's pill — and the auto-switch
-# trigger — can relaunch the AI pane under another claude login OR another
-# agent entirely. The pill's own eligibility gate (2+ logins or 2+ tools)
-# lives in the ledger. Cleared by cleanup() on window close.
-WISP_DECK_RELAUNCH_FILE="$SHARE_DIR/relaunch-${SESSION_NAME}"
-write_relaunch_context "$WISP_DECK_RELAUNCH_FILE" "$SELECTED_AI_TOOL" \
-  "$AI_TOOL_CMD" "$WISP_DECK_CLAUDE_SETTINGS" \
-  "$WISP_DECK_CLAUDE_FILTER" "$PROJECT_DIR" "$_gt_cfg_root" \
-  "${AI_TOOLS_AVAILABLE[*]}" "$CLAUDE_CMD" "$OPENCODE_CMD" "$CODEX_CMD" \
-  "$WISP_DECK_ATTENTION_ROOT" "$WISP_DECK_ATTENTION_DESCRIPTOR" \
-  "$WISP_DECK_CLAUDE_SETTINGS_SOURCE"
-export WISP_DECK_RELAUNCH_FILE
-
-# Start the descriptor consumer before tmux (which blocks until session ends).
-start_tab_title_watcher "$SESSION_NAME" "$PROJECT_NAME" "$_tab_title_setting" "$TMUX_CMD" "$WISP_DECK_ATTENTION_DESCRIPTOR" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
-
-# Session-restore snapshot: stamp metadata into the tmux session env via -e
-# flags on new-session (below), and run a heartbeat that re-derives the
-# snapshot from all alive Wisp Deck sessions.
 # Ghostty is the only supported terminal; the snapshot's terminal field is
 # kept for backward compatibility with restore.
 WISP_DECK_TERMINAL="ghostty"
 WISP_DECK_SNAPSHOT="$SHARE_DIR/last-session"
-# Backgrounded lib function, not an inline loop: each tick re-sources the lib
-# in a throwaway bash, so snapshot fixes reach sessions already running.
-run_snapshot_heartbeat "$_WRAPPER_DIR" "$TMUX_CMD" "$WISP_DECK_SNAPSHOT" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
-HEARTBEAT_PID=$!
 
 # Build pane 0 command: the compact changeset-ledger view.
 _pane0_cmd="source \"$_WRAPPER_DIR/lib/compact-view.sh\" && compact_view \"$PROJECT_DIR\"; exec bash"
 _pane0_pct=75
 
-# Drag-dropping a screenshot onto a specific tmux pane is unreliable: tmux
-# delivers the paste to the *active* pane, not the pane under the cursor (an
-# external file drag never produces a tmux mouse event, so tmux can't know the
-# target). Two mitigations below:
-#   1. The AI pane is left as the *active* pane (select-pane -R, and a distinct
-#      pane-active-border so focus is visible) -- so a screenshot dropped while
-#      the AI pane is focused lands in the AI tool.
-#   2. prefix+i injects the most recent screenshot straight into the AI pane
-#      regardless of which pane is active. See lib/screenshot.sh.
-_screenshot_bind="bash -c 'source \"$_WRAPPER_DIR/lib/screenshot.sh\" && gt_paste_latest_screenshot'"
-
-# tmux normally delivers pointer motion only to the pane underneath it, so the
-# ledger cannot observe the event that enters its neighbour. Install a private
-# session key table while pane 0 is still targeted; it forwards the real event
-# normally and injects one out-of-bounds motion into this ledger on pane leave.
-# Run with `run-shell -b`: tmux expands #{pane_id} at the command's position in
-# the chain (still pane 0), then backgrounds the script — the install grabs a
-# server-wide root-table lock (up to 15s on a busy many-session server), and a
-# foreground run-shell held the splits and attach hostage for that long.
-_ledger_hover_setup="bash -c 'source \"$_WRAPPER_DIR/lib/ledger-hover.sh\" && ledger_hover_install \"\$1\" \"\$2\" \"\$3\" || true' ledger-hover \"$TMUX_CMD\" \"$SESSION_NAME\" '#{pane_id}'"
-
-# Spare pane: a nested tmux whose top status bar is a tab bar (project name on
-# the first tab, numbered extras, a [ + ] add button and per-tab × close). The
-# config is written ahead of time; the pane execs the inner server. See
-# lib/spare-tabs.sh. Ledger routing enables outer mouse mode but preserves the
-# normal send-keys -M path, so clicks still reach the inner tmux.
-_spare_label="$(spare_tabs_socket "$SESSION_NAME")"
-mkdir -p "$SHARE_DIR"
-_spare_conf="$SHARE_DIR/spare-${SESSION_NAME}.conf"
 # Focus accent for the tmux chrome (active pane border + active spare-tab chip).
 # Honor a user-chosen theme preset (Settings menu), falling back to the per-tool
 # hue: purple for OpenCode, orange for claude. Mirrors the Go theme's Primary.
 _gt_theme_pref="$(grep '^theme=' "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
 _gt_accent="$(get_theme_accent "$(gt_resolve_theme "$_gt_theme_pref" "$SELECTED_AI_TOOL")")"
-spare_tabs_config "$PROJECT_NAME" "$PROJECT_DIR" "$_WRAPPER_DIR/lib/spare-tabs.sh" "$_spare_label" "$_gt_accent" > "$_spare_conf"
-# Minimal cwd-only prompt for the spare shell (drops user@host and conda's
-# "(base)"). Echoes empty for non-zsh shells, leaving them untouched.
-_spare_zdotdir="$(spare_prompt_zdotdir "$SHARE_DIR" "$SESSION_NAME" "$SHELL" "${ZDOTDIR:-$HOME}")"
-_spare_cmd="$(spare_tabs_launch_cmd "$_spare_label" "$_spare_conf" "$PROJECT_DIR" "$_spare_zdotdir")"
-_spare_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/spare-tabs.sh\" && spare_tabs_close_current \"$_spare_label\"'"
 
-# Restore: replay the captured pane geometry over the just-built panes. The
-# build order below is deterministic and identical to capture time, so the
-# panes line up with the layout's cells. MUST be backgrounded before
-# the tmux launch: its final attach blocks until the session ends, so any replay
-# placed after it never runs while the session is alive. The watcher also
-# re-applies after Ghostty's late pty resize (a crash-restored tab is spawned
-# before its final size lands, and tmux redistributes the delta equally across
-# columns, corrupting the split) and exits once the window size settles.
-# Skipped when no layout was captured (old snapshot) — the default split stays.
 if ! declare -f _sane_term_size >/dev/null 2>&1; then
   # shellcheck disable=SC1091  # Runtime library path
   source "$_WRAPPER_DIR/lib/loading.sh"
@@ -640,10 +572,6 @@ fi
 # full-width ledger pane (the stuck-launch bug).
 read -r _tmux_rows _tmux_cols <<< "$(_sane_term_size)"
 
-if [ "$RESTORE_MODE" -eq 1 ] && [ -n "${WISP_DECK_RESUME_LAYOUT:-}" ]; then
-  restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$WISP_DECK_RESUME_LAYOUT" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
-fi
-
 WISP_DECK_CLAUDE_SESSION=""
 WISP_DECK_CODEX_SESSION=""
 if [ "$RESTORE_MODE" -eq 1 ]; then
@@ -653,20 +581,22 @@ if [ "$RESTORE_MODE" -eq 1 ]; then
   esac
 fi
 
-# Layout self-heal: tmux runs every command of the chain below even when one
-# fails, so a failed split (any future cause, not just the pty-size race
-# _sane_term_size closes) would strand this tab on a lone full-width ledger.
-# The watcher rebuilds missing panes once the window has real space and exits
-# the moment the three-pane layout exists.
-gt_ensure_panes_watch "$TMUX_CMD" "$SESSION_NAME" "$PROJECT_DIR" \
-  "$AI_LAUNCH_CMD" "$_spare_cmd" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
+# Launch the session and the AI pane FIRST — before any of the remaining
+# setup (relaunch context, watchers, spare-tabs config). The agent takes
+# multiple seconds to boot; every millisecond of tail work done before this
+# call is dead screen time, while tail work done after it runs in the shadow
+# of that boot. -P prints the two pane ids (into a file in the private
+# attention root, which attention_cleanup removes) so the second batch below
+# can target panes explicitly — the focus watcher may move the active pane in
+# between, so positional targeting is no longer safe.
+_gt_panes_file="$WISP_DECK_ATTENTION_ROOT/launch-panes"
 
 _wisp_deck_testing_tmux_args=()
 if [[ "${WISP_DECK_TESTING:-}" == "1" ]]; then
   _wisp_deck_testing_tmux_args=(-e WISP_DECK_TESTING=1)
 fi
 
-env -u WISP_DECK_TESTING "$TMUX_CMD" new-session -d -x "$_tmux_cols" -y "$_tmux_rows" -s "$SESSION_NAME" "${_wisp_deck_testing_tmux_args[@]}" -e "PATH=$PATH" -e "WISP_DECK_ATTENTION_ROOT=$WISP_DECK_ATTENTION_ROOT" -e "WISP_DECK_ATTENTION_DESCRIPTOR=$WISP_DECK_ATTENTION_DESCRIPTOR" -e "WISP_DECK_ATTENTION_GENERATION=$WISP_DECK_ATTENTION_GENERATION" -e "WISP_DECK_ATTENTION_FILE=$WISP_DECK_ATTENTION_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=$WISP_DECK_CLAUDE_SESSION" -e "WISP_DECK_CODEX_SESSION=$WISP_DECK_CODEX_SESSION" -e "WISP_DECK_CODEX_SESSION_FILE=$WISP_DECK_CODEX_SESSION_FILE" -e "WISP_DECK_CLAUDE_PROVIDER=$WISP_DECK_CLAUDE_PROVIDER" -e "WISP_DECK_CLAUDE_CONFIG=$WISP_DECK_CLAUDE_CONFIG" -e "WISP_DECK_CODEX_CMD=$WISP_DECK_CODEX_CMD" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$WISP_DECK_RELAUNCH_FILE" -e "WISP_DECK_CLAUDE_ACCOUNT=${WISP_DECK_CLAUDE_ACCOUNT_DIR##*/}" -e "WISP_DECK_SEQ=${_wd_launch_seq}" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
+env -u WISP_DECK_TESTING "$TMUX_CMD" new-session -d -P -F '#{pane_id}' -x "$_tmux_cols" -y "$_tmux_rows" -s "$SESSION_NAME" "${_wisp_deck_testing_tmux_args[@]}" -e "PATH=$PATH" -e "WISP_DECK_ATTENTION_ROOT=$WISP_DECK_ATTENTION_ROOT" -e "WISP_DECK_ATTENTION_DESCRIPTOR=$WISP_DECK_ATTENTION_DESCRIPTOR" -e "WISP_DECK_ATTENTION_GENERATION=$WISP_DECK_ATTENTION_GENERATION" -e "WISP_DECK_ATTENTION_FILE=$WISP_DECK_ATTENTION_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=$WISP_DECK_CLAUDE_SESSION" -e "WISP_DECK_CODEX_SESSION=$WISP_DECK_CODEX_SESSION" -e "WISP_DECK_CODEX_SESSION_FILE=$WISP_DECK_CODEX_SESSION_FILE" -e "WISP_DECK_CLAUDE_PROVIDER=$WISP_DECK_CLAUDE_PROVIDER" -e "WISP_DECK_CLAUDE_CONFIG=$WISP_DECK_CLAUDE_CONFIG" -e "WISP_DECK_CODEX_CMD=$WISP_DECK_CODEX_CMD" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$SHARE_DIR/relaunch-${SESSION_NAME}" -e "WISP_DECK_CLAUDE_ACCOUNT=${WISP_DECK_CLAUDE_ACCOUNT_DIR##*/}" -e "WISP_DECK_SEQ=${_wd_launch_seq}" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
   "$_pane0_cmd" \; \
   set-option status-left " ⬡ ${PROJECT_NAME} " \; \
   set-option status-left-style "fg=white,bg=colour236,bold" \; \
@@ -675,17 +605,115 @@ env -u WISP_DECK_TESTING "$TMUX_CMD" new-session -d -x "$_tmux_cols" -y "$_tmux_
   set-option set-titles off \; \
   set-option pane-border-style "fg=colour238" \; \
   set-option pane-active-border-style "fg=colour${_gt_accent}" \; \
+  split-window -h -p "$_pane0_pct" -P -F '#{pane_id}' -c "$PROJECT_DIR" \
+  "$AI_LAUNCH_CMD; exec bash" \; \
+  set-option -p @gt_ai 1 > "$_gt_panes_file" 2>&3
+_gt_ledger_pane=""
+_gt_ai_pane=""
+{ { read -r _gt_ledger_pane; read -r _gt_ai_pane; } < "$_gt_panes_file"; } 2>/dev/null || true
+
+# ---- The agent is booting in its pane from here on; everything below runs ----
+# ---- in the shadow of that boot, before the attach at the end.            ----
+
+# Mid-session agent/account switch: for EVERY session (any tool), persist the
+# launch context so the compact-view ledger's pill — and the auto-switch
+# trigger — can relaunch the AI pane under another claude login OR another
+# agent entirely. The pill's own eligibility gate (2+ logins or 2+ tools)
+# lives in the ledger. Cleared by cleanup() on window close. The path matches
+# the WISP_DECK_RELAUNCH_FILE stamp on new-session above.
+WISP_DECK_RELAUNCH_FILE="$SHARE_DIR/relaunch-${SESSION_NAME}"
+write_relaunch_context "$WISP_DECK_RELAUNCH_FILE" "$SELECTED_AI_TOOL" \
+  "$AI_TOOL_CMD" "$WISP_DECK_CLAUDE_SETTINGS" \
+  "$WISP_DECK_CLAUDE_FILTER" "$PROJECT_DIR" "$_gt_cfg_root" \
+  "${AI_TOOLS_AVAILABLE[*]}" "$CLAUDE_CMD" "$OPENCODE_CMD" "$CODEX_CMD" \
+  "$WISP_DECK_ATTENTION_ROOT" "$WISP_DECK_ATTENTION_DESCRIPTOR" \
+  "$WISP_DECK_CLAUDE_SETTINGS_SOURCE"
+export WISP_DECK_RELAUNCH_FILE
+
+# Start the descriptor consumer before the attach (which blocks until the
+# session ends).
+start_tab_title_watcher "$SESSION_NAME" "$PROJECT_NAME" "$_tab_title_setting" "$TMUX_CMD" "$WISP_DECK_ATTENTION_DESCRIPTOR" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
+
+# Session-restore snapshot heartbeat: re-derives the snapshot from all alive
+# Wisp Deck sessions. Backgrounded lib function, not an inline loop: each tick
+# re-sources the lib in a throwaway bash, so snapshot fixes reach sessions
+# already running.
+run_snapshot_heartbeat "$_WRAPPER_DIR" "$TMUX_CMD" "$WISP_DECK_SNAPSHOT" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
+HEARTBEAT_PID=$!
+
+# Drag-dropping a screenshot onto a specific tmux pane is unreliable: tmux
+# delivers the paste to the *active* pane, not the pane under the cursor (an
+# external file drag never produces a tmux mouse event, so tmux can't know the
+# target). Two mitigations below:
+#   1. The AI pane is left as the *active* pane (select-pane, and a distinct
+#      pane-active-border so focus is visible) -- so a screenshot dropped while
+#      the AI pane is focused lands in the AI tool.
+#   2. prefix+i injects the most recent screenshot straight into the AI pane
+#      regardless of which pane is active. See lib/screenshot.sh.
+_screenshot_bind="bash -c 'source \"$_WRAPPER_DIR/lib/screenshot.sh\" && gt_paste_latest_screenshot'"
+
+# tmux normally delivers pointer motion only to the pane underneath it, so the
+# ledger cannot observe the event that enters its neighbour. Install a private
+# session key table for the ledger pane (its id was captured at creation); it
+# forwards the real event normally and injects one out-of-bounds motion into
+# this ledger on pane leave.
+# Run with `run-shell -b`: the install grabs a server-wide root-table lock (up
+# to 15s on a busy many-session server), and running it in the foreground once
+# held the spare split and attach hostage for that long.
+_ledger_hover_setup="bash -c 'source \"$_WRAPPER_DIR/lib/ledger-hover.sh\" && ledger_hover_install \"\$1\" \"\$2\" \"\$3\" || true' ledger-hover \"$TMUX_CMD\" \"$SESSION_NAME\" \"$_gt_ledger_pane\""
+
+# Spare pane: a nested tmux whose top status bar is a tab bar (project name on
+# the first tab, numbered extras, a [ + ] add button and per-tab × close). The
+# config is written ahead of time; the pane execs the inner server. See
+# lib/spare-tabs.sh. Ledger routing enables outer mouse mode but preserves the
+# normal send-keys -M path, so clicks still reach the inner tmux.
+_spare_label="$(spare_tabs_socket "$SESSION_NAME")"
+mkdir -p "$SHARE_DIR"
+_spare_conf="$SHARE_DIR/spare-${SESSION_NAME}.conf"
+spare_tabs_config "$PROJECT_NAME" "$PROJECT_DIR" "$_WRAPPER_DIR/lib/spare-tabs.sh" "$_spare_label" "$_gt_accent" > "$_spare_conf"
+# Minimal cwd-only prompt for the spare shell (drops user@host and conda's
+# "(base)"). Echoes empty for non-zsh shells, leaving them untouched.
+_spare_zdotdir="$(spare_prompt_zdotdir "$SHARE_DIR" "$SESSION_NAME" "$SHELL" "${ZDOTDIR:-$HOME}")"
+_spare_cmd="$(spare_tabs_launch_cmd "$_spare_label" "$_spare_conf" "$PROJECT_DIR" "$_spare_zdotdir")"
+_spare_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/spare-tabs.sh\" && spare_tabs_close_current \"$_spare_label\"'"
+
+# Restore: replay the captured pane geometry over the just-built panes. The
+# build order (ledger, AI, spare) is deterministic and identical to capture
+# time, so the panes line up with the layout's cells. MUST be backgrounded
+# before the attach: it blocks until the session ends, so any replay placed
+# after it never runs while the session is alive. The watcher also re-applies
+# after Ghostty's late pty resize (a crash-restored tab is spawned before its
+# final size lands, and tmux redistributes the delta equally across columns,
+# corrupting the split) and exits once the window size settles.
+# Skipped when no layout was captured (old snapshot) — the default split stays.
+if [ "$RESTORE_MODE" -eq 1 ] && [ -n "${WISP_DECK_RESUME_LAYOUT:-}" ]; then
+  restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$WISP_DECK_RESUME_LAYOUT" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
+fi
+
+# Layout self-heal: tmux runs every command of a chain even when one fails, so
+# a failed split (any future cause, not just the pty-size race _sane_term_size
+# closes) would strand this tab on a lone full-width ledger. The watcher
+# rebuilds missing panes once the window has real space and exits the moment
+# the three-pane layout exists.
+gt_ensure_panes_watch "$TMUX_CMD" "$SESSION_NAME" "$PROJECT_DIR" \
+  "$AI_LAUNCH_CMD" "$_spare_cmd" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
+
+# Second batch: key binds, hover routing, the spare split, then the attach.
+# The spare split targets the captured ledger pane id and the final focus the
+# captured AI pane id — never positions, which the focus watcher may have
+# changed since the first batch. If a capture is empty (the AI split failed,
+# e.g. a tiny pre-resize pty), the targeted commands fail while tmux still
+# runs the rest of the chain — the attach proceeds and the heal watcher above
+# rebuilds the missing panes. The server already exists (started by the
+# sanitized new-session client above), so this client needs no env scrub.
+"$TMUX_CMD" \
   bind-key i run-shell "$_screenshot_bind" \; \
   bind-key t run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label new-window -c \"$PROJECT_DIR\"" \; \
   bind-key w run-shell "$_spare_close_bind" \; \
   bind-key Tab run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label next-window" \; \
   bind-key BTab run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label previous-window" \; \
   run-shell -b "$_ledger_hover_setup" \; \
-  split-window -h -p "$_pane0_pct" -c "$PROJECT_DIR" \
-  "$AI_LAUNCH_CMD; exec bash" \; \
-  set-option -p @gt_ai 1 \; \
-  select-pane -L \; \
-  split-window -v -p 45 -c "$PROJECT_DIR" "$_spare_cmd" \; \
-  select-pane -R \; \
+  split-window -v -p 45 -c "$PROJECT_DIR" -t "$_gt_ledger_pane" "$_spare_cmd" \; \
+  select-pane -t "$_gt_ai_pane" \; \
   attach-session -t "$SESSION_NAME" \; \
   set-option exit-unattached on 2>&3

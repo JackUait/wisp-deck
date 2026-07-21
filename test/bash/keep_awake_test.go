@@ -194,6 +194,57 @@ func TestKeepAwakeSync_is_idempotent(t *testing.T) {
 	}
 }
 
+// keep_awake_sync runs on every launch and every window close. pmset -g costs
+// ~130ms (multiples under load), so the idle case — nothing held, and no
+// record that wisp-deck ever set the sleep veto — must skip the probe
+// entirely. The veto marker file is that record: it is written when the flag
+// is set and removed when cleared, so a crash that strands SleepDisabled=1
+// still leaves the marker behind and a later sync still probes and clears.
+func TestKeepAwakeSync_skips_pmset_probe_when_idle_and_no_veto_recorded(t *testing.T) {
+	dir := t.TempDir()
+	env, _, _ := keepAwakeEnv(t, dir)
+	cfg := filepath.Join(dir, "config")
+
+	probeLog := filepath.Join(dir, "probe.log")
+	env = append(env, "KA_PROBE_LOG="+probeLog)
+	// Re-mock pmset to record -g probes on top of the stateful behavior.
+	mockCommand(t, dir, "pmset", `
+[ "$1" = "-g" ] && echo "probe" >> "$KA_PROBE_LOG"
+state="$KA_STATE"
+if [ "$1" = "-g" ]; then
+  cur=0
+  [ -f "$state" ] && cur="$(cat "$state")"
+  echo " sleep                1"
+  [ "$cur" = "1" ] && echo " SleepDisabled        1"
+  exit 0
+fi
+if [ "$1" = "-a" ] && [ "$2" = "disablesleep" ]; then
+  echo "$3" > "$state"
+  exit 0
+fi
+exit 64
+`)
+
+	_, code := runBashFunc(t, "lib/keep-awake.sh", "keep_awake_sync", []string{cfg}, env)
+	assertExitCode(t, code, 0)
+
+	if readFileTrim(t, probeLog) != "" {
+		t.Error("keep_awake_sync probed pmset -g with no holders and no recorded veto; " +
+			"the idle launch/close path must not pay a pmset spawn")
+	}
+
+	// Sanity: once a hold sets the veto, the marker must make a later idle
+	// sync probe and clear the stranded flag (the crash-reap contract).
+	runBashFunc(t, "lib/keep-awake.sh", "keep_awake_hold", []string{cfg, "sess-a", "1"}, env)
+	os.Remove(filepath.Join(cfg, "keep-awake.d", "sess-a"))
+	_, code = runBashFunc(t, "lib/keep-awake.sh", "keep_awake_sync", []string{cfg}, env)
+	assertExitCode(t, code, 0)
+	if readFileTrim(t, probeLog) == "" {
+		t.Error("keep_awake_sync skipped the probe while the veto marker was present; " +
+			"a stranded SleepDisabled=1 would never be cleared")
+	}
+}
+
 // Without the sudoers rule, `sudo -n` fails. The feature must degrade quietly
 // rather than block a session behind a password prompt.
 func TestKeepAwakeHold_degrades_when_sudo_unavailable(t *testing.T) {

@@ -28,19 +28,49 @@ opencode_available() {
 # resolve_opencode_cmd — the launch command itself. The npx branch is the
 # expensive one; call it only when OpenCode is actually being launched, never on
 # the path to the picker.
+#
+# The --no-install probe spawns node (6-13s measured, warm cache), so a
+# successful verdict is cached: the probe passes exactly when npx holds a
+# cached opencode-ai copy, so the verdict is recorded alongside the
+# package.json of that copy. While the file still exists later launches skip
+# the probe; once it is gone (npm cache cleared, copy replaced) the record is
+# stale and the probe runs again — never launch a command whose backing copy
+# has vanished. Only the success verdict is cached: a failed probe means
+# nothing is installed yet, and the prefer-offline launch that follows will
+# install a copy, changing the right answer for the very next launch.
 resolve_opencode_cmd() {
+  # May run under zsh (mid-session tool switch from the compact-view pane),
+  # where an unmatched glob is fatal by default. Confined to this function.
+  [ -n "${ZSH_VERSION:-}" ] && setopt local_options no_nomatch 2>/dev/null
   if command -v opencode &>/dev/null; then
     echo "opencode"
-  elif command -v npx &>/dev/null; then
-    # A cached copy wins over @latest: the registry's advertised latest can be
-    # uninstallable (observed live: opencode-ai@latest -> 1.17.18, ETARGET),
-    # and then every @latest launch dies at npm and dumps the pane to a bare
-    # shell while a working cached copy sits unused.
-    if npx --no-install opencode-ai --version >/dev/null 2>&1; then
+    return 0
+  fi
+  command -v npx &>/dev/null || return 0
+  local verdict_file="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/opencode-npx-verdict"
+  local pkg=""
+  if [ -f "$verdict_file" ]; then
+    { IFS= read -r pkg < "$verdict_file"; } 2>/dev/null || pkg=""
+    if [ -n "$pkg" ] && [ -f "$pkg" ]; then
       echo "npx --no-install opencode-ai"
-    else
-      echo "npx --prefer-offline opencode-ai@latest"
+      return 0
     fi
+    rm -f "$verdict_file" 2>/dev/null
+  fi
+  # A cached copy wins over @latest: the registry's advertised latest can be
+  # uninstallable (observed live: opencode-ai@latest -> 1.17.18, ETARGET),
+  # and then every @latest launch dies at npm and dumps the pane to a bare
+  # shell while a working cached copy sits unused.
+  if npx --no-install opencode-ai --version >/dev/null 2>&1; then
+    for pkg in "${NPM_CONFIG_CACHE:-$HOME/.npm}"/_npx/*/node_modules/opencode-ai/package.json; do
+      [ -f "$pkg" ] || continue
+      mkdir -p "${verdict_file%/*}" 2>/dev/null || break
+      printf '%s\n' "$pkg" > "$verdict_file" 2>/dev/null || true
+      break
+    done
+    echo "npx --no-install opencode-ai"
+  else
+    echo "npx --prefer-offline opencode-ai@latest"
   fi
 }
 

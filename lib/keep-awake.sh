@@ -27,6 +27,13 @@ keep_awake_sudo() { echo "${WISP_DECK_SUDO:-/usr/bin/sudo}"; }
 # Directory holding one file per session that currently wants the machine awake.
 keep_awake_holders_dir() { echo "$1/keep-awake.d"; }
 
+# Marker recording that wisp-deck set the sleep veto. Written before the flag
+# is raised and removed after it is cleared, so a crash between the two leaves
+# the marker behind — a later idle sync still probes pmset and clears the
+# stranded flag. Its ABSENCE is what lets the common case (feature unused,
+# nothing held) skip the ~130ms pmset -g spawn on every launch and close.
+keep_awake_veto_marker() { echo "$1/keep-awake.veto"; }
+
 # Return 0 when the settings file opts into the feature. Default is off: this
 # takes standing root and defeats the lid switch, so it must never turn itself on.
 # Usage: keep_awake_enabled <settings_file>
@@ -56,10 +63,20 @@ keep_awake_sleep_disabled() {
 }
 
 # Set the kernel flag. Quiet no-op when the sudoers rule is absent.
-# Usage: keep_awake_set <0|1>
+# When a config dir is given, maintains the veto marker: written BEFORE
+# raising the flag (crash-safe — a stranded flag always has its marker),
+# removed after clearing it.
+# Usage: keep_awake_set <0|1> [config_dir]
 keep_awake_set() {
-  local want="$1"
-  "$(keep_awake_sudo)" -n "$(keep_awake_pmset)" -a disablesleep "$want" >/dev/null 2>&1 || return 0
+  local want="$1" config_dir="${2:-}"
+  if [ -n "$config_dir" ] && [ "$want" = "1" ]; then
+    : > "$(keep_awake_veto_marker "$config_dir")" 2>/dev/null || true
+  fi
+  "$(keep_awake_sudo)" -n "$(keep_awake_pmset)" -a disablesleep "$want" >/dev/null 2>&1 || true
+  if [ -n "$config_dir" ] && [ "$want" = "0" ]; then
+    rm -f "$(keep_awake_veto_marker "$config_dir")" 2>/dev/null || true
+  fi
+  return 0
 }
 
 # Drop holder files whose owning PID is dead — a crashed session must not pin
@@ -106,8 +123,20 @@ keep_awake_sync() {
     want=1
   fi
 
-  [ "$(keep_awake_sleep_disabled)" = "$want" ] && return 0
-  keep_awake_set "$want"
+  # Idle fast path: nothing held and no record that we ever raised the veto —
+  # the flag cannot be ours to clear, so skip the pmset probe entirely. This
+  # runs on every launch and window close, where the probe was pure overhead.
+  if [ "$want" -eq 0 ] && [ ! -e "$(keep_awake_veto_marker "$config_dir")" ]; then
+    return 0
+  fi
+
+  if [ "$(keep_awake_sleep_disabled)" = "$want" ]; then
+    # Already reconciled. A leftover marker with the flag down would make
+    # every future idle sync probe again — retire it here.
+    [ "$want" -eq 0 ] && rm -f "$(keep_awake_veto_marker "$config_dir")" 2>/dev/null
+    return 0
+  fi
+  keep_awake_set "$want" "$config_dir"
 }
 
 # Register this session as needing the machine awake, then sync.

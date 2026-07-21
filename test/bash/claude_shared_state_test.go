@@ -148,6 +148,46 @@ func TestSyncSharedState_steady_state_is_a_true_noop(t *testing.T) {
 	}
 }
 
+// The steady-state check must also be FORK-FREE. sync_all runs it for every
+// account on the launch critical path (before the picker), and a readlink
+// subprocess per item per account added ~0.2s per launch (multiples under
+// load). `[ dest -ef src ]` answers "already an alias of the store" as a test
+// builtin; readlink is only acceptable as a fallback for a dangling link.
+func TestSyncSharedState_steady_state_spawns_no_readlink(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "standard")
+	account := filepath.Join(dir, "account")
+	writeSharedFile(t, filepath.Join(source, "projects", "-p", "sid.jsonl"), "x")
+	writeSharedFile(t, filepath.Join(source, "history.jsonl"), "h")
+	if err := os.MkdirAll(account, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []string{"projects", "history.jsonl"} {
+		if err := os.Symlink(filepath.Join(source, item), filepath.Join(account, item)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	spyLog := filepath.Join(dir, "readlink.log")
+	binDir := mockCommand(t, dir, "readlink", `
+echo "readlink $*" >> "$READLINK_LOG"
+exec /usr/bin/readlink "$@"
+`)
+	env := buildEnv(t, []string{binDir}, "READLINK_LOG="+spyLog)
+
+	_, code := runBashFunc(t, "lib/claude-shared-settings.sh", "sync_claude_shared_state",
+		[]string{source, account}, env)
+	assertExitCode(t, code, 0)
+
+	if logged, _ := os.ReadFile(spyLog); len(logged) != 0 {
+		t.Errorf("steady-state sync spawned readlink; the linked-already check "+
+			"must use the -ef test builtin (no fork):\n%s", logged)
+	}
+	if target, err := os.Readlink(filepath.Join(account, "projects")); err != nil || target != filepath.Join(source, "projects") {
+		t.Fatalf("existing correct link must be left untouched: %q %v", target, err)
+	}
+}
+
 func TestSyncSharedState_unmergeable_files_survive_and_heal_later(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "standard")

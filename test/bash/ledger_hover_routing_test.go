@@ -429,18 +429,24 @@ exec cat >> "$1"
 	}
 }
 
+// The hover install must name the LEDGER pane explicitly — the pane id
+// captured when new-session created it (%0 from the recording mock's -P
+// reply) — and must be issued before the blocking attach so the routing
+// exists while the session runs. Positional targeting ("whatever pane is
+// active when the install runs") is not acceptable: the AI pane already
+// exists by then and the focus watcher may have moved the active pane.
 func TestLedgerHoverRouting_wrapperInstallsBeforeNeighbouringPane(t *testing.T) {
 	chain := recordWrapperNewSession(t)
 	install := strings.Index(chain, "ledger_hover_install")
-	split := strings.Index(chain, "split-window -h")
+	attach := strings.Index(chain, "attach-session")
 	if install < 0 {
-		t.Fatalf("wrapper does not install exact ledger hover routing; new-session chain:\n%s", chain)
+		t.Fatalf("wrapper does not install exact ledger hover routing; launch record:\n%s", chain)
 	}
-	if !strings.Contains(chain[install:], "#{pane_id}") {
-		t.Fatalf("ledger hover setup does not capture the ledger pane id; new-session chain:\n%s", chain)
+	if !strings.Contains(chain[install:install+300], "%0") {
+		t.Fatalf("ledger hover setup does not pass the captured ledger pane id; launch record:\n%s", chain)
 	}
-	if split < 0 || install > split {
-		t.Fatalf("ledger hover routing must be installed while the original ledger pane is targeted; new-session chain:\n%s", chain)
+	if attach < 0 || install > attach {
+		t.Fatalf("ledger hover routing must be installed before the blocking attach; launch record:\n%s", chain)
 	}
 }
 
