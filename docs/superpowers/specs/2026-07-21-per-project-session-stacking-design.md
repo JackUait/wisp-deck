@@ -68,7 +68,14 @@ conversation one switch away. One tab per project remains.
 - A hotkey cycles to the next session in the stack (`tmux switch-client`);
   the bar shows the new position.
 - A hotkey starts an **additional** fresh session for this project from inside
-  the tab — same code path as consolidation step 2.
+  the tab — built **in-place** by `wrapper.sh --stack-new <owner> <client>`
+  (backgrounded from the bind): the builder constructs a full session,
+  registers it in the CURRENT tab's stack file, restamps its owner-pid to the
+  owner wrapper (register-before-restamp, mirroring the adoption ordering),
+  switches the pressing client to it, and exits. No new Ghostty tab, no
+  adoption handoff, no tab churn. (v1 used the consolidation code path via a
+  simulated Cmd+T; that detached the old tabs' clients, and any session whose
+  wrapper predated stacking killed itself on that detach.)
 - A hotkey closes the **current** session only: kills that session's process
   tree (existing grace-period logic), drops it from the stack, switches to a
   neighbour. Closing the last session closes the tab.
@@ -104,6 +111,24 @@ tree — the zombie-prevention core feature. This becomes stack-aware:
   other orphan once its two-strike window elapses. The adopted conversation
   is therefore **destroyed rather than leaked** — no-zombie is prioritized
   over no-loss.
+
+### Upgrade boundary (live install)
+
+The install is a live symlink: new code deploys the moment it lands, but
+long-running wrapper processes keep their old script and traps in memory.
+Two consequences, both handled explicitly:
+
+- **Adoption is gated on protocol capability.** A session launched by a
+  pre-stacking wrapper lacks the `WISP_DECK_OWNER_PID` env stamp, and its
+  still-running wrapper kills its own session unconditionally when its client
+  detaches — adopting it would close it instead of stacking it. Consolidation
+  therefore adopts only sessions carrying the stamp
+  (`stack_adoptable_sessions_for_project`); older sessions keep their own tabs,
+  and `--stack-new` refuses to build for an unstamped owner.
+- **`exit-unattached off` is written on every launch.** Pre-stacking wrappers
+  set the server-wide `exit-unattached on`; a server started by one keeps that
+  fossil, and one all-clients-detached moment would kill every background
+  stack session. Dropping the old `on` from the chain was not enough.
 
 ## Interactions with existing subsystems
 

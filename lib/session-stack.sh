@@ -26,6 +26,26 @@ stack_sessions_for_project() {
   return 0
 }
 
+# stack_adoptable_sessions_for_project <tmux_cmd> <project_dir> [exclude]
+# Like stack_sessions_for_project, but only sessions whose wrapper speaks the
+# stacking protocol — detected by the WISP_DECK_OWNER_PID launch stamp.
+# Sessions launched by pre-stacking wrappers lack it, and their still-running
+# wrappers kill their own session unconditionally when their client detaches:
+# adopting one turns the consolidation handoff into a kill. Those sessions
+# must stay in their own tabs.
+stack_adoptable_sessions_for_project() {
+  local tmux_cmd="$1" project_dir="$2" exclude="${3:-}"
+  local s
+  stack_sessions_for_project "$tmux_cmd" "$project_dir" "$exclude" \
+    | while IFS= read -r s; do
+      [ -n "$s" ] || continue
+      "$tmux_cmd" show-environment -t "$s" WISP_DECK_OWNER_PID 2>/dev/null \
+        | grep -q '^WISP_DECK_OWNER_PID=[0-9][0-9]*$' || continue
+      printf '%s\n' "$s"
+    done
+  return 0
+}
+
 # Stack registry: <cfg_root>/stacks/<owner_session> lists every session that
 # tab owns (including its own). The owning wrapper's cleanup kills exactly
 # this list; adoption edits it. Single writer per file in practice (the
@@ -168,39 +188,6 @@ stack_close_current() {
   done
   [ -n "$neighbour" ] && stack_repaint "$tmux_cmd" "$cfg" "$project" "$proj_dir"
   return 0
-}
-
-# One-shot "open a fresh stack session for this project" request — the same
-# ticket pattern as the restore chain (see restore_issue_chain_ticket): the
-# hotkey writes the request and simulates Cmd+T; the fresh tab's wrapper
-# mv-claims it and skips the picker. Stale (>60s) requests are never claimed,
-# so a broken trigger can't hijack a tab the user opens later.
-
-# stack_request_new <tmux_cmd> <cfg_root> <session>
-stack_request_new() {
-  local tmux_cmd="$1" cfg="$2" session="$3" dir
-  dir="$("$tmux_cmd" show-environment -t "$session" WISP_DECK_PATH 2>/dev/null | cut -d= -f2-)"
-  [ -n "$dir" ] || return 1
-  printf '%s|%s\n' "$(date +%s)" "$dir" > "$cfg/stack-request" 2>/dev/null || return 1
-  if ! restore_trigger_tab; then
-    rm -f "$cfg/stack-request"
-    return 1
-  fi
-}
-
-# stack_request_claim <cfg_root> — prints the requested project dir.
-stack_request_claim() {
-  local cfg="$1" req="$1/stack-request" claimed stamp dir now
-  [ -f "$req" ] || return 1
-  claimed="$req.claimed.$$"
-  mv "$req" "$claimed" 2>/dev/null || return 1
-  IFS='|' read -r stamp dir < "$claimed" || true
-  rm -f "$claimed"
-  case "$stamp" in '' | *[!0-9]*) return 1 ;; esac
-  now="$(date +%s)"
-  [ $((now - stamp)) -le 60 ] || return 1
-  [ -d "$dir" ] || return 1
-  printf '%s\n' "$dir"
 }
 
 # stack_adopt_all <tmux_cmd> <cfg_root> <new_session> <owner_pid> <old>...

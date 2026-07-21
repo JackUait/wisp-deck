@@ -17,12 +17,19 @@ func wrapperSource(t *testing.T) string {
 	return string(b)
 }
 
-// The server-wide exit-unattached option kills unattached stacked sessions.
-// The orphan reaper replaced it; it must never come back to wrapper.sh.
+// The server-wide `exit-unattached on` kills every session the moment no
+// client is attached anywhere — fatal for background stack sessions. The
+// orphan reaper replaced it, but merely not-setting it was not enough: a tmux
+// server started by a pre-stacking wrapper keeps the fossil `on` for its whole
+// lifetime. Every launch must therefore write the `off` explicitly.
 // (lib/spare-tabs.sh's inner-server `set -g exit-unattached on` is fine.)
-func TestWrapper_never_sets_server_exit_unattached(t *testing.T) {
-	if strings.Contains(wrapperSource(t), "exit-unattached") {
-		t.Fatal("wrapper.sh sets exit-unattached — incompatible with session stacking; the orphan reaper owns leak GC now")
+func TestWrapper_heals_exit_unattached_off(t *testing.T) {
+	src := wrapperSource(t)
+	if strings.Contains(src, "exit-unattached on") {
+		t.Fatal("wrapper.sh sets exit-unattached on — incompatible with session stacking; the orphan reaper owns leak GC now")
+	}
+	if !strings.Contains(src, "exit-unattached off") {
+		t.Fatal("wrapper.sh must set `exit-unattached off` in the launch chain: servers started by pre-stacking wrappers still carry the old `on` and would kill background stack sessions")
 	}
 }
 
@@ -52,7 +59,7 @@ func TestWrapper_loads_session_stack_lib_and_starts_reaper(t *testing.T) {
 // baked into the quoted body.
 func TestWrapper_binds_use_session_format_not_baked_names(t *testing.T) {
 	src := wrapperSource(t)
-	for _, fn := range []string{"stack_cycle", "stack_close_current", "stack_request_new"} {
+	for _, fn := range []string{"stack_cycle", "stack_close_current", "--stack-new"} {
 		re := regexp.MustCompile(fn + `[^\n]*#\{q:session_name\}`)
 		if !re.MatchString(src) {
 			t.Fatalf("wrapper.sh bind for %s must pass #{q:session_name} (bind-key is server-global and SESSION_NAME is unsanitized; a baked or unescaped name acts on the wrong session or breaks the quoting)", fn)
@@ -63,24 +70,34 @@ func TestWrapper_binds_use_session_format_not_baked_names(t *testing.T) {
 	}
 }
 
-func TestWrapper_claims_stack_request_before_picker(t *testing.T) {
+// The Cmd+T request/claim dance is gone: prefix+S builds the new session
+// IN-PLACE (wrapper.sh --stack-new) inside the current tab's stack. The old
+// flow detached pre-stacking wrappers' clients, whose in-memory cleanup then
+// killed their own just-adopted sessions.
+func TestWrapper_stack_new_is_inplace_not_request_claim(t *testing.T) {
 	src := wrapperSource(t)
-	claim := strings.Index(src, "stack_request_claim")
-	picker := strings.Index(src, "select_project_interactive")
-	if claim < 0 || picker < 0 || claim > picker {
-		t.Fatal("wrapper.sh must claim a pending stack-request before falling through to the picker")
+	for _, gone := range []string{"stack_request_new", "stack_request_claim"} {
+		if strings.Contains(src, gone) {
+			t.Fatalf("wrapper.sh still references %s — prefix+S must build in-place via --stack-new, not spawn a Ghostty tab", gone)
+		}
+	}
+	if !strings.Contains(src, "--stack-new") {
+		t.Fatal("wrapper.sh must implement the --stack-new in-place builder mode")
 	}
 }
 
 func TestWrapper_consolidates_only_interactive_picks(t *testing.T) {
 	src := wrapperSource(t)
-	if !strings.Contains(src, "stack_sessions_for_project") {
-		t.Fatal("wrapper.sh must capture the adopt list via stack_sessions_for_project")
+	// The adoptable variant filters out sessions without the owner-pid stamp:
+	// pre-stacking wrappers' sessions must never be adopted (their live
+	// wrappers kill their own session on detach).
+	if !strings.Contains(src, "stack_adoptable_sessions_for_project") {
+		t.Fatal("wrapper.sh must capture the adopt list via stack_adoptable_sessions_for_project")
 	}
 	// The capture must be gated on the consolidation flag so restored/arg
 	// launches never adopt (restore chain = one tab per entry).
-	idx := strings.Index(src, "stack_sessions_for_project")
-	region := src[max(0, idx-400):idx]
+	idx := strings.Index(src, "stack_adoptable_sessions_for_project")
+	region := src[max(0, idx-700):idx]
 	if !strings.Contains(region, "_gt_consolidate") || !strings.Contains(region, "RESTORE_MODE") {
 		t.Fatal("adopt-list capture must be gated on _gt_consolidate=1 and RESTORE_MODE=0")
 	}

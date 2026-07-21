@@ -7189,7 +7189,7 @@ func TestShellProductionHostEffectOwnershipGuardRejectsBypasses(t *testing.T) {
 		t.Fatalf("current shell production host-effect inventory rejected: %v", err)
 	}
 	t.Run("relocated wrapper OSC0 title", func(t *testing.T) {
-		const title = `    printf '\033]0;󰊠  Wisp Deck\007'`
+		const title = `  printf '\033]0;󰊠  Wisp Deck\007'`
 		wrapper := sources["wrapper.sh"]
 		if strings.Count(wrapper, title) != 1 {
 			t.Fatal("wrapper OSC0 relocation prerequisite missing")
@@ -7204,12 +7204,12 @@ func TestShellProductionHostEffectOwnershipGuardRejectsBypasses(t *testing.T) {
 		}
 	})
 	t.Run("wrapper OSC0 title moved into helper", func(t *testing.T) {
-		const allowed = `  else
-    # Use TUI for project selection
-    printf '\033]0;󰊠  Wisp Deck\007'
+		const allowed = `  fi
+  # Use TUI for project selection
+  printf '\033]0;󰊠  Wisp Deck\007'
 
-    # Stop loading animation before TUI takes over
-    type stop_loading_screen &>/dev/null && stop_loading_screen`
+  # Stop loading animation before TUI takes over
+  type stop_loading_screen &>/dev/null && stop_loading_screen`
 		wrapper := sources["wrapper.sh"]
 		if strings.Count(wrapper, allowed) != 1 {
 			t.Fatal("wrapper OSC0 helper-move prerequisite missing")
@@ -7411,13 +7411,13 @@ func validateShellProductionHostEffectOwnership(
 }
 
 func sanitizeExactWrapperTitleOwnership(source string) (string, error) {
-	const exactLine = `    printf '\033]0;󰊠  Wisp Deck\007'`
-	const exactOwner = `  else
-    # Use TUI for project selection
-    printf '\033]0;󰊠  Wisp Deck\007'
+	const exactLine = `  printf '\033]0;󰊠  Wisp Deck\007'`
+	const exactOwner = `  fi
+  # Use TUI for project selection
+  printf '\033]0;󰊠  Wisp Deck\007'
 
-    # Stop loading animation before TUI takes over
-    type stop_loading_screen &>/dev/null && stop_loading_screen`
+  # Stop loading animation before TUI takes over
+  type stop_loading_screen &>/dev/null && stop_loading_screen`
 	if strings.Count(source, exactLine) != 1 {
 		return "", fmt.Errorf(
 			"wrapper.sh contains %d exact picker-title commands, want 1",
