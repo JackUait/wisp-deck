@@ -95,6 +95,16 @@ tree — the zombie-prevention core feature. This becomes stack-aware:
 - Single-session close (bar hotkey) removes exactly that session's tree and
   its ownership record; other stack members are untouched.
 
+### Known v1 limitations
+
+- If the adopting tab dies mid-handoff **after** marking (its stack file
+  already lists the session and `WISP_DECK_ADOPTED_BY`/`WISP_DECK_OWNER_PID`
+  already point at it), the adopted session's owner is now a dead PID. The
+  orphan reaper (`stack_reap_orphans`) will tear that session down like any
+  other orphan once its two-strike window elapses. The adopted conversation
+  is therefore **destroyed rather than leaked** — no-zombie is prioritized
+  over no-loss.
+
 ## Interactions with existing subsystems
 
 - **Crash restore:** unchanged in v1. Restored sessions reopen as separate
