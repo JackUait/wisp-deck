@@ -30,11 +30,12 @@ case "$1" in
       printf '%%b' "$all"
     fi ;;
   has-session)
-    printf '%%s\n' "$@" >> "$log" ;;
+    printf '%%s\n' "$@" >> "$log"
+    printf '%%b' %q | grep -qF " $3" ;;
   *)
     printf '%%s\n' "$*" >> "$log" ;;
 esac
-`, dir, listSessions, envCase)
+`, dir, listSessions, envCase, listSessions)
 	return mockCommand(t, dir, "tmux", body)
 }
 
@@ -301,4 +302,70 @@ true
 	assertExitCode(t, code, 0)
 	assertNotContains(t, out, "UNEXPECTED-OK")
 	assertNotContains(t, out, "REQUEST-LEFT-BEHIND")
+}
+
+func TestStackAdoptAll_registers_before_marking(t *testing.T) {
+	dir := t.TempDir()
+	cfg := t.TempDir()
+	bin := mockTmux(t, dir, "100 dev-app-111\n", stackEnvTwoApps)
+	script := fmt.Sprintf(`
+cd %q
+source lib/session-stack.sh
+stack_adopt_all %q %q "dev-app-999" "4242" "dev-app-111"
+echo "STACK:$(stack_list %q dev-app-999 | tr '\n' ',')"
+cat %q/tmux.log
+`, projectRoot(t), filepath.Join(bin, "tmux"), cfg, cfg, dir)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "STACK:dev-app-111,")
+	assertContains(t, out, "set-environment -t dev-app-111 WISP_DECK_ADOPTED_BY dev-app-999")
+	assertContains(t, out, "set-environment -t dev-app-111 WISP_DECK_OWNER_PID 4242")
+}
+
+func TestStackAdoptedAway_true_only_when_marker_set(t *testing.T) {
+	dir := t.TempDir()
+	envCase := `
+      "dev-app-111") all='WISP_DECK=1\nWISP_DECK_PATH=/tmp/app\nWISP_DECK_ADOPTED_BY=dev-app-999\n' ;;
+      "dev-app-333") all='WISP_DECK=1\nWISP_DECK_PATH=/tmp/app\n' ;;
+`
+	bin := mockTmux(t, dir, "100 dev-app-111\n300 dev-app-333\n", envCase)
+	script := fmt.Sprintf(`
+cd %q
+source lib/session-stack.sh
+stack_adopted_away %q "dev-app-111" && echo "111-ADOPTED"
+stack_adopted_away %q "dev-app-333" || echo "333-OWNED"
+`, projectRoot(t), filepath.Join(bin, "tmux"), filepath.Join(bin, "tmux"))
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "111-ADOPTED")
+	assertContains(t, out, "333-OWNED")
+}
+
+func TestStackOwnerTeardown_kills_owned_skips_adopted_away(t *testing.T) {
+	dir := t.TempDir()
+	cfg := t.TempDir()
+	envCase := `
+      "dev-app-111") all='WISP_DECK=1\nWISP_DECK_PATH=/tmp/app\nWISP_DECK_ATTENTION_ROOT=/tmp/att-111\n' ;;
+      "dev-app-333") all='WISP_DECK=1\nWISP_DECK_PATH=/tmp/app\nWISP_DECK_ADOPTED_BY=dev-app-777\n' ;;
+`
+	bin := mockTmux(t, dir, "100 dev-app-111\n300 dev-app-333\n", envCase)
+	script := fmt.Sprintf(`
+cd %q
+source lib/session-stack.sh
+cleanup_tmux_session() { echo "CLEANUP:$1"; }
+attention_cleanup() { echo "ATTENTION:$1"; }
+stack_add %q "dev-owner-9" "dev-owner-9"
+stack_add %q "dev-owner-9" "dev-app-111"
+stack_add %q "dev-owner-9" "dev-app-333"
+stack_owner_teardown %q %q "dev-owner-9"
+[ -f %q/stacks/dev-owner-9 ] && echo "STACKFILE-LEFT"
+true
+`, projectRoot(t), cfg, cfg, cfg, filepath.Join(bin, "tmux"), cfg, cfg)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "CLEANUP:dev-app-111")     // owned → killed
+	assertContains(t, out, "ATTENTION:/tmp/att-111")  // root read from env before kill
+	assertNotContains(t, out, "CLEANUP:dev-app-333")  // adopted by dev-app-777 → skipped
+	assertNotContains(t, out, "CLEANUP:dev-owner-9")  // own session left to wrapper
+	assertNotContains(t, out, "STACKFILE-LEFT")
 }

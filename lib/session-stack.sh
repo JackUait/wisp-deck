@@ -202,3 +202,74 @@ stack_request_claim() {
   [ -d "$dir" ] || return 1
   printf '%s\n' "$dir"
 }
+
+# stack_adopt_all <tmux_cmd> <cfg_root> <new_session> <owner_pid> <old>...
+# ORDER IS THE NO-ZOMBIE INVARIANT: a session is appended to the NEW owner's
+# stack file (so the new wrapper's cleanup will kill it) BEFORE its
+# adopted-by marker is set (which makes the OLD wrapper skip killing it).
+# A crash between the two leaves the session doubly covered, never orphaned.
+stack_adopt_all() {
+  local tmux_cmd="$1" cfg="$2" new_session="$3" owner_pid="$4"
+  shift 4
+  local s
+  for s in "$@"; do
+    "$tmux_cmd" has-session -t "$s" 2>/dev/null || continue
+    stack_add "$cfg" "$new_session" "$s" || continue
+    "$tmux_cmd" set-environment -t "$s" WISP_DECK_ADOPTED_BY "$new_session" 2>/dev/null || continue
+    "$tmux_cmd" set-environment -t "$s" WISP_DECK_OWNER_PID "$owner_pid" 2>/dev/null || true
+  done
+  return 0
+}
+
+# stack_finalize_adoption <tmux_cmd> <new_session> <old>...
+# Wait for the adopting tab's client to attach, then detach the old tabs'
+# clients so their wrappers unwind in adopted-away mode. Backgrounded by
+# wrapper.sh — must never block the launch. The server-wide exit-unattached
+# option no longer exists (removed with stacking), so the detach itself can
+# not take the server down.
+stack_finalize_adoption() {
+  local tmux_cmd="$1" new_session="$2"
+  shift 2
+  local i s
+  for i in $(seq 1 100); do
+    [ -n "$("$tmux_cmd" list-clients -t "$new_session" 2>/dev/null)" ] && break
+    sleep 0.2
+  done
+  for s in "$@"; do
+    "$tmux_cmd" detach-client -s "$s" 2>/dev/null || true
+  done
+  return 0
+}
+
+# stack_adopted_away <tmux_cmd> <session> — was this tab's session taken over
+# by a newer tab? (Its wrapper must then exit without killing anything.)
+stack_adopted_away() {
+  local tmux_cmd="$1" s="$2" v
+  "$tmux_cmd" has-session -t "$s" 2>/dev/null || return 1
+  v="$("$tmux_cmd" show-environment -t "$s" WISP_DECK_ADOPTED_BY 2>/dev/null | cut -d= -f2-)"
+  [ -n "$v" ]
+}
+
+# stack_owner_teardown <tmux_cmd> <cfg_root> <owner_session>
+# Kill every session this tab owns except its own (the wrapper's existing
+# cleanup lines handle that one) and except sessions adopted away since.
+stack_owner_teardown() {
+  local tmux_cmd="$1" cfg="$2" owner="$3"
+  local s adopted_by root
+  while IFS= read -r s; do
+    [ -n "$s" ] || continue
+    [ "$s" = "$owner" ] && continue
+    "$tmux_cmd" has-session -t "$s" 2>/dev/null || continue
+    adopted_by="$("$tmux_cmd" show-environment -t "$s" WISP_DECK_ADOPTED_BY 2>/dev/null | cut -d= -f2-)"
+    if [ -n "$adopted_by" ] && [ "$adopted_by" != "$owner" ]; then
+      continue
+    fi
+    root="$("$tmux_cmd" show-environment -t "$s" WISP_DECK_ATTENTION_ROOT 2>/dev/null | cut -d= -f2-)"
+    cleanup_tmux_session "$s" "" "$tmux_cmd"
+    command -v attention_cleanup >/dev/null 2>&1 && attention_cleanup "$root" 2>/dev/null
+    command -v keep_awake_drop >/dev/null 2>&1 && keep_awake_drop "$cfg" "$s" 2>/dev/null
+    stack_session_files_cleanup "$cfg" "$s"
+  done < <(stack_list "$cfg" "$owner")
+  rm -f "$cfg/stacks/$owner"
+  return 0
+}
