@@ -657,38 +657,16 @@ func renderLedgerHeader(metadata ledger.Metadata, width int) []string {
 		}
 		stamp = fmt.Sprintf("%d %s  +%d −%d", metadata.TotalFiles, unit, metadata.Added, metadata.Deleted)
 	}
-	branch := metadata.Branch
-	if branch == "" {
-		branch = "detached"
-	}
-	// The stamp's right-aligned block wins the row: the branch takes what is
-	// left of it (leading space + 2-col gap reserved) and truncates.
-	branchMax := width - visibleRuneWidth(stamp) - 3
-	if stamp == "" {
-		branchMax = width - 1
-	}
-	if branchMax < 1 {
-		branchMax = 1
-	}
-	branch = ledgerFitPlain(branch, branchMax)
-	pad := width - 2 - visibleRuneWidth(branch) - visibleRuneWidth(stamp)
+	// The branch lives in the Claude statusline now, so the stamp owns the row
+	// alone — right-aligned, with a leading space and a 1-col right margin.
+	pad := width - 2 - visibleRuneWidth(stamp)
 	if pad < 1 {
 		pad = 1
 	}
-	line := " " + branch + strings.Repeat(" ", pad) + stamp
+	line := " " + strings.Repeat(" ", pad) + stamp
 	line = ledgerFitPlain(line, width)
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	branchEnd := 1 + len(branch)
-	if branchEnd > len(line) {
-		branchEnd = len(line)
-	}
-	branchSeg := line[1:branchEnd]
-	rest := line[branchEnd:]
-	ns, leaf := "", branchSeg
-	if i := strings.LastIndex(branchSeg, "/"); i >= 0 {
-		ns, leaf = branchSeg[:i+1], branchSeg[i+1:]
-	}
-	bright := lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+	rest := line
 	restRendered := dim.Render(rest)
 	if stamp != "" {
 		added := fmt.Sprintf("+%d", metadata.Added)
@@ -705,7 +683,7 @@ func renderLedgerHeader(metadata ledger.Metadata, width int) []string {
 				dim.Render(rest[deletedAt+len(deleted):])
 		}
 	}
-	lineRendered := dim.Render(" "+ns) + bright.Render(leaf) + restRendered
+	lineRendered := restRendered
 	ruleWidth := width - 2
 	if ruleWidth < 0 {
 		ruleWidth = 0

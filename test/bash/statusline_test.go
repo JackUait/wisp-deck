@@ -118,6 +118,10 @@ esac
 
 // statuslineCmdSetupGitRepo creates a temp git repo with one initial commit.
 // Returns (repo dir, cleanup func).
+// The branch statuslineCmdSetupGitRepo checks out — the statusline names the
+// branch, not the directory, so tests assert on this.
+const statuslineCmdBranch = "statusline-fixture-branch"
+
 func statuslineCmdSetupGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -148,6 +152,12 @@ func statuslineCmdSetupGitRepo(t *testing.T) string {
 		}
 	}
 
+	// Pin the branch name so assertions don't depend on init.defaultBranch.
+	cmd := exec.Command("git", "-C", dir, "checkout", "-q", "-b", statuslineCmdBranch)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git setup failed: %v\n%s", err, out)
+	}
+
 	return dir
 }
 
@@ -165,7 +175,6 @@ func getBaselineSHA(t *testing.T, repoDir string) string {
 func TestStatusline_statusline_command_omits_diff_counts_even_with_baseline_set(t *testing.T) {
 	repoDir := statuslineCmdSetupGitRepo(t)
 	baselineSHA := getBaselineSHA(t, repoDir)
-	repoBasename := filepath.Base(repoDir)
 
 	// Change the working tree so a diff would exist if counts were rendered.
 	f, err := os.OpenFile(filepath.Join(repoDir, "file.txt"), os.O_APPEND|os.O_WRONLY, 0644)
@@ -190,14 +199,13 @@ func TestStatusline_statusline_command_omits_diff_counts_even_with_baseline_set(
 	env := buildEnv(t, nil, "WISP_DECK_BASELINE_FILE="+baselineFile)
 	out, code := runBashSnippet(t, script, env)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, repoBasename)
+	assertContains(t, out, statuslineCmdBranch)
 	assertNotContains(t, out, "+3")
 	assertNotContains(t, out, "/ -")
 }
 
 func TestStatusline_statusline_command_falls_back_to_repo_branch_only_without_baseline(t *testing.T) {
 	repoDir := statuslineCmdSetupGitRepo(t)
-	repoBasename := filepath.Base(repoDir)
 
 	root := projectRoot(t)
 	cmdPath := filepath.Join(root, "templates", "statusline-command.sh")
@@ -207,14 +215,13 @@ func TestStatusline_statusline_command_falls_back_to_repo_branch_only_without_ba
 
 	out, code := runBashSnippet(t, script, nil)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, repoBasename)
+	assertContains(t, out, statuslineCmdBranch)
 	assertNotContains(t, out, "+0")
 	assertNotContains(t, out, "/ -")
 }
 
 func TestStatusline_statusline_command_falls_back_when_baseline_file_missing(t *testing.T) {
 	repoDir := statuslineCmdSetupGitRepo(t)
-	repoBasename := filepath.Base(repoDir)
 
 	root := projectRoot(t)
 	cmdPath := filepath.Join(root, "templates", "statusline-command.sh")
@@ -224,7 +231,7 @@ func TestStatusline_statusline_command_falls_back_when_baseline_file_missing(t *
 	env := buildEnv(t, nil, "WISP_DECK_BASELINE_FILE=/tmp/wisp-deck-nonexistent-baseline")
 	out, code := runBashSnippet(t, script, env)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, repoBasename)
+	assertContains(t, out, statuslineCmdBranch)
 	assertNotContains(t, out, "+0")
 	assertNotContains(t, out, "/ -")
 }
@@ -265,12 +272,14 @@ func TestStatusline_statusline_command_prefixes_worktree_icon_before_name(t *tes
 	}
 }
 
-func TestStatusline_statusline_command_omits_branch_name(t *testing.T) {
+// The statusline names the checked-out branch (it moved here from the ledger
+// header); the directory name is already on the tab title, so it is dropped.
+func TestStatusline_statusline_command_shows_branch_instead_of_dirname(t *testing.T) {
 	repoDir := statuslineCmdSetupGitRepo(t)
 	repoBasename := filepath.Base(repoDir)
 
 	// Check out a uniquely-named branch so its presence is unambiguous.
-	branchName := "wisp-deck-omit-branch-check"
+	branchName := "wisp-deck-branch-check"
 	cmd := exec.Command("git", "-C", repoDir, "checkout", "-q", "-b", branchName)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git checkout failed: %v\n%s", err, out)
@@ -283,8 +292,34 @@ func TestStatusline_statusline_command_omits_branch_name(t *testing.T) {
 
 	out, code := runBashSnippet(t, script, nil)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, repoBasename)
-	assertNotContains(t, out, branchName)
+	assertContains(t, out, branchName)
+	assertNotContains(t, out, repoBasename)
+}
+
+// A detached HEAD has no branch to name — the statusline falls back to the
+// short commit SHA rather than rendering an empty segment.
+func TestStatusline_statusline_command_shows_short_sha_when_detached(t *testing.T) {
+	repoDir := statuslineCmdSetupGitRepo(t)
+
+	sha, err := exec.Command("git", "-C", repoDir, "rev-parse", "--short", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse failed: %v", err)
+	}
+	shortSHA := strings.TrimSpace(string(sha))
+
+	cmd := exec.Command("git", "-C", repoDir, "checkout", "-q", "--detach", "HEAD")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git checkout --detach failed: %v\n%s", err, out)
+	}
+
+	root := projectRoot(t)
+	cmdPath := filepath.Join(root, "templates", "statusline-command.sh")
+	stdinData := fmt.Sprintf(`{"current_dir":"%s"}`, repoDir)
+	script := fmt.Sprintf(`echo '%s' | bash '%s'`, stdinData, cmdPath)
+
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, shortSHA)
 }
 
 // Nerd Font glyphs the wrapper prefixes onto each metric so context %, memory,

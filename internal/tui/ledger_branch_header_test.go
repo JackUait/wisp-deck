@@ -7,45 +7,49 @@ import (
 	"github.com/jackuait/wisp-deck/internal/ledger"
 )
 
-// The branch name lives on the header's LEFT side (it moved out of the
-// footer), with the changed-file stamp still right-aligned on the same line.
-func TestLedgerHeaderShowsBranchOnLeft(t *testing.T) {
+// The branch name moved out of the ledger entirely — it now lives in the
+// Claude statusline. The header keeps only the right-aligned changed-file
+// stamp.
+func TestLedgerHeaderOmitsBranchKeepsStamp(t *testing.T) {
 	raw := renderLedgerHeader(ledger.Metadata{
 		Branch: "feature/perf", TotalFiles: 8, Added: 654, Deleted: 25,
 	}, 80)[0]
 
 	plain := stripANSI(raw)
-	if !strings.HasPrefix(plain, " feature/perf") {
-		t.Fatalf("header does not lead with the branch name: %q", plain)
+	if strings.Contains(plain, "feature/perf") {
+		t.Fatalf("header still names the branch: %q", plain)
 	}
 	if !strings.Contains(plain, "8 files  +654 −25") {
 		t.Fatalf("header lost the changed-file stamp: %q", plain)
 	}
-}
-
-// An empty branch (detached HEAD) renders as "detached", exactly as the
-// footer used to label it.
-func TestLedgerHeaderShowsDetachedWhenBranchEmpty(t *testing.T) {
-	raw := renderLedgerHeader(ledger.Metadata{TotalFiles: 1, Added: 1}, 80)[0]
-
-	if plain := stripANSI(raw); !strings.HasPrefix(plain, " detached") {
-		t.Fatalf("empty branch does not render as detached: %q", plain)
+	if !strings.HasSuffix(strings.TrimRight(plain, " "), "8 files  +654 −25") {
+		t.Fatalf("stamp is not right-aligned: %q", plain)
 	}
 }
 
-// A branch wider than the pane truncates rather than displacing the stamp or
-// overflowing the row.
-func TestLedgerHeaderTruncatesLongBranchBeforeStamp(t *testing.T) {
+// A detached HEAD has no branch to report, and the header never had one to
+// begin with — the stamp still renders.
+func TestLedgerHeaderRendersStampWhenBranchEmpty(t *testing.T) {
+	raw := renderLedgerHeader(ledger.Metadata{TotalFiles: 1, Added: 1}, 80)[0]
+
+	plain := stripANSI(raw)
+	if strings.Contains(plain, "detached") {
+		t.Fatalf("header labels a detached HEAD it no longer tracks: %q", plain)
+	}
+	if !strings.Contains(plain, "1 file  +1 −0") {
+		t.Fatalf("header lost the changed-file stamp: %q", plain)
+	}
+}
+
+// Even at a narrow width the header row never overflows the pane.
+func TestLedgerHeaderFitsNarrowPane(t *testing.T) {
 	raw := renderLedgerHeader(ledger.Metadata{
 		Branch: strings.Repeat("b", 100), TotalFiles: 2, Added: 5, Deleted: 1,
 	}, 40)[0]
 
 	plain := stripANSI(raw)
-	if !strings.Contains(plain, "bbb") {
-		t.Fatalf("truncated branch not on the header at all: %q", plain)
-	}
 	if !strings.Contains(plain, "2 files  +5 −1") {
-		t.Fatalf("stamp displaced by long branch: %q", plain)
+		t.Fatalf("header lost the stamp: %q", plain)
 	}
 	if w := visibleRuneWidth(plain); w > 40 {
 		t.Fatalf("header row overflows the pane: %d cols > 40 (%q)", w, plain)
@@ -53,7 +57,7 @@ func TestLedgerHeaderTruncatesLongBranchBeforeStamp(t *testing.T) {
 }
 
 // The footer keeps the commits to push (↑N) and pull (↓M) but no longer names
-// the branch — that moved to the header.
+// the branch.
 func TestLedgerFooterKeepsAheadBehindWithoutBranchName(t *testing.T) {
 	m := NewLedgerModel(fakeLedgerSource{}, ledgerTestSnapshot(3), LedgerOptions{})
 	sizeLedger(m, 80, 14)

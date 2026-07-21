@@ -116,11 +116,15 @@ func TestLedgerViewRendersFileStatesAndMetadata(t *testing.T) {
 	for _, want := range []string{
 		"2 files", "+12", "−3", "modified", "(2)",
 		"☑", "selected.go", "☐", "+1.5KB", "image.png",
-		"feature/perf", "↑2", "↓1",
+		"↑2", "↓1",
 	} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("view missing %q:\n%s", want, plain)
 		}
+	}
+	// The branch name moved to the Claude statusline; the ledger never shows it.
+	if strings.Contains(plain, "feature/perf") {
+		t.Errorf("view still renders the branch name:\n%s", plain)
 	}
 	if !strings.Contains(raw, "48;5;238") {
 		t.Errorf("hover row lacks full-row background style: %q", raw)

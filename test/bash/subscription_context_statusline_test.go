@@ -138,6 +138,7 @@ if [[ "$*" == *"comm="* ]]; then echo "sh"; else echo "1"; fi
 `)
 	binDir := filepath.Join(dir, "bin")
 	env := buildEnv(t, []string{binDir}, "HOME="+fakeHome,
+		"PATH="+binDir+":/usr/bin:/bin",
 		"CLAUDE_CONFIG_DIR=", "WISP_DECK_CLAUDE_CONFIG=glm.json")
 
 	out, code := runContextWrapper(t, env, contextStdin)
