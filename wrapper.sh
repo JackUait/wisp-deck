@@ -318,20 +318,26 @@ else
   fi
 fi
 
-# Same-project sessions already open in other tabs. Captured pre-launch,
-# adopted post-launch. Tmux-only — this sits on the post-pick critical path.
-# Gated: interactive picks only; a restored tab must never consolidate (the
-# restore chain relies on one tab per queue entry). Adoptable means the
-# session carries the WISP_DECK_OWNER_PID stamp: a session launched by a
-# pre-stacking wrapper must NOT be adopted — its still-running wrapper kills
-# its own session unconditionally when its client detaches, so adoption would
-# close it instead of stacking it. Those sessions keep their own tabs.
-_gt_adopt=()
+# Same-project stack already open in another tab? Then this pick ADDS a
+# session to that tab instead of replacing it: the fresh session is built
+# in-place into the existing owner's stack (exactly like prefix+S), the
+# owner tab's client is switched to it, and this picker tab closes itself.
+# Opening a project twice never closes existing tabs. Detection is tmux +
+# registry files only — this sits on the post-pick critical path. Gated:
+# interactive picks only; a restored tab must never consolidate (the restore
+# chain relies on one tab per queue entry). Only owners whose sessions carry
+# the WISP_DECK_OWNER_PID stamp qualify: a pre-stacking tab cannot host or
+# clean up a stacked session, so those keep their own tabs and this pick
+# opens a normal fresh tab alongside them.
 if [ "${_gt_consolidate:-0}" = "1" ] && [ "$RESTORE_MODE" -eq 0 ]; then
-  while IFS= read -r _gt_s; do
-    [ -n "$_gt_s" ] && _gt_adopt+=("$_gt_s")
-  done < <(stack_adoptable_sessions_for_project "$TMUX_CMD" "$(pwd)")
-  unset _gt_s
+  IFS=$'\t' read -r _stack_owner _stack_owner_pid _stack_client < <(
+    stack_live_owner_for_project "$TMUX_CMD" "$SHARE_DIR" "$(pwd)"
+  ) || true
+  if [ -n "$_stack_owner" ] && [ -n "$_stack_owner_pid" ]; then
+    WISP_DECK_STACK_BUILD=1
+  else
+    _stack_owner="" _stack_owner_pid="" _stack_client=""
+  fi
 fi
 
 PROJECT_DIR="$(pwd)"
@@ -743,15 +749,17 @@ write_relaunch_context "$WISP_DECK_RELAUNCH_FILE" "$SELECTED_AI_TOOL" \
   "$WISP_DECK_CLAUDE_SETTINGS_SOURCE"
 export WISP_DECK_RELAUNCH_FILE
 
-# In-place stack build: the session is complete — hand it to the owner tab
-# and get out of the way. ORDER IS THE NO-ZOMBIE INVARIANT (mirrors
-# stack_adopt_all): the session enters the OWNER's stack file (so the owner
-# tab's close will kill it) BEFORE its owner-pid stamp flips from this
-# builder to the owner wrapper (which stops the orphan reaper from tying its
-# life to this exiting process). A crash between the two leaves the session
-# doubly covered, never orphaned. Binds are server-global and already
-# installed by the owner tab's launch; the hover routing is per-session and
-# is installed here. No attach — the pressing client is switched instead.
+# In-place stack build — reached by prefix+S (--stack-new) AND by an
+# interactive pick of an already-open project: the session is complete —
+# hand it to the owner tab and get out of the way. ORDER IS THE NO-ZOMBIE
+# INVARIANT: the session enters the OWNER's stack file (so the owner tab's
+# close will kill it) BEFORE its owner-pid stamp flips from this builder to
+# the owner wrapper (which stops the orphan reaper from tying its life to
+# this exiting process). A crash between the two leaves the session doubly
+# covered, never orphaned. Binds are server-global and already installed by
+# the owner tab's launch; the hover routing is per-session and is installed
+# here. No attach — the owner tab's client is switched instead, and an
+# interactive picker tab closes itself on the exit below.
 if [ "$WISP_DECK_STACK_BUILD" = "1" ]; then
   stack_add "$SHARE_DIR" "$_stack_owner" "$SESSION_NAME"
   "$TMUX_CMD" set-environment -t "$SESSION_NAME" WISP_DECK_OWNER_PID "$_stack_owner_pid" 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}"
@@ -765,17 +773,10 @@ if [ "$WISP_DECK_STACK_BUILD" = "1" ]; then
   exit 0
 fi
 
-# Register this tab's own session, then adopt same-project sessions from
-# other tabs. The finalizer detaches the old tabs' clients only after OUR
-# client is attached, so the project is never left with zero attached
-# clients mid-handoff. Repaint is immediate: the bar must show the stack the
-# moment the user can see the pane.
+# Register this tab's own session in its own stack file. (A pick of an
+# already-open project never reaches here — it exits above after building
+# into the existing tab's stack.)
 stack_add "$SHARE_DIR" "$SESSION_NAME" "$SESSION_NAME"
-if [ "${#_gt_adopt[@]}" -gt 0 ]; then
-  stack_adopt_all "$TMUX_CMD" "$SHARE_DIR" "$SESSION_NAME" "$$" "${_gt_adopt[@]}"
-  stack_finalize_adoption "$TMUX_CMD" "$SESSION_NAME" "${_gt_adopt[@]}" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" 3>&- &
-  stack_repaint "$TMUX_CMD" "$SHARE_DIR" "$PROJECT_NAME" "$PROJECT_DIR"
-fi
 
 # Start the descriptor consumer before the attach (which blocks until the
 # session ends).

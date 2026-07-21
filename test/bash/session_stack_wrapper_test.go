@@ -86,20 +86,32 @@ func TestWrapper_stack_new_is_inplace_not_request_claim(t *testing.T) {
 	}
 }
 
-func TestWrapper_consolidates_only_interactive_picks(t *testing.T) {
+func TestWrapper_opens_into_existing_tab_only_on_interactive_picks(t *testing.T) {
 	src := wrapperSource(t)
-	// The adoptable variant filters out sessions without the owner-pid stamp:
-	// pre-stacking wrappers' sessions must never be adopted (their live
-	// wrappers kill their own session on detach).
-	if !strings.Contains(src, "stack_adoptable_sessions_for_project") {
-		t.Fatal("wrapper.sh must capture the adopt list via stack_adoptable_sessions_for_project")
+	// Picking an already-open project builds INTO the existing tab's stack
+	// (via the live-owner lookup, which filters out pre-stacking sessions
+	// lacking the owner-pid stamp) instead of adopting-and-closing tabs.
+	if !strings.Contains(src, "stack_live_owner_for_project") {
+		t.Fatal("wrapper.sh must detect the existing tab via stack_live_owner_for_project")
 	}
-	// The capture must be gated on the consolidation flag so restored/arg
-	// launches never adopt (restore chain = one tab per entry).
-	idx := strings.Index(src, "stack_adoptable_sessions_for_project")
-	region := src[max(0, idx-700):idx]
+	// The detection must be gated on the consolidation flag so restored/arg
+	// launches always get their own tab (restore chain = one tab per entry).
+	idx := strings.Index(src, "stack_live_owner_for_project")
+	region := src[max(0, idx-900):idx]
 	if !strings.Contains(region, "_gt_consolidate") || !strings.Contains(region, "RESTORE_MODE") {
-		t.Fatal("adopt-list capture must be gated on _gt_consolidate=1 and RESTORE_MODE=0")
+		t.Fatal("live-owner detection must be gated on _gt_consolidate=1 and RESTORE_MODE=0")
+	}
+}
+
+// Opening the same project must never close the tabs the user already has:
+// the adoption handoff (new tab adopts old sessions, finalizer detaches the
+// old tabs' clients) is gone.
+func TestWrapper_never_adopts_or_detaches_existing_tabs(t *testing.T) {
+	src := wrapperSource(t)
+	for _, gone := range []string{"stack_adopt_all", "stack_finalize_adoption", "detach-client"} {
+		if strings.Contains(src, gone) {
+			t.Fatalf("wrapper.sh still references %s — opening an already-open project must add a session to the existing tab's stack, never close existing tabs", gone)
+		}
 	}
 }
 
@@ -117,12 +129,9 @@ func TestWrapper_cleanup_is_stack_aware(t *testing.T) {
 	}
 }
 
-func TestWrapper_registers_own_session_and_backgrounds_finalizer(t *testing.T) {
+func TestWrapper_registers_own_session_in_own_stack_file(t *testing.T) {
 	src := wrapperSource(t)
 	if !regexp.MustCompile(`stack_add "\$SHARE_DIR" "\$SESSION_NAME" "\$SESSION_NAME"`).MatchString(src) {
 		t.Fatal("wrapper.sh must register its own session in its stack file")
-	}
-	if !regexp.MustCompile(`(?m)stack_finalize_adoption[^\n]*&\s*$`).MatchString(src) {
-		t.Fatal("stack_finalize_adoption must be backgrounded (it waits for the attach)")
 	}
 }

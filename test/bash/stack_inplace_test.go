@@ -104,7 +104,7 @@ func TestWrapperStackNew_builds_inplace_session_registered_to_owner(t *testing.T
 	}
 }
 
-// Ownership handoff ordering mirrors stack_adopt_all: the session is
+// Ownership handoff ordering (the no-zombie invariant): the session is
 // registered in the owner's stack file BEFORE the owner-pid restamp, so a
 // crash between the two leaves it doubly covered (builder cleanup + owner),
 // never orphaned. Observable as: the restamp call happens, and by then the

@@ -296,46 +296,10 @@ cat %q/tmux.log 2>/dev/null || true
 	assertNotContains(t, out, "STACK:dev-web-222") // deregistered: entry removed, list now empty
 }
 
-func TestStackAdoptAll_registers_before_marking(t *testing.T) {
-	dir := t.TempDir()
-	cfg := t.TempDir()
-	bin := mockTmux(t, dir, "100 dev-app-111\n", stackEnvTwoApps)
-	// Wrap stack_add so it logs to the SAME tmux.log the mockTmux
-	// set-environment lines land in, then still performs the real
-	// registration. This lets the assertions below prove ORDER, not just
-	// presence: an order-inverting regression (mark-then-register) would
-	// still pass a presence-only check but fails the index comparison.
-	script := fmt.Sprintf(`
-cd %q
-source lib/session-stack.sh
-orig_stack_add="$(declare -f stack_add)"
-eval "orig_${orig_stack_add}"
-stack_add() { echo "STACK-ADD:$3" >> %q/tmux.log; orig_stack_add "$@"; }
-stack_adopt_all %q %q "dev-app-999" "4242" "dev-app-111"
-echo "STACK:$(stack_list %q dev-app-999 | tr '\n' ',')"
-cat %q/tmux.log
-`, projectRoot(t), dir, filepath.Join(bin, "tmux"), cfg, cfg, dir)
-	out, code := runBashSnippet(t, script, nil)
-	assertExitCode(t, code, 0)
-	assertContains(t, out, "STACK:dev-app-111,")
-	assertContains(t, out, "set-environment -t dev-app-111 WISP_DECK_ADOPTED_BY dev-app-999")
-	assertContains(t, out, "set-environment -t dev-app-111 WISP_DECK_OWNER_PID 4242")
-
-	logBytes, err := os.ReadFile(filepath.Join(dir, "tmux.log"))
-	if err != nil {
-		t.Fatalf("reading tmux.log: %v", err)
-	}
-	log := string(logBytes)
-	addIdx := strings.Index(log, "STACK-ADD:dev-app-111")
-	markIdx := strings.Index(log, "set-environment -t dev-app-111 WISP_DECK_ADOPTED_BY")
-	if addIdx < 0 || markIdx < 0 {
-		t.Fatalf("expected both markers in tmux.log, got %q", log)
-	}
-	if addIdx >= markIdx {
-		t.Errorf("expected stack_add BEFORE the adopted-by marker (no-zombie invariant): add@%d, mark@%d, log=%q", addIdx, markIdx, log)
-	}
-}
-
+// stack_adopted_away survives the adoption-handoff removal as an
+// upgrade-boundary defense: a still-running picker wrapper from the adoption
+// era can adopt a NEW wrapper's session (its in-memory code, not this repo's),
+// and the new wrapper's cleanup must then not kill the taken-over session.
 func TestStackAdoptedAway_true_only_when_marker_set(t *testing.T) {
 	dir := t.TempDir()
 	envCase := `

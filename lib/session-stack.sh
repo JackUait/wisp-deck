@@ -46,10 +46,45 @@ stack_adoptable_sessions_for_project() {
   return 0
 }
 
+# stack_live_owner_for_project <tmux_cmd> <cfg_root> <project_dir>
+# Print "owner<TAB>pid<TAB>client" for the live tab already hosting this
+# project's stack: owner = the registry file naming that tab's stack, pid =
+# the owning wrapper (checked alive), client = a tmux client attached to any
+# session of that stack (may be empty if the tab is momentarily unattached).
+# Prints nothing when no such tab exists — pre-stacking sessions (no
+# owner-pid stamp), dead owners, sessions no registry lists — and the caller
+# then launches a normal fresh tab. Tmux + registry files only: this runs on
+# the post-pick critical path.
+stack_live_owner_for_project() {
+  local tmux_cmd="$1" cfg="$2" project_dir="$3"
+  local s pid f owner member client
+  while IFS= read -r s; do
+    [ -n "$s" ] || continue
+    pid="$("$tmux_cmd" show-environment -t "$s" WISP_DECK_OWNER_PID 2>/dev/null | cut -d= -f2-)"
+    case "$pid" in '' | *[!0-9]*) continue ;; esac
+    kill -0 "$pid" 2>/dev/null || continue
+    for f in "$cfg"/stacks/*; do
+      [ -f "$f" ] || continue
+      owner="${f##*/}"
+      [ "$owner" = ".reap-marks" ] && continue
+      grep -qxF "$s" "$f" 2>/dev/null || continue
+      client=""
+      while IFS= read -r member; do
+        [ -n "$member" ] || continue
+        client="$("$tmux_cmd" list-clients -t "$member" -F '#{client_name}' 2>/dev/null | head -n 1)"
+        [ -n "$client" ] && break
+      done < "$f"
+      printf '%s\t%s\t%s\n' "$owner" "$pid" "$client"
+      return 0
+    done
+  done < <(stack_adoptable_sessions_for_project "$tmux_cmd" "$project_dir")
+  return 0
+}
+
 # Stack registry: <cfg_root>/stacks/<owner_session> lists every session that
 # tab owns (including its own). The owning wrapper's cleanup kills exactly
-# this list; adoption edits it. Single writer per file in practice (the
-# owning wrapper and the close/adopt helpers it spawns), no locking.
+# this list; in-place builds append to it. Single writer per file in practice
+# (the owning wrapper and the close/build helpers it spawns), no locking.
 
 stack_add() {
   local cfg="$1" owner="$2" session="$3" f
@@ -190,46 +225,12 @@ stack_close_current() {
   return 0
 }
 
-# stack_adopt_all <tmux_cmd> <cfg_root> <new_session> <owner_pid> <old>...
-# ORDER IS THE NO-ZOMBIE INVARIANT: a session is appended to the NEW owner's
-# stack file (so the new wrapper's cleanup will kill it) BEFORE its
-# adopted-by marker is set (which makes the OLD wrapper skip killing it).
-# A crash between the two leaves the session doubly covered, never orphaned.
-stack_adopt_all() {
-  local tmux_cmd="$1" cfg="$2" new_session="$3" owner_pid="$4"
-  shift 4
-  local s
-  for s in "$@"; do
-    "$tmux_cmd" has-session -t "$s" 2>/dev/null || continue
-    stack_add "$cfg" "$new_session" "$s" || continue
-    "$tmux_cmd" set-environment -t "$s" WISP_DECK_ADOPTED_BY "$new_session" 2>/dev/null || continue
-    "$tmux_cmd" set-environment -t "$s" WISP_DECK_OWNER_PID "$owner_pid" 2>/dev/null || true
-  done
-  return 0
-}
-
-# stack_finalize_adoption <tmux_cmd> <new_session> <old>...
-# Wait for the adopting tab's client to attach, then detach the old tabs'
-# clients so their wrappers unwind in adopted-away mode. Backgrounded by
-# wrapper.sh — must never block the launch. The server-wide exit-unattached
-# option no longer exists (removed with stacking), so the detach itself can
-# not take the server down.
-stack_finalize_adoption() {
-  local tmux_cmd="$1" new_session="$2"
-  shift 2
-  local i s
-  for i in $(seq 1 100); do
-    [ -n "$("$tmux_cmd" list-clients -t "$new_session" 2>/dev/null)" ] && break
-    sleep 0.2
-  done
-  for s in "$@"; do
-    "$tmux_cmd" detach-client -s "$s" 2>/dev/null || true
-  done
-  return 0
-}
-
 # stack_adopted_away <tmux_cmd> <session> — was this tab's session taken over
-# by a newer tab? (Its wrapper must then exit without killing anything.)
+# by a newer tab? Nothing in THIS repo sets WISP_DECK_ADOPTED_BY anymore
+# (re-picking an open project now builds into the existing tab instead of
+# adopting), but a still-running picker wrapper from the adoption era adopts
+# with its in-memory code — this check keeps the new wrapper's cleanup from
+# killing a session such a tab took over.
 stack_adopted_away() {
   local tmux_cmd="$1" s="$2" v
   "$tmux_cmd" has-session -t "$s" 2>/dev/null || return 1

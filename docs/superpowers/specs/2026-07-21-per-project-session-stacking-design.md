@@ -33,23 +33,34 @@ keyboard-only).
 
 ### Consolidation moment (re-picking an already-open project)
 
-Ghostty cannot programmatically focus an existing tab (the adapter can only
-`open -na Ghostty`), so the roles flip — with the same visible outcome as
-"jump to the existing tab":
+*(Revised 2026-07-21: v1 flipped the roles — the new tab adopted the old
+tabs' sessions and the old tabs closed. Closing the user's existing tabs was
+the wrong trade; the direction is now reversed.)*
 
-1. After `select_project_interactive`, wrapper.sh detects whether a live wisp
-   session already exists for the picked project. Detection is cheap tmux
-   introspection only (`tmux ls` + per-session env lookup) — **no blocking
-   subprocess**; the launch-critical-path budget (~130ms) and its guard test
-   must stay green.
-2. The new tab creates its fresh session as normal and **adopts** the
-   project's existing session(s) into its stack. All sessions live on the same
-   tmux server, so any tab's client can switch to any of them.
-3. The old tab hands off ownership of its session(s) to the new tab and closes
-   itself **without** killing its session's process tree.
+Re-picking an already-open project **adds a session to the existing tab**
+and never closes any existing tab:
 
-Result: the user lands in the front tab, in a fresh conversation, with the old
-conversation one switch away. One tab per project remains.
+1. After `select_project_interactive`, wrapper.sh looks up the live tab
+   already hosting this project's stack (`stack_live_owner_for_project`:
+   registry file + owner pid + attached client). Detection is cheap tmux
+   introspection and registry-file reads only — **no blocking subprocess**;
+   the launch-critical-path budget (~130ms) and its guard test must stay
+   green.
+2. If one exists, the picker tab becomes an in-place builder (the same path
+   as prefix+S): it constructs the full fresh session, registers it in the
+   EXISTING owner's stack file, restamps its owner-pid to the existing
+   owner's wrapper (register-before-restamp ordering), switches the owner
+   tab's client to the new session, and exits — which closes the picker tab.
+3. If none exists (no session, dead owner, or a pre-stacking tab without the
+   owner-pid stamp), the pick launches a normal fresh tab.
+
+Result: the existing tab shows the fresh conversation, with the old one a
+switch away on its session bar; the surplus picker tab closes itself. One
+tab per project remains — the tab the user already had. The adoption
+handoff (`stack_adopt_all` / `stack_finalize_adoption`, and its
+detach-clients finalizer) is removed; `WISP_DECK_ADOPTED_BY` is no longer
+written, though the cleanup still honours it as an upgrade-boundary defense
+against adoption-era wrappers still running in memory.
 
 ### Session bar
 
@@ -104,13 +115,12 @@ tree — the zombie-prevention core feature. This becomes stack-aware:
 
 ### Known v1 limitations
 
-- If the adopting tab dies mid-handoff **after** marking (its stack file
-  already lists the session and `WISP_DECK_ADOPTED_BY`/`WISP_DECK_OWNER_PID`
-  already point at it), the adopted session's owner is now a dead PID. The
-  orphan reaper (`stack_reap_orphans`) will tear that session down like any
-  other orphan once its two-strike window elapses. The adopted conversation
-  is therefore **destroyed rather than leaked** — no-zombie is prioritized
-  over no-loss.
+- If the owner tab dies right after an in-place build's handoff (its stack
+  file already lists the new session and `WISP_DECK_OWNER_PID` already
+  points at it), the new session's owner is a dead PID. The orphan reaper
+  (`stack_reap_orphans`) will tear that session down like any other orphan
+  once its two-strike window elapses. The stacked conversation is therefore
+  **destroyed rather than leaked** — no-zombie is prioritized over no-loss.
 
 ### Upgrade boundary (live install)
 
@@ -118,13 +128,15 @@ The install is a live symlink: new code deploys the moment it lands, but
 long-running wrapper processes keep their old script and traps in memory.
 Two consequences, both handled explicitly:
 
-- **Adoption is gated on protocol capability.** A session launched by a
-  pre-stacking wrapper lacks the `WISP_DECK_OWNER_PID` env stamp, and its
-  still-running wrapper kills its own session unconditionally when its client
-  detaches — adopting it would close it instead of stacking it. Consolidation
-  therefore adopts only sessions carrying the stamp
-  (`stack_adoptable_sessions_for_project`); older sessions keep their own tabs,
-  and `--stack-new` refuses to build for an unstamped owner.
+- **Stacking into a tab is gated on protocol capability.** A session
+  launched by a pre-stacking wrapper lacks the `WISP_DECK_OWNER_PID` env
+  stamp, and its tab has no stack registry, no reaper coverage, and no stack
+  binds — building into it would leak or strand the new session. The
+  live-owner lookup therefore considers only sessions carrying the stamp
+  (`stack_adoptable_sessions_for_project`, via
+  `stack_live_owner_for_project`); older sessions keep their own tabs and a
+  re-pick opens a normal fresh tab alongside, and `--stack-new` refuses to
+  build for an unstamped owner.
 - **`exit-unattached off` is written on every launch.** Pre-stacking wrappers
   set the server-wide `exit-unattached on`; a server started by one keeps that
   fossil, and one all-clients-detached moment would kill every background
