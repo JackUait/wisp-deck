@@ -70,7 +70,7 @@ if [ ! -d "$_WRAPPER_DIR/lib" ]; then
   exit 1
 fi
 
-_gt_libs=(theme ai-tools projects process input tui install menu-tui project-actions ledger-hover tmux-session settings-json notification-setup keep-awake tab-title-watcher terminals/ghostty session-restore claude-configs claude-accounts claude-shared-settings auto-switch attention account-switch compact-view screenshot spare-tabs)
+_gt_libs=(theme ai-tools projects process input tui install menu-tui project-actions ledger-hover tmux-session settings-json notification-setup keep-awake tab-title-watcher terminals/ghostty session-restore claude-configs claude-accounts claude-shared-settings auto-switch attention account-switch compact-view screenshot spare-tabs tab-view)
 for _gt_lib in "${_gt_libs[@]}"; do
   if [ ! -f "$_WRAPPER_DIR/lib/${_gt_lib}.sh" ]; then
     printf '\033[31mError:\033[0m Missing library %s/lib/%s.sh\n' "$_WRAPPER_DIR" "$_gt_lib" >&2
@@ -625,10 +625,16 @@ fi
 
 env -u WISP_DECK_TESTING "$TMUX_CMD" new-session -d -P -F '#{pane_id}' -x "$_tmux_cols" -y "$_tmux_rows" -s "$SESSION_NAME" "${_wisp_deck_testing_tmux_args[@]}" -e "PATH=$PATH" -e "WISP_DECK_ATTENTION_ROOT=$WISP_DECK_ATTENTION_ROOT" -e "WISP_DECK_ATTENTION_DESCRIPTOR=$WISP_DECK_ATTENTION_DESCRIPTOR" -e "WISP_DECK_ATTENTION_GENERATION=$WISP_DECK_ATTENTION_GENERATION" -e "WISP_DECK_ATTENTION_FILE=$WISP_DECK_ATTENTION_FILE" -e "WISP_DECK=1" -e "WISP_DECK_BOOT=$WISP_DECK_BOOT_ID" -e "WISP_DECK_PROJECT=$PROJECT_NAME" -e "WISP_DECK_PATH=$PROJECT_DIR" -e "WISP_DECK_TOOL=$SELECTED_AI_TOOL" -e "WISP_DECK_TERMINAL=$WISP_DECK_TERMINAL" -e "WISP_DECK_CLAUDE_SESSION=$WISP_DECK_CLAUDE_SESSION" -e "WISP_DECK_CODEX_SESSION=$WISP_DECK_CODEX_SESSION" -e "WISP_DECK_CODEX_SESSION_FILE=$WISP_DECK_CODEX_SESSION_FILE" -e "WISP_DECK_CLAUDE_PROVIDER=$WISP_DECK_CLAUDE_PROVIDER" -e "WISP_DECK_CLAUDE_CONFIG=$WISP_DECK_CLAUDE_CONFIG" -e "WISP_DECK_CODEX_CMD=$WISP_DECK_CODEX_CMD" -e "WISP_DECK_PLAN=$WISP_DECK_PLAN" -e "WISP_DECK_RELAUNCH_FILE=$SHARE_DIR/relaunch-${SESSION_NAME}" -e "WISP_DECK_CLAUDE_ACCOUNT=${WISP_DECK_CLAUDE_ACCOUNT_DIR##*/}" -e "WISP_DECK_SEQ=${_wd_launch_seq}" -e "WISP_DECK_LIB_DIR=$_WRAPPER_DIR/lib" -c "$PROJECT_DIR" \
   "$_pane0_cmd" \; \
-  set-option status-left " ⬡ ${PROJECT_NAME} " \; \
+  set-option status on \; \
+  set-option status-position top \; \
+  set-option status-left-length 400 \; \
+  set-option status-left "$(tab_view_status_left "$PROJECT_NAME" "$_gt_accent")" \; \
   set-option status-left-style "fg=white,bg=colour236,bold" \; \
   set-option status-style "bg=colour235" \; \
   set-option status-right "" \; \
+  set-option window-status-format "" \; \
+  set-option window-status-current-format "" \; \
+  set-option window-status-separator "" \; \
   set-option set-titles off \; \
   set-option pane-border-style "fg=colour238" \; \
   set-option pane-active-border-style "fg=colour${_gt_accent}" \; \
@@ -705,6 +711,15 @@ if [ "$RESTORE_MODE" -eq 1 ] && [ -n "${WISP_DECK_RESUME_LAYOUT:-}" ]; then
   restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$WISP_DECK_RESUME_LAYOUT" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
 fi
 
+# Tab view actions. Server-global binds must never bake a session name —
+# #{q:...} expands (shell-escaped) at event time, so the handler always acts
+# on the session the key/click landed in. The status mouse binds are added in
+# the batch BEFORE the ledger-hover install: the hover setup clones the
+# session's effective key table, and binds added after the clone would be
+# invisible to it (status clicks lost).
+_tab_view_dispatch_bind="bash -c 'source \"\$1/tab-view.sh\" && tab_view_dispatch \"\$2\" \"\$1\" \"\$3\" \"\$4\"' wisp-tab-view \"$_WRAPPER_DIR/lib\" \"$TMUX_CMD\" #{q:session_name} #{q:mouse_status_range}"
+_tab_view_new_bind="bash -c 'source \"\$1/tab-view.sh\" && tab_view_new_window \"\$2\" \"\$1\" \"\$3\"' wisp-tab-view \"$_WRAPPER_DIR/lib\" \"$TMUX_CMD\" #{q:session_name}"
+
 # Second batch: key binds and hover routing, then the attach. The pane layout
 # is already complete (built whole in the new-session batch above, so the
 # heal watcher never sees a partial layout it would "fix" into duplicate
@@ -718,6 +733,10 @@ fi
   bind-key w run-shell "$_spare_close_bind" \; \
   bind-key Tab run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label next-window" \; \
   bind-key BTab run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label previous-window" \; \
+  bind-key c run-shell "$_tab_view_new_bind" \; \
+  bind-key -n MouseDown1Status run-shell "$_tab_view_dispatch_bind" \; \
+  bind-key -n MouseDown1StatusLeft run-shell "$_tab_view_dispatch_bind" \; \
+  bind-key -n MouseDown1StatusRight run-shell "$_tab_view_dispatch_bind" \; \
   run-shell -b "$_ledger_hover_setup" \; \
   attach-session -t "$SESSION_NAME" \; \
   set-option exit-unattached on 2>&3
