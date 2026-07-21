@@ -1,6 +1,6 @@
 #!/bin/bash
 # shellcheck disable=SC2059  # Intentional: ANSI escape variables in printf format strings
-# Compact view: a "changeset ledger" of working-tree changes instead of lazygit.
+# Compact view: a "changeset ledger" of working-tree changes.
 # Net +/- stamp as the heading, aligned +/- columns with filenames. The branch
 # name is deliberately absent — it lives in the Claude statusline.
 # Refreshes every 2 seconds. Scroll with the mouse wheel, arrows/j/k,
