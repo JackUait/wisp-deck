@@ -62,3 +62,50 @@ func TestWrapper_binds_use_session_format_not_baked_names(t *testing.T) {
 		t.Fatal("wrapper.sh uses bare #{session_name} (unescaped) — SESSION_NAME may contain shell metacharacters (e.g. an apostrophe from the project folder name); use #{q:session_name} instead")
 	}
 }
+
+func TestWrapper_claims_stack_request_before_picker(t *testing.T) {
+	src := wrapperSource(t)
+	claim := strings.Index(src, "stack_request_claim")
+	picker := strings.Index(src, "select_project_interactive")
+	if claim < 0 || picker < 0 || claim > picker {
+		t.Fatal("wrapper.sh must claim a pending stack-request before falling through to the picker")
+	}
+}
+
+func TestWrapper_consolidates_only_interactive_picks(t *testing.T) {
+	src := wrapperSource(t)
+	if !strings.Contains(src, "stack_sessions_for_project") {
+		t.Fatal("wrapper.sh must capture the adopt list via stack_sessions_for_project")
+	}
+	// The capture must be gated on the consolidation flag so restored/arg
+	// launches never adopt (restore chain = one tab per entry).
+	idx := strings.Index(src, "stack_sessions_for_project")
+	region := src[max(0, idx-400):idx]
+	if !strings.Contains(region, "_gt_consolidate") || !strings.Contains(region, "RESTORE_MODE") {
+		t.Fatal("adopt-list capture must be gated on _gt_consolidate=1 and RESTORE_MODE=0")
+	}
+}
+
+func TestWrapper_cleanup_is_stack_aware(t *testing.T) {
+	src := wrapperSource(t)
+	cleanupStart := strings.Index(src, "cleanup() {")
+	if cleanupStart < 0 {
+		t.Fatal("cleanup() not found")
+	}
+	cleanupBody := src[cleanupStart : cleanupStart+strings.Index(src[cleanupStart:], "\n}")]
+	for _, fn := range []string{"stack_adopted_away", "stack_owner_teardown"} {
+		if !strings.Contains(cleanupBody, fn) {
+			t.Fatalf("cleanup() must call %s", fn)
+		}
+	}
+}
+
+func TestWrapper_registers_own_session_and_backgrounds_finalizer(t *testing.T) {
+	src := wrapperSource(t)
+	if !regexp.MustCompile(`stack_add "\$SHARE_DIR" "\$SESSION_NAME" "\$SESSION_NAME"`).MatchString(src) {
+		t.Fatal("wrapper.sh must register its own session in its stack file")
+	}
+	if !regexp.MustCompile(`(?m)stack_finalize_adoption[^\n]*&\s*$`).MatchString(src) {
+		t.Fatal("stack_finalize_adoption must be backgrounded (it waits for the attach)")
+	}
+}

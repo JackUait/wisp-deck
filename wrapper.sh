@@ -208,85 +208,109 @@ else
     type stop_loading_screen &>/dev/null && stop_loading_screen
     exit 0
   fi
+  # A stack-request tab (prefix+S in an existing session) skips the picker and
+  # lands straight in the requested project; the consolidation below then
+  # adopts the requester's sessions and closes the requester's tab.
+  _stack_req_dir=""
+  _stack_req_dir="$(stack_request_claim "$SHARE_DIR")" || _stack_req_dir=""
+  if [ -n "$_stack_req_dir" ]; then
+    cd "$_stack_req_dir" || exit 1
+    PROJECT_NAME="$(basename "$_stack_req_dir")"
+    _gt_consolidate=1
+    type stop_loading_screen &>/dev/null && stop_loading_screen
+  else
+    # Use TUI for project selection
+    printf '\033]0;󰊠  Wisp Deck\007'
 
-  # Use TUI for project selection
-  printf '\033]0;󰊠  Wisp Deck\007'
+    # Stop loading animation before TUI takes over
+    type stop_loading_screen &>/dev/null && stop_loading_screen
 
-  # Stop loading animation before TUI takes over
-  type stop_loading_screen &>/dev/null && stop_loading_screen
-
-  while true; do
-    # Fingerprint the settings file so the (expensive, all-session) propagation
-    # below only runs when the menu actually changed a setting.
-    _settings_before="$(settings_fingerprint "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings")"
-    # Remember whether keep-awake was on going into the menu: turning it off
-    # in there is the in-app path to revoking the sudo rule (offered below).
-    _keep_awake_was_on=0
-    keep_awake_enabled "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" && _keep_awake_was_on=1
-    if select_project_interactive "$PROJECTS_FILE"; then
-      # The menu just closed: push any settings change (theme, panel mode) to
-      # every OTHER already-running session so a toggle reaches all open windows,
-      # not just newly-launched ones. This window's own session does not exist
-      # yet, so it is untouched here.
-      apply_settings_to_all_sessions_if_changed "$TMUX_CMD" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" "$_settings_before" 2>/dev/null || true
-      # If the user just turned keep-awake on, grant the sudo rule now, while a
-      # terminal is still attached and a password prompt can be answered.
-      keep_awake_ensure_sudoers "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" || true
-      # And if they just turned it off, offer to revoke the sudo rule too.
-      keep_awake_offer_revoke "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" "$_keep_awake_was_on" || true
-      # Update AI tool if user cycled it in the menu (for all actions)
-      if [[ -n "${_selected_ai_tool:-}" ]]; then
-        SELECTED_AI_TOOL="$_selected_ai_tool"
+    while true; do
+      # Fingerprint the settings file so the (expensive, all-session) propagation
+      # below only runs when the menu actually changed a setting.
+      _settings_before="$(settings_fingerprint "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings")"
+      # Remember whether keep-awake was on going into the menu: turning it off
+      # in there is the in-app path to revoking the sudo rule (offered below).
+      _keep_awake_was_on=0
+      keep_awake_enabled "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" && _keep_awake_was_on=1
+      if select_project_interactive "$PROJECTS_FILE"; then
+        # The menu just closed: push any settings change (theme, panel mode) to
+        # every OTHER already-running session so a toggle reaches all open windows,
+        # not just newly-launched ones. This window's own session does not exist
+        # yet, so it is untouched here.
+        apply_settings_to_all_sessions_if_changed "$TMUX_CMD" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" "$_settings_before" 2>/dev/null || true
+        # If the user just turned keep-awake on, grant the sudo rule now, while a
+        # terminal is still attached and a password prompt can be answered.
+        keep_awake_ensure_sudoers "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" || true
+        # And if they just turned it off, offer to revoke the sudo rule too.
+        keep_awake_offer_revoke "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" "$_keep_awake_was_on" || true
+        # Update AI tool if user cycled it in the menu (for all actions)
+        if [[ -n "${_selected_ai_tool:-}" ]]; then
+          SELECTED_AI_TOOL="$_selected_ai_tool"
+        fi
+        # shellcheck disable=SC2154
+        case "$_selected_project_action" in
+          select-project|open-once)
+            PROJECT_NAME="$_selected_project_name"
+            # shellcheck disable=SC2154
+            cd "$_selected_project_path" || exit 1
+            _gt_consolidate=1
+            break
+            ;;
+          plain-terminal)
+            # A plain Ghostty shell should still run `claude` under the login the
+            # user has selected in the menu (the current Claude Code user), not the
+            # Keychain default. Export the active account's isolated CLAUDE_CONFIG_DIR
+            # before exec'ing the shell; Default leaves it unset (Keychain login).
+            apply_plain_terminal_claude_account "$SHARE_DIR/claude-accounts" "$SHARE_DIR/claude-account"
+            # An account registered in the menu this launch missed the early
+            # state/settings sync — link it before claude can write a private
+            # store or start with blank settings.
+            if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+              sync_claude_shared_state "$HOME/.claude" "$CLAUDE_CONFIG_DIR"
+              sync_claude_shared_settings "$HOME/.claude" "$CLAUDE_CONFIG_DIR"
+            fi
+            exec "$SHELL"
+            ;;
+          add-worktree)
+            # Loop back to menu — worktrees refresh on reload
+            continue
+            ;;
+          update)
+            # The header notice's Update button. Run the npm update in the
+            # foreground, then reopen the menu — it re-execs wisp-deck-tui from
+            # disk, so the freshly installed build shows immediately.
+            if type run_wisp_deck_update &>/dev/null; then
+              run_wisp_deck_update || true
+            fi
+            continue
+            ;;
+          *)
+            # settings or unknown — loop back to menu
+            continue
+            ;;
+        esac
+      else
+        # User quit (ESC/Ctrl-C) — still propagate any settings change they made
+        # before quitting to the other running sessions.
+        apply_settings_to_all_sessions_if_changed "$TMUX_CMD" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" "$_settings_before" 2>/dev/null || true
+        exit 0
       fi
-      # shellcheck disable=SC2154
-      case "$_selected_project_action" in
-        select-project|open-once)
-          PROJECT_NAME="$_selected_project_name"
-          # shellcheck disable=SC2154
-          cd "$_selected_project_path" || exit 1
-          break
-          ;;
-        plain-terminal)
-          # A plain Ghostty shell should still run `claude` under the login the
-          # user has selected in the menu (the current Claude Code user), not the
-          # Keychain default. Export the active account's isolated CLAUDE_CONFIG_DIR
-          # before exec'ing the shell; Default leaves it unset (Keychain login).
-          apply_plain_terminal_claude_account "$SHARE_DIR/claude-accounts" "$SHARE_DIR/claude-account"
-          # An account registered in the menu this launch missed the early
-          # state/settings sync — link it before claude can write a private
-          # store or start with blank settings.
-          if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
-            sync_claude_shared_state "$HOME/.claude" "$CLAUDE_CONFIG_DIR"
-            sync_claude_shared_settings "$HOME/.claude" "$CLAUDE_CONFIG_DIR"
-          fi
-          exec "$SHELL"
-          ;;
-        add-worktree)
-          # Loop back to menu — worktrees refresh on reload
-          continue
-          ;;
-        update)
-          # The header notice's Update button. Run the npm update in the
-          # foreground, then reopen the menu — it re-execs wisp-deck-tui from
-          # disk, so the freshly installed build shows immediately.
-          if type run_wisp_deck_update &>/dev/null; then
-            run_wisp_deck_update || true
-          fi
-          continue
-          ;;
-        *)
-          # settings or unknown — loop back to menu
-          continue
-          ;;
-      esac
-    else
-      # User quit (ESC/Ctrl-C) — still propagate any settings change they made
-      # before quitting to the other running sessions.
-      apply_settings_to_all_sessions_if_changed "$TMUX_CMD" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" "$_settings_before" 2>/dev/null || true
-      exit 0
-    fi
-  done
+    done
   fi
+  fi
+fi
+
+# Same-project sessions already open in other tabs. Captured pre-launch,
+# adopted post-launch. Tmux-only — this sits on the post-pick critical path.
+# Gated: interactive picks and stack requests only; a restored tab must never
+# consolidate (the restore chain relies on one tab per queue entry).
+_gt_adopt=()
+if [ "${_gt_consolidate:-0}" = "1" ] && [ "$RESTORE_MODE" -eq 0 ]; then
+  while IFS= read -r _gt_s; do
+    [ -n "$_gt_s" ] && _gt_adopt+=("$_gt_s")
+  done < <(stack_sessions_for_project "$TMUX_CMD" "$(pwd)")
+  unset _gt_s
 fi
 
 PROJECT_DIR="$(pwd)"
@@ -384,11 +408,23 @@ cleanup() {
   if [ -n "${_WD_ERROR_LOG:-}" ] && [ ! -s "$_WD_ERROR_LOG" ]; then
     rm -f "$_WD_ERROR_LOG"
   fi
+  [ -n "${HEARTBEAT_PID:-}" ] && kill_tree "$HEARTBEAT_PID" TERM 2>/dev/null || true
+  [ -n "${STACK_REAPER_PID:-}" ] && kill "$STACK_REAPER_PID" 2>/dev/null || true
+  if stack_adopted_away "$TMUX_CMD" "$SESSION_NAME"; then
+    # A newer tab adopted this tab's sessions: they live on. Kill only
+    # wrapper-local jobs; the sessions, their SHARE_DIR files, their
+    # attention roots and keep-awake holders now belong to the adopter
+    # (its stack file covers every one of them).
+    kill "$WATCHER_PID" 2>/dev/null || true
+    rm -f "$SHARE_DIR/stacks/$SESSION_NAME"
+    return 0
+  fi
   # Release before anything else: whatever follows may fail, and leaving the
   # machine unable to sleep is worse than leaving a temp file behind.
   keep_awake_drop "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" "$SESSION_NAME" 2>/dev/null || true
-  [ -n "${HEARTBEAT_PID:-}" ] && kill_tree "$HEARTBEAT_PID" TERM 2>/dev/null || true
-  [ -n "${STACK_REAPER_PID:-}" ] && kill "$STACK_REAPER_PID" 2>/dev/null || true
+  # Adopted sessions first (their attention roots are read from session env
+  # before the kill), then this tab's own session via the existing path.
+  stack_owner_teardown "$TMUX_CMD" "$SHARE_DIR" "$SESSION_NAME"
   cleanup_tmux_session "$SESSION_NAME" "$WATCHER_PID" "$TMUX_CMD"
   attention_cleanup "${WISP_DECK_ATTENTION_ROOT:-}" 2>/dev/null || true
   rm -f "$SHARE_DIR/spare-${SESSION_NAME}.conf"
@@ -660,6 +696,18 @@ write_relaunch_context "$WISP_DECK_RELAUNCH_FILE" "$SELECTED_AI_TOOL" \
   "$WISP_DECK_ATTENTION_ROOT" "$WISP_DECK_ATTENTION_DESCRIPTOR" \
   "$WISP_DECK_CLAUDE_SETTINGS_SOURCE"
 export WISP_DECK_RELAUNCH_FILE
+
+# Register this tab's own session, then adopt same-project sessions from
+# other tabs. The finalizer detaches the old tabs' clients only after OUR
+# client is attached, so the project is never left with zero attached
+# clients mid-handoff. Repaint is immediate: the bar must show the stack the
+# moment the user can see the pane.
+stack_add "$SHARE_DIR" "$SESSION_NAME" "$SESSION_NAME"
+if [ "${#_gt_adopt[@]}" -gt 0 ]; then
+  stack_adopt_all "$TMUX_CMD" "$SHARE_DIR" "$SESSION_NAME" "$$" "${_gt_adopt[@]}"
+  stack_finalize_adoption "$TMUX_CMD" "$SESSION_NAME" "${_gt_adopt[@]}" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
+  stack_repaint "$TMUX_CMD" "$SHARE_DIR" "$PROJECT_NAME" "$PROJECT_DIR"
+fi
 
 # Start the descriptor consumer before the attach (which blocks until the
 # session ends).
