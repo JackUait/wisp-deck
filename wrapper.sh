@@ -70,7 +70,7 @@ if [ ! -d "$_WRAPPER_DIR/lib" ]; then
   exit 1
 fi
 
-_gt_libs=(theme ai-tools projects process input tui install menu-tui project-actions ledger-hover tmux-session settings-json notification-setup keep-awake tab-title-watcher terminals/ghostty session-restore claude-configs claude-accounts claude-shared-settings auto-switch attention account-switch compact-view screenshot spare-tabs tab-view)
+_gt_libs=(theme ai-tools projects process input tui install menu-tui project-actions ledger-hover tmux-session settings-json notification-setup keep-awake tab-title-watcher terminals/ghostty session-restore claude-configs claude-accounts claude-shared-settings auto-switch attention account-switch compact-view screenshot spare-tabs tab-view ai-loading)
 for _gt_lib in "${_gt_libs[@]}"; do
   if [ ! -f "$_WRAPPER_DIR/lib/${_gt_lib}.sh" ]; then
     printf '\033[31mError:\033[0m Missing library %s/lib/%s.sh\n' "$_WRAPPER_DIR" "$_gt_lib" >&2
@@ -561,6 +561,16 @@ _pane0_pct=75
 # hue: purple for OpenCode, orange for claude. Mirrors the Go theme's Primary.
 _gt_theme_pref="$(grep '^theme=' "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
 _gt_accent="$(get_theme_accent "$(gt_resolve_theme "$_gt_theme_pref" "$SELECTED_AI_TOOL")")"
+
+# Show a "Starting <tool>…" banner in the AI pane until the tool paints. The AI
+# CLI can spend seconds — minutes when macOS's Security subsystem is contended
+# (claude 2.1.217 blocks on keychain/trust XPC at startup) — before it draws
+# anything, and a black pane reads as "the agent failed to load". The banner
+# runs INSIDE the pane (prepended to the launch string, executed by tmux, never
+# by this wrapper), so it adds no latency; the tool's alt-screen replaces it on
+# paint. Applied to the same AI_LAUNCH_CMD the heal watcher rebuilds from.
+_gt_loading_prefix="$(ai_pane_loading_prefix "$SELECTED_AI_TOOL" "$_gt_accent")" \
+  && AI_LAUNCH_CMD="${_gt_loading_prefix}${AI_LAUNCH_CMD}"
 
 if ! declare -f _sane_term_size >/dev/null 2>&1; then
   # shellcheck disable=SC1091  # Runtime library path
