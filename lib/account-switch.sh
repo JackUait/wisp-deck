@@ -1571,39 +1571,94 @@ open_account_switcher() {
 --active-config $(printf '%q' "$session_config") "
   fi
 
+  # The switcher's full flag string, shared by the --measure probe and the popup
+  # command so the measured card can never disagree with the card actually drawn.
+  # Every value is %q-quoted (session_flags already is), so eval is safe.
+  local switcher_flags
+  switcher_flags="--list $(printf '%q' "$_rc_list") \
+--accounts-dir $(printf '%q' "$_rc_accounts_dir") \
+--pointer $(printf '%q' "$_rc_pointer") \
+--colors $(printf '%q' "$_rc_colors") \
+--default-label $(printf '%q' "$_rc_default_label") \
+${session_flags}"
+
+  # Confine the switcher to the agent (AI) pane so it reads as part of the agent
+  # view — the ledger and spare panes stay visible because the popup never covers
+  # them. Locate the AI pane (tagged @gt_ai), then size the popup to the CARD
+  # itself (via the popup binary's --measure seam) centered in the pane, so the
+  # switcher floats as a small card instead of dimming the whole pane. Fallbacks:
+  # measure unavailable/oversized → cover the AI pane (dimmed-backdrop mode);
+  # no AI pane at all → full-window popup so the switcher still works.
+  local ai_pane="" ai_left="" ai_top="" ai_width="" ai_height="" confined=0 card_mode=0
+  local -a popup_geom=(-w 100% -h 100%)
+  ai_pane="$(find_ai_pane "$tmux_cmd")"
+  if [ -n "$ai_pane" ]; then
+    read -r ai_left ai_top ai_width ai_height < <(
+      "$tmux_cmd" display-message -p -t "$ai_pane" \
+        '#{pane_left} #{pane_top} #{pane_width} #{pane_height}' 2>/dev/null
+    )
+    if [ -n "$ai_width" ] && [ -n "$ai_height" ]; then
+      popup_geom=(-x "$ai_left" -y "$ai_top" -w "$ai_width" -h "$ai_height")
+      confined=1
+      local card_size="" card_w="" card_h=""
+      card_size="$(eval "wisp-deck-tui claude-account-switch --measure $switcher_flags" 2>/dev/null)" || card_size=""
+      if [[ "$card_size" =~ ^[0-9]+\ [0-9]+$ ]]; then
+        card_w="${card_size%% *}"
+        card_h="${card_size##* }"
+        if [ "$card_w" -gt 0 ] && [ "$card_h" -gt 0 ] \
+           && [ "$card_w" -le "$ai_width" ] && [ "$card_h" -le "$ai_height" ]; then
+          popup_geom=(-x "$((ai_left + (ai_width - card_w) / 2))" \
+                      -y "$((ai_top + (ai_height - card_h) / 2))" \
+                      -w "$card_w" -h "$card_h")
+          card_mode=1
+        fi
+      fi
+    fi
+  fi
+
   # Snapshot the screen behind the popup so the switcher can show it DIMMED in the
   # margin around the card. tmux freezes the panes under a popup, so this snapshot
   # (taken just before opening it) matches what's behind. Serialized as a "W H"
   # header then one "PANE <left> <top>" + captured-lines + "ENDPANE" block per
   # pane; ParseBackdrop composites it. Best-effort: any failure yields a blank
-  # margin. This mirrors the diff pager's backdrop (lib/compact-view.sh).
-  local backdrop backdrop_arg=""
-  backdrop=$(mktemp "${TMPDIR:-/tmp}/gtswitch.XXXXXX" 2>/dev/null) || backdrop=""
+  # margin. This mirrors the diff pager's backdrop (lib/compact-view.sh). When
+  # confined to the AI pane, capture ONLY that pane at origin 0,0 — the popup's
+  # coordinate space starts at the pane's top-left, and the other panes lie
+  # outside the popup so they never need dimming.
+  # A card-sized popup has no margin around the card, so there is nothing to dim
+  # — skip the snapshot entirely in card mode.
+  local backdrop="" backdrop_arg=""
+  [ "$card_mode" -eq 0 ] && { backdrop=$(mktemp "${TMPDIR:-/tmp}/gtswitch.XXXXXX" 2>/dev/null) || backdrop=""; }
   if [ -n "$backdrop" ]; then
-    {
-      "$tmux_cmd" display-message -p -t "${TMUX_PANE:-}" '#{client_width} #{client_height}'
-      "$tmux_cmd" list-panes -t "${TMUX_PANE:-}" -F '#{pane_id} #{pane_left} #{pane_top}' 2>/dev/null |
-        while read -r pid pleft ptop; do
-          printf 'PANE %s %s\n' "$pleft" "$ptop"
-          "$tmux_cmd" capture-pane -p -t "$pid" 2>/dev/null
-          printf 'ENDPANE\n'
-        done
-    } >"$backdrop" 2>/dev/null
+    if [ "$confined" -eq 1 ]; then
+      {
+        printf '%s %s\n' "$ai_width" "$ai_height"
+        printf 'PANE 0 0\n'
+        "$tmux_cmd" capture-pane -p -t "$ai_pane" 2>/dev/null
+        printf 'ENDPANE\n'
+      } >"$backdrop" 2>/dev/null
+    else
+      {
+        "$tmux_cmd" display-message -p -t "${TMUX_PANE:-}" '#{client_width} #{client_height}'
+        "$tmux_cmd" list-panes -t "${TMUX_PANE:-}" -F '#{pane_id} #{pane_left} #{pane_top}' 2>/dev/null |
+          while read -r pid pleft ptop; do
+            printf 'PANE %s %s\n' "$pleft" "$ptop"
+            "$tmux_cmd" capture-pane -p -t "$pid" 2>/dev/null
+            printf 'ENDPANE\n'
+          done
+      } >"$backdrop" 2>/dev/null
+    fi
     backdrop_arg="--backdrop-file $(printf '%q' "$backdrop")"
   fi
 
-  # Full-screen (-w/-h 100%) and borderless (-B) so the switcher owns the whole
-  # window: it draws its own rounded card over the dimmed snapshot and closes when
-  # a click lands outside the card (tmux ignores clicks outside a smaller popup).
+  # Borderless (-B) so the switcher draws its own rounded card over the dimmed
+  # snapshot and closes when a click lands outside the card (tmux ignores clicks
+  # outside the popup). Geometry is the AI pane's rectangle when confined, else
+  # the full window (-w/-h 100%).
   local before
   before="$(get_active_claude_account "$_rc_pointer")"
-  "$tmux_cmd" display-popup -E -B -w 100% -h 100% \
-    "wisp-deck-tui claude-account-switch --list $(printf '%q' "$_rc_list") \
---accounts-dir $(printf '%q' "$_rc_accounts_dir") \
---pointer $(printf '%q' "$_rc_pointer") \
---colors $(printf '%q' "$_rc_colors") \
---default-label $(printf '%q' "$_rc_default_label") \
-${session_flags}${backdrop_arg}" 2>/dev/null || true
+  "$tmux_cmd" display-popup -E -B "${popup_geom[@]}" \
+    "wisp-deck-tui claude-account-switch ${switcher_flags}${backdrop_arg}" 2>/dev/null || true
   [ -n "$backdrop" ] && rm -f "$backdrop"
 
   # No result file = the popup was cancelled (or never ran) — a clean no-op.

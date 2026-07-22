@@ -421,9 +421,9 @@ type SwitchOption struct {
 	Active bool
 }
 
-// AccountSwitcher applies a chooser selection through the existing relaunch flow.
+// AccountSwitcher floats the account/agent switcher popup for this session.
 type AccountSwitcher interface {
-	Switch(context.Context, SessionContext, SwitchChoice) error
+	OpenSwitcher(context.Context, SessionContext) error
 }
 
 // ExecAccountSwitcher delegates to account-switch.sh with a fixed shell
@@ -438,6 +438,11 @@ func NewExecAccountSwitcher(runner ProcessRunner, libDir string) *ExecAccountSwi
 	return &ExecAccountSwitcher{runner: runner, libDir: libDir}
 }
 
+// ledgerAccountSwitchScript sources the switch libraries and floats the account
+// switcher popup. open_account_switcher confines itself to the agent pane so the
+// card reads as part of the agent view, presents the account, subscription, and
+// agent rows, and applies the chosen identity (preserving the draft) — the whole
+// select-and-apply flow lives in account-switch.sh.
 const ledgerAccountSwitchScript = `
 . "$1/statusline.sh"
 . "$1/claude-accounts.sh"
@@ -446,50 +451,24 @@ const ledgerAccountSwitchScript = `
 . "$1/tmux-session.sh"
 . "$1/session-pool.sh"
 . "$1/account-switch.sh"
-apply_account_switch_choice tmux "$2" "$3" "$4"
+open_account_switcher tmux "$2"
 `
 
-// Switch applies an already-selected identity through the established relaunch
-// orchestration. The chooser runs in-process, so this shell starts only after
-// confirmation and never opens or capability-probes the standalone popup.
-func (s *ExecAccountSwitcher) Switch(ctx context.Context, session SessionContext, choice SwitchChoice) error {
+// OpenSwitcher floats the standalone switcher popup over the agent pane and lets
+// account-switch.sh apply the user's selection through the established relaunch
+// orchestration. The popup blocks until closed, so callers run it in a Tea
+// command. Only the library and relaunch paths reach the shell — both as
+// positional arguments, never interpolated into the program.
+func (s *ExecAccountSwitcher) OpenSwitcher(ctx context.Context, session SessionContext) error {
 	if s == nil || s.runner == nil {
-		return fmt.Errorf("switch account: no process runner configured")
+		return fmt.Errorf("open switcher: no process runner configured")
 	}
 	if s.libDir == "" || session.RelaunchFile == "" {
-		return fmt.Errorf("switch account: missing library or relaunch context")
-	}
-	switch choice.Kind {
-	case SwitchAccount:
-		if choice.Value != "" {
-			info, err := os.Stat(filepath.Join(session.AccountsDir, choice.Value))
-			if err != nil || !info.IsDir() {
-				return fmt.Errorf("switch account: account %q is no longer available", choice.Value)
-			}
-		}
-	case SwitchSubscription:
-		var selected *claudeconfig.Config
-		for _, config := range claudeconfig.Load(session.ConfigsList) {
-			if config.File == choice.Value {
-				selected = &config
-				break
-			}
-		}
-		disabled := claudeconfig.LoadDisabled(claudeconfig.DisabledFile(session.ConfigsList))
-		if selected == nil || disabled[choice.Value] ||
-			!claudeconfig.ConfigReady(session.ConfigsDir, *selected) {
-			return fmt.Errorf("switch account: subscription %q is no longer ready", choice.Value)
-		}
-	case SwitchTool:
-		if choice.Value == "" {
-			return fmt.Errorf("switch account: missing tool choice")
-		}
-	default:
-		return fmt.Errorf("switch account: unknown choice kind %q", choice.Kind)
+		return fmt.Errorf("open switcher: missing library or relaunch context")
 	}
 	if _, err := s.runner.Run(ctx, "bash", "-c", ledgerAccountSwitchScript, "--",
-		s.libDir, session.RelaunchFile, string(choice.Kind), choice.Value); err != nil {
-		return fmt.Errorf("switch account: %w", err)
+		s.libDir, session.RelaunchFile); err != nil {
+		return fmt.Errorf("open switcher: %w", err)
 	}
 	return nil
 }

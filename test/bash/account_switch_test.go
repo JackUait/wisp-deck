@@ -197,10 +197,12 @@ func TestAccountCurrent_default_when_no_pointer(t *testing.T) {
 
 // The switcher popup is drawn as a self-styled rounded card by the Go TUI. tmux
 // only delivers clicks that land inside a popup, so to close on a click OUTSIDE
-// the card the popup must be full-screen (-w/-h 100%) and borderless (-B); the Go
-// side then treats any click off the card as cancel. A dimmed capture of the
-// screen behind is passed via --backdrop-file so the full-screen popup isn't a
-// blank void. This guards the flags the popup is launched with.
+// FALLBACK path: when the AI pane can't be located (list-panes reports no
+// @gt_ai-marked pane, as this mock does), the switcher falls back to a
+// borderless FULL-SCREEN popup (-w/-h 100%) over a whole-window backdrop. The Go
+// side then treats any click off the card as cancel. This guards the flags the
+// fallback popup is launched with. The confined-to-agent-pane path is guarded by
+// TestOpenAccountSwitcher_confines_to_agent_pane below.
 func TestOpenAccountSwitcher_launches_fullscreen_borderless_popup(t *testing.T) {
 	dir := t.TempDir()
 	rec := filepath.Join(dir, "tmux.log")
@@ -227,6 +229,145 @@ func TestOpenAccountSwitcher_launches_fullscreen_borderless_popup(t *testing.T) 
 	assertContains(t, logOut, "100%") // full-screen so tmux delivers clicks outside the card
 	assertContains(t, logOut, "--backdrop-file")
 	assertContains(t, logOut, "claude-account-switch")
+}
+
+// When the AI pane CAN be located (find_ai_pane returns a @gt_ai-marked pane),
+// the switcher popup is sized to the CARD itself (measured via the popup
+// binary's hidden --measure mode) and centered inside that pane's rectangle —
+// NOT stretched over the pane. The user sees a small floating card in the agent
+// view; the rest of the agent pane, the ledger, and the spare pane all stay
+// visible. No backdrop is captured: a card-sized popup has no margin to dim.
+func TestOpenAccountSwitcher_confines_to_agent_pane(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	// Mock tmux: report a marked AI pane (%1) at offset 50,0 sized 120x40, echo
+	// its geometry for display-message, and a sentinel for capture-pane. Every
+	// call is logged so we can assert the display-popup flags and backdrop scope.
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`printf '%%s\n' "$*" >> %q
+case "$1" in
+  list-panes)
+    case "$*" in
+      *@gt_ai*) printf '%%s\n' "%%0 0" "%%1 1" "%%2 0" ;;
+    esac
+    ;;
+  display-message)
+    case "$*" in
+      *pane_left*) printf '%%s\n' "50 0 120 40" ;;
+      *client_width*) printf '%%s\n' "200 50" ;;
+    esac
+    ;;
+  capture-pane) printf '%%s\n' "AGENTPANE-LINE" ;;
+esac`, rec))
+	// Mock the popup binary: --measure reports a 41x8 card; anything else no-ops.
+	mockCommand(t, dir, "wisp-deck-tui", `case "$*" in
+  *--measure*) printf '%s\n' "41 8" ;;
+esac`)
+	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
+		"tool=claude", "tool_cmd=claude",
+		"settings=/cfg/settings.json", "filter=", "project_dir=/proj",
+		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
+		"pointer=" + filepath.Join(dir, "claude-account"),
+		"list=" + filepath.Join(dir, "claude-accounts.list"),
+		"colors=" + filepath.Join(dir, "claude-account-colors"),
+		"default_label=" + filepath.Join(dir, "claude-account-default-label"),
+		"",
+	}, "\n"))
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+
+	// The popup is the measured card, centered in the AI pane's rectangle:
+	// x = 50 + (120-41)/2 = 89, y = 0 + (40-8)/2 = 16.
+	popupLine := ""
+	for _, line := range strings.Split(logOut, "\n") {
+		if strings.HasPrefix(line, "display-popup") {
+			popupLine = line
+			break
+		}
+	}
+	if popupLine == "" {
+		t.Fatalf("no display-popup invocation logged; got:\n%s", logOut)
+	}
+	assertContains(t, popupLine, "-x 89")
+	assertContains(t, popupLine, "-y 16")
+	assertContains(t, popupLine, "-w 41")
+	assertContains(t, popupLine, "-h 8")
+	assertContains(t, popupLine, "-B")
+	assertNotContains(t, popupLine, "100%")   // NOT the full-screen fallback
+	assertNotContains(t, popupLine, "-w 120") // NOT stretched over the pane
+	// A card-sized popup has no margin to dim, so no backdrop is captured.
+	assertNotContains(t, popupLine, "--backdrop-file")
+	assertNotContains(t, logOut, "capture-pane")
+}
+
+// When the popup binary is too old to answer --measure, the switcher falls back
+// to covering the AI pane's full rectangle with the dimmed-backdrop treatment —
+// still confined to the agent view, never the whole window.
+func TestOpenAccountSwitcher_pane_fallback_when_measure_fails(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`printf '%%s\n' "$*" >> %q
+case "$1" in
+  list-panes)
+    case "$*" in
+      *@gt_ai*) printf '%%s\n' "%%0 0" "%%1 1" "%%2 0" ;;
+    esac
+    ;;
+  display-message)
+    case "$*" in
+      *pane_left*) printf '%%s\n' "50 0 120 40" ;;
+      *client_width*) printf '%%s\n' "200 50" ;;
+    esac
+    ;;
+  capture-pane) printf '%%s\n' "AGENTPANE-LINE" ;;
+esac`, rec))
+	mockCommand(t, dir, "wisp-deck-tui", `exit 1`)
+	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
+		"tool=claude", "tool_cmd=claude",
+		"settings=/cfg/settings.json", "filter=", "project_dir=/proj",
+		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
+		"pointer=" + filepath.Join(dir, "claude-account"),
+		"list=" + filepath.Join(dir, "claude-accounts.list"),
+		"colors=" + filepath.Join(dir, "claude-account-colors"),
+		"default_label=" + filepath.Join(dir, "claude-account-default-label"),
+		"",
+	}, "\n"))
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+
+	popupLine := ""
+	for _, line := range strings.Split(logOut, "\n") {
+		if strings.HasPrefix(line, "display-popup") {
+			popupLine = line
+			break
+		}
+	}
+	if popupLine == "" {
+		t.Fatalf("no display-popup invocation logged; got:\n%s", logOut)
+	}
+	assertContains(t, popupLine, "-x 50")
+	assertContains(t, popupLine, "-y 0")
+	assertContains(t, popupLine, "-w 120")
+	assertContains(t, popupLine, "-h 40")
+	assertNotContains(t, popupLine, "100%")
+	assertContains(t, popupLine, "--backdrop-file")
+
+	// The pane-sized fallback still snapshots ONLY the AI pane for its backdrop.
+	captures := 0
+	for _, line := range strings.Split(logOut, "\n") {
+		if strings.HasPrefix(line, "capture-pane") {
+			captures++
+			assertContains(t, line, "%1")
+		}
+	}
+	if captures != 1 {
+		t.Fatalf("expected exactly 1 capture-pane (the AI pane only), got %d:\n%s", captures, logOut)
+	}
 }
 
 // The ledger is a long-running process that sources account-switch.sh once at

@@ -41,6 +41,7 @@ var (
 	casConfigs      string
 	casConfigsDir   string
 	casActiveConfig string
+	casMeasure      bool
 )
 
 // switchRow is one selectable entry in the switcher: a claude login (Dir set,
@@ -294,6 +295,15 @@ func runClaudeAccountSwitch(cmd *cobra.Command, args []string) error {
 		configColorsFile = filepath.Join(filepath.Dir(casConfigs), "claude-config-colors")
 	}
 	model := newAccountSwitchModel(rows, cursor, casColors, configColorsFile)
+	// --measure: print the card's exact size ("cols rows") and exit, so bash can
+	// open the tmux popup at the card's own footprint instead of covering the
+	// pane. Must never touch the TTY — bash calls it from a non-interactive shell.
+	if casMeasure {
+		w := model.contentWidth() + 2*accountSwitchPadX + 2*accountSwitchBorder
+		h := len(model.innerLines()) + accountSwitchPadY + accountSwitchPadBottom + 2*accountSwitchBorder
+		fmt.Fprintf(cmd.OutOrStdout(), "%d %d\n", w, h)
+		return nil
+	}
 	// Show the screen behind the (full-screen) popup dimmed around the card. Best
 	// effort: an unreadable/missing backdrop file just leaves the margin blank.
 	if casBackdrop != "" {
@@ -751,5 +761,7 @@ func init() {
 	claudeAccountSwitchCmd.Flags().StringVar(&casConfigs, "configs", "", "Path to subscriptions list (name:file), each shown as a backend row under Claude")
 	claudeAccountSwitchCmd.Flags().StringVar(&casConfigsDir, "configs-dir", "", "Path to the subscriptions directory (for readiness checks)")
 	claudeAccountSwitchCmd.Flags().StringVar(&casActiveConfig, "active-config", "", "Subscription filename THIS pane is running (empty = standard Claude); marks the active row")
+	claudeAccountSwitchCmd.Flags().BoolVar(&casMeasure, "measure", false, "Print the card size as \"cols rows\" and exit (bash popup-sizing seam)")
+	_ = claudeAccountSwitchCmd.Flags().MarkHidden("measure")
 	rootCmd.AddCommand(claudeAccountSwitchCmd)
 }

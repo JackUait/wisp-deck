@@ -300,22 +300,12 @@ func TestSessionContextShowsActiveNonClaudeAgent(t *testing.T) {
 	}
 }
 
-func TestExplicitAccountSwitcherAppliesChoiceWithoutOpeningPopupOrProbingCapabilities(t *testing.T) {
-	directory := t.TempDir()
-	configsDir := filepath.Join(directory, "claude-configs")
-	writeSessionFixture(t, configsDir, "chatgpt.json",
-		`{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"openai-chatgpt"}}`)
-	configsList := writeSessionFixture(t, directory, "claude-configs.list", "ChatGPT:chatgpt.json\n")
+func TestAccountSwitcherFloatsPopupWithArgvSafePaths(t *testing.T) {
 	runner := &recordingProcessRunner{}
 	switcher := NewExecAccountSwitcher(runner, "/lib path; false")
-	session := SessionContext{
-		RelaunchFile: "/tmp/relaunch '$(false)",
-		ConfigsDir:   configsDir,
-		ConfigsList:  configsList,
-	}
-	choice := SwitchChoice{Kind: SwitchSubscription, Value: "chatgpt.json"}
+	session := SessionContext{RelaunchFile: "/tmp/relaunch '$(false)"}
 
-	if err := switcher.Switch(context.Background(), session, choice); err != nil {
+	if err := switcher.OpenSwitcher(context.Background(), session); err != nil {
 		t.Fatal(err)
 	}
 
@@ -323,44 +313,29 @@ func TestExplicitAccountSwitcherAppliesChoiceWithoutOpeningPopupOrProbingCapabil
 	if len(calls) != 1 || calls[0].name != "bash" {
 		t.Fatalf("switcher calls = %#v", calls)
 	}
-	if len(calls[0].args) != 7 || calls[0].args[0] != "-c" || calls[0].args[2] != "--" ||
-		calls[0].args[3] != "/lib path; false" || calls[0].args[4] != session.RelaunchFile ||
-		calls[0].args[5] != string(choice.Kind) || calls[0].args[6] != choice.Value {
+	// Only the fixed program plus the two positional paths reach the shell.
+	if len(calls[0].args) != 5 || calls[0].args[0] != "-c" || calls[0].args[2] != "--" ||
+		calls[0].args[3] != "/lib path; false" || calls[0].args[4] != session.RelaunchFile {
 		t.Fatalf("switcher argv = %#v", calls[0].args)
 	}
 	program := calls[0].args[1]
-	if strings.Contains(program, "/lib path") || strings.Contains(program, session.RelaunchFile) ||
-		strings.Contains(program, choice.Value) {
+	if strings.Contains(program, "/lib path") || strings.Contains(program, session.RelaunchFile) {
 		t.Fatalf("arguments were interpolated into switcher program %q", program)
 	}
-	if !strings.Contains(program, "apply_account_switch_choice") || !strings.Contains(program, "account-switch.sh") {
-		t.Fatalf("switcher did not call the explicit apply flow: %q", program)
-	}
-	if strings.Contains(program, "open_account_switcher") || strings.Contains(program, "--help") {
-		t.Fatalf("explicit apply must not open or capability-probe the popup: %q", program)
+	if !strings.Contains(program, "open_account_switcher") || !strings.Contains(program, "account-switch.sh") {
+		t.Fatalf("switcher did not float the popup flow: %q", program)
 	}
 }
 
-func TestExplicitAccountSwitcherRejectsSubscriptionThatIsNoLongerReady(t *testing.T) {
-	directory := t.TempDir()
-	configsDir := filepath.Join(directory, "claude-configs")
-	writeSessionFixture(t, configsDir, "glm.json",
-		`{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"zhipu"}}`)
-	configsList := writeSessionFixture(t, directory, "claude-configs.list", "GLM:glm.json\n")
+func TestAccountSwitcherRejectsMissingRelaunchContext(t *testing.T) {
 	runner := &recordingProcessRunner{}
 	switcher := NewExecAccountSwitcher(runner, "/lib")
 
-	err := switcher.Switch(context.Background(), SessionContext{
-		RelaunchFile: "/tmp/relaunch",
-		ConfigsDir:   configsDir,
-		ConfigsList:  configsList,
-	}, SwitchChoice{Kind: SwitchSubscription, Value: "glm.json"})
-
-	if err == nil {
-		t.Fatal("switcher accepted a subscription that lost its API key")
+	if err := switcher.OpenSwitcher(context.Background(), SessionContext{}); err == nil {
+		t.Fatal("switcher opened without a relaunch file")
 	}
 	if calls := runner.snapshotCalls(); len(calls) != 0 {
-		t.Fatalf("invalid subscription launched process calls %#v", calls)
+		t.Fatalf("missing context launched process calls %#v", calls)
 	}
 }
 

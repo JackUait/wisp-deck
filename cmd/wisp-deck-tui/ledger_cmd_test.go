@@ -236,19 +236,17 @@ func TestLedgerAccountCommandWiresSessionAndPopupAdapters(t *testing.T) {
 		if view := ledgerModel.View(); !strings.Contains(view, "Work") {
 			t.Fatalf("session pill not wired:\n%s", view)
 		}
+		// Clicking the pill floats the switcher popup over the agent pane (an
+		// asynchronous command that shells account-switch.sh) rather than painting
+		// an in-ledger chooser card.
 		_, openCommand := ledgerModel.Update(tea.MouseMsg{
 			X: 1, Y: 13, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
 		})
-		if openCommand != nil {
-			t.Fatal("account pill started a process before the in-process selection")
+		if openCommand == nil {
+			t.Fatal("account pill did not return the switcher popup command")
 		}
-		if view := ledgerModel.View(); !strings.Contains(view, "Switch agent") || !strings.Contains(view, "OpenCode") {
-			t.Fatalf("account pill did not paint the in-process chooser:\n%s", view)
-		}
-		ledgerModel.Update(tea.KeyMsg{Type: tea.KeyDown})
-		_, switchCommand := ledgerModel.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		if switchCommand == nil {
-			t.Fatal("confirmed account choice has no asynchronous apply command")
+		if view := ledgerModel.View(); strings.Contains(view, "Switch agent") {
+			t.Fatalf("account pill painted an in-ledger chooser instead of floating the popup:\n%s", view)
 		}
 		return model, nil
 	}
