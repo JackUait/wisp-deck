@@ -15,22 +15,60 @@
 # server, the session env, or the relaunch context is missing.
 # See docs/superpowers/specs/2026-07-22-tab-view-design.md.
 
-# tab_view_status_left <project_name> [accent_colour]
-# Print the outer status-left format: project label, the window chip list, and
-# the + button. Chips are numbered 1-based (#{e|+:...} — outer windows keep
-# tmux's 0-based indexes) and ride in named click ranges so the status mouse
-# binds can identify their target via #{mouse_status_range}. Inside #{W:...}
-# every style comma is escaped (#,) or tmux would read it as the iterator's
-# format separator. The bar's base style (fg=white,bg=colour236,bold,
-# status-left-style set at launch) is restored after each coloured chip.
+# tab_view_status_left <project_name> [accent_colour] [ai_pane_left]
+# Print the outer status-left format. The bar is drawn as the AGENT pane's top
+# border rather than a full-width block: a plain border rule spans the ledger
+# column, a ┬ junction lands on the ledger/agent split (ai_pane_left - 1), and
+# the project label + window chips + the [+] button sit right after it — over
+# the agent pane. A long trailing rule runs to the window edge (tmux clips it
+# at status-left-length). Without ai_pane_left the lead rule is skipped.
+#
+# Chips are numbered 1-based (#{e|+:...} — outer windows keep tmux's 0-based
+# indexes) and ride in named click ranges so the status mouse binds can
+# identify their target via #{mouse_status_range}. Inside #{W:...} every style
+# comma is escaped (#,) or tmux would read it as the iterator's format
+# separator. The bar's base style (the border rule: fg=colour238,
+# status-left-style set at launch) is restored after each coloured segment.
 tab_view_status_left() {
-  local project="$1" accent="${2:-209}"
-  local restore='#[default]#[fg=white#,bg=colour236#,bold]'
+  local project="$1" accent="${2:-209}" ai_left="${3:-}"
+  local restore='#[default]'
   local num='#{e|+:#{window_index},1}'
   local active="#[fg=colour235#,bg=colour${accent}#,bold] ${num} ${restore}"
   local inactive="#[fg=colour245] ${num} ${restore}"
-  printf ' ⬡ %s #{W:#[range=user|wdtab:#{window_id}]#{?window_active,%s,%s}#[norange] }#[range=user|wdnew]#[fg=colour%s,bold] + #[nobold]#[norange]' \
-    "$project" "$active" "$inactive" "$accent"
+  local lead="" tail="" i
+  if [ -n "$ai_left" ] && [ "$ai_left" -gt 1 ] 2>/dev/null; then
+    for ((i = 0; i < ai_left - 1; i++)); do lead+='─'; done
+    lead+='┬'
+  fi
+  for ((i = 0; i < 400; i++)); do tail+='─'; done
+  printf '%s─ #[fg=white,bold]⬡ %s#[default] #{W:#[range=user|wdtab:#{window_id}]#{?window_active,%s,%s}#[norange] }#[range=user|wdnew]#[fg=colour%s,bold] + #[nobold]#[norange] %s' \
+    "$lead" "$project" "$active" "$inactive" "$accent" "$tail"
+}
+
+# tab_view_refresh_bar <tmux_cmd> <lib_dir> <session>
+# Recompute the bar from live session state — project name, the active tool's
+# accent, and the AI pane's current left offset — and re-set status-left so the
+# ┬ junction tracks the real pane split. Bound to the resize/layout hooks and
+# safe to call any time; fail-open like everything here.
+tab_view_refresh_bar() {
+  local tmux_cmd="$1" lib_dir="$2" session="$3"
+  local project tool accent ai_pane="" ai_left="" id flag
+  project="$(_tab_view_session_env "$tmux_cmd" "$session" WISP_DECK_PROJECT)"
+  [ -n "$project" ] || return 0
+  tool="$(_tab_view_session_env "$tmux_cmd" "$session" WISP_DECK_TOOL)"
+  # shellcheck source=/dev/null
+  declare -f get_tool_accent >/dev/null 2>&1 || source "$lib_dir/tmux-session.sh"
+  accent="$(get_tool_accent "${tool:-claude}" 2>/dev/null)" || accent=""
+  : "${accent:=209}"
+  while read -r id flag; do
+    [ "$flag" = "1" ] && { ai_pane="$id"; break; }
+  done < <("$tmux_cmd" list-panes -t "$session" -F '#{pane_id} #{@gt_ai}' 2>/dev/null)
+  if [ -n "$ai_pane" ]; then
+    ai_left="$("$tmux_cmd" display-message -p -t "$ai_pane" '#{pane_left}' 2>/dev/null)"
+  fi
+  "$tmux_cmd" set-option -t "$session" status-left \
+    "$(tab_view_status_left "$project" "$accent" "$ai_left")" 2>/dev/null || true
+  return 0
 }
 
 # _tab_view_session_env <tmux_cmd> <session> <var>

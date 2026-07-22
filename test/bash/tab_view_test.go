@@ -1,6 +1,7 @@
 package bash_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,7 +53,7 @@ func writeRelaunchFixture(t *testing.T, cfgDir, projDir, tool, toolCmd string) s
 
 func TestTabViewStatusLeft_contains_label_ranges_and_accent(t *testing.T) {
 	out, code := runBashFunc(t, "lib/tab-view.sh", "tab_view_status_left",
-		[]string{"myproj", "141"}, nil)
+		[]string{"myproj", "141", "47"}, nil)
 	assertExitCode(t, code, 0)
 	assertContains(t, out, "⬡ myproj")
 	// One chip per window, iterated live by tmux; each chip is a click range
@@ -63,6 +64,75 @@ func TestTabViewStatusLeft_contains_label_ranges_and_accent(t *testing.T) {
 	assertContains(t, out, "colour141")
 	// Chips are numbered 1-based (outer windows are 0-indexed).
 	assertContains(t, out, "#{e|+:#{window_index},1}")
+}
+
+// The bar reads as the agent pane's top border, not a full-width block: the
+// stretch over the ledger is a plain border rule, a ┬ junction sits exactly on
+// the ledger/agent split (ai_left-1), and the label + chips start right after
+// it — over the agent pane. The tail is a long rule that tmux clips at the
+// window edge. The old full-width chrome (bg=colour236 block) must be gone.
+func TestTabViewStatusLeft_aligns_bar_over_agent_pane(t *testing.T) {
+	out, code := runBashFunc(t, "lib/tab-view.sh", "tab_view_status_left",
+		[]string{"myproj", "141", "47"}, nil)
+	assertExitCode(t, code, 0)
+	lead := strings.Repeat("─", 46) + "┬"
+	if !strings.HasPrefix(out, lead) {
+		t.Fatalf("bar must open with a 46-col rule and a ┬ on the pane split; got:\n%q", out)
+	}
+	// The label sits after the junction (over the agent pane), not at col 0.
+	if at := strings.Index(out, "⬡ myproj"); at < len(lead) {
+		t.Fatalf("label at %d, want after the %d-col lead", at, len(lead))
+	}
+	// Long clipped tail keeps the border rule running to the window edge.
+	assertContains(t, out, strings.Repeat("─", 100))
+	assertNotContains(t, out, "bg=colour236")
+}
+
+// Without a pane offset (older caller / geometry unavailable) the bar degrades
+// to the label + chips with no lead rule — never an error.
+func TestTabViewStatusLeft_no_offset_degrades_gracefully(t *testing.T) {
+	out, code := runBashFunc(t, "lib/tab-view.sh", "tab_view_status_left",
+		[]string{"myproj", "141"}, nil)
+	assertExitCode(t, code, 0)
+	assertNotContains(t, out, "┬")
+	assertContains(t, out, "⬡ myproj")
+}
+
+// tab_view_refresh_bar recomputes the bar from live session state (project,
+// tool accent, AI pane offset) and re-sets status-left — the resize/layout
+// hooks call it so the ┬ junction tracks the real pane split.
+func TestTabViewRefreshBar_realigns_to_ai_pane(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`printf '%%s\n' "$*" >> %q
+case "$1" in
+  show-environment)
+    case "$*" in
+      *WISP_DECK_PROJECT*) echo "WISP_DECK_PROJECT=myproj" ;;
+      *WISP_DECK_TOOL*) echo "WISP_DECK_TOOL=claude" ;;
+    esac
+    ;;
+  list-panes)
+    case "$*" in
+      *@gt_ai*) printf '%%s\n' "%%0 " "%%1 1" ;;
+    esac
+    ;;
+  display-message)
+    case "$*" in
+      *pane_left*) echo "62" ;;
+    esac
+    ;;
+esac`, rec))
+	env := buildEnv(t, []string{bin})
+	_, code := runBashSnippet(t, fmt.Sprintf(
+		`source %q; tab_view_refresh_bar tmux %q mysession`,
+		filepath.Join(projectRoot(t), "lib", "tab-view.sh"),
+		filepath.Join(projectRoot(t), "lib")), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+	assertContains(t, logOut, "set-option -t mysession status-left")
+	assertContains(t, logOut, strings.Repeat("─", 61)+"┬")
+	assertContains(t, logOut, "⬡ myproj")
 }
 
 func TestTabViewDispatch_select_routes_to_select_window(t *testing.T) {
@@ -237,11 +307,22 @@ func TestWrapper_tab_view_bar_and_binds(t *testing.T) {
 	}
 	got := string(data)
 
-	// First batch: visible top bar with the tab view.
+	// First batch: visible top bar with the tab view, styled as a border rule
+	// (the old full-width colour236 block is gone) so it reads as the agent
+	// pane's top border.
 	assertContains(t, got, "set-option status on")
 	assertContains(t, got, "set-option status-position top")
 	assertContains(t, got, "range=user|wdnew")
 	assertContains(t, got, "range=user|wdtab:#{window_id}")
+	assertContains(t, got, "status-left-style fg=colour238")
+	assertNotContains(t, got, "bg=colour236")
+
+	// After the panes exist the wrapper realigns the bar to the AI pane's
+	// offset and hooks resize/layout changes so it keeps tracking the split.
+	assertContains(t, got, "tabbar-refresh")
+	assertContains(t, got, "set-hook")
+	assertContains(t, got, "client-resized")
+	assertContains(t, got, "window-layout-changed")
 
 	// Second batch: new-window keybind and clickable status line.
 	assertContains(t, got, "bind-key c run-shell")

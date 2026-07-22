@@ -639,8 +639,8 @@ env -u WISP_DECK_TESTING "$TMUX_CMD" new-session -d -P -F '#{pane_id}' -x "$_tmu
   set-option status-position top \; \
   set-option status-left-length 400 \; \
   set-option status-left "$(tab_view_status_left "$PROJECT_NAME" "$_gt_accent")" \; \
-  set-option status-left-style "fg=white,bg=colour236,bold" \; \
-  set-option status-style "bg=colour235" \; \
+  set-option status-left-style "fg=colour238" \; \
+  set-option status-style "bg=default" \; \
   set-option status-right "" \; \
   set-option window-status-format "" \; \
   set-option window-status-current-format "" \; \
@@ -657,6 +657,24 @@ env -u WISP_DECK_TESTING "$TMUX_CMD" new-session -d -P -F '#{pane_id}' -x "$_tmu
 _gt_ledger_pane=""
 _gt_ai_pane=""
 { { read -r _gt_ledger_pane; read -r _gt_ai_pane; } < "$_gt_panes_file"; } 2>/dev/null || true
+
+# The tab bar draws as the agent pane's top border: now that the panes exist,
+# read the AI pane's left offset so the second batch can realign the bar's ┬
+# junction onto the real ledger/agent split (the batch-1 bar had no offset).
+_gt_ai_left=""
+if [ -n "$_gt_ai_pane" ]; then
+  _gt_ai_left="$("$TMUX_CMD" display-message -p -t "$_gt_ai_pane" '#{pane_left}' 2>/dev/null)" || _gt_ai_left=""
+fi
+
+# Per-session refresh script for the resize/layout hooks: recomputes the bar
+# from live state so the junction keeps tracking the split. A plain script
+# file keeps the hook command free of nested quoting.
+_gt_tabbar_refresh="$SHARE_DIR/tabbar-refresh-${SESSION_NAME}.sh"
+{
+  printf '#!/bin/bash\n'
+  printf 'source %q/tab-view.sh 2>/dev/null || exit 0\n' "$_WRAPPER_DIR/lib"
+  printf 'tab_view_refresh_bar %q %q %q\n' "$TMUX_CMD" "$_WRAPPER_DIR/lib" "$SESSION_NAME"
+} > "$_gt_tabbar_refresh" 2>/dev/null && chmod +x "$_gt_tabbar_refresh" 2>/dev/null || _gt_tabbar_refresh=""
 
 # ---- The agent is booting in its pane from here on; everything below runs ----
 # ---- in the shadow of that boot, before the attach at the end.            ----
@@ -737,7 +755,17 @@ _tab_view_new_bind="bash -c 'source \"\$1/tab-view.sh\" && tab_view_new_window \
 # position, which the focus watcher may have changed since the first batch.
 # The server already exists (started by the sanitized new-session client
 # above), so this client needs no env scrub.
+# Realign the bar to the AI pane's offset and hook resize/layout changes so
+# the ┬ junction keeps tracking the split. Built as an array so the hook
+# commands drop out cleanly when the refresh script could not be written.
+_gt_tabbar_chain=(set-option status-left "$(tab_view_status_left "$PROJECT_NAME" "$_gt_accent" "$_gt_ai_left")" ';')
+if [ -n "$_gt_tabbar_refresh" ]; then
+  _gt_tabbar_chain+=(set-hook -t "$SESSION_NAME" client-resized "run-shell -b \"$_gt_tabbar_refresh\"" ';')
+  _gt_tabbar_chain+=(set-hook -t "$SESSION_NAME" window-layout-changed "run-shell -b \"$_gt_tabbar_refresh\"" ';')
+fi
+
 "$TMUX_CMD" \
+  "${_gt_tabbar_chain[@]}" \
   bind-key i run-shell "$_screenshot_bind" \; \
   bind-key t run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label new-window -c \"$PROJECT_DIR\"" \; \
   bind-key w run-shell "$_spare_close_bind" \; \
