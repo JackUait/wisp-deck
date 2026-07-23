@@ -281,11 +281,16 @@ func TestWrapper_tab_view_bar_and_binds(t *testing.T) {
 		t.Fatalf("mkdir bin: %v", err)
 	}
 	recPath := filepath.Join(home, "rec")
+	// The wrapper's EXIT trap deletes the generated spare conf; this rm mock
+	// snapshots it (then really deletes) so the test can assert the forwarding
+	// binds the wrapper wired into it.
+	confCap := filepath.Join(home, "spare-conf-capture")
 	mocks := map[string]string{
 		"tmux":          recordingTmuxMock,
 		"claude":        "#!/bin/bash\nexit 0\n",
 		"wisp-deck-tui": "#!/bin/bash\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
+		"rm":            "#!/bin/bash\nfor a in \"$@\"; do case \"$a\" in */spare-*.conf) cp \"$a\" \"$GT_CONF_CAP\" 2>/dev/null || true ;; esac; done\nexec /bin/rm \"$@\"\n",
 	}
 	for name, body := range mocks {
 		if err := os.WriteFile(filepath.Join(binDir, name), []byte(body), 0755); err != nil {
@@ -297,7 +302,7 @@ func TestWrapper_tab_view_bar_and_binds(t *testing.T) {
 		t.Fatalf("mkdir proj: %v", err)
 	}
 	seedRestoreQueue(t, home, projDir, "claude")
-	env := buildEnv(t, nil, "HOME="+home, "GT_REC="+recPath)
+	env := buildEnv(t, nil, "HOME="+home, "GT_REC="+recPath, "GT_CONF_CAP="+confCap)
 	_, code := runBashScript(t, "wrapper.sh", nil, env)
 	assertExitCode(t, code, 0)
 
@@ -349,4 +354,19 @@ func TestWrapper_tab_view_bar_and_binds(t *testing.T) {
 	if bindAt == -1 || bindAt > hoverAt {
 		t.Fatalf("status mouse binds must precede the hover install (bind=%d hover=%d)", bindAt, hoverAt)
 	}
+
+	// The spare pane's inner tmux owns the prefix, so the wrapper must pass the
+	// outer session name into spare_tabs_config; the generated inner config then
+	// forwards prefix+n/p/1-9 to the outer session, so tab-switch works with the
+	// spare pane focused too. Read the conf the rm mock snapshotted before the
+	// EXIT trap deleted it.
+	confData, err := os.ReadFile(confCap)
+	if err != nil {
+		t.Fatalf("spare conf was not captured (wrapper may not have wired it): %v", err)
+	}
+	spareConf := string(confData)
+	assertContains(t, spareConf, "bind n run-shell")
+	assertContains(t, spareConf, "bind p run-shell")
+	assertContains(t, spareConf, "next-window -t dev-proj")
+	assertContains(t, spareConf, "select-window -t dev-proj")
 }

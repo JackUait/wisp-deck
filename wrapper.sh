@@ -603,7 +603,7 @@ fi
 _spare_label="$(spare_tabs_socket "$SESSION_NAME")"
 mkdir -p "$SHARE_DIR"
 _spare_conf="$SHARE_DIR/spare-${SESSION_NAME}.conf"
-spare_tabs_config "$PROJECT_NAME" "$PROJECT_DIR" "$_WRAPPER_DIR/lib/spare-tabs.sh" "$_spare_label" "$_gt_accent" > "$_spare_conf"
+spare_tabs_config "$PROJECT_NAME" "$PROJECT_DIR" "$_WRAPPER_DIR/lib/spare-tabs.sh" "$_spare_label" "$_gt_accent" "$SESSION_NAME" > "$_spare_conf"
 # Minimal cwd-only prompt for the spare shell (drops user@host and conda's
 # "(base)"). Echoes empty for non-zsh shells, leaving them untouched.
 _spare_zdotdir="$(spare_prompt_zdotdir "$SHARE_DIR" "$SESSION_NAME" "$SHELL" "${ZDOTDIR:-$HOME}")"

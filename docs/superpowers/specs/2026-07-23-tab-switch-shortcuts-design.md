@@ -39,6 +39,34 @@ routed to the **spare** terminal. `prefix+Tab` therefore stays with the spare;
 we use `n`/`p` and the number row instead. The number binds only correct the
 (wrong-target) tmux default; they steal nothing.
 
+## Making it work from every pane
+
+The AI and ledger panes have no nested tmux, so the outer prefix binds above
+already reach them. The **spare pane runs a nested tmux that owns the prefix**
+(`lib/spare-tabs.sh:77`), so `prefix+n/p/1-9` there hit the *inner* server (the
+spare's own windows), never the outer tabs.
+
+Following the codebase's existing pattern — `lib/spare-tabs.sh:81` mirrors
+`prefix+t` into the inner config so it "works the same regardless of pane
+focus" — `spare_tabs_config` now takes the outer session name and, when given
+it, emits forwarding binds in the inner config:
+
+```
+bind n run-shell "env -u TMUX -u TMUX_PANE tmux next-window -t <outer> ..."
+bind p run-shell "env -u TMUX -u TMUX_PANE tmux previous-window -t <outer> ..."
+bind 1..9 run-shell "env -u TMUX -u TMUX_PANE tmux select-window -t <outer>:N-1 ..."
+```
+
+The `-u TMUX` scrub makes tmux target the **outer default socket** (the outer
+session runs on the default socket via `TMUX_CMD`), so the inner keys switch the
+project tabs. `wrapper.sh` passes `$SESSION_NAME` as the new 6th arg.
+
+**Tradeoff:** this repurposes the spare's own default `n`/`p`/`1-9` window
+navigation (from inside the spare pane) to switch project tabs instead. The
+spare is a secondary terminal, usually single-window, and its own tabs stay
+reachable by mouse and by the outer `prefix+Tab`/`BTab` cycle — so consistent
+project-tab switching from every pane is the better trade.
+
 ## Out of scope
 
 - `base-index` (would break the chip numbering formula).

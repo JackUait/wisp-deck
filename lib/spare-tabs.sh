@@ -43,7 +43,7 @@ spare_tabs_set_accent() {
 # accent_colour is the 256-colour focus accent (default 209 orange); OpenCode
 # sessions pass 141 (purple) so the tab bar matches the theme.
 spare_tabs_config() {
-  local dir="$2" lib="$3" label="$4" accent="${5:-209}"
+  local dir="$2" lib="$3" label="$4" accent="${5:-209}" outer="${6:-}"
 
   # Tab bar styling — deliberately minimal. The selected tab is the only thing
   # with colour: its number on the accent colour (the app's focus colour,
@@ -52,6 +52,25 @@ spare_tabs_config() {
   # decoration. The bar itself is transparent (bg=default), so the tabs and the
   # + button float on the terminal background. Closing is keyboard-only
   # (prefix+w); there is no per-tab ✕.
+
+  # Tab-switch shortcuts, mirrored into the spare pane. The inner tmux owns the
+  # prefix here, so the outer session's prefix+n/p/1-9 never reach it — forward
+  # them to the outer session (env-scrubbed so tmux hits the outer default
+  # socket, not this inner server) so the shortcut switches the PROJECT tabs no
+  # matter which pane has focus. Chips are window_index+1, so key N selects the
+  # outer window at index N-1. Only wired when the outer session is known.
+  local fwd=""
+  if [ -n "$outer" ]; then
+    local envpfx='env -u TMUX -u TMUX_PANE tmux'
+    fwd="bind n run-shell \"$envpfx next-window -t $outer 2>/dev/null || true\"
+bind p run-shell \"$envpfx previous-window -t $outer 2>/dev/null || true\""
+    local n
+    for ((n = 1; n <= 9; n++)); do
+      fwd+="
+bind $n run-shell \"$envpfx select-window -t $outer:$((n - 1)) 2>/dev/null || true\""
+    done
+  fi
+
   cat <<EOF
 set -g mouse on
 set -g status-position top
@@ -79,6 +98,7 @@ set -g @gt_dir "$dir"
 # project dir) so the new tab joins the existing list — matching the outer
 # prefix+t binding so the shortcut works the same regardless of pane focus.
 bind t new-window -c "$dir"
+$fwd
 bind -n MouseDown1Status run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""
 bind -n MouseDown1StatusLeft run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""
 bind -n MouseDown1StatusRight run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""

@@ -69,6 +69,43 @@ func TestSpareTabs_config_core(t *testing.T) {
 	assertNotContains(t, out, "wisp-deck")
 }
 
+// With an outer session name (6th arg), the inner spare tmux mirrors the outer
+// tab-switch shortcuts so they switch the PROJECT tabs no matter which pane has
+// focus: the spare pane's inner tmux owns the prefix, so prefix+n/p/1-9 must be
+// forwarded to the outer session rather than acting on the spare's own windows.
+// Chips are window_index+1, so key N selects outer window index N-1. The env
+// scrub (-u TMUX) is what makes tmux target the outer default socket, not the
+// inner server.
+func TestSpareTabs_config_forwards_tab_switch_to_outer(t *testing.T) {
+	out, code := runBashFunc(t, "lib/spare-tabs.sh", "spare_tabs_config",
+		[]string{"wisp-deck", "/proj/dir", "/abs/lib/spare-tabs.sh", "gtspare_x", "209", "dev-app-42"}, nil)
+	assertExitCode(t, code, 0)
+
+	for _, want := range []string{
+		"bind n run-shell",
+		"bind p run-shell",
+		"bind 1 run-shell",
+		"bind 9 run-shell",
+		"-u TMUX",                          // forward to the outer default socket
+		"next-window -t dev-app-42",        // prefix+n cycles the project tabs
+		"previous-window -t dev-app-42",    // prefix+p cycles the other way
+		"select-window -t dev-app-42:0",    // prefix+1 -> chip 1 (window index 0)
+		"select-window -t dev-app-42:8",    // prefix+9 -> chip 9 (window index 8)
+	} {
+		assertContains(t, out, want)
+	}
+}
+
+// Without the outer session arg, no forwarding binds are emitted — existing
+// callers (and the spare's own default window nav) are unaffected.
+func TestSpareTabs_config_no_forward_binds_without_outer(t *testing.T) {
+	out, code := runBashFunc(t, "lib/spare-tabs.sh", "spare_tabs_config",
+		[]string{"wisp-deck", "/proj/dir", "/abs/lib/spare-tabs.sh", "gtspare_x"}, nil)
+	assertExitCode(t, code, 0)
+	assertNotContains(t, out, "bind n run-shell")
+	assertNotContains(t, out, "select-window -t")
+}
+
 // The active-tab chip and the + button take their accent from the 5th arg so the
 // tab bar matches the session's tool theme (orange for claude, purple for
 // OpenCode). A purple accent must replace every orange colour209 in the bar.
