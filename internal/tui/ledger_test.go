@@ -131,22 +131,8 @@ func TestLedgerViewRendersFileStatesAndMetadata(t *testing.T) {
 	}
 }
 
-func TestLedgerHeaderRendersLineTotalsInDiffColors(t *testing.T) {
-	previousProfile := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.ANSI256)
-	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
-
-	raw := renderLedgerHeader(ledger.Metadata{
-		TotalFiles: 8, Added: 654, Deleted: 25,
-	}, 80)[0]
-
-	if !ledgerSGRActiveAt(raw, "+654", "32m") {
-		t.Fatalf("added total does not carry green foreground: %q", raw)
-	}
-	if !ledgerSGRActiveAt(raw, "−25", "31m") {
-		t.Fatalf("deleted total does not carry red foreground: %q", raw)
-	}
-}
+// The changed-file line totals carry the diff colors — see the footer stamp
+// tests in ledger_footer_stamp_test.go, which now own the stamp.
 
 func TestLedgerGroupRowsRenderStatusColors(t *testing.T) {
 	previousProfile := lipgloss.ColorProfile()
@@ -294,9 +280,9 @@ func TestLedgerMouseMotionMapsVisibleRowAndSameRowIsNoOp(t *testing.T) {
 	m := NewLedgerModel(fakeLedgerSource{}, snapshot, LedgerOptions{})
 	sizeLedger(m, 80, 14)
 	m.state.ScrollTo(50)
-	want := snapshot.Rows[51].ID // Y=3 is the second viewport row (zero-based screen coordinates).
+	want := snapshot.Rows[51].ID // Y=1 is the second viewport row (zero-based, no top header).
 
-	updated, cmd := m.Update(tea.MouseMsg{X: 10, Y: 3, Action: tea.MouseActionMotion})
+	updated, cmd := m.Update(tea.MouseMsg{X: 10, Y: 1, Action: tea.MouseActionMotion})
 
 	if updated != m || cmd != nil {
 		t.Fatalf("motion returned model=%T cmd=%v; want same model and nil command", updated, cmd)
@@ -304,7 +290,7 @@ func TestLedgerMouseMotionMapsVisibleRowAndSameRowIsNoOp(t *testing.T) {
 	if m.state.Hovered != want {
 		t.Fatalf("hover = %v, want %v", m.state.Hovered, want)
 	}
-	updated, cmd = m.Update(tea.MouseMsg{X: 11, Y: 3, Action: tea.MouseActionMotion})
+	updated, cmd = m.Update(tea.MouseMsg{X: 11, Y: 1, Action: tea.MouseActionMotion})
 	if updated != m || cmd != nil || m.state.Hovered != want {
 		t.Fatalf("same-row motion changed state: model=%T cmd=%v hover=%v", updated, cmd, m.state.Hovered)
 	}
@@ -359,7 +345,7 @@ func TestLedgerScrollMouseWheelKeepsHoverUnderPointer(t *testing.T) {
 	if m.state.Scroll != 13 {
 		t.Fatalf("scroll = %d, want 13", m.state.Scroll)
 	}
-	want := snapshot.Rows[16].ID
+	want := snapshot.Rows[18].ID // Y=5, offset=Y (no top header): Rows[scroll+5].
 	if m.state.Hovered != want {
 		t.Fatalf("hover after wheel = %v, want %v", m.state.Hovered, want)
 	}
@@ -376,10 +362,10 @@ func TestLedgerScrollKeyboardBindings(t *testing.T) {
 		{name: "down", key: tea.KeyMsg{Type: tea.KeyDown}, start: 10, want: 11},
 		{name: "k", key: ledgerRuneKey('k'), start: 10, want: 9},
 		{name: "up", key: tea.KeyMsg{Type: tea.KeyUp}, start: 10, want: 9},
-		{name: "space", key: ledgerRuneKey(' '), start: 10, want: 21},
-		{name: "page down", key: tea.KeyMsg{Type: tea.KeyPgDown}, start: 10, want: 21},
-		{name: "b", key: ledgerRuneKey('b'), start: 20, want: 9},
-		{name: "page up", key: tea.KeyMsg{Type: tea.KeyPgUp}, start: 20, want: 9},
+		{name: "space", key: ledgerRuneKey(' '), start: 10, want: 23},
+		{name: "page down", key: tea.KeyMsg{Type: tea.KeyPgDown}, start: 10, want: 23},
+		{name: "b", key: ledgerRuneKey('b'), start: 20, want: 7},
+		{name: "page up", key: tea.KeyMsg{Type: tea.KeyPgUp}, start: 20, want: 7},
 		{name: "g", key: ledgerRuneKey('g'), start: 20, want: 0},
 		{name: "home", key: tea.KeyMsg{Type: tea.KeyHome}, start: 20, want: 0},
 	}
@@ -414,7 +400,7 @@ func TestLedgerUpdateResizeDoesNotLoadGit(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("resize command = %v, want nil", cmd)
 	}
-	if m.width != 120 || m.height != 42 || m.state.ViewportHeight() != 39 {
+	if m.width != 120 || m.height != 42 || m.state.ViewportHeight() != 41 {
 		t.Fatalf("geometry = %dx%d viewport=%d", m.width, m.height, m.state.ViewportHeight())
 	}
 	if source.CallCount() != 0 {
@@ -632,11 +618,11 @@ func TestLedgerSelectionKeyboardAndCheckboxClickToggleHoveredPath(t *testing.T) 
 	if !m.state.IsSelected(snapshot.Rows[1].Path) {
 		t.Fatal("x did not select the hovered path")
 	}
-	m.Update(tea.MouseMsg{X: 1, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m.Update(tea.MouseMsg{X: 1, Y: 1, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	if m.state.IsSelected(snapshot.Rows[1].Path) {
 		t.Fatal("checkbox click did not deselect the file row")
 	}
-	m.Update(tea.MouseMsg{X: 4, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m.Update(tea.MouseMsg{X: 4, Y: 1, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	if m.state.IsSelected(snapshot.Rows[1].Path) {
 		t.Fatal("click outside the checkbox changed selection")
 	}
@@ -850,7 +836,7 @@ func TestLedgerOpenClickStartsPopupOffInputLoopOnCacheMiss(t *testing.T) {
 	})
 	sizeLedger(m, 80, 14)
 
-	_, cmd := m.Update(tea.MouseMsg{X: 12, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	_, cmd := m.Update(tea.MouseMsg{X: 12, Y: 1, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 
 	if cmd == nil || !m.opening {
 		t.Fatalf("click cmd=%v opening=%v", cmd, m.opening)
@@ -893,7 +879,7 @@ func TestLedgerOpenUsesCachedBackdropAndImageMetadata(t *testing.T) {
 	m := NewLedgerModel(nil, snapshot, LedgerOptions{ProjectDir: "/repo", Popup: popup, BackdropCache: cache})
 	sizeLedger(m, 80, 14)
 
-	_, cmd := m.Update(tea.MouseMsg{X: 12, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	_, cmd := m.Update(tea.MouseMsg{X: 12, Y: 1, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	if cmd == nil {
 		t.Fatal("image click returned no popup command")
 	}
@@ -916,7 +902,7 @@ func TestLedgerOpenCompletionDiscardsDecisionAndRefreshesState(t *testing.T) {
 	})
 	sizeLedger(m, 80, 14)
 
-	_, openCmd := m.Update(tea.MouseMsg{X: 12, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	_, openCmd := m.Update(tea.MouseMsg{X: 12, Y: 1, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	popupDone := openCmd()
 	if calls, dir, paths := mutator.result(); calls != 1 || dir != "/repo" || strings.Join(paths, ",") != snapshot.Rows[1].Path {
 		t.Fatalf("popup discard calls=%d dir=%q paths=%v", calls, dir, paths)
@@ -1156,19 +1142,20 @@ func TestLedgerAccountClickIgnoredWhileSwitching(t *testing.T) {
 	}
 }
 
-func TestLedgerHeaderOmitsSubscriptionPlan(t *testing.T) {
-	// The subscription moved to the account pill; the header keeps only the
-	// changed-file stamp, right-aligned.
-	raw := renderLedgerHeader(ledger.Metadata{
-		TotalFiles: 8, Added: 654, Deleted: 25,
-	}, 80)[0]
+// The subscription lives in the account pill, never the changed-file stamp:
+// the footer stamp carries only file counts and line totals.
+func TestLedgerFooterStampOmitsSubscriptionPlan(t *testing.T) {
+	rows := []ledger.Row{{Kind: ledger.RowGroup, Group: ledger.GroupModified, Label: "modified", Count: 8}}
+	snapshot := ledger.NewSnapshot(1, rows, ledger.Metadata{TotalFiles: 8, Added: 654, Deleted: 25})
+	m := NewLedgerModel(fakeLedgerSource{}, snapshot, LedgerOptions{})
+	sizeLedger(m, 80, 14)
 
-	plain := stripANSI(raw)
+	plain := stripANSI(m.View())
 	if strings.Contains(plain, "OpenAI / ChatGPT") {
-		t.Fatalf("header still renders the subscription plan: %q", plain)
+		t.Fatalf("footer stamp still renders the subscription plan: %q", plain)
 	}
 	if !strings.Contains(plain, "8 files  +654 −25") {
-		t.Fatalf("header lost the changed-file stamp: %q", plain)
+		t.Fatalf("footer lost the changed-file stamp: %q", plain)
 	}
 }
 

@@ -7,52 +7,45 @@ import (
 	"github.com/jackuait/wisp-deck/internal/ledger"
 )
 
-// The branch name moved out of the ledger entirely — it now lives in the
-// Claude statusline. The header keeps only the right-aligned changed-file
-// stamp.
-func TestLedgerHeaderOmitsBranchKeepsStamp(t *testing.T) {
-	raw := renderLedgerHeader(ledger.Metadata{
+// The branch name lives in the Claude statusline; the footer stamp names
+// neither the branch nor a detached HEAD, only the changed-file summary.
+func TestLedgerFooterStampOmitsBranch(t *testing.T) {
+	rows := []ledger.Row{{Kind: ledger.RowGroup, Group: ledger.GroupModified, Label: "modified", Count: 8}}
+	snapshot := ledger.NewSnapshot(1, rows, ledger.Metadata{
 		Branch: "feature/perf", TotalFiles: 8, Added: 654, Deleted: 25,
-	}, 80)[0]
+	})
+	m := NewLedgerModel(fakeLedgerSource{}, snapshot, LedgerOptions{})
+	sizeLedger(m, 80, 14)
 
-	plain := stripANSI(raw)
+	plain := stripANSI(m.View())
 	if strings.Contains(plain, "feature/perf") {
-		t.Fatalf("header still names the branch: %q", plain)
+		t.Fatalf("footer still names the branch: %q", plain)
+	}
+	if strings.Contains(plain, "detached") {
+		t.Fatalf("footer labels a detached HEAD it no longer tracks: %q", plain)
 	}
 	if !strings.Contains(plain, "8 files  +654 −25") {
-		t.Fatalf("header lost the changed-file stamp: %q", plain)
-	}
-	if !strings.HasSuffix(strings.TrimRight(plain, " "), "8 files  +654 −25") {
-		t.Fatalf("stamp is not right-aligned: %q", plain)
+		t.Fatalf("footer lost the changed-file stamp: %q", plain)
 	}
 }
 
-// A detached HEAD has no branch to report, and the header never had one to
-// begin with — the stamp still renders.
-func TestLedgerHeaderRendersStampWhenBranchEmpty(t *testing.T) {
-	raw := renderLedgerHeader(ledger.Metadata{TotalFiles: 1, Added: 1}, 80)[0]
+// Even at a narrow width the footer row never overflows the pane.
+func TestLedgerFooterStampFitsNarrowPane(t *testing.T) {
+	rows := []ledger.Row{{Kind: ledger.RowGroup, Group: ledger.GroupModified, Label: "modified", Count: 2}}
+	snapshot := ledger.NewSnapshot(1, rows, ledger.Metadata{TotalFiles: 2, Added: 5, Deleted: 1})
+	m := NewLedgerModel(fakeLedgerSource{}, snapshot, LedgerOptions{})
+	sizeLedger(m, 40, 14)
+	m.Update(ledgerSessionMsg{session: ledger.SessionContext{
+		Tool: "claude", Pill: &ledger.SessionPill{Label: "Personal", Color: 78},
+	}})
 
-	plain := stripANSI(raw)
-	if strings.Contains(plain, "detached") {
-		t.Fatalf("header labels a detached HEAD it no longer tracks: %q", plain)
+	lines := strings.Split(m.View(), "\n")
+	footer := stripANSI(lines[len(lines)-1])
+	if !strings.Contains(footer, "2 files  +5 −1") {
+		t.Fatalf("footer lost the stamp: %q", footer)
 	}
-	if !strings.Contains(plain, "1 file  +1 −0") {
-		t.Fatalf("header lost the changed-file stamp: %q", plain)
-	}
-}
-
-// Even at a narrow width the header row never overflows the pane.
-func TestLedgerHeaderFitsNarrowPane(t *testing.T) {
-	raw := renderLedgerHeader(ledger.Metadata{
-		Branch: strings.Repeat("b", 100), TotalFiles: 2, Added: 5, Deleted: 1,
-	}, 40)[0]
-
-	plain := stripANSI(raw)
-	if !strings.Contains(plain, "2 files  +5 −1") {
-		t.Fatalf("header lost the stamp: %q", plain)
-	}
-	if w := visibleRuneWidth(plain); w > 40 {
-		t.Fatalf("header row overflows the pane: %d cols > 40 (%q)", w, plain)
+	if w := visibleRuneWidth(footer); w > 40 {
+		t.Fatalf("footer row overflows the pane: %d cols > 40 (%q)", w, footer)
 	}
 }
 

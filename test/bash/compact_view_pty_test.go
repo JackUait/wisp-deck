@@ -666,9 +666,10 @@ func TestCompactView_hover_clears_when_pointer_leaves_pane_sideways(t *testing.T
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	// Hover a.txt's row: rows 1-2 are the pinned header, row 3 the "modified"
-	// group header, row 4 the file. Column 10 is well inside the 60-col pane.
-	_, _ = ptmx.Write([]byte("\x1b[<35;10;4M"))
+	// Hover a.txt's row: there is no pinned header now, so row 1 is the
+	// "modified" group header and row 2 the file. Column 10 is well inside the
+	// 60-col pane.
+	_, _ = ptmx.Write([]byte("\x1b[<35;10;2M"))
 	lit := false
 	for i := 0; i < 40; i++ {
 		if frameHasHighlight() {
@@ -681,10 +682,10 @@ func TestCompactView_hover_clears_when_pointer_leaves_pane_sideways(t *testing.T
 		t.Fatalf("hover over the file row never lit the highlight; cannot test the clear.\nframe:\n%q", lastRawFrame())
 	}
 
-	// Move the pointer SIDEWAYS into the neighbouring pane: SAME row (4), but a
+	// Move the pointer SIDEWAYS into the neighbouring pane: SAME row (2), but a
 	// column far past the pane's right edge (200 > 60). With mouse off in the outer
 	// tmux this report still reaches the active ledger; the highlight must clear.
-	_, _ = ptmx.Write([]byte("\x1b[<35;200;4M"))
+	_, _ = ptmx.Write([]byte("\x1b[<35;200;2M"))
 	cleared := false
 	for i := 0; i < 40; i++ {
 		if !frameHasHighlight() {
@@ -886,9 +887,9 @@ func TestCompactView_multiselect_discards_selected_files(t *testing.T) {
 		}
 	}()
 
-	// Body layout with a short "main" heading (header_rows=2): screen row 3 is the
-	// "modified" group header, row 4 = a.txt, row 5 = b.txt, row 6 = c.txt. A
-	// no-button SGR motion report (button 35) sets the hover to the row's file.
+	// Body layout with no pinned header: screen row 1 is the "modified" group
+	// header, row 2 = a.txt, row 3 = b.txt, row 4 = c.txt. A no-button SGR
+	// motion report (button 35) sets the hover to the row's file.
 	hover := func(row int) {
 		_, _ = ptmx.Write([]byte(fmt.Sprintf("\x1b[<35;10;%dM", row)))
 		time.Sleep(120 * time.Millisecond)
@@ -896,10 +897,10 @@ func TestCompactView_multiselect_discards_selected_files(t *testing.T) {
 
 	time.Sleep(700 * time.Millisecond) // first frame
 
-	hover(4)                       // a.txt
+	hover(2)                       // a.txt
 	_, _ = ptmx.Write([]byte("x")) // select a.txt
 	time.Sleep(120 * time.Millisecond)
-	hover(5)                       // b.txt
+	hover(3)                       // b.txt
 	_, _ = ptmx.Write([]byte("x")) // select b.txt
 	time.Sleep(120 * time.Millisecond)
 	_, _ = ptmx.Write([]byte("d")) // arm the confirm
@@ -1017,11 +1018,11 @@ func TestCompactView_mouse_marks_and_discards(t *testing.T) {
 		t.Fatalf("ledger did not paint before mouse input:\n%s", frame())
 	}
 
-	// Body: row 3 = "modified" header, row 4 = a.txt, row 5 = b.txt, row 6 = c.txt.
-	// The checkbox lives in the left indent (cols 1-3), so a click at col 2 toggles
-	// the row's mark.
-	click(2, 4) // mark a.txt
-	click(2, 5) // mark b.txt
+	// Body (no pinned header): row 1 = "modified" header, row 2 = a.txt,
+	// row 3 = b.txt, row 4 = c.txt. The checkbox lives in the left indent
+	// (cols 1-3), so a click at col 2 toggles the row's mark.
+	click(2, 2) // mark a.txt
+	click(2, 3) // mark b.txt
 
 	// The "[ discard 2 ]" button now rides the group-header row NEXT TO the title,
 	// not the bottom bar. Assert it renders on the SAME line as "modified".
@@ -1037,8 +1038,9 @@ func TestCompactView_mouse_marks_and_discards(t *testing.T) {
 	}
 
 	// The header " ● modified  (3)" is 16 cols; a 2-space gap then "[ discard 2 ]"
-	// (13 cols) spans cols 19-31 on row 3. Click inside it to arm the confirm.
-	click(25, 3)
+	// (13 cols) spans cols 19-31 on row 1 (the group header, now the first row).
+	// Click inside it to arm the confirm.
+	click(25, 1)
 
 	// The confirm overlays the same row: "  Discard 2 files? [ yes ] [ no ]"; the
 	// "[ yes ]" button spans cols 36-42. Assert it landed on the group-header row.
@@ -1052,7 +1054,7 @@ func TestCompactView_mouse_marks_and_discards(t *testing.T) {
 	if confirmLine == "" {
 		t.Errorf("arming should draw the confirm at the top of the list; frame:\n%s", frame())
 	}
-	click(39, 3) // click [ yes ]
+	click(39, 1) // click [ yes ]
 	time.Sleep(500 * time.Millisecond)
 
 	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
@@ -1138,15 +1140,16 @@ func TestCompactView_mouse_uncheck_removes_mark(t *testing.T) {
 
 	time.Sleep(700 * time.Millisecond) // first frame
 
-	// Row 4 = a.txt, row 5 = b.txt. Mark a.txt, then click its box AGAIN to unmark,
-	// then mark b.txt — leaving ONLY b.txt in the discard set.
-	click(2, 4) // mark a.txt
-	click(2, 4) // UNMARK a.txt
-	click(2, 5) // mark b.txt
+	// Row 2 = a.txt, row 3 = b.txt (no pinned header). Mark a.txt, then click its
+	// box AGAIN to unmark, then mark b.txt — leaving ONLY b.txt in the discard set.
+	click(2, 2) // mark a.txt
+	click(2, 2) // UNMARK a.txt
+	click(2, 3) // mark b.txt
 
-	// With one file marked the button spans cols 19-31 on row 3; arm and confirm.
-	click(25, 3) // [ discard 1 ]
-	click(39, 3) // [ yes ]  — pre "Discard 1 file? " is 16 cols, so yes spans 35-41
+	// With one file marked the button spans cols 19-31 on row 1 (the group
+	// header, now the first row); arm and confirm.
+	click(25, 1) // [ discard 1 ]
+	click(39, 1) // [ yes ]  — pre "Discard 1 file? " is 16 cols, so yes spans 35-41
 	time.Sleep(500 * time.Millisecond)
 
 	_, _ = ptmx.Write([]byte{0x03}) // Ctrl-C
@@ -1238,8 +1241,9 @@ func TestCompactView_shows_hover_checkbox(t *testing.T) {
 		t.Errorf("idle frame (no hover) should not show a checkbox; got:\n%s", idle)
 	}
 
-	// Hover the single file row: screen row 4 (row 3 is the "modified" header).
-	_, _ = ptmx.Write([]byte("\x1b[<35;10;4M"))
+	// Hover the single file row: screen row 2 (row 1 is the "modified" header,
+	// no pinned header above it).
+	_, _ = ptmx.Write([]byte("\x1b[<35;10;2M"))
 	time.Sleep(300 * time.Millisecond)
 	mu.Lock()
 	hovered := out.String()
@@ -1253,13 +1257,13 @@ func TestCompactView_shows_hover_checkbox(t *testing.T) {
 	}
 }
 
-// The branch NAME lives in the Claude statusline now — the pinned top heading
-// keeps only the right-aligned changed-file stamp, while the push/pull commit
-// counts stay at the BOTTOM bar below the listed files. Drives the real loop
-// under zsh with an upstream two commits ahead, and asserts the heading is the
-// stamp alone, no line names the branch, the last content line reads "↑2", and
-// the file list sits between them.
-func TestCompactView_stamp_heading_push_pull_at_bottom(t *testing.T) {
+// The branch NAME lives in the Claude statusline now, and there is no pinned top
+// header at all: the changed-file stamp AND the push/pull commit counts both ride
+// the BOTTOM bar below the listed files (counts left, stamp right-aligned). Drives
+// the real loop under zsh with an upstream two commits ahead, and asserts the
+// first row is the group header (not a stamp), no line names the branch, the last
+// content line carries both "↑2" and the stamp, and the file list sits above it.
+func TestCompactView_stamp_push_pull_at_bottom(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
 		t.Skip("zsh not available")
@@ -1352,13 +1356,23 @@ func TestCompactView_stamp_heading_push_pull_at_bottom(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatalf("no content rendered; frame:\n%q", frame)
 	}
+	// No pinned header: the first content row is the "modified" group header,
+	// never the stamp.
 	heading := lines[0]
-	if !strings.HasSuffix(strings.TrimRight(heading, " \r"), "1 file  +1 −0") {
-		t.Errorf("pinned heading must be the right-aligned stamp alone; got %q\nframe:\n%s", heading, frame)
+	if !strings.Contains(heading, "modified") {
+		t.Errorf("first row must be the group header (no pinned stamp heading); got %q\nframe:\n%s", heading, frame)
 	}
+	if strings.Contains(heading, "1 file  +1 −0") {
+		t.Errorf("the stamp must not be pinned at the top anymore; got %q\nframe:\n%s", heading, frame)
+	}
+	// The stamp and push count now share the bottom bar: ↑2 on the left, the
+	// stamp right-aligned.
 	bottom := lines[len(lines)-1]
 	if !strings.Contains(bottom, "↑2") {
 		t.Errorf("bottom line must keep the push count (\"↑2\"); got %q\nframe:\n%s", bottom, frame)
+	}
+	if !strings.Contains(bottom, "1 file  +1 −0") {
+		t.Errorf("bottom bar must carry the right-aligned changed-file stamp; got %q\nframe:\n%s", bottom, frame)
 	}
 	// The branch must appear NOWHERE — it lives in the Claude statusline.
 	for _, ln := range lines {
@@ -1487,9 +1501,9 @@ func TestCompactView_overflow_hover_keeps_scroll_position(t *testing.T) {
 	out.Reset()
 	mu.Unlock()
 
-	// Hover a file row: screen row 5 (rows 1-2 are the pinned header, row 3 is the
-	// "modified" group header, row 4 is the first file — row 5 is a file row).
-	_, _ = ptmx.Write([]byte("\x1b[<35;10;5M"))
+	// Hover a file row: screen row 3 (no pinned header, row 1 is the "modified"
+	// group header, row 2 is the first file — row 3 is a file row).
+	_, _ = ptmx.Write([]byte("\x1b[<35;10;3M"))
 	time.Sleep(300 * time.Millisecond)
 	mu.Lock()
 	hovered := out.String()

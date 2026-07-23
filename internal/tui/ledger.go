@@ -15,7 +15,9 @@ import (
 )
 
 const (
-	ledgerHeaderHeight = 2
+	// The pane has no top header: the first rendered line is the first
+	// snapshot row. The changed-file stamp moved into the footer.
+	ledgerHeaderHeight = 0
 	ledgerFooterHeight = 1
 )
 
@@ -608,7 +610,6 @@ func (m *LedgerModel) View() string {
 		width = 1
 	}
 	lines := make([]string, 0, m.height)
-	lines = append(lines, renderLedgerHeader(m.state.Snapshot.Metadata, width)...)
 
 	visible := m.state.VisibleRows()
 	if len(m.state.Snapshot.Rows) == 0 {
@@ -646,48 +647,41 @@ func (m *LedgerModel) View() string {
 	return strings.Join(lines, "\n")
 }
 
-func renderLedgerHeader(metadata ledger.Metadata, width int) []string {
-	stamp := ""
-	if metadata.TotalFiles > 0 {
-		unit := "files"
-		if metadata.TotalFiles == 1 {
-			unit = "file"
-		}
-		stamp = fmt.Sprintf("%d %s  +%d −%d", metadata.TotalFiles, unit, metadata.Added, metadata.Deleted)
+// ledgerStampText is the plain changed-file summary ("8 files  +356 −0"), or
+// "" when nothing changed.
+func ledgerStampText(metadata ledger.Metadata) string {
+	if metadata.TotalFiles <= 0 {
+		return ""
 	}
-	// The branch lives in the Claude statusline now, so the stamp owns the row
-	// alone — right-aligned, with a leading space and a 1-col right margin.
-	pad := width - 2 - visibleRuneWidth(stamp)
-	if pad < 1 {
-		pad = 1
+	unit := "files"
+	if metadata.TotalFiles == 1 {
+		unit = "file"
 	}
-	line := " " + strings.Repeat(" ", pad) + stamp
-	line = ledgerFitPlain(line, width)
+	return fmt.Sprintf("%d %s  +%d −%d", metadata.TotalFiles, unit, metadata.Added, metadata.Deleted)
+}
+
+// renderLedgerStamp colors the changed-file summary: dim text with a green
+// +added and a red −deleted. Returns "" when nothing changed.
+func renderLedgerStamp(metadata ledger.Metadata) string {
+	text := ledgerStampText(metadata)
+	if text == "" {
+		return ""
+	}
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	rest := line
-	restRendered := dim.Render(rest)
-	if stamp != "" {
-		added := fmt.Sprintf("+%d", metadata.Added)
-		deleted := fmt.Sprintf("−%d", metadata.Deleted)
-		addedAt := strings.LastIndex(rest, added)
-		deletedAt := strings.LastIndex(rest, deleted)
-		if addedAt >= 0 && deletedAt >= addedAt+len(added) {
-			green := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-			red := lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-			restRendered = dim.Render(rest[:addedAt]) +
-				green.Render(added) +
-				dim.Render(rest[addedAt+len(added):deletedAt]) +
-				red.Render(deleted) +
-				dim.Render(rest[deletedAt+len(deleted):])
-		}
+	added := fmt.Sprintf("+%d", metadata.Added)
+	deleted := fmt.Sprintf("−%d", metadata.Deleted)
+	addedAt := strings.LastIndex(text, added)
+	deletedAt := strings.LastIndex(text, deleted)
+	if addedAt >= 0 && deletedAt >= addedAt+len(added) {
+		green := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+		red := lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+		return dim.Render(text[:addedAt]) +
+			green.Render(added) +
+			dim.Render(text[addedAt+len(added):deletedAt]) +
+			red.Render(deleted) +
+			dim.Render(text[deletedAt+len(deleted):])
 	}
-	lineRendered := restRendered
-	ruleWidth := width - 2
-	if ruleWidth < 0 {
-		ruleWidth = 0
-	}
-	rule := " " + strings.Repeat("─", ruleWidth)
-	return []string{lineRendered, dim.Faint(true).Render(rule)}
+	return dim.Render(text)
 }
 
 func renderLedgerRow(row ledger.Row, width int, visual ledger.RowVisualState) string {
@@ -861,7 +855,34 @@ func renderLedgerFileRow(row ledger.Row, width int, visual ledger.RowVisualState
 	return lipgloss.NewStyle().MaxWidth(width).Render(line)
 }
 
+// renderLedgerFooter draws the account pill (and any status/error) on the left
+// and the changed-file stamp right-aligned, with a 1-col right margin.
 func renderLedgerFooter(state *ledger.State, width int, actionError error, pill *ledger.SessionPill, pillHover bool) string {
+	metadata := state.Snapshot.Metadata
+	stampWidth := visibleRuneWidth(ledgerStampText(metadata))
+	leftBudget := width
+	if stampWidth > 0 {
+		// Reserve the stamp plus a leading gap and a 1-col right margin.
+		leftBudget = width - stampWidth - 2
+		if leftBudget < 0 {
+			leftBudget = 0
+		}
+	}
+	left := renderLedgerFooterLeft(state, leftBudget, actionError, pill, pillHover)
+	if stampWidth == 0 {
+		return left
+	}
+	pad := width - 1 - stampWidth - lipgloss.Width(left)
+	if pad < 1 {
+		pad = 1
+	}
+	return left + strings.Repeat(" ", pad) + renderLedgerStamp(metadata)
+}
+
+func renderLedgerFooterLeft(state *ledger.State, width int, actionError error, pill *ledger.SessionPill, pillHover bool) string {
+	if width <= 0 {
+		return ""
+	}
 	// An action error shares the footer with the pill rather than replacing it.
 	// actionError is sticky — it survives until some later action succeeds — so
 	// taking the row over would hide the pane's identity, and its only switch

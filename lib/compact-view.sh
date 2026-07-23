@@ -1,8 +1,9 @@
 #!/bin/bash
 # shellcheck disable=SC2059  # Intentional: ANSI escape variables in printf format strings
 # Compact view: a "changeset ledger" of working-tree changes.
-# Net +/- stamp as the heading, aligned +/- columns with filenames. The branch
-# name is deliberately absent — it lives in the Claude statusline.
+# The file list starts at the top row (no pinned header); the changed-file count
+# and net +/- stamp ride the bottom bar, right-aligned. The branch name is
+# deliberately absent — it lives in the Claude statusline.
 # Refreshes every 2 seconds. Scroll with the mouse wheel, arrows/j/k,
 # space/b (page), g/G (top/bottom) when the list overflows. Ctrl-C to exit.
 # Hover a file row to reveal a checkbox (☐) at its left edge; click the box to
@@ -520,50 +521,6 @@ viewport_avail() {
   printf '%d' "$avail"
 }
 
-# heading_layout decides where the pinned ledger heading's +/- stamp goes and how
-# many SCREEN rows the heading spans (excluding the separator). The stamp (file
-# count + net +/-) is a single block that is NEVER split: it sits right-aligned on
-# the heading line when it fits, and when there is no room it moves WHOLE onto its
-# own new row below — never dropped, never wrapped mid-block.
-#
-# The heading line is: leading space + headtext + marker (ab_vis) + plan. All
-# three widths are 0 today — the branch name that used to lead the heading
-# lives in the Claude statusline now — but the parameters keep the fit math
-# general. The pane width <w> lets an over-wide stamp line count its own
-# wrapping too.
-#
-# Echoes "<mode> <pad> <head_rows>":
-#   mode      = inline (stamp on the heading line) | below (own new row) | none
-#   pad       = right-align spaces before the stamp on its target row
-#   head_rows = screen rows the heading occupies (excl. the separator)
-# Usage: heading_layout <iw> <headtext_w> <ab_vis> <plan_w> <stamp_w> <w>
-heading_layout() {
-  local iw="$1" headtext_w="$2" ab_vis="$3" plan_w="$4" stamp_w="$5" w="$6"
-  local head_vis=$((1 + headtext_w + ab_vis + plan_w))
-
-  if [ "$stamp_w" -le 0 ]; then
-    printf 'none 0 %s\n' "$(wrap_rows_for "$head_vis" "$w")"
-    return 0
-  fi
-
-  # Try to place the stamp inline, right-aligned after the left run.
-  local pad=$((iw - headtext_w - ab_vis - plan_w - stamp_w))
-  if [ "$pad" -ge 1 ]; then
-    # Fits: the heading line fills exactly 1 + iw columns.
-    printf 'inline %s %s\n' "$pad" "$(wrap_rows_for $((1 + iw)) "$w")"
-    return 0
-  fi
-
-  # No room on the heading line — move the whole stamp to its own row below,
-  # LEFT-aligned (one leading space, under the heading line's left edge) like
-  # text wrapping to a new line. The heading now spans the first row(s) plus
-  # the stamp row(s).
-  local below_pad=1
-  local stamp_vis=$((below_pad + stamp_w))
-  local rows=$(( $(wrap_rows_for "$head_vis" "$w") + $(wrap_rows_for "$stamp_vis" "$w") ))
-  printf 'below %s %s\n' "$below_pad" "$rows"
-}
-
 # body_line_for_click maps a clicked SCREEN row to a 1-based body-line index, or
 # 0 when the click landed on the pinned header, the bottom scroll-status row, or
 # past the end of the content. The header occupies <header_rows> screen rows (2
@@ -635,7 +592,10 @@ split_content() {
     i=$((i + 1))
     if [ "$i" -eq 1 ]; then
       HEADER_ROWS="$line"
-    elif [ "$i" -le 3 ]; then
+    elif [ "$HEADER_ROWS" -gt 0 ] && [ "$i" -le 3 ]; then
+      # A present header is always 2 CONTENT lines (heading + separator);
+      # HEADER_ROWS is its SCREEN-row span (≥2, more when the heading wraps).
+      # HEADER_ROWS=0 means no header at all — every line is body.
       if [ "$i" -eq 2 ]; then HEADER="$line"; else HEADER="${HEADER}"$'\n'"${line}"; fi
     else
       if [ "$BODY_TOTAL" -eq 0 ]; then BODY="$line"; else BODY="${BODY}"$'\n'"${line}"; fi
@@ -1270,6 +1230,23 @@ compact_view_shell() {
       fi
     fi
 
+    # The changed-file stamp (count + net +/-) rides the RIGHT of the bottom bar
+    # with a 1-col right margin, so the account pill/divergence/scroll stay on the
+    # left. It used to be the pinned top header. Padded to right-align; the pad
+    # never drops below 1, and viewport_avail reserves any wrap the full-width row
+    # incurs, so hover math stays correct.
+    if [ "$stamp_total_files" -gt 0 ]; then
+      local sfunit="files"
+      [ "$stamp_total_files" -eq 1 ] && sfunit="file"
+      local stamp_plain="${stamp_total_files} ${sfunit}  +${stamp_added} −${stamp_deleted}"
+      local stamp_cols left_cols spad
+      stamp_cols=$(visible_width "$stamp_plain")
+      left_cols=$(visible_width "$bottom_bar")
+      spad=$(( w - 1 - stamp_cols - left_cols ))
+      [ "$spad" -lt 1 ] && spad=1
+      bottom_bar="${bottom_bar}$(printf '%*s' "$spad" '')$(printf '\033[90m%s %s\033[0m  \033[32m+%s\033[0m \033[31m−%s\033[0m' "$stamp_total_files" "$sfunit" "$stamp_added" "$stamp_deleted")"
+    fi
+
     # Top-of-list discard affordance: a string spliced onto the FIRST group header
     # (body line 1) so it sits next to that title. While a discard is armed it is
     # the inline confirm "Discard N file(s)? [ yes ] [ no ]"; otherwise, with 1+
@@ -1313,7 +1290,6 @@ compact_view_shell() {
   local yellow="\033[33m"
   local bright="\033[97m"
   local reset="\033[0m"
-  local dimline="\033[2m"
 
   # render_group prints a status group: a glyph header, then one row per file.
   # The header label and each row's "+NNN −NNN" counts share column 3, so the
@@ -1359,6 +1335,11 @@ compact_view_shell() {
   # a *display* command that dumps "NAME=value" to stdout — the bottom bar blinked
   # a raw `ab_counts=$'8\t0'` on every tick after the first (see the NOTE above).
   local ahead behind ab_counts
+  # Changed-file stamp figures (count + net +/-), computed on the build tick and
+  # reused across hover ticks like ahead/behind. build_bottom_bar reads them to
+  # draw the right-aligned stamp on the bottom bar. Declared ONCE (zsh display
+  # gotcha above).
+  local stamp_total_files=0 stamp_added=0 stamp_deleted=0 _stamp_sums
   local mterm mrest mcol mrow bl cpath prev_hover prev_scroll hover_keep
   local prev_pill_hover pill_hover_keep
   # Multi-select batch discard: SELECTED is a newline-delimited set of marked
@@ -1705,6 +1686,18 @@ compact_view_shell() {
         behind=$(echo "$ab_counts" | cut -f2)
       fi
     fi
+    # Changed-file stamp figures for the bottom bar: total changed files and the
+    # net line +/- across staged+unstaged+untracked. A new file's every line
+    # counts as an addition, so untracked rows feed the +total too. Gathered here
+    # (build tick, loop scope) so build_bottom_bar can read them — the render
+    # subshell can't export them back.
+    stamp_total_files=0
+    [ -n "$staged" ] && stamp_total_files=$((stamp_total_files + $(printf '%s\n' "$staged" | wc -l | tr -d ' ')))
+    [ -n "$unstaged" ] && stamp_total_files=$((stamp_total_files + $(printf '%s\n' "$unstaged" | wc -l | tr -d ' ')))
+    [ -n "$untracked" ] && stamp_total_files=$((stamp_total_files + $(printf '%s\n' "$untracked" | wc -l | tr -d ' ')))
+    _stamp_sums=$(printf '%s\n%s\n%s\n' "$staged" "$unstaged" "$untracked" | sum_numstat)
+    stamp_added=${_stamp_sums% *}
+    stamp_deleted=${_stamp_sums#* }
     content=$(
       cd "$project_dir" || exit 1
 
@@ -1722,55 +1715,12 @@ compact_view_shell() {
       [ -n "$unstaged" ] && n_unstaged=$(echo "$unstaged" | wc -l | tr -d ' ')
       [ -n "$untracked" ] && n_untracked=$(echo "$untracked" | wc -l | tr -d ' ')
 
-      # Net line totals across all changes (the ledger "stamp"); a new file's
-      # every line counts as an addition, so untracked rows feed the +total too.
-      local sums ta td
-      sums=$(printf '%s\n%s\n%s\n' "$staged" "$unstaged" "$untracked" | sum_numstat)
-      ta=${sums% *}
-      td=${sums#* }
-
-      # ── Header: the changed-file count + net +/- stamp, right-aligned,
-      # owning the row alone. The branch name lives in the Claude statusline,
-      # the push/pull counts stay at the bottom bar, and the subscription/plan
-      # lives on the account pill there, so all three are deliberately absent
-      # here. This whole line (plus the separator below) is PINNED by the
-      # renderer — it never scrolls — so the changeset size stays in view.
-      local total_files=$((n_staged + n_unstaged + n_untracked))
-      local funit="files"
-      [ "$total_files" -eq 1 ] && funit="file"
-      local stamp=""
-      if [ "$total_files" -gt 0 ]; then
-        stamp="${total_files} ${funit}  +${ta} −${td}"
-      fi
-      # Place the stamp with heading_layout: right-aligned on the heading line
-      # when it fits (mode inline), else moved WHOLE onto its own new row below
-      # (mode below) — the +/- block is never split across rows. The heading's
-      # left run is empty (no branch, no marker, no plan), so headtext width is
-      # 0. The returned head_rows counts every screen row the pinned heading
-      # spans; +1 for the separator. Emit that total as the content's first
-      # line for split_content; the renderer/click math read the pinned-header
-      # offset from there so clicks/hover map to the right file row.
-      local mode pad head_rows
-      read -r mode pad head_rows <<< "$(heading_layout "$iw" 0 0 0 "${#stamp}" "$w")"
-      printf '%s\n' "$((head_rows + 1))"
-
-      # The leading space heading_layout's +1 accounts for.
-      printf ' '
-      # A newline before the stamp when it lives on its own row (mode below).
-      [ "$mode" = "below" ] && printf "\n"
-      if [ "$mode" = "inline" ] || [ "$mode" = "below" ]; then
-        printf '%*s' "$pad" ''
-        printf "${dim}%s %s${reset}  ${green}+%s${reset} ${red}−%s${reset}" \
-          "$total_files" "$funit" "$ta" "$td"
-      fi
-      printf "\n"
-
-      # Separator line — a full-width horizontal rule. printf '%.*s' only
-      # *truncates* the one-char string to the precision (it never repeats it),
-      # so it must be emitted iw times; '─%.0s' prints the dash per seq arg.
-      printf " ${dimline}"
-      printf '─%.0s' $(seq 1 "$iw")
-      printf "${reset}\n"
+      # ── No pinned header: the changed-file count + net +/- stamp moved to the
+      # bottom bar (see build_bottom_bar), so the file groups start on the very
+      # first row and nothing is pinned at the top. Emit HEADER_ROWS=0 as the
+      # content's first metadata line so split_content pins no header and the
+      # click/hover math offsets the body by zero.
+      printf '%s\n' 0
 
       # Filenames follow the right-aligned "+NNN −NNN  " prefix:
       #   indent(3) + added cell(4) + 1 + deleted cell(4) + 2 spaces
@@ -1793,10 +1743,10 @@ compact_view_shell() {
 
       # Empty state: the mascot placeholder, centered in the body viewport. Its
       # height must match what the renderer will reserve, so mirror that math
-      # here — the pinned header is head_rows+1 rows and the bottom bar takes
-      # one (a wrapped bar costs a row, which just nudges the art up by one).
+      # here — there is no pinned header now, only the bottom bar takes one row
+      # (a wrapped bar costs a row, which just nudges the art up by one).
       if [ "$has_content" -eq 0 ]; then
-        local empty_rows=$((h - head_rows - 2))
+        local empty_rows=$((h - 1))
         [ "$empty_rows" -lt 1 ] && empty_rows=1
         ledger_empty_state "$w" "$empty_rows" "$_cv_theme"
       fi
@@ -1911,7 +1861,10 @@ compact_view_shell() {
         fi
       fi
       frame=$(
-        printf '%s\n' "$header"
+        # The header is empty now (the stamp moved to the bottom bar), so emit
+        # it only when present — a blank `printf '%s\n' ""` would waste the top
+        # pane row and shift the body down out from under the hover mapping.
+        [ -n "$header" ] && printf '%s\n' "$header"
         printf '%s\n' "$draw_body" | viewport_slice "$scroll" "$avail"
         # Pad the body region up to a CONSTANT `avail` rows with blank lines, so
         # the bottom bar always lands on the pane's last row no matter how few

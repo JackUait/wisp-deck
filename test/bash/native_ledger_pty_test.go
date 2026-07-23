@@ -412,8 +412,9 @@ func TestNativeLedgerPTYSelectionAndDiscard(t *testing.T) {
 	if _, raw, ok := session.waitFor("file_00000.go", 2*time.Second); !ok {
 		t.Fatalf("first frame missing: %q", raw)
 	}
-	_ = session.write(t, sgrMotion(20, 4))
-	offset := session.write(t, sgrClick(2, 4))
+	// No pinned header now: row 1 is the "modified" group header, row 2 the file.
+	_ = session.write(t, sgrMotion(20, 2))
+	offset := session.write(t, sgrClick(2, 2))
 	if _, raw, ok := session.waitAfter(offset, "☑", 250*time.Millisecond); !ok {
 		t.Fatalf("checkbox selection did not render: %q", raw)
 	}
