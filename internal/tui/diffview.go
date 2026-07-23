@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
+	"github.com/rivo/uniseg"
 )
 
 // DiffViewModel is a scrollable pager for a structural (uncolored) git diff,
@@ -164,17 +165,83 @@ func expandTabsLine(line string, tabWidth int) string {
 	}
 	var b strings.Builder
 	col := 0
-	for _, r := range code {
-		if r == '\t' {
+	forEachCell(code, func(text string, w int, isEsc bool) bool {
+		if text == "\t" {
 			n := tabWidth - col%tabWidth
 			b.WriteString(strings.Repeat(" ", n))
 			col += n
+			return true
+		}
+		b.WriteString(text)
+		col += w
+		return true
+	})
+	return marker + b.String()
+}
+
+// forEachCell walks a possibly ANSI-colored string as the terminal lays it
+// out: one callback per zero-width escape sequence, and one per GRAPHEME
+// CLUSTER — not per rune — with the cells that cluster occupies. Return false
+// to stop.
+//
+// Measuring per rune is the bug this exists to prevent. In Bengali (and Hindi,
+// Thai, Arabic, …) a syllable is a base letter plus combining vowel signs and
+// viramas: "ভি" is two codepoints painted in ONE cell. ZWJ emoji are the same
+// shape — 👨‍👩‍👦 is five codepoints in two cells. Summing runewidth.RuneWidth
+// over the runes counted those marks as cells of their own, so every column in
+// the diff pager thought a Bengali line was nearly twice as wide as the
+// terminal drew it: lines wrapped and truncated early, background bands stopped
+// short of the column edge, and the side-by-side divider drifted off its
+// column. Slicing by rune also let a truncation orphan a base letter from its
+// vowel sign.
+//
+// The per-cluster width comes from runewidth.StringWidth, which matches what
+// tmux and Ghostty paint cell-for-cell (verified against a live cursor-position
+// probe for Bengali, Thai, Arabic, CJK and ZWJ emoji).
+func forEachCell(s string, fn func(text string, w int, isEsc bool) bool) {
+	state := -1
+	for i := 0; i < len(s); {
+		if s[i] == '\x1b' { // an ESC…m sequence: zero cells, copied verbatim
+			j := i
+			for j < len(s) && s[j] != 'm' {
+				j++
+			}
+			if j < len(s) {
+				j++
+			}
+			if !fn(s[i:j], 0, true) {
+				return
+			}
+			i = j
+			state = -1 // ESC is a cluster boundary; don't carry state across it
 			continue
 		}
-		b.WriteRune(r)
-		col += runewidth.RuneWidth(r)
+		cluster, _, _, next := uniseg.FirstGraphemeClusterInString(s[i:], state)
+		if cluster == "" {
+			return
+		}
+		state = next
+		if !fn(cluster, runewidth.StringWidth(cluster), false) {
+			return
+		}
+		i += len(cluster)
 	}
-	return marker + b.String()
+}
+
+// cellWidth reports how many terminal cells s occupies, ANSI escapes excluded.
+// It is the sum of forEachCell's per-cluster widths, and deliberately NOT
+// runewidth.StringWidth(s) over the whole string: this repo's runewidth ships
+// newer Unicode tables than tmux does, so for an Indic conjunct like "ক্ষ" it
+// answers 1 where tmux draws 2. tmux owns the cell grid the popup is painted
+// into, so per-cluster is the measurement that keeps the columns aligned.
+// diffview_grapheme_test.go pins this against widths captured from a live tmux.
+func cellWidth(s string) int {
+	n := 0
+	forEachCell(s, func(_ string, w int, _ bool) bool {
+		n += w
+		return true
+	})
+	return n
 }
 
 var (
@@ -323,31 +390,21 @@ func tintColumn(s string, width int, bgSeq string) string {
 	if width < 0 {
 		width = 0
 	}
-	rs := []rune(s)
 	var b strings.Builder
 	b.WriteString(bgSeq)
 	vis := 0
-	for i := 0; i < len(rs) && vis < width; {
-		if rs[i] == '\x1b' {
-			j := i
-			for j < len(rs) && rs[j] != 'm' {
-				j++
-			}
-			if j < len(rs) {
-				j++
-			}
-			b.WriteString(string(rs[i:j]))
-			i = j
-			continue
+	forEachCell(s, func(text string, w int, isEsc bool) bool {
+		if isEsc {
+			b.WriteString(text)
+			return true
 		}
-		rw := runewidth.RuneWidth(rs[i])
-		if vis+rw > width { // a wide rune that won't fit the last cell
-			break
+		if vis+w > width { // a glyph that won't fit the remaining cells
+			return false
 		}
-		b.WriteRune(rs[i])
-		vis += rw
-		i++
-	}
+		b.WriteString(text)
+		vis += w
+		return vis < width
+	})
 	if vis < width {
 		b.WriteString(strings.Repeat(" ", width-vis))
 	}
@@ -617,30 +674,20 @@ func fitColumn(s string, width int) string {
 	if width < 0 {
 		width = 0
 	}
-	rs := []rune(s)
 	var b strings.Builder
 	vis := 0
-	for i := 0; i < len(rs) && vis < width; {
-		if rs[i] == '\x1b' {
-			j := i
-			for j < len(rs) && rs[j] != 'm' {
-				j++
-			}
-			if j < len(rs) {
-				j++
-			}
-			b.WriteString(string(rs[i:j]))
-			i = j
-			continue
+	forEachCell(s, func(text string, w int, isEsc bool) bool {
+		if isEsc {
+			b.WriteString(text)
+			return true
 		}
-		rw := runewidth.RuneWidth(rs[i])
-		if vis+rw > width { // a wide rune that won't fit the last cell
-			break
+		if vis+w > width { // a glyph that won't fit the remaining cells
+			return false
 		}
-		b.WriteRune(rs[i])
-		vis += rw
-		i++
-	}
+		b.WriteString(text)
+		vis += w
+		return vis < width
+	})
 	b.WriteString("\x1b[0m")
 	if vis < width {
 		b.WriteString(strings.Repeat(" ", width-vis))
@@ -674,7 +721,6 @@ func wrapColumns(s string, width int) []string {
 	if width < 1 {
 		width = 1
 	}
-	rs := []rune(s)
 	var rows []string
 	var b strings.Builder
 	vis := 0
@@ -684,36 +730,26 @@ func wrapColumns(s string, width int) []string {
 		b.Reset()
 		vis = 0
 	}
-	for i := 0; i < len(rs); {
-		if rs[i] == '\x1b' {
-			j := i
-			for j < len(rs) && rs[j] != 'm' {
-				j++
-			}
-			if j < len(rs) {
-				j++
-			}
-			seq := string(rs[i:j])
-			if ansiIsReset(seq) {
+	forEachCell(s, func(text string, w int, isEsc bool) bool {
+		if isEsc {
+			if ansiIsReset(text) {
 				active = ""
 			} else {
-				active = seq
+				active = text
 			}
-			b.WriteString(seq)
-			i = j
-			continue
+			b.WriteString(text)
+			return true
 		}
-		rw := runewidth.RuneWidth(rs[i])
-		if vis > 0 && vis+rw > width { // wrap before a rune that would overflow this row
+		if vis > 0 && vis+w > width { // wrap before a glyph that would overflow this row
 			flush()
 			if active != "" {
 				b.WriteString(active)
 			}
 		}
-		b.WriteRune(rs[i])
-		vis += rw
-		i++
-	}
+		b.WriteString(text)
+		vis += w
+		return true
+	})
 	rows = append(rows, b.String())
 	return rows
 }
@@ -1455,14 +1491,35 @@ func (m DiffViewModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // width below 1 yields a single ellipsis; a path that already fits is returned
 // unchanged.
 func truncatePath(p string, width int) string {
-	rs := []rune(p)
-	if len(rs) <= width {
+	if cellWidth(p) <= width {
 		return p
 	}
 	if width <= 1 {
 		return "…"
 	}
-	return "…" + string(rs[len(rs)-(width-1):])
+	// Keep the widest tail that fits beside the ellipsis, walking whole
+	// grapheme clusters so a directory name in a combining script never loses
+	// its vowel signs (see forEachCell).
+	type cell struct {
+		off, w int
+	}
+	var cells []cell
+	off := 0
+	forEachCell(p, func(text string, w int, isEsc bool) bool {
+		cells = append(cells, cell{off, w})
+		off += len(text)
+		return true
+	})
+	budget := width - 1 // the ellipsis takes one cell
+	start := len(p)
+	for i := len(cells) - 1; i >= 0; i-- {
+		if budget-cells[i].w < 0 {
+			break
+		}
+		budget -= cells[i].w
+		start = cells[i].off
+	}
+	return "…" + p[start:]
 }
 
 // discardButtonSpan returns the [start, end) content columns the [ Discard ]
