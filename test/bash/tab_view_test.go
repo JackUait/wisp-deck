@@ -326,6 +326,14 @@ func TestWrapper_tab_view_bar_and_binds(t *testing.T) {
 
 	// Second batch: new-window keybind and clickable status line.
 	assertContains(t, got, "bind-key c run-shell")
+
+	// Tab-switch shortcuts: prefix+n/p cycle windows (wrap), and prefix+1..9
+	// jump to the chip-labelled tab. The chip is window_index+1, so prefix+1
+	// must select window index 0 — proving the off-by-one correction.
+	assertContains(t, got, "bind-key n next-window")
+	assertContains(t, got, "bind-key p previous-window")
+	assertContains(t, got, "bind-key 1 select-window -t :0")
+	assertContains(t, got, "bind-key 9 select-window -t :8")
 	assertContains(t, got, "MouseDown1Status")
 	assertContains(t, got, "MouseDown1StatusLeft")
 	assertContains(t, got, "MouseDown1StatusRight")

@@ -764,6 +764,15 @@ if [ -n "$_gt_tabbar_refresh" ]; then
   _gt_tabbar_chain+=(set-hook -t "$SESSION_NAME" window-layout-changed "run-shell -b \"$_gt_tabbar_refresh\"" ';')
 fi
 
+# Tab-switch shortcuts: prefix+n/p cycle the tab-view windows (wrap around);
+# prefix+1..9 jump to the chip-labelled tab. Chips are window_index+1
+# (tab_view_status_left), so key N selects window index N-1 — the tab whose
+# chip reads N. prefix+Tab stays reserved for the spare terminal's windows.
+_gt_tab_switch_binds=(bind-key n next-window ';' bind-key p previous-window ';')
+for ((_gt_tab_n = 1; _gt_tab_n <= 9; _gt_tab_n++)); do
+  _gt_tab_switch_binds+=(bind-key "$_gt_tab_n" select-window -t ":$((_gt_tab_n - 1))" ';')
+done
+
 "$TMUX_CMD" \
   "${_gt_tabbar_chain[@]}" \
   bind-key i run-shell "$_screenshot_bind" \; \
@@ -772,6 +781,7 @@ fi
   bind-key Tab run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label next-window" \; \
   bind-key BTab run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label previous-window" \; \
   bind-key c run-shell "$_tab_view_new_bind" \; \
+  "${_gt_tab_switch_binds[@]}" \
   bind-key -n MouseDown1Status run-shell "$_tab_view_dispatch_bind" \; \
   bind-key -n MouseDown1StatusLeft run-shell "$_tab_view_dispatch_bind" \; \
   bind-key -n MouseDown1StatusRight run-shell "$_tab_view_dispatch_bind" \; \
