@@ -349,6 +349,46 @@ leaves a blank cell, while under-counting writes past the column edge and shoves
 everything after it sideways. `TestCellWidth_never_under_counts` enforces that
 direction, and it holds for all 154,996 assigned codepoints.
 
+### The ledger's account pill is re-resolved every refresh, never once
+
+The ledger pane always races its own relaunch context. tmux `new-session`
+stamps `WISP_DECK_RELAUNCH_FILE` into the pane's env and creates the pane in
+the same batch, while `wrapper.sh` writes the file itself in the launch tail —
+and it **must stay there**: `test/bash/launch_post_pick_path_test.go` keeps
+every millisecond of tail work behind `new-session` so the agent's boot
+overlaps it. Whether the pane wins the race is decided by how warm the TUI
+binary is, which is why the symptom was "the pill sometimes doesn't show".
+
+So the pill's context is **state that becomes valid later**, and the ledger
+must treat it that way:
+
+- `LedgerModel` reloads the session context on **every refresh tick**
+  (`internal/tui/ledger.go`). A one-shot load in `Init()` turned any transient
+  miss — absent file, partial read, tmux hiccup — into a pane with no pill for
+  its entire life.
+- The shell fallback renderer re-reads the context each build tick until it
+  resolves (`lib/compact-view.sh`). It recomputed the pill per tick but read the
+  context *once* before the loop, so a pane that won the race kept empty account
+  paths forever. **Both renderers must self-heal** — the pane picks between them
+  by binary capability, so a fix in one is a fix for half the users.
+- A failed reload **keeps the last good context**. Blanking it makes the pill
+  drop out of the footer until the next tick.
+- `write_relaunch_context` publishes by **rename** (`lib/account-switch.sh`).
+  A truncated prefix parses cleanly into a context with no accounts —
+  indistinguishable from "nothing to switch to" — so a mid-write reader would
+  silently drop the pill instead of failing and being retried. The mid-session
+  switch rewrites this same file under a live pane, so the window is not
+  confined to launch.
+- An action error **shares** the footer with the pill rather than replacing it.
+  `actionError` is sticky until some later action succeeds, so taking the row
+  over hid the pane's identity — and its only switch affordance — indefinitely.
+
+Guarded end-to-end by `test/bash/ledger_pill_race_test.go` and
+`test/bash/compact_view_pill_late_context_test.go` (both drive a real renderer
+over a pty with the context published late), plus the model-level tests in
+`internal/tui/ledger_session_reload_test.go` and the atomic-publish test in
+`test/bash/relaunch_context_ready_test.go`.
+
 ### Restore-queue pops are authorized, never ambient
 
 An interactive launch may consume a restore-queue entry only through

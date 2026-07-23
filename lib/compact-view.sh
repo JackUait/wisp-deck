@@ -1412,12 +1412,14 @@ compact_view_shell() {
   local _rc_relaunch="${WISP_DECK_RELAUNCH_FILE:-}"
   local _rc_pointer="" _rc_list="" _rc_colors="" _rc_default_label="" \
     _rc_config_pointer="" _rc_configs_list=""
+  # The account file paths live in the relaunch context, so the pill needs only
+  # WISP_DECK_RELAUNCH_FILE in the pane env. (The unused _rc_* vars are set too.)
+  # Declared unconditionally so the per-tick re-read below cannot leak globals
+  # when the context did not exist yet.
+  local _rc_tool="" _rc_tool_cmd="" _rc_settings="" \
+    _rc_filter="" _rc_project_dir="" _rc_accounts_dir=""
   if [ -n "$_rc_relaunch" ] && [ -f "$_rc_relaunch" ] \
      && command -v _read_relaunch_ctx >/dev/null 2>&1; then
-    # The account file paths live in the relaunch context, so the pill needs only
-    # WISP_DECK_RELAUNCH_FILE in the pane env. (The unused _rc_* vars are set too.)
-    local _rc_tool="" _rc_tool_cmd="" _rc_settings="" \
-      _rc_filter="" _rc_project_dir="" _rc_accounts_dir=""
     _read_relaunch_ctx "$_rc_relaunch"
   fi
   # SGR background for the hovered file row (a subtle selection bar).
@@ -1821,6 +1823,15 @@ compact_view_shell() {
     # session is ineligible (no relaunch context, nothing to switch to, or the
     # helpers aren't loaded).
     account_pill_str=""; account_pill_cols=0; account_pill_hover_str=""
+    # wrapper.sh writes the relaunch context in the launch tail, AFTER the tmux
+    # batch that created this pane — so a pane that started first read nothing
+    # and would keep empty account paths (no pill, or the wrong identity) for
+    # its whole life. Re-read until it resolves; a bash read loop, no forks, and
+    # it stops the moment the context lands.
+    if [ -z "$_rc_list" ] && [ -n "$_rc_relaunch" ] && [ -f "$_rc_relaunch" ] \
+       && command -v _read_relaunch_ctx >/dev/null 2>&1; then
+      _read_relaunch_ctx "$_rc_relaunch"
+    fi
     if [ -n "$_rc_relaunch" ] && command -v account_pill_enabled >/dev/null 2>&1 \
        && account_pill_enabled "$_rc_relaunch" "$_rc_list"; then
       # Re-read the running tool each tick: a mid-session agent switch

@@ -174,7 +174,12 @@ func (m *LedgerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.state.ReplaceSnapshot(msg.snapshot)
 		m.loading = false
 		m.refreshError = nil
-		return m, tea.Batch(m.scheduleRefresh(), m.refreshBackdrop())
+		// Reload the session identity on every refresh, exactly like the bash
+		// renderer recomputes the pill each build tick. wrapper.sh writes the
+		// relaunch context AFTER the tmux batch that spawns this pane, so the
+		// first load can find no file — or a half-written one — and a one-shot
+		// load would leave the pill hidden for the pane's whole life.
+		return m, tea.Batch(m.scheduleRefresh(), m.refreshBackdrop(), m.loadSession())
 	case ledgerLoadErrMsg:
 		if msg.generation != m.requestedGeneration {
 			return m, nil
@@ -211,7 +216,11 @@ func (m *LedgerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case ledgerSessionMsg:
 		m.sessionLoading = false
 		if msg.err != nil {
-			m.session = ledger.SessionContext{}
+			// Keep the last good identity. A reload fails for reasons that say
+			// nothing about the session (the context being rewritten by a
+			// mid-session switch, a tmux hiccup); discarding it would blink the
+			// pill — the pane's identity and its only switch affordance — out of
+			// the footer until the next tick repaired it.
 			return m, nil
 		}
 		m.session = msg.session
@@ -332,6 +341,20 @@ func ledgerPillText(pill *ledger.SessionPill) string {
 		glyph = "󰀄"
 	}
 	return " " + glyph + " " + pill.Label + " "
+}
+
+// ledgerPillStyle is the pill's color, plus the hover highlight while the
+// pointer sits over its click span.
+func ledgerPillStyle(pill *ledger.SessionPill, pillHover bool) lipgloss.Style {
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color(fmt.Sprintf("%d", pill.Color)))
+	if pillHover {
+		style = style.Background(lipgloss.Color("238"))
+	}
+	return style
+}
+
+func renderLedgerPill(pill *ledger.SessionPill, pillHover bool) string {
+	return ledgerPillStyle(pill, pillHover).Render(ledgerPillText(pill))
 }
 
 func ledgerAccountPillWidth(pill *ledger.SessionPill) int {
@@ -839,10 +862,21 @@ func renderLedgerFileRow(row ledger.Row, width int, visual ledger.RowVisualState
 }
 
 func renderLedgerFooter(state *ledger.State, width int, actionError error, pill *ledger.SessionPill, pillHover bool) string {
+	// An action error shares the footer with the pill rather than replacing it.
+	// actionError is sticky — it survives until some later action succeeds — so
+	// taking the row over would hide the pane's identity, and its only switch
+	// affordance, for an unbounded time.
 	if actionError != nil {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(
-			ledgerFitPlain(" discard failed · "+actionError.Error(), width),
-		)
+		message := lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render
+		if pill == nil {
+			return message(ledgerFitPlain(" "+actionError.Error(), width))
+		}
+		pillRendered := renderLedgerPill(pill, pillHover)
+		remaining := width - lipgloss.Width(pillRendered) - 3
+		if remaining < 1 {
+			return pillRendered
+		}
+		return pillRendered + message(" · "+ledgerFitPlain(actionError.Error(), remaining))
 	}
 	metadata := state.Snapshot.Metadata
 	parts := []string{}
@@ -869,10 +903,7 @@ func renderLedgerFooter(state *ledger.State, width int, actionError error, pill 
 		return dim.Render(ledgerFitPlain(" "+status, width))
 	}
 	pillText := ledgerPillText(pill)
-	pillStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(fmt.Sprintf("%d", pill.Color)))
-	if pillHover {
-		pillStyle = pillStyle.Background(lipgloss.Color("238"))
-	}
+	pillStyle := ledgerPillStyle(pill, pillHover)
 	pillRendered := pillStyle.Render(pillText)
 	if status == "" {
 		return pillStyle.Render(ledgerFitPlain(pillText, width))

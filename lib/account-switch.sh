@@ -725,7 +725,11 @@ write_relaunch_context() {
     claude_cmd="${9:-}" opencode_cmd="${10:-}" codex_cmd="${11:-}" \
     attention_root="${12:-}" attention_descriptor="${13:-}" \
     claude_settings_source="${14:-}"
-  mkdir -p "$(dirname "$out")" 2>/dev/null
+  case "$out" in */*) mkdir -p "${out%/*}" 2>/dev/null ;; esac
+  # Published by rename: the ledger pane reads this file on its own schedule, and
+  # an in-place rewrite lets it observe a truncated prefix — which parses into a
+  # context with no accounts, i.e. a pane with no account pill.
+  local tmp="$out.$$.tmp"
   {
     printf 'tool=%s\n' "$tool"
     printf 'tool_cmd=%s\n' "$tool_cmd"
@@ -748,7 +752,8 @@ write_relaunch_context() {
     printf 'tool_pref=%s\n' "$cfg_root/ai-tool"
     printf 'attention_root=%s\n' "$attention_root"
     printf 'attention_descriptor=%s\n' "$attention_descriptor"
-  } > "$out"
+  } > "$tmp" || { rm -f "$tmp" 2>/dev/null; return 1; }
+  mv -f "$tmp" "$out" || { rm -f "$tmp" 2>/dev/null; return 1; }
 }
 
 # stage_claude_relaunch_settings <tool> <previous-generated-path>
