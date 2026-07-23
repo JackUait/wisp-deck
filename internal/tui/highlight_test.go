@@ -5,6 +5,17 @@ import (
 	"testing"
 )
 
+// Astro files have no upstream chroma lexer; wisp-deck maps them onto the
+// HTML lexer so an .astro diff still gets syntax color instead of passing
+// through as plain text.
+func TestHighlightDiff_colorizes_astro(t *testing.T) {
+	body := " <h1>Title</h1>\n+<p>hello</p>\n"
+	got := highlightDiff(body, "Card.astro")
+	if !strings.Contains(got, "\x1b[38;2;") {
+		t.Errorf("Astro content should gain truecolor fg escapes, got: %q", got)
+	}
+}
+
 // An unknown (empty) filename has no lexer, so the body is returned verbatim.
 func TestHighlightDiff_unknown_language_passes_through(t *testing.T) {
 	body := " context\n+added\n-removed\n"

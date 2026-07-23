@@ -15,6 +15,18 @@ import (
 // the name is ever unavailable.
 const diffSyntaxStyle = "github-dark"
 
+// lexerFor resolves the chroma lexer for a filename, adding mappings for
+// extensions chroma ships no lexer for. Astro (.astro) is HTML-first — an HTML
+// template plus an optional TypeScript frontmatter fence — so it borrows the
+// HTML lexer, which colors the markup, embedded <script>, and <style> and
+// leaves the frontmatter as plain text rather than dropping all color.
+func lexerFor(basename string) chroma.Lexer {
+	if strings.HasSuffix(basename, ".astro") {
+		return lexers.Get("HTML")
+	}
+	return lexers.Match(basename)
+}
+
 // highlightDiff syntax-highlights the code in an uncolored unified-diff body.
 // It reconstructs the old and new file versions from the diff and tokenizes
 // each WHOLE file (so multi-line strings/comments don't bleed), then maps the
@@ -24,7 +36,7 @@ const diffSyntaxStyle = "github-dark"
 // emitted so a later row background tint survives. Unknown language → body
 // returned unchanged.
 func highlightDiff(body, filename string) string {
-	lexer := lexers.Match(filepath.Base(filename))
+	lexer := lexerFor(filepath.Base(filename))
 	if lexer == nil {
 		return body
 	}
