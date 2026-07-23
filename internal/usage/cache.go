@@ -6,11 +6,12 @@ import (
 	"path/filepath"
 )
 
-// cacheVersion is 6: ParseCodexRollout now backfills token_count events that
-// precede a rollout's first turn_context (replayed history in forked/resumed
-// sessions) to that first model instead of "unknown", so v5 caches must rebuild.
+// cacheVersion is 7: ParseCodexRollout now discards the replayed history that
+// forked/resumed/compacted Codex rollouts dump at load, which had inflated a real
+// month's Codex usage 31x. Every v6 entry counted those replays, so v6 caches must
+// rebuild; the bump also outranks v6 journal sources (see historySource ordering).
 // LoadCache rejects a mismatched version.
-const cacheVersion = 6
+const cacheVersion = 7
 
 // fileCacheEntry stores one transcript file's identity and its parsed months.
 type fileCacheEntry struct {

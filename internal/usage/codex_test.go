@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -148,6 +149,95 @@ func TestParseCodexRollout_backfillsReplayedTokenCountsToFirstModel(t *testing.T
 	}
 	if u := modelIn(months["2026-07"], "unknown"); u != nil {
 		t.Errorf("unknown bucket should be empty, got %+v", u)
+	}
+}
+
+func TestParseCodexRollout_dropsReplayedHistoryBurst(t *testing.T) {
+	// A forked/resumed rollout replays its ancestor's ENTIRE token_count history at
+	// load time, re-stamped with the load instant. Observed in production: 18,899 of
+	// one 19,019-event rollout's events landed in a 2-second burst, and summing them
+	// over-counted July's Codex usage by 31x. A replay burst writes hundreds of
+	// events inside one second; a real request round-trip takes seconds. Only the
+	// live events that follow may be counted.
+	turn := `{"timestamp":"2026-07-10T00:35:00Z","type":"turn_context","payload":{"model":"gpt-5.6-sol"}}`
+	lines := []string{turn}
+	for i := 0; i < 10; i++ {
+		lines = append(lines, fmt.Sprintf(
+			`{"timestamp":"2026-07-10T00:35:10.%03dZ","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":%d,"cached_input_tokens":0,"output_tokens":100,"total_tokens":%d}}}}`,
+			i, 1000+i, 1100+i))
+	}
+	// Two genuine requests, seconds apart, each alone in its second.
+	lines = append(lines,
+		`{"timestamp":"2026-07-10T00:36:20Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":7,"cached_input_tokens":2,"output_tokens":3,"total_tokens":10}}}}`,
+		`{"timestamp":"2026-07-10T00:36:41Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":9,"cached_input_tokens":4,"output_tokens":6,"total_tokens":15}}}}`)
+	path := writeCodexRollout(t, lines...)
+
+	months, _, err := ParseCodexRollout(path)
+	if err != nil {
+		t.Fatalf("ParseCodexRollout: %v", err)
+	}
+	m := modelIn(months["2026-07"], "gpt-5.6-sol")
+	if m == nil {
+		t.Fatalf("no usage for gpt-5.6-sol; got %+v", months)
+	}
+	if m.Input != 10 { // (7-2) + (9-4); the 10-event replay burst contributes nothing
+		t.Errorf("Input = %d, want 10 (replay burst must not be counted)", m.Input)
+	}
+	if m.CacheRead != 6 { // 2 + 4
+		t.Errorf("CacheRead = %d, want 6", m.CacheRead)
+	}
+	if m.Output != 9 { // 3 + 6
+		t.Errorf("Output = %d, want 9", m.Output)
+	}
+}
+
+func TestParseCodexRollout_collapsesConsecutiveDuplicateTokenCounts(t *testing.T) {
+	// Codex re-emits the same token_count for a single request (observed in a real
+	// rollout: an identical last_token_usage 11 seconds after the first emission).
+	// Counting it twice inflates the request. Identical back-to-back deltas are one
+	// request: a genuine follow-up request always carries a larger input than its
+	// predecessor, so byte-identical consecutive deltas never describe two requests.
+	turn := `{"timestamp":"2026-07-10T00:35:00Z","type":"turn_context","payload":{"model":"gpt-5.6-sol"}}`
+	tok := `{"timestamp":"2026-07-10T00:35:20Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":500,"cached_input_tokens":300,"output_tokens":40,"reasoning_output_tokens":10,"total_tokens":540}}}}`
+	dup := `{"timestamp":"2026-07-10T00:35:31Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":500,"cached_input_tokens":300,"output_tokens":40,"reasoning_output_tokens":10,"total_tokens":540}}}}`
+	next := `{"timestamp":"2026-07-10T00:35:55Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":700,"cached_input_tokens":300,"output_tokens":20,"reasoning_output_tokens":5,"total_tokens":720}}}}`
+	path := writeCodexRollout(t, turn, tok, dup, next)
+
+	months, _, err := ParseCodexRollout(path)
+	if err != nil {
+		t.Fatalf("ParseCodexRollout: %v", err)
+	}
+	m := modelIn(months["2026-07"], "gpt-5.6-sol")
+	if m == nil {
+		t.Fatalf("no usage; got %+v", months)
+	}
+	if m.Input != 600 { // (500-300) counted once + (700-300)
+		t.Errorf("Input = %d, want 600 (duplicate emission counted once)", m.Input)
+	}
+	if m.CacheRead != 600 { // 300 + 300
+		t.Errorf("CacheRead = %d, want 600", m.CacheRead)
+	}
+	if m.Output != 60 { // 40 + 20
+		t.Errorf("Output = %d, want 60", m.Output)
+	}
+}
+
+func TestParseCodexRollout_keepsBurstFreeRapidRequests(t *testing.T) {
+	// The dense-second rule must not punish a genuinely busy session: a handful of
+	// requests inside one second stays under the replay threshold and is counted.
+	turn := `{"timestamp":"2026-07-10T00:35:00Z","type":"turn_context","payload":{"model":"gpt-5.6-sol"}}`
+	a := `{"timestamp":"2026-07-10T00:35:20.100Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":1,"total_tokens":11}}}}`
+	b := `{"timestamp":"2026-07-10T00:35:20.500Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":20,"cached_input_tokens":0,"output_tokens":2,"total_tokens":22}}}}`
+	c := `{"timestamp":"2026-07-10T00:35:20.900Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":30,"cached_input_tokens":0,"output_tokens":3,"total_tokens":33}}}}`
+	path := writeCodexRollout(t, turn, a, b, c)
+
+	months, _, err := ParseCodexRollout(path)
+	if err != nil {
+		t.Fatalf("ParseCodexRollout: %v", err)
+	}
+	m := modelIn(months["2026-07"], "gpt-5.6-sol")
+	if m == nil || m.Input != 60 {
+		t.Fatalf("Input: got %+v, want 60", m)
 	}
 }
 
