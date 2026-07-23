@@ -106,25 +106,45 @@ func highlightSource(source string, lexer chroma.Lexer, style *chroma.Style) []s
 
 	var lines []string
 	var cur strings.Builder
+	open := "" // the color currently left open on this line, if any
 	for _, tok := range it.Tokens() {
 		entry := style.Get(tok.Type)
 		parts := strings.Split(tok.Value, "\n")
 		for j, part := range parts {
 			if j > 0 {
+				if open != "" { // never let a color cross a line boundary
+					cur.WriteString("\x1b[39m")
+					open = ""
+				}
 				lines = append(lines, cur.String())
 				cur.Reset()
 			}
 			if part == "" {
 				continue
 			}
+			// Coalesce a run of same-colored tokens under one SGR pair. Chroma
+			// hands back one token per character for text its lexer doesn't
+			// recognise — which is every character of a Bengali or Japanese
+			// string value — and wrapping each of those in its own escape pair
+			// costs about eight bytes of escape per byte of text, on every row
+			// the pager lays out and every row the terminal then draws.
+			colour := ""
 			if entry.Colour.IsSet() {
 				c := entry.Colour
-				fmt.Fprintf(&cur, "\x1b[38;2;%d;%d;%dm%s\x1b[39m",
-					c.Red(), c.Green(), c.Blue(), part)
-			} else {
-				cur.WriteString(part)
+				colour = fmt.Sprintf("\x1b[38;2;%d;%d;%dm", c.Red(), c.Green(), c.Blue())
 			}
+			if colour != open {
+				if open != "" {
+					cur.WriteString("\x1b[39m")
+				}
+				cur.WriteString(colour)
+				open = colour
+			}
+			cur.WriteString(part)
 		}
+	}
+	if open != "" {
+		cur.WriteString("\x1b[39m")
 	}
 	lines = append(lines, cur.String())
 

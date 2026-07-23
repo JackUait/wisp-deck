@@ -1,0 +1,2222 @@
+[
+{
+"s": "abc123 plain ascii",
+"w": 18
+},
+{
+"s": "café naïve résumé",
+"w": 17
+},
+{
+"s": "Привет мир",
+"w": 10
+},
+{
+"s": "Γειά σου κόσμε",
+"w": 14
+},
+{
+"s": "שלום עולם",
+"w": 9
+},
+{
+"s": "שָׁלוֹם עוֹלָם",
+"w": 9
+},
+{
+"s": "مرحبا بالعالم",
+"w": 13
+},
+{
+"s": "مَرْحَبًا بِالْعَالَمِ",
+"w": 13
+},
+{
+"s": "سلام دنیا",
+"w": 9
+},
+{
+"s": "नमस्ते दुनिया",
+"w": 8
+},
+{
+"s": "हिन्दी में लिखा",
+"w": 8
+},
+{
+"s": "ভিডিও ফাইলের লিঙ্ক দিন",
+"w": 15
+},
+{
+"s": "ক্ষ ঙ্ক ত্র হ্ম",
+"w": 11
+},
+{
+"s": "ਸਤ ਸ੍ਰੀ ਅਕਾਲ",
+"w": 9
+},
+{
+"s": "નમસ્તે વિશ્વ",
+"w": 8
+},
+{
+"s": "ନମସ୍କାର ବିଶ୍ୱ",
+"w": 9
+},
+{
+"s": "வணக்கம் உலகம்",
+"w": 10
+},
+{
+"s": "నమస్కారం ప్రపంచం",
+"w": 10
+},
+{
+"s": "ನಮಸ್ಕಾರ ಜಗತ್ತು",
+"w": 10
+},
+{
+"s": "നമസ്കാരം ലോകം",
+"w": 8
+},
+{
+"s": "ආයුබෝවන් ලෝකය",
+"w": 9
+},
+{
+"s": "สวัสดีชาวโลก",
+"w": 10
+},
+{
+"s": "ກະລຸນາ ສະບາຍດີ",
+"w": 12
+},
+{
+"s": "བཀྲ་ཤིས་བདེ་ལེགས།",
+"w": 13
+},
+{
+"s": "မင်္ဂလာပါ ကမ္ဘာ",
+"w": 9
+},
+{
+"s": "សួស្តី ពិភពលោក",
+"w": 9
+},
+{
+"s": "ជំរាបសួរ",
+"w": 5
+},
+{
+"s": "你好世界",
+"w": 8
+},
+{
+"s": "中文测试用例",
+"w": 12
+},
+{
+"s": "こんにちは世界",
+"w": 14
+},
+{
+"s": "カタカナ テスト",
+"w": 15
+},
+{
+"s": "ｱｲｳｴｵ半角",
+"w": 9
+},
+{
+"s": "안녕하세요 세계",
+"w": 15
+},
+{
+"s": "한글 조합 테스트",
+"w": 16
+},
+{
+"s": "한글",
+"w": 4
+},
+{
+"s": "Xin chào thế giới",
+"w": 17
+},
+{
+"s": "Tiếng Việt có dấu",
+"w": 17
+},
+{
+"s": "ខ្ញុំស្រឡាញ់អ្នក",
+"w": 9
+},
+{
+"s": "አማርኛ ሰላም",
+"w": 8
+},
+{
+"s": "ᐃᓄᒃᑎᑐᑦ",
+"w": 6
+},
+{
+"s": "ⰀⰁⰂ glagolitic",
+"w": 14
+},
+{
+"s": "𐌀𐌁𐌂 gothic",
+"w": 10
+},
+{
+"s": "𝐁𝐨𝐥𝐝 math",
+"w": 9
+},
+{
+"s": "🇺🇸🇯🇵🇩🇪 flags",
+"w": 8
+},
+{
+"s": "👨‍👩‍👦‍👦 family",
+"w": 9
+},
+{
+"s": "👋🏽 skin tone",
+"w": 12
+},
+{
+"s": "❤️ vs16 heart",
+"w": 13
+},
+{
+"s": "❤ no vs16",
+"w": 9
+},
+{
+"s": "☺️ smiley vs16",
+"w": 14
+},
+{
+"s": "✅ check",
+"w": 8
+},
+{
+"s": "⚠️ warning",
+"w": 10
+},
+{
+"s": "→ ← ↑ ↓ arrows",
+"w": 14
+},
+{
+"s": "─│┌┐└┘├┤ box",
+"w": 12
+},
+{
+"s": "█▓▒░ blocks",
+"w": 11
+},
+{
+"s": "é combining acute",
+"w": 17
+},
+{
+"s": "à́̂ stacked",
+"w": 9
+},
+{
+"s": "Ω Å ﬁ ligature",
+"w": 14
+},
+{
+"s": "０１２３ fullwidth digits",
+"w": 25
+},
+{
+"s": "ＡＢＣ fullwidth latin",
+"w": 22
+},
+{
+"s": "①②③ circled",
+"w": 11
+},
+{
+"s": "Ⅰ Ⅱ Ⅲ roman",
+"w": 11
+},
+{
+"s": "※ § ¶ marks",
+"w": 11
+},
+{
+"s": "\"tools.video.errorNotMediaUrl\": \"ভিডিও ফাইলের লিঙ্ক দিন (.mp4, .webm, .mov)\",",
+"w": 70
+},
+{
+"s": "\"key\": \"नमस्ते {name}, आपका स्वागत है\",",
+"w": 33
+},
+{
+"s": "\"key\": \"வணக்கம் {name}, வரவேற்கிறோம்\",",
+"w": 31
+},
+{
+"s": "\"key\": \"안녕하세요 {name}님, 환영합니다\",",
+"w": 41
+},
+{
+"s": "\"key\": \"こんにちは{name}さん、ようこそ\",",
+"w": 40
+},
+{
+"s": "❤️",
+"w": 2
+},
+{
+"s": "❤",
+"w": 1
+},
+{
+"s": "⚠️",
+"w": 2
+},
+{
+"s": "⚠",
+"w": 1
+},
+{
+"s": "☺️",
+"w": 2
+},
+{
+"s": "✅",
+"w": 2
+},
+{
+"s": "✔️",
+"w": 2
+},
+{
+"s": "✔",
+"w": 1
+},
+{
+"s": "ℹ️",
+"w": 2
+},
+{
+"s": "#️⃣",
+"w": 2
+},
+{
+"s": "🇺🇸",
+"w": 2
+},
+{
+"s": "🇺🇸🇯🇵",
+"w": 2
+},
+{
+"s": "🇺🇸🇯🇵🇩🇪",
+"w": 2
+},
+{
+"s": "🇺",
+"w": 1
+},
+{
+"s": "မ",
+"w": 1
+},
+{
+"s": "မင်",
+"w": 2
+},
+{
+"s": "မင်္ဂ",
+"w": 3
+},
+{
+"s": "မင်္ဂလာပါ",
+"w": 5
+},
+{
+"s": "ကမ္ဘာ",
+"w": 3
+},
+{
+"s": "က",
+"w": 1
+},
+{
+"s": "ကမ္",
+"w": 2
+},
+{
+"s": "ကမ္ဘ",
+"w": 3
+},
+{
+"s": "🇺🇸 🇯🇵",
+"w": 5
+},
+{
+"s": "🇺🇸x🇯🇵",
+"w": 5
+},
+{
+"s": "🇺🇸🇯🇵🇩🇪🇫🇷",
+"w": 2
+},
+{
+"s": "🇺🇸 English",
+"w": 10
+},
+{
+"s": "x❤️x",
+"w": 4
+},
+{
+"s": "x❤x",
+"w": 3
+},
+{
+"s": "👍🏽",
+"w": 2
+},
+{
+"s": "👍",
+"w": 2
+},
+{
+"s": "🏳️‍🌈",
+"w": 2
+},
+{
+"s": "e҉",
+"w": 1
+},
+{
+"s": "a͈͈͈͈b",
+"w": 2
+},
+{
+"s": "ｶﾞ",
+"w": 2
+},
+{
+"s": "が",
+"w": 2
+},
+{
+"s": "が",
+"w": 2
+},
+{
+"s": "🧑‍🚀 astronaut",
+"w": 12
+},
+{
+"s": "1️⃣2️⃣3️⃣",
+"w": 6
+},
+{
+"s": "กำ",
+"w": 2
+},
+{
+"s": "ก",
+"w": 1
+},
+{
+"s": "ำ",
+"w": 1
+},
+{
+"s": "ﾞ",
+"w": 1
+},
+{
+"s": "ප්‍ර",
+"w": 1
+},
+{
+"s": "ප්",
+"w": 1
+},
+{
+"s": "ර",
+"w": 1
+},
+{
+"s": "ක්‍ෂ",
+"w": 1
+},
+{
+"s": "ව්‍ය",
+"w": 1
+},
+{
+"s": "각",
+"w": 2
+},
+{
+"s": "ᅡ",
+"w": 1
+},
+{
+"s": "ᄀ",
+"w": 2
+},
+{
+"s": "🏽",
+"w": 2
+},
+{
+"s": "👨‍👩‍👦",
+"w": 2
+},
+{
+"s": "🧑‍🚀",
+"w": 2
+},
+{
+"s": "a‍b",
+"w": 2
+},
+{
+"s": "ก‍ก",
+"w": 1
+},
+{
+"s": "ஜ்‍ஞ",
+"w": 1
+},
+{
+"s": "क्‍ष",
+"w": 1
+},
+{
+"s": "ಕ್‍ಷ",
+"w": 1
+},
+{
+"s": "ຫນ",
+"w": 2
+},
+{
+"s": "ໜ",
+"w": 1
+},
+{
+"s": "ⓐ",
+"w": 1
+},
+{
+"s": "𝕏",
+"w": 1
+},
+{
+"s": "ᜀᜁ",
+"w": 2
+},
+{
+"s": "ꦄꦂ",
+"w": 1
+},
+{
+"s": "𑀓𑀔",
+"w": 2
+},
+{
+"s": "ᬅᬆ",
+"w": 2
+},
+{
+"s": "ﷺ",
+"w": 1
+},
+{
+"s": "﷽",
+"w": 1
+},
+{
+"s": "₹1,000",
+"w": 6
+},
+{
+"s": "ⵜⴰⵎⴰⵣⵉⵖⵜ",
+"w": 8
+},
+{
+"s": "ꆈꌠ",
+"w": 4
+},
+{
+"s": "ᚠᚢᚦ",
+"w": 3
+},
+{
+"s": "⠁⠃⠉",
+"w": 3
+},
+{
+"s": "ㄱㄴㄷ",
+"w": 6
+},
+{
+"s": "ᛟᛞ",
+"w": 2
+},
+{
+"s": "ⲁⲃⲅ",
+"w": 3
+},
+{
+"s": "ⴀⴁ",
+"w": 2
+},
+{
+"s": "აბგ",
+"w": 3
+},
+{
+"s": "ԱԲԳ",
+"w": 3
+},
+{
+"s": "ᏣᎳᎩ",
+"w": 3
+},
+{
+"s": "ܐܒܓ",
+"w": 3
+},
+{
+"s": "ދިވެހި",
+"w": 3
+},
+{
+"s": "ߒߞߏ",
+"w": 3
+},
+{
+"s": "𞤀𞤁",
+"w": 2
+},
+{
+"s": "X",
+"w": 1
+},
+{
+"s": "Xa‍bX",
+"w": 4
+},
+{
+"s": "Xก‍กX",
+"w": 3
+},
+{
+"s": "XกกX",
+"w": 4
+},
+{
+"s": "Xප්‍රX",
+"w": 3
+},
+{
+"s": "Xප්රX",
+"w": 4
+},
+{
+"s": "XකෂX",
+"w": 4
+},
+{
+"s": "Xක්‍ෂX",
+"w": 3
+},
+{
+"s": "Xஜ்ஞX",
+"w": 4
+},
+{
+"s": "Xஜ்‍ஞX",
+"w": 3
+},
+{
+"s": "XabX",
+"w": 4
+},
+{
+"s": "Xa‌bX",
+"w": 4
+},
+{
+"s": "Xa‍กX",
+"w": 3
+},
+{
+"s": "Xก‍aX",
+"w": 4
+},
+{
+"s": "Xя‍яX",
+"w": 3
+},
+{
+"s": "X1‍2X",
+"w": 4
+},
+{
+"s": "Xअ‍बX",
+"w": 3
+},
+{
+"s": "X你‍好X",
+"w": 4
+},
+{
+"s": "Xก‍กก‍กX",
+"w": 4
+},
+{
+"s": "Xගඟ‍ගX",
+"w": 4
+},
+{
+"s": "Xก‍ก‍กX",
+"w": 3
+},
+{
+"s": "X각X",
+"w": 4
+},
+{
+"s": "X각X",
+"w": 4
+},
+{
+"s": "X각각X",
+"w": 6
+},
+{
+"s": "Xகௌ X",
+"w": 4
+},
+{
+"s": "Xக்ஷX",
+"w": 4
+},
+{
+"s": "Xក្ខX",
+"w": 4
+},
+{
+"s": "XབཀྲX",
+"w": 4
+},
+{
+"s": "Xกำกำ X",
+"w": 7
+},
+{
+"s": "Xｶﾞｷﾞ X",
+"w": 7
+},
+{
+"s": "Xநிலைமைx",
+"w": 5
+},
+{
+"s": "Xผู้ใช้x",
+"w": 5
+},
+{
+"s": "Xดำเนินการx",
+"w": 10
+},
+{
+"s": "  \"th.key\": \"ตั้งค่า\",",
+"w": 19
+},
+{
+"s": "  \"pt-BR.key\": \"Tema\",",
+"w": 22
+},
+{
+"s": "  \"lt.key\": \"Nepavyko atidaryti grupės pranešimo su tais naudotojais. Patikrinkite ryšį ir bandykite dar kartą.\",",
+"w": 113
+},
+{
+"s": "  \"ru.key\": \"сервере\",",
+"w": 22
+},
+{
+"s": "  \"mk.key\": \"Грешка при парсирање: {error}\",",
+"w": 44
+},
+{
+"s": "  \"eu.key\": \"Konpilatze data:\",",
+"w": 31
+},
+{
+"s": "  \"nb_NO.key\": \"Oppdater melding\",",
+"w": 34
+},
+{
+"s": "  \"mn.key\": \"Талбарт тодорхойгүй сонголт `{fieldName}`: `{option}`.\",",
+"w": 69
+},
+{
+"s": "  \"sq.key\": \"Ju lutemi shkruani një URL të vlefshme të serverit\",",
+"w": 65
+},
+{
+"s": "  \"zh-CN.key\": \"您没有开始录制的权限。请联系通话的主持人开始录制。\",",
+"w": 68
+},
+{
+"s": "  \"gu.key\": \"બિલ્ડ હેશ:\",",
+"w": 22
+},
+{
+"s": "  \"hu.key\": \"{firstUser} **el lett távolítva a beszélgetésből**.\",",
+"w": 66
+},
+{
+"s": "  \"de.key\": \"deine Organisation\",",
+"w": 33
+},
+{
+"s": "  \"es.key\": \"Los destinatarios mencionados serán notificados cada {interval, plural, one {minute} other {{interval} minutes}} hasta que hayan admitido o respondido al mensaje.\",",
+"w": 177
+},
+{
+"s": "  \"vi.key\": \"Một email mời đã được gửi\",",
+"w": 40
+},
+{
+"s": "  \"id.key\": \"Kesalahan penguraian\",",
+"w": 35
+},
+{
+"s": "  \"zh-CN.key\": \"无\",",
+"w": 20
+},
+{
+"s": "  \"en.key\": \"A server is your team's communication hub accessed using a unique URL\",",
+"w": 84
+},
+{
+"s": "  \"sq.key\": \"BOT\",",
+"w": 18
+},
+{
+"s": "  \"vi.key\": \"Trạng thái tùy chỉnh\",",
+"w": 35
+},
+{
+"s": "  \"sv.key\": \"Schemalägg\",",
+"w": 25
+},
+{
+"s": "  \"sq.key\": \"Jo\",",
+"w": 17
+},
+{
+"s": "  \"mk.key\": \"Не се дозволени повеќекратни `=` знаци.\",",
+"w": 54
+},
+{
+"s": "  \"sl.key\": \"Če uporabite @all ali @channel, boste poslali obvestila **{totalMembers} ljudem** v **{timezones, number} {timezones, plural, one {timezone} other {timezones}}**. Ali ste prepričani, da želite to storiti?\",",
+"w": 219
+},
+{
+"s": "  \"pt.key\": \"tom tema predefinido\",",
+"w": 35
+},
+{
+"s": "  \"kk_Latn.key\": \"Sizdiŋ Firewall'dıŋ arjagındagı zamanaui baylanıs.\",",
+"w": 70
+},
+{
+"s": "  \"ro.key\": \"Comanda trebuie să înceapă cu un `/`.\",",
+"w": 52
+},
+{
+"s": "  \"gl.key\": \"Propósito\",",
+"w": 24
+},
+{
+"s": "  \"pt-BR.key\": \"Escolha um emoji\",",
+"w": 34
+},
+{
+"s": "  \"fr.key\": \"Un appel est déjà en cours sur ce canal.\",",
+"w": 55
+},
+{
+"s": "  \"lt.key\": \"buvo **įtrauktas į kanalą** nario {actor}.\",",
+"w": 57
+},
+{
+"s": "  \"gu.key\": \"પર એન્ટરપ્રાઇઝ આવૃત્તિ વિશે વધુ જાણો \",",
+"w": 41
+},
+{
+"s": "  \"uk.key\": \"Щогодини\",",
+"w": 23
+},
+{
+"s": "  \"lo.key\": \"EE Build Hash:\",",
+"w": 29
+},
+{
+"s": "  \"bg.key\": \"Не са върнати данни за динамични предложения\",",
+"w": 59
+},
+{
+"s": "  \"kk_Latn.key\": \"Mattermost kauımına kosılınız \",",
+"w": 50
+},
+{
+"s": "  \"ro.key\": \"**a părăsit echipa**.\",",
+"w": 36
+},
+{
+"s": "  \"hr.key\": \"Nepoznata opcija za polje `{fieldName}`: `{option}`.\",",
+"w": 67
+},
+{
+"s": "  \"id.key\": \"Tidak dapat mengidentifikasi argumen.\",",
+"w": 52
+},
+{
+"s": "  \"si.key\": \"ව්‍යවසාය සංස්කරණය\",",
+"w": 26
+},
+{
+"s": "  \"en_AU.key\": \"Create New Channel\",",
+"w": 36
+},
+{
+"s": "  \"es.key\": \"Canal abierto\",",
+"w": 28
+},
+{
+"s": "  \"sl.key\": \"Izbriši sporočilo\",",
+"w": 32
+},
+{
+"s": "  \"es.key\": \"Mostrar: Canales públicos\",",
+"w": 40
+},
+{
+"s": "  \"be.key\": \"Сымбалi\",",
+"w": 22
+},
+{
+"s": "  \"pt.key\": \"A abrir...\",",
+"w": 25
+},
+{
+"s": "  \"fi.key\": \"Palvelinta ei tavoiteta.\",",
+"w": 39
+},
+{
+"s": "  \"mk.key\": \"Командата не го прифаќа знамето `{flagName}`.\",",
+"w": 60
+},
+{
+"s": "  \"pt-BR.key\": \"Copiar Link\",",
+"w": 29
+},
+{
+"s": "  \"vi.key\": \"Thêm phản ứng\",",
+"w": 28
+},
+{
+"s": "  \"ka.key\": \"მომსახურების პირობები\",",
+"w": 36
+},
+{
+"s": "  \"sv.key\": \"Laddar upp... ({progress}%)\",",
+"w": 42
+},
+{
+"s": "  \"nl.key\": \"Taak onder bepaalde voorwaarden uitgevoerd\",",
+"w": 57
+},
+{
+"s": "  \"sv.key\": \"Favorit\",",
+"w": 22
+},
+{
+"s": "  \"ru.key\": \"Что-то пошло не так. Не удалось преобразовать групповое сообщение в приватный канал.\",",
+"w": 99
+},
+{
+"s": "  \"th.key\": \"**เข้าร่วมทีม**.\",",
+"w": 28
+},
+{
+"s": "  \"km.key\": \"កំហុស: {error}\",",
+"w": 27
+},
+{
+"s": "  \"zh-CN.key\": \"OK\",",
+"w": 20
+},
+{
+"s": "  \"cs.key\": \"Nahrávám...({progress}%)\",",
+"w": 39
+},
+{
+"s": "  \"pt-BR.key\": \"Novo canal\",",
+"w": 28
+},
+{
+"s": "  \"sl.key\": \"Oseba {firstUser} **se je pridružila ekipi**.\",",
+"w": 60
+},
+{
+"s": "  \"da.key\": \"Ukendte kanaler for feltet `{fieldName}`: `{option}`.\",",
+"w": 68
+},
+{
+"s": "  \"hi.key\": \"रीति\",",
+"w": 17
+},
+{
+"s": "  \"he.key\": \"למד עוד אודות הגרסה הארגונית ב \",",
+"w": 46
+},
+{
+"s": "  \"zh-TW.key\": \"群組訊息資訊\",",
+"w": 30
+},
+{
+"s": "  \"ne.key\": \"`form` परिभाषित छैन।\",",
+"w": 31
+},
+{
+"s": "  \"ml.key\": \"അപ്രതീക്ഷിത തെറ്റ്.\",",
+"w": 27
+},
+{
+"s": "  \"lo.key\": \"ຊື່\",",
+"w": 16
+},
+{
+"s": "  \"fi.key\": \"Eläimet ja luonto\",",
+"w": 32
+},
+{
+"s": "  \"pt-BR.key\": \"Não foi possível converter {displayName} em um canal privado.\",",
+"w": 79
+},
+{
+"s": "  \"de.key\": \"Zeige: Archivierte Kanäle\",",
+"w": 40
+},
+{
+"s": "  \"fi.key\": \"Kirjaudu sisään\",",
+"w": 30
+},
+{
+"s": "  \"kk.key\": \"Mattermost қауымына қосылыныз \",",
+"w": 45
+},
+{
+"s": "  \"ar.key\": \"كل محادثات فريقك فى مكان واحد, بحث فورى وتستطيع الوصول له من اى مكان.\",",
+"w": 84
+},
+{
+"s": "  \"it.key\": \"carnagione medio-chiara\",",
+"w": 38
+},
+{
+"s": "  \"ca.key\": \"Comunicació moderna des de darrere del teu tallafoc.\",",
+"w": 67
+},
+{
+"s": "  \"fr.key\": \"Les messages de groupe sont limités à {maxCount} membres\",",
+"w": 71
+},
+{
+"s": "  \"km.key\": \"EE Build Hash:\",",
+"w": 29
+},
+{
+"s": "  \"ml.key\": \"ബന്ധിപ്പിക്കുന്നു...\",",
+"w": 27
+},
+{
+"s": "  \"fy.key\": \"Foute Link\",",
+"w": 25
+},
+{
+"s": "  \"en.key\": \"Due date\",",
+"w": 23
+},
+{
+"s": "  \"tr.key\": \"Kalıcı bildirimler gönder\",",
+"w": 40
+},
+{
+"s": "  \"uk.key\": \"Нагадати пізніше\",",
+"w": 31
+},
+{
+"s": "  \"sv.key\": \"Automatisk inställning\",",
+"w": 37
+},
+{
+"s": "  \"ru.key\": \"Последние файлы\",",
+"w": 30
+},
+{
+"s": "  \"ko.key\": \"{date}에 {creator}님이 만들었습니다.\",",
+"w": 51
+},
+{
+"s": "  \"hu.key\": \"Nem sikerült menteni a fájlt\",",
+"w": 43
+},
+{
+"s": "  \"ja.key\": \"キャンセル\",",
+"w": 25
+},
+{
+"s": "  \"uk.key\": \"Повідомити всіх на цьому каналі\",",
+"w": 46
+},
+{
+"s": "  \"hi.key\": \"{firstUser} ** चैनल से जोड़ा गया ** {अभिनेता} द्वारा।\",",
+"w": 56
+},
+{
+"s": "  \"fi.key\": \"Kopioi linkki\",",
+"w": 28
+},
+{
+"s": "  \"tr.key\": \"{user} yazıyor...\",",
+"w": 32
+},
+{
+"s": "  \"eu.key\": \"Enpresarako Bertsioa\",",
+"w": 35
+},
+{
+"s": "  \"el.key\": \"Ο χρήστης {username} ενημέρωσε την κεφαλίδα του καναλιού σε: {newHeader}\",",
+"w": 87
+},
+{
+"s": "  \"gl.key\": \"Vostede está a ver unha **canle arquivada**. Non é posíbel publicar novas mensaxes.\",",
+"w": 98
+},
+{
+"s": "  \"sv.key\": \"Notifierar alla i kanalen\",",
+"w": 40
+},
+{
+"s": "  \"cs.key\": \"Zrušit\",",
+"w": 21
+},
+{
+"s": "  \"el.key\": \"Επεξεργασία\",",
+"w": 26
+},
+{
+"s": "  \"gu.key\": \"આધુનિક સંચાર તમારા ફાયરવોલની પાછળથી.\",",
+"w": 40
+},
+{
+"s": "  \"vi.key\": \"SAML\",",
+"w": 19
+},
+{
+"s": "  \"ca.key\": \"Suma de comprovació de la construcció:\",",
+"w": 53
+},
+{
+"s": "  \"lt.key\": \"(pranešimas ištrintas)\",",
+"w": 37
+},
+{
+"s": "  \"el.key\": \"{firstUser} **αφαιρέθηκε από την ομάδα**.\",",
+"w": 56
+},
+{
+"s": "  \"hi.key\": \"सर्वर URL दर्ज करें\",",
+"w": 30
+},
+{
+"s": "  \"de.key\": \"An Kanal anheften\",",
+"w": 32
+},
+{
+"s": "  \"mn.key\": \"{username} өрөөнд зочноор {addedUsername}-ийг нэмлээ.\",",
+"w": 68
+},
+{
+"s": "  \"km.key\": \"Team Edition\",",
+"w": 27
+},
+{
+"s": "  \"hr.key\": \"Ova je osoba već član tima\",",
+"w": 41
+},
+{
+"s": "  \"el.key\": \"Σύνδεση...\",",
+"w": 25
+},
+{
+"s": "  \"en_AU.key\": \"Open a DM\",",
+"w": 27
+},
+{
+"s": "  \"ro.key\": \"Temă\",",
+"w": 19
+},
+{
+"s": "  \"cs.key\": \"Vlákna\",",
+"w": 21
+},
+{
+"s": "  \"he.key\": \"טאבלט\",",
+"w": 20
+},
+{
+"s": "  \"bg.key\": \"Възникна неочаквана грешка\",",
+"w": 41
+},
+{
+"s": "  \"fa.key\": \"شما باید شرایط استفاده از خدمت را قبول کنید\",",
+"w": 58
+},
+{
+"s": "  \"tr.key\": \"Bağlantıyı kopyala\",",
+"w": 33
+},
+{
+"s": "  \"it.key\": \"Caricare foto e video sul server o salvarli sul dispositivo. Aprire le Impostazioni per concedere a {applicationName} l'accesso in lettura e scrittura alla libreria di foto e video.\",",
+"w": 196
+},
+{
+"s": "  \"sq.key\": \"{Përdoruesi i parë} u **hoq nga ekipi**.\",",
+"w": 55
+},
+{
+"s": "  \"ka.key\": \"ჩემი პაროლის აღდგენა\",",
+"w": 35
+},
+{
+"s": "  \"zh-CN.key\": \"**离开了频道**。\",",
+"w": 34
+},
+{
+"s": "  \"ml.key\": \"സൈൻ ഇൻ പ്രോസസ്സ് പൂർത്തിയാക്കാൻ, നിങ്ങളുടെ സ്മാർട്ട്ഫോണിന്റെ ഓതന്റിക്കേറ്ററിൽ നിന്ന് ഒരു ടോക്കൺ നൽകുക\",",
+"w": 80
+},
+{
+"s": "  \"gu.key\": \"પર મેટરમોસ્ટ સમુદાયમાં જોડાઓ \",",
+"w": 35
+},
+{
+"s": "  \"id.key\": \"Saluran ini tidak berisi file apa pun dengan filter yang diterapkan\",",
+"w": 82
+},
+{
+"s": "  \"cs.key\": \"Systém\",",
+"w": 21
+},
+{
+"s": "  \"fy.key\": \"Nee\",",
+"w": 18
+},
+{
+"s": "  \"km.key\": \"{addedUsername} បានបន្ថែមទៅក្នុង channel ដោយ {username}.\",",
+"w": 64
+},
+{
+"s": "  \"ar.key\": \"بناء على اعدادات هذا السيرفر لا يمكن ارسال اشعارات عبر تطبيق الهاتف. تواصل مع مدير السيرفر للمزيد من المعلومات.\",",
+"w": 126
+},
+{
+"s": "  \"mk.key\": \"Придружи се на Mattermost заедницата на \",",
+"w": 55
+},
+{
+"s": "  \"fr.key\": \"Aucun résultat trouvé pour \"{term}\"\",",
+"w": 50
+},
+{
+"s": "  \"pl.key\": \"Anuluj\",",
+"w": 21
+},
+{
+"s": "  \"vi.key\": \"(tin nhắn đã bị xóa)\",",
+"w": 35
+},
+{
+"s": "  \"fr.key\": \"Se déconnecter\",",
+"w": 29
+},
+{
+"s": "  \"ca.key\": \"Més informació sobre l'edició empresarial a \",",
+"w": 59
+},
+{
+"s": "  \"sq.key\": \"Asnjë Rezultat\",",
+"w": 29
+},
+{
+"s": "  \"lt.key\": \"{actor} **į komandą pridėjo** {firstUser}.\",",
+"w": 57
+},
+{
+"s": "  \"ka.key\": \"მაგ.: \"არხი სადაც შეგვატყობინებთ ბაგების შესახებ\"\",",
+"w": 64
+},
+{
+"s": "  \"zh-CN.key\": \"频道已归档\",",
+"w": 28
+},
+{
+"s": "  \"ko.key\": \"취소\",",
+"w": 19
+},
+{
+"s": "  \"en_AU.key\": \"Enabling access to Bluetooth means your audio peripherals can be used for calls and your content can be synchronised across your devices and clients.\",",
+"w": 167
+},
+{
+"s": "  \"sv.key\": \"Lägg till fler teammedlemmar i kanalen eller starta en konversation nedan.\",",
+"w": 89
+},
+{
+"s": "  \"kk.key\": \"Кәсіпорын басылымы туралы көбірек біліңіз \",",
+"w": 57
+},
+{
+"s": "  \"pt.key\": \"Este servidor não foi capaz de receber esta ação devido a motivos não identificados. Isto será tentado novamente quando ligar da próxima vez.\",",
+"w": 156
+},
+{
+"s": "  \"it.key\": \"Benvenuti\",",
+"w": 24
+},
+{
+"s": "  \"hi.key\": \"AD / LDAP उपयोगकर्ता नाम\",",
+"w": 35
+},
+{
+"s": "  \"cs.key\": \"1 den\",",
+"w": 20
+},
+{
+"s": "  \"hi.key\": \"फ़ील्ड के लिए दोहराया गया विकल्प '{fieldName}': '{option}'.\",",
+"w": 63
+},
+{
+"s": "  \"sl.key\": \"Nekdo\",",
+"w": 20
+},
+{
+"s": "  \"ja.key\": \"こんにちは、ただいま外出中のため返信できません。\",",
+"w": 63
+},
+{
+"s": "  \"da.key\": \"Ingen indberetning i binding eller form.\",",
+"w": 55
+},
+{
+"s": "  \"fr.key\": \"Lever la main\",",
+"w": 28
+},
+{
+"s": "  \"el.key\": \"προσθέστε τους στο κανάλι\",",
+"w": 40
+},
+{
+"s": "  \"ka.key\": \"სახელი\",",
+"w": 21
+},
+{
+"s": "  \"gl.key\": \"Comunicación moderna dende detrás da devasa.\",",
+"w": 59
+},
+{
+"s": "  \"fa.key\": \"خارج از محل‌کار\",",
+"w": 29
+},
+{
+"s": "  \"ml.key\": \"അവരെ ഈ സ്വകാര്യ ചാനലിൽ ചേർക്കുക\",",
+"w": 37
+},
+{
+"s": "  \"be.key\": \"Пацвердзіць\",",
+"w": 26
+},
+{
+"s": "  \"ca.key\": \"Política de privadesa\",",
+"w": 36
+},
+{
+"s": "  \"ko.key\": \"건너뛰기\",",
+"w": 23
+},
+{
+"s": "  \"en.key\": \"Matching tick quote expected before end of input.\",",
+"w": 64
+},
+{
+"s": "  \"ja.key\": \"実行を完了する\",",
+"w": 29
+},
+{
+"s": "  \"en.key\": \"Table\",",
+"w": 20
+},
+{
+"s": "  \"sr.key\": \"Хеш градње:\",",
+"w": 26
+},
+{
+"s": "  \"ru.key\": \"Адрес должен начинаться с http:// или https://\",",
+"w": 61
+},
+{
+"s": "  \"da.key\": \" og \",",
+"w": 19
+},
+{
+"s": "  \"da.key\": \"På grund af serverens konfiguration kan der ikke modtages notifikationer i mobilappen. Kontakt din systemadministrator for at få flere oplysninger.\",",
+"w": 162
+},
+{
+"s": "  \"nb_NO.key\": \"Nøkkelord skiller ikke mellom store og små bokstaver. Skill nøkkelordene med komma.\",",
+"w": 101
+},
+{
+"s": "  \"de.key\": \"Du wurdest aus dem Kanal entfernt\",",
+"w": 48
+},
+{
+"s": "  \"sl.key\": \"(opcijsko)\",",
+"w": 25
+},
+{
+"s": "  \"ka.key\": \"Კონფიდენციალურობის პოლიტიკა\",",
+"w": 42
+},
+{
+"s": "  \"en_AU.key\": \"Select server\",",
+"w": 31
+},
+{
+"s": "  \"pt-BR\": \"Canais Públicos\",",
+"w": 29
+},
+{
+"s": "  \"fa\": \"{username} هدر کانال را به روز کرد: {newHeader}\",",
+"w": 58
+},
+{
+"s": "  \"bn\": \"টিম সংস্করণ\",",
+"w": 19
+},
+{
+"s": "  \"zh-TW\": \"選定的伺服器已停用檔案上傳\",",
+"w": 40
+},
+{
+"s": "  \"cs\": \"Zrušit uložení\",",
+"w": 25
+},
+{
+"s": "  \"en_AU\": \"Download failed\",",
+"w": 29
+},
+{
+"s": "  \"translation\": \"Некорректный формат ссылки https://example.com\",",
+"w": 66
+},
+{
+"s": "  \"ru\": \"Отклонить\",",
+"w": 20
+},
+{
+"s": "  \"ar\": \"الاعدادات\",",
+"w": 20
+},
+{
+"s": "  \"common\": \"Показать все {count, plural, one {# опцию} few {# опции} many {# опций} other {# опции}}\",",
+"w": 103
+},
+{
+"s": "  \"en_AU\": \"Unknown user for field `{fieldName}`: `{option}`.\",",
+"w": 63
+},
+{
+"s": "  \"common\": \"Go to {field}\",",
+"w": 28
+},
+{
+"s": "  \"ne\": \"वा\",",
+"w": 12
+},
+{
+"s": "  \"fy\": \"Unferwachte flater.\",",
+"w": 30
+},
+{
+"s": "  \"he\": \"פסיק לא צפוי.\",",
+"w": 24
+},
+{
+"s": "  \"ko\": \"최근\",",
+"w": 15
+},
+{
+"s": "  \"sv\": \"Återställningslänk skickad\",",
+"w": 37
+},
+{
+"s": "  \"pt\": \"Vamos Ligar a um Servidor\",",
+"w": 36
+},
+{
+"s": "  \"es\": \"Responder\",",
+"w": 20
+},
+{
+"s": "  \"lt\": \"{vendor} nepasitiki nulaužtais įrenginiais.  Priežastis: {reason}    Derinimo informacija: {debug}  Uždarykite programą.\",",
+"w": 131
+},
+{
+"s": "  \"da\": \"Al kommunikation i dit team på ét sted, søgbart og tilgængeligt overalt.\",",
+"w": 83
+},
+{
+"s": "  \"cs\": \"Jste si jisti, že chcete přepnout na jiný hovor?\",",
+"w": 59
+},
+{
+"s": "  \"common\": \"Emissions\",",
+"w": 24
+},
+{
+"s": "  \"kk_Latn\": \"Sizdiŋ Firewall'dıŋ arjagındagı zamanaui baylanıs.\",",
+"w": 66
+},
+{
+"s": "  \"be\": \"Заўтра\",",
+"w": 17
+},
+{
+"s": "  \"tr\": \"Beklenmeyen virgül.\",",
+"w": 30
+},
+{
+"s": "  \"sv\": \"Normal\",",
+"w": 17
+},
+{
+"s": "  \"common\": \"切换主题\",",
+"w": 23
+},
+{
+"s": "  \"gl\": \"{users} e {lastUser} foron **retirados da canle**.\",",
+"w": 61
+},
+{
+"s": "  \"el\": \"{firstUser} και {secondUser} **εισήλθαν στην ομάδα**.\",",
+"w": 64
+},
+{
+"s": "  \"nb_NO\": \"Serveren er ikke tilgjengelig\",",
+"w": 43
+},
+{
+"s": "  \"es\": \"Confirma el envío de notificaciones a grupos\",",
+"w": 55
+},
+{
+"s": "  \"tr\": \"Bir görsel ifade seçin\",",
+"w": 33
+},
+{
+"s": "  \"ja\": \"下書き\",",
+"w": 17
+},
+{
+"s": "  \"id\": \"Panggil peserta\",",
+"w": 26
+},
+{
+"s": "  \"common\": \"Repainted panels\",",
+"w": 31
+},
+{
+"s": "  \"nb_NO\": \"Samtaleopptaket og transkriberingsfilene vil bli behandlet og lagt ut i samtaletråden. Er du sikker på at du vil stoppe opptaket og transkriberingen?\",",
+"w": 163
+},
+{
+"s": "  \"common\": \"計算のしくみ\",",
+"w": 27
+},
+{
+"s": "  \"common\": \"딜러에서 신차를 직접 구매할 수 있는 유일한 경로입니다. 시장 점유율은 약 51.5%에 달하지만 점차 하락하는 추세입니다.\",",
+"w": 129
+},
+{
+"s": "  \"pl\": \"(wiadomość usunięta)\",",
+"w": 31
+},
+{
+"s": "  \"th\": \"**ออกจากทีมแล้ว**.\",",
+"w": 27
+},
+{
+"s": "  \"ka\": \"თანამედროვე კოუნიკაცია თქვენი ფაირვოლის მიღმა.\",",
+"w": 57
+},
+{
+"s": "  \"de\": \"Es ist ein Fehler beim Abrufen der Auswahlfelder aufgetreten. Kontaktiere bitte den App-Entwickler. Details: {details}\",",
+"w": 129
+},
+{
+"s": "  \"ja\": \"利用規約への同意が必要です\",",
+"w": 37
+},
+{
+"s": "  \"ar\": \"تسجيل الخروج\",",
+"w": 23
+},
+{
+"s": "  \"be\": \"Адзначыць як прачытанае\",",
+"w": 34
+},
+{
+"s": "  \"it\": \"Display dell'orologio\",",
+"w": 32
+},
+{
+"s": "  \"ko\": \"팀에 구성원 초대하기\",",
+"w": 31
+},
+{
+"s": "  \"ro\": \"{username} a eliminat antetul canalului (a fost: {oldHeader})\",",
+"w": 72
+},
+{
+"s": "  \"en_AU\": \"Join private channel\",",
+"w": 34
+},
+{
+"s": "  \"mk\": \"Модерна комуникација позади вашиот заштитен ѕид.\",",
+"w": 59
+},
+{
+"s": "  \"sr\": \"Нисмо могли да покренемо директну поруку са саговорником {displayName}. Проверите вашу везу и пробајте поново.\",",
+"w": 121
+},
+{
+"s": "  \"da\": \"Feltværdi mangler.\",",
+"w": 29
+},
+{
+"s": "  \"fa\": \"حذف\",",
+"w": 14
+},
+{
+"s": "  \"common\": \"功率（kW）\",",
+"w": 25
+},
+{
+"s": "  \"en\": \"Note: silent mode must be off to hear the ringtone preview.\",",
+"w": 70
+},
+{
+"s": "  \"en_AU\": \"Lasted {duration}\",",
+"w": 31
+},
+{
+"s": "  \"hi\": \"फोटो कैप्चर करें\",",
+"w": 21
+},
+{
+"s": "  \"da\": \"Der er opstået en fejl ved hentning af de valgte felter. Kontakt app-udvikleren. Detaljer: {details}\",",
+"w": 111
+},
+{
+"s": "  \"sl\": \"Ne moti\",",
+"w": 18
+},
+{
+"s": "  \"nb_NO\": \"Koden er kopiert til utklippstavlen\",",
+"w": 49
+},
+{
+"s": "  \"km\": \"EE Build Hash:\",",
+"w": 25
+},
+{
+"s": "  \"el\": \"Ασφαλισμένο από {vendor}\",",
+"w": 35
+},
+{
+"s": "  \"hi\": \"त्रुटि निष्पादन आदेश\",",
+"w": 24
+},
+{
+"s": "  \"common\": \"In this section\",",
+"w": 30
+},
+{
+"s": "  \"vi\": \"Gửi thông báo qua email\",",
+"w": 34
+},
+{
+"s": "  \"ja\": \"他のチャンネル\",",
+"w": 25
+},
+{
+"s": "  \"tr\": \"Sunucuyu düzenle\",",
+"w": 27
+},
+{
+"s": "  \"tr\": \"Dinamik\",",
+"w": 18
+},
+{
+"s": "  \"common\": \"{from}–{to} cm³\",",
+"w": 30
+},
+{
+"s": "  \"nl\": \"Voer een aangepast bericht in\",",
+"w": 40
+},
+{
+"s": "  \"translation\": \"april\",",
+"w": 25
+},
+{
+"s": "  \"he\": \"רשיון מסחרי\",",
+"w": 22
+},
+{
+"s": "  \"th\": \"การสื่อสารในทีมทั้งหมดของคุณในที่เดียว ค้นหาได้ทันทีและเข้าถึงได้จากทุกที่\",",
+"w": 66
+},
+{
+"s": "  \"ko\": \"{numParticipants}명이 참가하고 있는 {displayName}의 미팅을 종료 하시겠습니까?\",",
+"w": 88
+},
+{
+"s": "  \"eu\": \"Batu Mattermost komunetateari hemen \",",
+"w": 47
+},
+{
+"s": "  \"kk_Latn\": \"Enterprise Edition\",",
+"w": 34
+},
+{
+"s": "  \"fa\": \"دعوت\",",
+"w": 15
+},
+{
+"s": "  \"bn\": \"কোন রিফ্রেশ ফিল্ডে রিফ্রেশ বলা হয়।\",",
+"w": 34
+},
+{
+"s": "  \"ka\": \"სათაური\",",
+"w": 18
+},
+{
+"s": "  \"common\": \"Delivery inside Russia\",",
+"w": 37
+},
+{
+"s": "  \"zh-CN\": \"成员们\",",
+"w": 20
+},
+{
+"s": "  \"sr\": \"Дошло је до грешке приликом прикупљања података из одабраних поља. Контактирајте развојни тим. Детаљи: {details}\",",
+"w": 123
+},
+{
+"s": "  \"ka\": \"არხის დახურვა\",",
+"w": 24
+},
+{
+"s": "  \"ko\": \"Cloud Professional 또는 Cloud Enterprise로 업그레이드하여 {maxParticipants} 이상의 참가자와 그룹 통화를 사용하세요.\",",
+"w": 126
+},
+{
+"s": "  \"ja\": \"ログアウト\",",
+"w": 21
+},
+{
+"s": "  \"fy\": \"EE-buildhash:\",",
+"w": 24
+},
+{
+"s": "  \"sq\": \"Ti\",",
+"w": 13
+},
+{
+"s": "  \"el\": \"Το όνομα του καναλιού πρέπει να είναι μικρότερο από {maxLength, number} χαρακτήρες\",",
+"w": 93
+},
+{
+"s": "  \"es\": \"El servidor requiere el certificado del cliente para la autenticación.\",",
+"w": 81
+},
+{
+"s": "  \"cs\": \"Zrušit\",",
+"w": 17
+},
+{
+"s": "  \"bn\": \"খালি মান অনুমোদিত নয়\",",
+"w": 25
+},
+{
+"s": "  \"pl\": \"Nie na Kanale\",",
+"w": 24
+},
+{
+"s": "  \"common\": \"Кто проводил осмотр\",",
+"w": 34
+},
+{
+"s": "  \"common\": \"Government registration\",",
+"w": 38
+},
+{
+"s": "  \"kk_Latn\": \"Mattermost kauımına kosılınız \",",
+"w": 46
+},
+{
+"s": "  \"pt-BR\": \"Hash de Compilação:\",",
+"w": 33
+},
+{
+"s": "  \"en_AU\": \"Copy\",",
+"w": 18
+},
+{
+"s": "  \"gl\": \"foron **engadidos ao equipo** por {actor}.\",",
+"w": 53
+},
+{
+"s": "  \"it\": \"Copia Testo\",",
+"w": 22
+},
+{
+"s": "  \"hr\": \"Pokušaj prijave neuspio. Pokušaj ponovo.\",",
+"w": 51
+},
+{
+"s": "  \"be\": \"{language} код\",",
+"w": 25
+},
+{
+"s": "  \"mn\": \"\"Team\" хувилбар\",",
+"w": 26
+},
+{
+"s": "  \"common\": \"Вы вошли как {name}\",",
+"w": 34
+},
+{
+"s": "  \"es\": \"Preparando...\",",
+"w": 24
+},
+{
+"s": "  \"be\": \"Вы былі **выдалены з канала**.\",",
+"w": 41
+},
+{
+"s": "  \"fy\": \"Fuortsmite\",",
+"w": 21
+},
+{
+"s": "  \"ru\": \"Прикрепить сообщение\",",
+"w": 31
+},
+{
+"s": "  \"common\": \"海关完税价（₽）\",",
+"w": 30
+},
+{
+"s": "  \"fy\": \"Formulier hat gjin submit en gjin source.\",",
+"w": 52
+},
+{
+"s": "  \"th\": \"ออกจากระบบ {serverName}\",",
+"w": 34
+},
+{
+"s": "  \"pl\": \"Wyświetl informacje\",",
+"w": 30
+},
+{
+"s": "  \"common\": \"Engine size (cm³)\",",
+"w": 32
+},
+{
+"s": "  \"hr\": \"Članovi\",",
+"w": 18
+},
+{
+"s": "  \"fy\": \"Noch gjin folge triedsjjes\",",
+"w": 37
+},
+{
+"s": "  \"ro\": \"Alăturați-vă canalului privat\",",
+"w": 40
+},
+{
+"s": "  \"ka\": \"შეცვლა\",",
+"w": 17
+},
+{
+"s": "  \"ml\": \"AD/LDAP ഉപയോക്തൃനാമം\",",
+"w": 26
+},
+{
+"s": "  \"uk\": \"Зображення перевищує максимальні розміри 7680 x 4320 px\",",
+"w": 66
+},
+{
+"s": "  \"mk\": \"Грешка: {error}\",",
+"w": 26
+},
+{
+"s": "  \"fr\": \"Erreur de rendu LaTex\",",
+"w": 32
+},
+{
+"s": "  \"common\": \"价格\",",
+"w": 19
+},
+{
+"s": "  \"br\": \"Kehentiñ arnevez a-dreñv ho tanvoger.\",",
+"w": 48
+},
+{
+"s": "  \"hu\": \"Kilépés\",",
+"w": 18
+},
+{
+"s": "  \"ne\": \"'source' परिभाषित गरिएको छैन।\",",
+"w": 34
+},
+{
+"s": "  \"lt\": \"Failai turi būti mažesni nei {max}\",",
+"w": 45
+},
+{
+"s": "  \"sl\": \"Ime kanala mora biti manj kot {maxLength, number} znakov\",",
+"w": 67
+},
+{
+"s": "  \"th\": \"ช่องที่เก็บถาวร\",",
+"w": 22
+},
+{
+"s": "  \"ca\": \"Suma de comprovació de la construcció:\",",
+"w": 49
+},
+{
+"s": "  \"fy\": \"Oorspronkelijk bericht verwijderd\",",
+"w": 44
+},
+{
+"s": "  \"sr\": \"Закачено\",",
+"w": 19
+},
+{
+"s": "  \"fr\": \"Enregistrer\",",
+"w": 22
+},
+{
+"s": "  \"fa\": \"شما\",",
+"w": 14
+},
+{
+"s": "  \"cs\": \"Ukončit hovor pro všechny\",",
+"w": 36
+},
+{
+"s": "  \"sl\": \"Ali ste prepričani, da želite izbrisati to objavo?\",",
+"w": 61
+},
+{
+"s": "  \"ml\": \"പ്രവർത്തനങ്ങൾ\",",
+"w": 21
+},
+{
+"s": "  \"cs\": \"Zpět na přihlášení\",",
+"w": 29
+},
+{
+"s": "  \"ar\": \"لا يمكن استقبال اشعارات من هذا الخادم\",",
+"w": 48
+},
+{
+"s": "  \"common\": \"Dieses Passwort ist zu schwach oder in Datenlecks aufgetaucht. Wählen Sie ein anderes.\",",
+"w": 101
+},
+{
+"s": "  \"common\": \"https://www.consultant.ru/document/cons_doc_LAW_28165/35cc6698564adc4507baa31c9cfdbb4f2516d068/\",",
+"w": 110
+},
+{
+"s": "  \"ar\": \"ملفك الشخصي\",",
+"w": 22
+},
+{
+"s": "  \"translation\": \"Three hours ago\",",
+"w": 35
+},
+{
+"s": "  \"el\": \"Επαναφέρετε τον κωδικό πρόσβασής μου\",",
+"w": 47
+},
+{
+"s": "  \"common\": \"Die 180-Tage-Hürde\",",
+"w": 33
+},
+{
+"s": "  \"uk\": \"Скасувати\",",
+"w": 20
+},
+{
+"s": "  \"km\": \"ពេលវេលាស្ថាបនា ៖\",",
+"w": 21
+},
+{
+"s": "  \"fr\": \"Licence accordée à : {company}\",",
+"w": 41
+},
+{
+"s": "  \"en_AU\": \"Received an error for an unknown field. Field name: `{field}`. Error: `{error}`.\",",
+"w": 94
+},
+{
+"s": "  \"pt\": \"OK\",",
+"w": 13
+},
+{
+"s": "  \"translation\": \"Four hours ago\",",
+"w": 34
+},
+{
+"s": "  \"common\": \"Under 3 years old — percent of customs value with a per-cm³ floor\",",
+"w": 80
+},
+{
+"s": "  \"common\": \"Langue et apparence\",",
+"w": 34
+},
+{
+"s": "  \"common\": \"Начать заново\",",
+"w": 28
+},
+{
+"s": "  \"mk\": \"Недостасува задолжителено поле: `{fieldName}`.\",",
+"w": 57
+},
+{
+"s": "  \"ml\": \"മറുപടി\",",
+"w": 15
+},
+{
+"s": "  \"hu\": \"A jelenlegi üzenete túl hosszú. Jelenlegi karakterek száma: {count}/{max}\",",
+"w": 84
+},
+{
+"s": "  \"zh-CN\": \"登录中\",",
+"w": 20
+},
+{
+"s": "  \"km\": \"ទំនាក់ទំនងទំនើបនៅពីក្រោយ Firewall អ្នក។\",",
+"w": 39
+},
+{
+"s": "  \"id\": \"Terjadi kesalahan saat mencoba mengikuti semua utas secara otomatis di saluran {displayName}\",",
+"w": 103
+},
+{
+"s": "  \"el\": \"Γράψτε στο {channelDisplayName}\",",
+"w": 42
+},
+{
+"s": "  \"ja\": \"このチャンネルに投稿されたファイルがここに表示されます。\",",
+"w": 67
+},
+{
+"s": "  \"fr\": \"Le téléchargement de fichiers est désactivé sur ce serveur. Veuillez contacter votre administrateur système pour en savoir plus. \",",
+"w": 140
+},
+{
+"s": "  \"nl\": \"Afwezig of offline\",",
+"w": 29
+},
+{
+"s": "  \"sr\": \"Непозната опција за поље `{fieldName}`: `{option}`.\",",
+"w": 62
+},
+{
+"s": "  \"common\": \"VIN\",",
+"w": 18
+},
+{
+"s": "  \"pt\": \"Menção\",",
+"w": 17
+},
+{
+"s": "  \"zh-CN\": \"帮助\",",
+"w": 18
+},
+{
+"s": "  \"ca\": \"Comunicació moderna des de darrere del teu tallafoc.\",",
+"w": 63
+},
+{
+"s": "  \"sv\": \"Detta gruppmeddelande är för närvarande <b>mjutad</b>, så du kommer inte att notifierad.\",",
+"w": 99
+},
+{
+"s": "  \"ml\": \"പാർസിങ്ങിലെ തെറ്റ്\",",
+"w": 21
+},
+{
+"s": "X­X",
+"w": 3
+},
+{
+"s": "X☝X",
+"w": 4
+},
+{
+"s": "X☰X",
+"w": 4
+},
+{
+"s": "X⚊X",
+"w": 4
+},
+{
+"s": "X⛹X",
+"w": 4
+},
+{
+"s": "X✌X",
+"w": 4
+},
+{
+"s": "X✍X",
+"w": 4
+},
+{
+"s": "X〮X",
+"w": 4
+},
+{
+"s": "X㇤X",
+"w": 4
+},
+{
+"s": "X䷀X",
+"w": 4
+},
+{
+"s": "X䷿X",
+"w": 4
+},
+{
+"s": "XㅤX",
+"w": 2
+},
+{
+"s": "XᅡX",
+"w": 2
+},
+{
+"s": "XᆨX",
+"w": 2
+},
+{
+"s": "XힵX",
+"w": 2
+},
+{
+"s": "X⁦X",
+"w": 2
+},
+{
+"s": "X​X",
+"w": 2
+},
+{
+"s": "XำX",
+"w": 3
+},
+{
+"s": "XﾞX",
+"w": 3
+},
+{
+"s": "X️X",
+"w": 3
+},
+{
+"s": "X︎X",
+"w": 2
+},
+{
+"s": "X𖿰X",
+"w": 4
+},
+{
+"s": "X𘳿X",
+"w": 4
+},
+{
+"s": "X𝌀X",
+"w": 4
+},
+{
+"s": "X𝍠X",
+"w": 4
+},
+{
+"s": "X🏋X",
+"w": 4
+},
+{
+"s": "X🕴X",
+"w": 4
+},
+{
+"s": "X🖐X",
+"w": 4
+},
+{
+"s": "X🪉X",
+"w": 4
+},
+{
+"s": "X🫩X",
+"w": 4
+},
+{
+"s": "X🏻X",
+"w": 4
+}
+]

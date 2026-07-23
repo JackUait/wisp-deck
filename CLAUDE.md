@@ -133,6 +133,7 @@ shellcheck lib/*.sh lib/terminals/*.sh bin/wisp-deck wrapper.sh  # Lint all scri
 ./bin/wisp-deck                         # Run main installer/setup
 make release                            # Create a new release
 WISP_DECK_LIVE_CLAUDE_E2E=1 go test ./test/bash/ -run TestLiveClaude -v  # After a claude upgrade: verify the real-claude behaviors draft preservation depends on
+WISP_DECK_TMUX_WIDTH_E2E=1 go test ./internal/tui/ -run TestCellWidth_matches_a_live_tmux  # After a tmux/go-runewidth/uniseg bump: re-check the diff pager's width model against a real tmux
 ```
 
 ### Reading a red CI run
@@ -310,6 +311,43 @@ spawn here is dead screen time. Three launch invariants, each with a guard:
    `test/bash/sane_term_size_test.go`), and `gt_ensure_panes_watch`
    (backgrounded around the launch) rebuilds whatever panes are missing once
    the window has real space — guarded by `test/bash/pane_heal_test.go`.
+
+### The diff pager measures text in cells, never in runes
+
+Everything the file preview lays out — `fitColumn`, `wrapColumns`, `tintColumn`,
+`truncatePath`, the popup frame — measures through `cellWidth`/`forEachCell` in
+`internal/tui/diffview.go`. **Never reach for `len([]rune(s))`,
+`runewidth.RuneWidth` per rune, `runewidth.StringWidth` over a whole string, or
+`lipgloss.Width` on text that came out of a file.** Each of those has already
+shipped a broken preview:
+
+- Per-rune `RuneWidth` counts a Bengali vowel sign as its own cell. A locale
+  file read ~50% wider than the terminal drew it, so every line truncated and
+  wrapped early and the side-by-side divider walked off its column.
+- Whole-string `runewidth.StringWidth` disagrees the other way: this repo's
+  Unicode tables are newer than tmux's, so an Indic conjunct reads one cell
+  narrower than tmux paints it.
+- `lipgloss.Width` (and therefore `lipgloss`'s `Width()` padding, `Border()` and
+  `Place()`) uses a third table. Letting lipgloss frame the popup re-padded rows
+  that were already exact and produced 122- and 124-cell rows inside a 120-cell
+  box — hence `framePopup` and `placeBox` draw the chrome by hand.
+- Segmenting each colored run separately splits a letter from its accent,
+  because the highlighter wraps every rune in its own SGR pair. Escapes are
+  transparent to the terminal's composition, so `forEachCell` walks the
+  escape-free projection of the line.
+
+tmux owns the cell grid the popup is painted into, so tmux is the authority —
+not Unicode, not a library. The model is pinned to it by
+`internal/tui/testdata/tmux_widths.json`, a recording of what a real tmux
+painted for 555 strings (real shipped-locale lines across ~60 languages, the
+constructs that segment strangely, and every codepoint class where the tables
+were ever found to disagree). `TestCellWidth_matches_a_live_tmux` re-derives it
+from a live tmux on demand — run it after bumping tmux, go-runewidth or uniseg.
+
+Where the model cannot be exact it **rounds up, never down**: over-counting
+leaves a blank cell, while under-counting writes past the column edge and shoves
+everything after it sideways. `TestCellWidth_never_under_counts` enforces that
+direction, and it holds for all 154,996 assigned codepoints.
 
 ### Restore-queue pops are authorized, never ambient
 

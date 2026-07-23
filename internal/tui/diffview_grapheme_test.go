@@ -51,6 +51,40 @@ func TestCellWidth_matches_the_terminal(t *testing.T) {
 		{"مرحبا", 5},                   // Arabic
 		{bnShort, 3},
 		{bnCode, 74},
+
+		// Scripts whose marks segment in ways that fooled earlier attempts.
+		{"မင်္ဂလာပါ ကမ္ဘာ", 9}, // Myanmar: spacing vowels ride on their base
+		{"กำ", 2},   // Thai SARA AM: a spacing vowel that does NOT
+		{"ｶﾞ", 2},   // halfwidth kana + voiced mark: two cells
+		{"ප්‍ර", 1}, // Sinhala conjunct written with ZWJ
+		{"ஜ்‍ஞ", 1}, // Tamil conjunct written with ZWJ
+		{"a‍b", 2},  // ...but ZWJ does not glue ASCII together
+		{"각", 2},    // Hangul spelled out in jamo
+		{"한글", 4},
+		{"ᬅᬆ", 2},       // Balinese
+		{"ក្ខ", 2},      // Khmer
+		{"བཀྲ", 2},      // Tibetan
+		{"ދިވެހި", 3},   // Dhivehi (Thaana)
+		{"ᏣᎳᎩ", 3},      // Cherokee
+		{"ⵜⴰⵎⴰⵣⵉⵖⵜ", 8}, // Tifinagh
+		{"𞤀𞤁", 2},       // Adlam
+		{"ߒߞߏ", 3},      // N'Ko
+
+		// Emoji and symbols, where the two width tables disagree most.
+		{"👍🏽", 2},     // skin tone rides on the emoji
+		{"🏽", 2},      // ...but is a glyph of its own when alone
+		{"☝🏽", 4},     // ...and after a BMP emoji, tmux charges for both
+		{"❤️", 2},     // VS16 promotes a one-cell glyph to emoji presentation
+		{"❤", 1},      // without it, one cell
+		{"#️⃣", 2},    // keycap
+		{"🇺🇸", 2},     // one flag
+		{"🇺🇸🇯🇵🇩🇪", 2}, // adjacent flags share one slot on tmux's grid
+		{"🇺🇸 English", 10},
+		{"☰", 2}, // trigram
+		{"䷀", 2}, // Yijing hexagram
+		{"𝌆", 2}, // Tai Xuan Jing
+		{"­", 1}, // soft hyphen: a format control the terminal prints
+		{"⁦", 0}, // bidi isolate: one it does not
 	}
 	for _, tt := range tests {
 		if got := cellWidth(tt.s); got != tt.want {
@@ -177,5 +211,38 @@ func TestTruncatePath_measures_by_cells(t *testing.T) {
 	got := truncatePath(p, termWidth(p))
 	if got != p {
 		t.Errorf("truncatePath shortened a path that already fits:\n got %q\nwant %q", got, p)
+	}
+}
+
+// The header carries the file path, so a path in a non-Latin script has to be
+// measured the same way the body is — otherwise the right-anchored Discard
+// button lands on the wrong column or wraps out of reach of its click target.
+func TestDiffView_header_row_fits_a_non_latin_path(t *testing.T) {
+	for _, path := range []string{
+		"apps/web/messages/bn.json",
+		"apps/web/বার্তা/messages/bn.json",
+		"apps/web/メッセージ/ja.json",
+		"apps/web/сообщения/ru.json",
+	} {
+		m := sizeDiff(NewDiffView(path, " line one\n line two\n"), 120, 24)
+		for i, row := range strings.Split(m.View(), "\n") {
+			if got := termWidth(row); got > 120 {
+				t.Errorf("path %q: view row %d is %d cells, wider than the 120-cell popup", path, i, got)
+			}
+		}
+	}
+}
+
+// A column too narrow to seat a glyph must still not overflow: the glyph is
+// stood in for rather than allowed to overhang into the next column.
+func TestWrapColumns_never_overhangs_a_column_too_narrow_for_the_glyph(t *testing.T) {
+	for _, s := range []string{"你好世界", "👍🏽ok", "日本語テスト"} {
+		for _, w := range []int{1, 2, 3} {
+			for _, row := range wrapColumns(s, w) {
+				if got := termWidth(row); got > w {
+					t.Errorf("wrapColumns(%q, %d) produced a %d-cell row %q", s, w, got, row)
+				}
+			}
+		}
 	}
 }

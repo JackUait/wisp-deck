@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -195,37 +197,305 @@ func expandTabsLine(line string, tabWidth int) string {
 // column. Slicing by rune also let a truncation orphan a base letter from its
 // vowel sign.
 //
-// The per-cluster width comes from runewidth.StringWidth, which matches what
-// tmux and Ghostty paint cell-for-cell (verified against a live cursor-position
-// probe for Bengali, Thai, Arabic, CJK and ZWJ emoji).
+// Per-cluster widths come from clusterWidth, which is validated against a live
+// tmux across the scripts of the world by TestCellWidth_matches_tmux.
+// A segment's text may CONTAIN escape sequences, because color changes do not
+// interrupt how the terminal composes characters: the syntax highlighter wraps
+// every rune in its own SGR pair, so a Bengali letter and its vowel sign, or the
+// halves of a ZWJ emoji, routinely arrive with an escape between them and are
+// still painted in one cell. Segmenting each colored run separately counted
+// those pieces twice over and left highlighted non-Latin rows short.
 func forEachCell(s string, fn func(text string, w int, isEsc bool) bool) {
-	state := -1
-	for i := 0; i < len(s); {
-		if s[i] == '\x1b' { // an ESC…m sequence: zero cells, copied verbatim
-			j := i
-			for j < len(s) && s[j] != 'm' {
-				j++
+	if isASCII(s) {
+		// Nothing in ASCII combines, so each byte is its own cell and none of
+		// the segmenting below can change the answer. Most lines of most diffs
+		// take this path; skipping the machinery keeps them as cheap as they
+		// were before any of this existed.
+		for i := 0; i < len(s); {
+			if s[i] == '\x1b' {
+				j := i
+				for j < len(s) && s[j] != 'm' {
+					j++
+				}
+				if j < len(s) {
+					j++
+				}
+				if !fn(s[i:j], 0, true) {
+					return
+				}
+				i = j
+				continue
 			}
-			if j < len(s) {
-				j++
+			w := 0
+			if s[i] >= 0x20 && s[i] != 0x7f {
+				w = 1
 			}
-			if !fn(s[i:j], 0, true) {
+			if !fn(s[i:i+1], w, false) {
 				return
 			}
-			i = j
-			state = -1 // ESC is a cluster boundary; don't carry state across it
+			i++
+		}
+		return
+	}
+	if strings.IndexByte(s, '\x1b') < 0 {
+		segmentText(s, func(lo, hi, w int) bool { return fn(s[lo:hi], w, false) })
+		return
+	}
+	plain := stripEscapes(s)
+	if len(plain) == 0 { // nothing but escapes
+		fn(s, 0, true)
+		return
+	}
+	// Walk s and plain in lockstep: for every segment found in the stripped
+	// text, hand back the original bytes it spans, escapes and all, so the
+	// caller can copy them through unchanged.
+	cur := 0
+	skipEscapes := func() {
+		for cur < len(s) && s[cur] == '\x1b' {
+			for cur < len(s) && s[cur] != 'm' {
+				cur++
+			}
+			if cur < len(s) {
+				cur++
+			}
+		}
+	}
+	skipEscapes()
+	if cur > 0 && !fn(s[:cur], 0, true) { // escapes before the first character
+		return
+	}
+	segmentText(plain, func(lo, hi, w int) bool {
+		start := cur
+		for n := hi - lo; n > 0; n-- {
+			skipEscapes()
+			cur++
+		}
+		skipEscapes() // trailing escapes belong to the segment they follow
+		return fn(s[start:cur], w, false)
+	})
+}
+
+// segmentText walks escape-free text, reporting each segment as a byte range
+// and the cells it occupies. Stops early if emit returns false.
+func segmentText(plain string, emit func(lo, hi, w int) bool) {
+	state := -1
+	for i := 0; i < len(plain); {
+		// A run of regional indicators (flag emoji) is one segment, because
+		// that is how tmux stores it — see regionalIndicatorRun.
+		if n, count := regionalIndicatorRun(plain[i:]); count > 0 {
+			w := 2
+			if count == 1 { // a lone indicator, not half of a flag
+				w = 1
+			}
+			if !emit(i, i+n, w) {
+				return
+			}
+			i += n
+			state = -1
 			continue
 		}
-		cluster, _, _, next := uniseg.FirstGraphemeClusterInString(s[i:], state)
-		if cluster == "" {
+		seg, next := nextSegment(plain[i:], state)
+		if seg == "" {
 			return
 		}
 		state = next
-		if !fn(cluster, runewidth.StringWidth(cluster), false) {
+		if !emit(i, i+len(seg), clusterWidth(seg)) {
 			return
 		}
-		i += len(cluster)
+		i += len(seg)
 	}
+}
+
+// stripEscapes returns s with its ESC…m sequences removed.
+func stripEscapes(s string) string {
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); {
+		if s[i] == '\x1b' {
+			for i < len(s) && s[i] != 'm' {
+				i++
+			}
+			if i < len(s) {
+				i++
+			}
+			continue
+		}
+		out = append(out, s[i])
+		i++
+	}
+	return string(out)
+}
+
+const (
+	zeroWidthJoiner   = '‍'
+	softHyphen        = '­'
+	variationSelect16 = '️'
+)
+
+// nextSegment returns the leading run of s that the terminal keeps in one cell,
+// plus the segmenter state to continue with.
+//
+// It is a Unicode grapheme cluster, with one deliberate extension: tmux glues
+// whatever follows a zero-width joiner onto the same cell — not just emoji, the
+// way Unicode's GB11 says, but anything non-ASCII. That is how the Indic
+// conjuncts written with ZWJ behave on its grid: Sinhala "ප්‍ර", Tamil "ஜ்‍ஞ"
+// and Devanagari "क्‍ष" are one cell each, where the segmenter alone would say
+// two. The non-ASCII condition is not arbitrary — tmux has an ASCII fast path
+// that skips grapheme combining entirely, so "a‍b" really is two cells.
+func nextSegment(s string, state int) (string, int) {
+	seg, _, _, next := uniseg.FirstGraphemeClusterInString(s, state)
+	if seg == "" {
+		return "", state
+	}
+	for strings.HasSuffix(seg, string(zeroWidthJoiner)) && len(seg) < len(s) && s[len(seg)] >= utf8.RuneSelf {
+		more, _, _, after := uniseg.FirstGraphemeClusterInString(s[len(seg):], next)
+		if more == "" {
+			break
+		}
+		seg, next = seg+more, after
+	}
+	return seg, next
+}
+
+// clusterWidth reports the cells one segment occupies, matching how tmux — which
+// owns the cell grid the popup is painted into — accounts for it.
+//
+// The rule is "every mark hanging off a base character is free, and anything
+// that still claims its own space is charged for". Marks, format controls and
+// emoji skin-tone modifiers ride along for nothing, which is what makes
+// Bengali "লো", Thai "ดี", Hebrew "שָׁ", a skin-toned 👍🏽 and a ZWJ 👨‍👩‍👦 each cost
+// exactly what their base costs. Two cases still get charged even though the
+// segmenter folded them into the cluster, because tmux gives them a cell of
+// their own: Thai's spacing vowel SARA AM ("กำ" is two cells) and the halfwidth
+// katakana voiced marks ("ｶﾞ" is two).
+//
+// Note this is NOT runewidth.StringWidth over the cluster, which bills every
+// codepoint — that is how Myanmar came out three columns too wide. Nor is it
+// the width of the base alone, which loses the two cases above.
+//
+// Variation selector 16 is the documented exception: it promotes a text-style
+// glyph to emoji presentation and the terminal reserves two cells for it (❤ is
+// one cell, ❤️ is two). VS15 does the reverse and is left to the base.
+func clusterWidth(cluster string) int {
+	if strings.ContainsRune(cluster, variationSelect16) {
+		return 2
+	}
+	w := 0
+	glued, prev := false, rune(-1)
+	for _, r := range cluster {
+		switch {
+		case r == zeroWidthJoiner:
+			glued = true // everything past here shares the cell it joined
+		case glued:
+		case unicode.Is(tmuxWide, r):
+			w += 2
+		case r == softHyphen:
+			w++ // formally a format control, but the terminal prints it
+		case prev >= 0 && isConjoiningJamo(r):
+			// Free only when something precedes it in the same segment — i.e. it
+			// is part of a written-out syllable. An orphan jamo is charged a
+			// cell: tmux composes it onto whatever cell came before, which we
+			// cannot see from here, so we round the safe way and reserve one.
+		case isInvisible(r):
+		case unicode.In(r, unicode.Mn, unicode.Mc, unicode.Me):
+			// Marks are free wherever they land — including as the FIRST rune of
+			// a segment, which happens when the segmenter refuses to attach one
+			// to its base: Unicode keeps Myanmar's ာ/ါ out of the SpacingMark
+			// class, so they segment alone even though they are painted on the
+			// preceding letter. tmux hangs them off it anyway.
+		case r >= 0x1F3FB && r <= 0x1F3FF && prev >= 0x1F000 && prev <= 0x1FFFF:
+			// A skin-tone modifier recolors the emoji in front of it, for free.
+			// Only an emoji from the pictographic planes absorbs one, though:
+			// tmux charges the modifier two cells of its own after a BMP glyph
+			// like ☝ or ✌, after a plane-2 ideograph, and when it stands alone.
+		default:
+			if rw := runewidth.RuneWidth(r); rw > 0 {
+				w += rw
+			}
+		}
+		prev = r
+	}
+	return w
+}
+
+// isConjoiningJamo reports whether r is a Hangul medial vowel, final consonant
+// or filler. Written out, "한" is a lead consonant plus these, and the terminal
+// composes the whole syllable into the lead's two cells, so they cost nothing.
+func isConjoiningJamo(r rune) bool {
+	return (r >= 0x1160 && r <= 0x11FF) || // Hangul Jamo: medials and finals
+		(r >= 0xD7B0 && r <= 0xD7C6) || // Extended-B medials
+		(r >= 0xD7CB && r <= 0xD7FB) || // Extended-B finals
+		r == 0x3164 // Hangul filler
+}
+
+// tmuxWide holds the codepoints tmux paints two cells wide where runewidth
+// calls them narrow — mostly emoji whose East Asian Width is still "ambiguous"
+// (☝ ✌ 🏋 🕵 🖐) and the divination-symbol blocks (☰ ䷀ 𝌆), plus a few marks it
+// reserves space for. Both tables are defensible readings of Unicode; they just
+// disagree, and tmux owns the grid.
+//
+// This list is not guesswork: it is every disagreement found by pushing all
+// 154,996 assigned codepoints through a live tmux and diffing against
+// cellWidth. Only the ones where tmux is WIDER are corrected here, because that
+// is the direction that breaks a layout — writing a glyph the column cannot
+// hold shoves the divider sideways. Where we read wider than tmux (a mark from
+// a script newer than Go's Unicode tables), the column merely under-fills by a
+// cell, so those are left alone rather than pinned to one tmux build.
+var tmuxWide = &unicode.RangeTable{
+	R16: []unicode.Range16{
+		{Lo: 0x261D, Hi: 0x261D, Stride: 1},
+		{Lo: 0x2630, Hi: 0x2637, Stride: 1}, // trigrams
+		{Lo: 0x268A, Hi: 0x268F, Stride: 1}, // monograms and digrams
+		{Lo: 0x26F9, Hi: 0x26F9, Stride: 1},
+		{Lo: 0x270C, Hi: 0x270D, Stride: 1},
+		{Lo: 0x302E, Hi: 0x302F, Stride: 1}, // Hangul tone marks
+		{Lo: 0x31E4, Hi: 0x31E5, Stride: 1}, // CJK strokes
+		{Lo: 0x4DC0, Hi: 0x4DFF, Stride: 1}, // Yijing hexagrams
+	},
+	R32: []unicode.Range32{
+		{Lo: 0x16FF0, Hi: 0x16FF1, Stride: 1}, // Vietnamese reading marks
+		{Lo: 0x18CFF, Hi: 0x18CFF, Stride: 1},
+		{Lo: 0x1D300, Hi: 0x1D356, Stride: 1}, // Tai Xuan Jing symbols
+		{Lo: 0x1D360, Hi: 0x1D376, Stride: 1}, // counting rod numerals
+		{Lo: 0x1F3CB, Hi: 0x1F3CC, Stride: 1},
+		{Lo: 0x1F574, Hi: 0x1F575, Stride: 1},
+		{Lo: 0x1F590, Hi: 0x1F590, Stride: 1},
+		{Lo: 0x1FA89, Hi: 0x1FA89, Stride: 1},
+		{Lo: 0x1FA8F, Hi: 0x1FA8F, Stride: 1},
+		{Lo: 0x1FABE, Hi: 0x1FABE, Stride: 1},
+		{Lo: 0x1FAC6, Hi: 0x1FAC6, Stride: 1},
+		{Lo: 0x1FADC, Hi: 0x1FADC, Stride: 1},
+		{Lo: 0x1FADF, Hi: 0x1FADF, Stride: 1},
+		{Lo: 0x1FAE9, Hi: 0x1FAE9, Stride: 1},
+	},
+}
+
+// isInvisible reports whether r takes no space of its own: the format controls
+// — bidi isolates and overrides, joiners, tags — which steer how the text around
+// them is laid out without occupying a cell themselves. The soft hyphen is a
+// format control the terminal does print, and the caller charges for it before
+// reaching here.
+func isInvisible(r rune) bool {
+	return unicode.In(r, unicode.Cf)
+}
+
+// regionalIndicatorRun returns the byte length and letter count of the run of
+// regional-indicator letters at the start of s, or 0, 0 if there is none.
+//
+// Flags get their own segment because tmux does not pair the indicators up the
+// way Unicode's GB12/GB13 say to: it packs a whole adjacent run into a single
+// two-cell slot, so "🇺🇸🇯🇵🇩🇪" is two cells on its grid, not six. Standard
+// pairing would leave the layout four cells adrift on a language-picker diff.
+// Indicators separated by anything else are ordinary two-cell flags.
+func regionalIndicatorRun(s string) (bytes, count int) {
+	for bytes < len(s) {
+		r, size := utf8.DecodeRuneInString(s[bytes:])
+		if r < 0x1F1E6 || r > 0x1F1FF {
+			break
+		}
+		bytes += size
+		count++
+	}
+	return bytes, count
 }
 
 // cellWidth reports how many terminal cells s occupies, ANSI escapes excluded.
@@ -474,7 +744,8 @@ func numberLines(content string, width int) string {
 		codeW := width - lipgloss.Width(gutter)
 		// A line wider than codeW wraps onto continuation rows (blank gutter)
 		// rather than getting cut off; most lines are one row.
-		for j, row := range wrapColumns(ln, codeW) {
+		wrapped, wrappedW := wrapColumnsWidths(ln, codeW)
+		for j, row := range wrapped {
 			if j > 0 {
 				b.WriteByte('\n')
 				b.WriteString(blankGutter)
@@ -483,9 +754,9 @@ func numberLines(content string, width int) string {
 			}
 			switch kind {
 			case diffAdd:
-				b.WriteString(tintColumn(row, codeW, diffAddBgSeq))
+				b.WriteString(tintTo(row, wrappedW[j], codeW, diffAddBgSeq))
 			case diffDel:
-				b.WriteString(tintColumn(row, codeW, diffDelBgSeq))
+				b.WriteString(tintTo(row, wrappedW[j], codeW, diffDelBgSeq))
 			default:
 				b.WriteString(row)
 			}
@@ -695,6 +966,24 @@ func fitColumn(s string, width int) string {
 	return b.String()
 }
 
+// padTo pads s — whose cell width is already known to be w — out to width
+// cells, ending in a reset so color cannot bleed into the next column. It is
+// fitColumn without the measuring pass; the caller guarantees w <= width.
+func padTo(s string, w, width int) string {
+	if w > width {
+		return fitColumn(s, width)
+	}
+	return s + "\x1b[0m" + strings.Repeat(" ", width-w)
+}
+
+// tintTo is tintColumn for a string whose cell width is already known.
+func tintTo(s string, w, width int, bgSeq string) string {
+	if w > width {
+		return tintColumn(s, width, bgSeq)
+	}
+	return bgSeq + s + strings.Repeat(" ", width-w) + "\x1b[0m"
+}
+
 // ansiIsReset reports whether seq (a full "\x1b[...m" escape) clears the
 // active foreground color rather than setting one: an empty, "0", or "39"
 // parameter. Those are the only codes this package ever emits or expects in a
@@ -718,25 +1007,47 @@ func ansiIsReset(seq string) bool {
 // mid-token wrap doesn't lose syntax highlighting. Returns one (possibly
 // empty) row for input that already fits, including the empty string.
 func wrapColumns(s string, width int) []string {
+	rows, _ := wrapColumnsWidths(s, width)
+	return rows
+}
+
+// wrapColumnsWidths is wrapColumns plus the cell width of each row it produced.
+// Handing those widths on saves the caller from segmenting the same text a
+// second time just to pad it, which on a file written in a non-Latin script is
+// the difference between measuring every line once and measuring it twice.
+func wrapColumnsWidths(s string, width int) ([]string, []int) {
 	if width < 1 {
 		width = 1
 	}
 	var rows []string
+	var widths []int
 	var b strings.Builder
 	vis := 0
 	active := ""
 	flush := func() {
 		rows = append(rows, b.String())
+		widths = append(widths, vis)
 		b.Reset()
 		vis = 0
 	}
-	forEachCell(s, func(text string, w int, isEsc bool) bool {
-		if isEsc {
-			if ansiIsReset(text) {
+	// Track the last color opened, wherever it turns up: escapes arrive on their
+	// own, and also embedded in a segment, since the highlighter colors each
+	// rune separately and a letter can be joined to its accent across one.
+	track := func(text string) {
+		if strings.IndexByte(text, '\x1b') < 0 {
+			return
+		}
+		for _, seq := range diffAnsiSeq.FindAllString(text, -1) {
+			if ansiIsReset(seq) {
 				active = ""
 			} else {
-				active = text
+				active = seq
 			}
+		}
+	}
+	forEachCell(s, func(text string, w int, isEsc bool) bool {
+		if isEsc {
+			track(text)
 			b.WriteString(text)
 			return true
 		}
@@ -746,12 +1057,23 @@ func wrapColumns(s string, width int) []string {
 				b.WriteString(active)
 			}
 		}
+		track(text)
+		if w > width {
+			// Wider than the whole column, so no amount of wrapping will seat
+			// it — a double-width CJK glyph or an emoji in a one-column view.
+			// Stand an ellipsis in for it rather than let it overhang the
+			// column and shove everything to its right out of alignment.
+			b.WriteString("…")
+			vis += 1
+			return true
+		}
 		b.WriteString(text)
 		vis += w
 		return true
 	})
 	rows = append(rows, b.String())
-	return rows
+	widths = append(widths, vis)
+	return rows, widths
 }
 
 // pickByWidth chooses the view that fits: side-by-side when each column would
@@ -863,8 +1185,9 @@ func contextTabAt(contentX int) int {
 // sbsCell is one side of a side-by-side row: a line number (0 = blank cell) and
 // the colored text.
 type sbsCell struct {
-	no   int
-	text string
+	no    int
+	text  string
+	width int // cells text occupies, carried from wrapColumnsWidths
 }
 
 // renderSideBySide lays the diff out in two columns. Context lines appear on
@@ -908,8 +1231,8 @@ func renderSideBySide(content string, cw int) string {
 	// independently, so the shorter side is padded with blank rows to keep
 	// both columns — and the " │ " divider between them — aligned.
 	emit := func(l, r sbsCell, lbg, rbg string) {
-		lRows := wrapColumns(l.text, textW)
-		rRows := wrapColumns(r.text, textW)
+		lRows, lWidths := wrapColumnsWidths(l.text, textW)
+		rRows, rWidths := wrapColumnsWidths(r.text, textW)
 		n := maxInt(len(lRows), len(rRows))
 		for i := 0; i < n; i++ {
 			var lc, rc sbsCell
@@ -919,14 +1242,14 @@ func renderSideBySide(content string, cw int) string {
 				if i == 0 {
 					no = l.no
 				}
-				lc, lBg = sbsCell{no, lRows[i]}, lbg
+				lc, lBg = sbsCell{no, lRows[i], lWidths[i]}, lbg
 			}
 			if i < len(rRows) {
 				no := 0
 				if i == 0 {
 					no = r.no
 				}
-				rc, rBg = sbsCell{no, rRows[i]}, rbg
+				rc, rBg = sbsCell{no, rRows[i], rWidths[i]}, rbg
 			}
 			rows = append(rows, sbsCellStr(lc, gw, textW, lBg)+diffGutterStyle.Render(" │ ")+sbsCellStr(rc, gw, textW, rBg))
 		}
@@ -967,13 +1290,13 @@ func renderSideBySide(content string, cw int) string {
 			flush()
 			oldNo++
 			newNo++
-			emit(sbsCell{oldNo, text}, sbsCell{newNo, text}, "", "")
+			emit(sbsCell{no: oldNo, text: text}, sbsCell{no: newNo, text: text}, "", "")
 		case diffDel:
 			oldNo++
-			dels = append(dels, sbsCell{oldNo, text})
+			dels = append(dels, sbsCell{no: oldNo, text: text})
 		case diffAdd:
 			newNo++
-			adds = append(adds, sbsCell{newNo, text})
+			adds = append(adds, sbsCell{no: newNo, text: text})
 		}
 	}
 	flush()
@@ -989,9 +1312,9 @@ func sbsCellStr(c sbsCell, gw, textW int, bgSeq string) string {
 		gutter = diffGutterStyle.Render(strings.Repeat(" ", gw) + " ")
 	}
 	if bgSeq == "" {
-		return gutter + fitColumn(c.text, textW)
+		return gutter + padTo(c.text, c.width, textW)
 	}
-	return gutter + tintColumn(c.text, textW, bgSeq)
+	return gutter + tintTo(c.text, c.width, textW, bgSeq)
 }
 
 // countDiffLines tallies the added (+) and deleted (-) lines of the diff body.
@@ -1627,7 +1950,10 @@ func (m DiffViewModel) render() string {
 	// gap before the right-anchored control too.
 	pathBudget := cw - lipgloss.Width(badge) - lipgloss.Width(counts) - ctrlW - 2 - 1
 	titleLeft := badge + diffTitleStyle.Render(truncatePath(m.title, pathBudget)) + counts
-	title := titleLeft + m.discardControl(cw-lipgloss.Width(titleLeft)-ctrlW)
+	// cellWidth, not lipgloss.Width: titleLeft carries the file path, and a path
+	// with a non-Latin directory in it measures differently under the two (see
+	// forEachCell). Getting this wrong pushes the discard button off its row.
+	title := titleLeft + m.discardControl(cw-cellWidth(titleLeft)-ctrlW)
 	rule := diffRuleStyle.Render(strings.Repeat("─", maxInt(cw, 0)))
 
 	pct := int(m.viewport.ScrollPercent() * 100)
@@ -1669,17 +1995,84 @@ func (m DiffViewModel) render() string {
 		rows = []string{title, "", m.tabRow(), rule, m.viewport.View(), bar}
 	}
 	inner := strings.Join(rows, "\n")
-	box := diffBoxStyle.Width(cw).Height(ch).Render(inner)
+	box := framePopup(inner, cw, ch)
 
 	// No backdrop: float the box on a blank surface.
 	if len(m.backdrop) == 0 {
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+		return placeBox(box, m.width, m.height)
 	}
 	// Backdrop: composite the box over the dimmed snapshot. The box occupies
 	// columns [mh, width-mh) and rows [mv, mv+boxRows); everything else shows the
 	// dimmed screen behind. Slicing the PLAIN backdrop by rune index is safe; the
 	// already-styled box lines are dropped in whole.
 	return m.composite(box, mh, mv)
+}
+
+// framePopup draws the popup's rounded border around inner: every content row
+// fitted to exactly cw cells, padded out to ch rows.
+//
+// This is deliberately not lipgloss's Width()+Border(), which is what it
+// replaced. lipgloss pads each line to width using its OWN width table, and
+// that table disagrees with the terminal's for the same scripts everything else
+// here had to be taught about — it reads the Bengali "র্ত" one cell narrower
+// than tmux paints it. So it padded rows that were already exactly cw, and a
+// Bengali diff came out with 122- and 124-cell rows inside a 120-cell box: the
+// right border and the side-by-side divider walked off their columns, row by
+// row. Measuring the rows ourselves with fitColumn is the only way to keep them
+// honest, because no amount of pre-padding survives a second, wrong pass.
+func framePopup(inner string, cw, ch int) string {
+	border := lipgloss.RoundedBorder()
+	edge := lipgloss.NewStyle().Foreground(diffBoxStyle.GetBorderTopForeground())
+	side := edge.Render(border.Left)
+	rule := strings.Repeat(border.Top, maxInt(cw, 0))
+
+	lines := strings.Split(inner, "\n")
+	for len(lines) < ch {
+		lines = append(lines, "")
+	}
+	var b strings.Builder
+	b.WriteString(edge.Render(border.TopLeft + rule + border.TopRight))
+	for _, line := range lines {
+		b.WriteByte('\n')
+		b.WriteString(side)
+		b.WriteString(fitColumn(line, cw))
+		b.WriteString(side)
+	}
+	b.WriteByte('\n')
+	b.WriteString(edge.Render(border.BottomLeft + rule + border.BottomRight))
+	return b.String()
+}
+
+// placeBox centers box on a blank width×height frame. lipgloss.Place would do
+// this, but it pads each line according to the same width table that made
+// framePopup necessary — so a box row carrying non-Latin text got a cell too
+// much padding and the popup's right edge came out ragged.
+func placeBox(box string, width, height int) string {
+	lines := strings.Split(box, "\n")
+	boxW := 0
+	for _, line := range lines {
+		if w := cellWidth(line); w > boxW {
+			boxW = w
+		}
+	}
+	left := maxInt((width-boxW)/2, 0)
+	top := maxInt((height-len(lines))/2, 0)
+
+	var b strings.Builder
+	for y := 0; y < height; y++ {
+		if y > 0 {
+			b.WriteByte('\n')
+		}
+		if y < top || y-top >= len(lines) {
+			b.WriteString(strings.Repeat(" ", maxInt(width, 0)))
+			continue
+		}
+		line := lines[y-top]
+		b.WriteString(strings.Repeat(" ", left))
+		b.WriteString(line)
+		b.WriteString(strings.Repeat(" ", maxInt(width-left-cellWidth(line), 0)))
+	}
+	return b.String()
 }
 
 // composite overlays the rendered box onto the dimmed backdrop and returns the
@@ -1751,3 +2144,13 @@ func maxInt(a, b int) int {
 // must never assume a digit budget (a fixed 4-byte buffer here once panicked
 // the pager on any count ≥ 10000, killing the popup before it painted).
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// isASCII reports whether s is entirely single-byte characters.
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
+}
