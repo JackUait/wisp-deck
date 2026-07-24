@@ -86,6 +86,9 @@ func TestSpareTabs_config_forwards_tab_switch_to_outer(t *testing.T) {
 		"bind p run-shell",
 		"bind 1 run-shell",
 		"bind 9 run-shell",
+		"bind C-@ run-shell",
+		"bind C-n run-shell",
+		"bind C-p run-shell",
 		"-u TMUX",                          // forward to the outer default socket
 		"next-window -t dev-app-42",        // prefix+n cycles the project tabs
 		"previous-window -t dev-app-42",    // prefix+p cycles the other way

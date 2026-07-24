@@ -339,6 +339,12 @@ func TestWrapper_tab_view_bar_and_binds(t *testing.T) {
 	assertContains(t, got, "bind-key p previous-window")
 	assertContains(t, got, "bind-key 1 select-window -t :0")
 	assertContains(t, got, "bind-key 9 select-window -t :8")
+	// Holding Ctrl while pressing the final key changes what the terminal sends:
+	// Ctrl+2 is C-@ (NUL), while Ctrl+n/p are C-n/C-p. Accept those encodings so
+	// the shortcuts work whether the prefix modifier is released or held.
+	assertContains(t, got, "bind-key C-@ select-window -t :1")
+	assertContains(t, got, "bind-key C-n next-window")
+	assertContains(t, got, "bind-key C-p previous-window")
 	assertContains(t, got, "MouseDown1Status")
 	assertContains(t, got, "MouseDown1StatusLeft")
 	assertContains(t, got, "MouseDown1StatusRight")

@@ -63,7 +63,10 @@ spare_tabs_config() {
   if [ -n "$outer" ]; then
     local envpfx='env -u TMUX -u TMUX_PANE tmux'
     fwd="bind n run-shell \"$envpfx next-window -t $outer 2>/dev/null || true\"
-bind p run-shell \"$envpfx previous-window -t $outer 2>/dev/null || true\""
+bind p run-shell \"$envpfx previous-window -t $outer 2>/dev/null || true\"
+bind C-n run-shell \"$envpfx next-window -t $outer 2>/dev/null || true\"
+bind C-p run-shell \"$envpfx previous-window -t $outer 2>/dev/null || true\"
+bind C-@ run-shell \"$envpfx select-window -t $outer:1 2>/dev/null || true\""
     local n
     for ((n = 1; n <= 9; n++)); do
       fwd+="

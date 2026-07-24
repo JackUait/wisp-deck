@@ -767,8 +767,13 @@ fi
 # Tab-switch shortcuts: prefix+n/p cycle the tab-view windows (wrap around);
 # prefix+1..9 jump to the chip-labelled tab. Chips are window_index+1
 # (tab_view_status_left), so key N selects window index N-1 — the tab whose
-# chip reads N. prefix+Tab stays reserved for the spare terminal's windows.
-_gt_tab_switch_binds=(bind-key n next-window ';' bind-key p previous-window ';')
+# chip reads N. Accept the held-Ctrl encodings too: Ctrl+n/p arrive as C-n/C-p,
+# and Ctrl+2 arrives as C-@ (NUL). prefix+Tab stays with the spare terminals.
+_gt_tab_switch_binds=(
+  bind-key n next-window ';' bind-key p previous-window ';'
+  bind-key C-n next-window ';' bind-key C-p previous-window ';'
+  bind-key C-@ select-window -t :1 ';'
+)
 for ((_gt_tab_n = 1; _gt_tab_n <= 9; _gt_tab_n++)); do
   _gt_tab_switch_binds+=(bind-key "$_gt_tab_n" select-window -t ":$((_gt_tab_n - 1))" ';')
 done
