@@ -230,8 +230,12 @@ func TestTranslateSkillContinuationMergesSupplementalContent(t *testing.T) {
 			]}
 		]
 	}`)
-	if len(got.ToolResults) != 1 || len(got.Input) != 0 {
+	if len(got.ToolResults) != 1 || len(got.Input) != 1 {
 		t.Fatalf("translation = %+v", got)
+	}
+	if got.Input[0].Type != "text" ||
+		got.Input[0].Text != "Base directory for this skill: /skills/superpowers" {
+		t.Fatalf("supplemental input = %+v", got.Input)
 	}
 	items := got.ToolResults[0].ContentItems
 	if len(items) != 2 {
@@ -244,6 +248,42 @@ func TestTranslateSkillContinuationMergesSupplementalContent(t *testing.T) {
 	if items[1].Type != "inputText" ||
 		items[1].Text != "Base directory for this skill: /skills/superpowers" {
 		t.Fatalf("supplemental result content = %+v", items[1])
+	}
+}
+
+// Claude Code's compactor appends its plain-text instruction to a pending
+// tool result. Recovery must keep that instruction as fresh model input while
+// replaying only the real tool output as function_call_output history.
+func TestTranslateMixedToolResultPreservesSupplementalRecoveryInput(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-sol",
+		"max_tokens":32000,
+		"messages":[
+			{"role":"user","content":"Run lint"},
+			{"role":"assistant","content":[{
+				"type":"tool_use","id":"lint_1","name":"Bash","input":{"command":"yarn lint"}
+			}]},
+			{"role":"user","content":[
+				{"type":"tool_result","tool_use_id":"lint_1","content":"Exit code 1"},
+				{"type":"text","text":"Summarize the conversation. Do not call tools; respond with plain text only."}
+			]}
+		]
+	}`)
+
+	if len(got.ToolResults) != 1 || len(got.Input) != 1 {
+		t.Fatalf("translation = %+v", got)
+	}
+	result := got.ToolResults[0]
+	if len(result.ContentItems) != 2 ||
+		result.ContentItems[1].Text != "Summarize the conversation. Do not call tools; respond with plain text only." {
+		t.Fatalf("live result content = %+v", result.ContentItems)
+	}
+	if len(result.HistoryContentItems) != 1 || result.HistoryContentItems[0].Text != "Exit code 1" {
+		t.Fatalf("history result content = %+v", result.HistoryContentItems)
+	}
+	if got.Input[0].Type != "text" ||
+		got.Input[0].Text != "Summarize the conversation. Do not call tools; respond with plain text only." {
+		t.Fatalf("supplemental input = %+v", got.Input)
 	}
 }
 
@@ -271,8 +311,12 @@ func TestTranslateMergesTextAcrossMultipleToolResults(t *testing.T) {
 			]}
 		]
 	}`)
-	if len(got.ToolResults) != 2 || len(got.Input) != 0 {
+	if len(got.ToolResults) != 2 || len(got.Input) != 2 {
 		t.Fatalf("translation = %+v", got)
+	}
+	if got.Input[0].Text != "Base directory for this skill: /skills/x" ||
+		got.Input[1].Text != "continue" {
+		t.Fatalf("supplemental input = %+v", got.Input)
 	}
 	first := got.ToolResults[0]
 	if first.ToolUseID != "tool_1" || len(first.ContentItems) != 2 ||
@@ -305,8 +349,11 @@ func TestTranslateMergesLeadingTextIntoFirstToolResult(t *testing.T) {
 			]}
 		]
 	}`)
-	if len(got.ToolResults) != 2 {
+	if len(got.ToolResults) != 2 || len(got.Input) != 1 {
 		t.Fatalf("translation = %+v", got)
+	}
+	if got.Input[0].Text != "<system-reminder>note</system-reminder>" {
+		t.Fatalf("supplemental input = %+v", got.Input)
 	}
 	first := got.ToolResults[0]
 	if len(first.ContentItems) != 2 ||
@@ -352,13 +399,16 @@ func TestTranslateNeverRejectsAnyFinalUserBlockInterleaving(t *testing.T) {
 			var uses, finals []string
 			var markers []string
 			results := 0
+			ordinary := 0
 			for index, kind := range shape {
 				switch kind {
 				case "text":
+					ordinary++
 					marker := "txt_marker_" + strings.Repeat("x", index+1)
 					markers = append(markers, marker)
 					finals = append(finals, `{"type":"text","text":"`+marker+`"}`)
 				case "image":
+					ordinary++
 					finals = append(finals, `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"`+pixel+`"}}`)
 				case "tool_result":
 					results++
@@ -379,6 +429,9 @@ func TestTranslateNeverRejectsAnyFinalUserBlockInterleaving(t *testing.T) {
 			got := parseAndTranslate(t, body)
 			if len(got.ToolResults) != results {
 				t.Fatalf("tool results = %d, want %d", len(got.ToolResults), results)
+			}
+			if results > 0 && len(got.Input) != ordinary {
+				t.Fatalf("supplemental input = %d, want %d: %+v", len(got.Input), ordinary, got.Input)
 			}
 			flattened, err := json.Marshal(got)
 			if err != nil {

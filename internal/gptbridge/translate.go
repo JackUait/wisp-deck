@@ -33,9 +33,10 @@ type ToolOutputItem struct {
 
 // TranslatedToolResult is one Claude-executed tool result.
 type TranslatedToolResult struct {
-	ToolUseID    string
-	Success      bool
-	ContentItems []ToolOutputItem
+	ToolUseID           string
+	Success             bool
+	ContentItems        []ToolOutputItem
+	HistoryContentItems []ToolOutputItem
 }
 
 // Translation contains the pure request translation consumed by the turn
@@ -176,22 +177,34 @@ func translateMessages(messages []Message, translation *Translation) error {
 		hasResult, _ := classifyBlocks(message.Content)
 		if final {
 			if hasResult {
-				results, err := normalizedFinalToolResults(message.Content)
+				results, supplemental, err := normalizedFinalToolResults(message.Content)
 				if err != nil {
 					return err
 				}
 				for _, block := range results {
-					name, ok := open[block.ToolUseID]
+					name, ok := open[block.Live.ToolUseID]
 					if !ok {
-						return fmt.Errorf("tool_result %q has no pending tool_use", block.ToolUseID)
+						return fmt.Errorf("tool_result %q has no pending tool_use", block.Live.ToolUseID)
 					}
 					_ = name
-					delete(open, block.ToolUseID)
-					result, err := translateToolResult(block)
+					delete(open, block.Live.ToolUseID)
+					live, err := translateToolResult(block.Live)
 					if err != nil {
 						return err
 					}
-					translation.ToolResults = append(translation.ToolResults, result)
+					history, err := translateToolResult(block.History)
+					if err != nil {
+						return err
+					}
+					live.HistoryContentItems = history.ContentItems
+					translation.ToolResults = append(translation.ToolResults, live)
+				}
+				if len(supplemental) > 0 {
+					input, err := translateUserInput(supplemental)
+					if err != nil {
+						return err
+					}
+					translation.Input = input
 				}
 			} else {
 				if len(open) != 0 {
@@ -229,37 +242,45 @@ func classifyBlocks(blocks []ContentBlock) (hasResult, hasOrdinary bool) {
 	return
 }
 
-// normalizedFinalToolResults folds ordinary user content into the adjacent
-// tool result so a suspended app-server turn (whose only inbound channel is
-// the per-call tool response) still receives it. Claude Code routinely builds
-// this shape: Skill content, system reminders, and post-error typed input all
-// share the final user message with pending tool results. Blocks before the
-// first result prepend to it; blocks after a result append to that result.
-func normalizedFinalToolResults(blocks []ContentBlock) ([]ContentBlock, error) {
-	results := make([]ContentBlock, 0, len(blocks))
+type normalizedToolResult struct {
+	Live    ContentBlock
+	History ContentBlock
+}
+
+// normalizedFinalToolResults preserves both meanings of a mixed final user
+// message. Ordinary blocks remain attached to the adjacent live tool response,
+// while clean tool output and supplemental model input stay available if the
+// continuation must be reconstructed on a fresh thread.
+func normalizedFinalToolResults(blocks []ContentBlock) ([]normalizedToolResult, []ContentBlock, error) {
+	results := make([]normalizedToolResult, 0, len(blocks))
 	var leading []ContentBlock
+	var supplemental []ContentBlock
 	for _, block := range blocks {
 		if block.Type == "tool_result" {
-			block.ToolContent = append(
+			history := block
+			history.ToolContent = append([]ContentBlock(nil), block.ToolContent...)
+			live := block
+			live.ToolContent = append(
 				append([]ContentBlock(nil), leading...), block.ToolContent...,
 			)
 			leading = nil
-			results = append(results, block)
+			results = append(results, normalizedToolResult{Live: live, History: history})
 			continue
 		}
+		supplemental = append(supplemental, block)
 		if len(results) == 0 {
 			leading = append(leading, block)
 			continue
 		}
 		last := &results[len(results)-1]
-		last.ToolContent = append(last.ToolContent, block)
+		last.Live.ToolContent = append(last.Live.ToolContent, block)
 	}
 	if len(leading) != 0 {
 		// Unreachable in practice: the caller only enters this path when the
 		// message contains at least one tool_result.
-		return nil, errors.New("final user content has no tool result to attach to")
+		return nil, nil, errors.New("final user content has no tool result to attach to")
 	}
-	return results, nil
+	return results, supplemental, nil
 }
 
 func translateHistoryMessage(message Message, open map[string]string, seen map[string]bool) ([]map[string]any, error) {
