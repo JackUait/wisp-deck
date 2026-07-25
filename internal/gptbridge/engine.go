@@ -168,10 +168,15 @@ func recoverContinuationFromHistory(translation Translation) (Translation, bool)
 	}
 
 	recovery := translation
+	supplemental := append([]UserInput(nil), translation.Input...)
 	recovery.ToolResults = nil
 	recovery.History = append([]map[string]any(nil), translation.History...)
 	for _, result := range translation.ToolResults {
-		output, ok := translatedToolHistoryOutput(result.ContentItems)
+		content := result.HistoryContentItems
+		if content == nil {
+			content = result.ContentItems
+		}
+		output, ok := translatedToolHistoryOutput(content)
 		if !ok {
 			return Translation{}, false
 		}
@@ -186,6 +191,7 @@ func recoverContinuationFromHistory(translation Translation) (Translation, bool)
 			"Do not repeat tool calls that already have results above, and do not " +
 			"re-ask questions whose answers already appear above.",
 	}}
+	recovery.Input = append(recovery.Input, supplemental...)
 	return recovery, true
 }
 

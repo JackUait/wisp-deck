@@ -464,6 +464,102 @@ func TestEngineRecoversExpiredContinuationFromValidatedHistory(t *testing.T) {
 	}
 }
 
+// Claude Code can request compaction in the same final user message as a
+// pending tool result. If that continuation has expired, recovery must replay
+// only the actual tool output and keep the compaction instruction as fresh
+// model input; hiding it in function output makes GPT continue with tools and
+// leaves Claude Code with an empty summary.
+func TestEngineRecoveryPreservesCompactionInstructionAsFreshInput(t *testing.T) {
+	rpc := newFakeEngineRPC()
+	starts := 0
+	rpc.onTurnStart = func(threadID, turnID string) {
+		starts++
+		if starts == 1 {
+			rpc.requests <- ServerRequest{
+				ID:     fakeRequestID("rpc-compaction-recovery"),
+				Method: "item/tool/call",
+				Params: json.RawMessage(fmt.Sprintf(
+					`{"threadId":%q,"turnId":%q,"callId":"call","tool":"Bash","arguments":{}}`,
+					threadID, turnID,
+				)),
+			}
+			return
+		}
+		completeTextTurn(rpc, threadID, turnID, "summary text")
+	}
+	engine, err := NewEngine(rpc, EngineOptions{
+		PrivateCWD: t.TempDir(), ToolBatchWindow: time.Millisecond,
+		PendingTTL: 15 * time.Millisecond, Models: []string{"gpt-test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+
+	first := testTranslation("Run lint")
+	first.DynamicTools[0].Name = "Bash"
+	message, err := engine.Execute(context.Background(), first, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := message.Content[0].ID
+	deadline := time.Now().Add(time.Second)
+	for engine.PendingTurns() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if engine.PendingTurns() != 0 {
+		t.Fatal("expired pending turn remained in memory")
+	}
+
+	const compact = "Summarize the conversation. Do not call tools; respond with plain text only."
+	continuation := testTranslation("")
+	continuation.History = []map[string]any{{
+		"type": "function_call", "call_id": id,
+		"name": "Bash", "arguments": `{}`,
+	}}
+	continuation.Input = []UserInput{{Type: "text", Text: compact}}
+	continuation.ToolResults = []TranslatedToolResult{{
+		ToolUseID: id,
+		Success:   true,
+		ContentItems: []ToolOutputItem{
+			{Type: "inputText", Text: "Exit code 1"},
+			{Type: "inputText", Text: compact},
+		},
+		HistoryContentItems: []ToolOutputItem{{Type: "inputText", Text: "Exit code 1"}},
+	}}
+	message, err = engine.Execute(context.Background(), continuation, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(message.Content) != 1 || message.Content[0].Text != "summary text" {
+		t.Fatalf("recovered response = %+v", message)
+	}
+
+	rpc.mu.Lock()
+	calls := append([]string(nil), rpc.calls...)
+	params := append([]json.RawMessage(nil), rpc.callParams...)
+	rpc.mu.Unlock()
+	var injected, turnInputs string
+	for index, method := range calls {
+		switch method {
+		case "thread/inject_items":
+			injected += string(params[index])
+		case "turn/start":
+			turnInputs += string(params[index])
+		}
+	}
+	if !strings.Contains(injected, "Exit code 1") {
+		t.Fatalf("recovery history is missing real tool output: %s", injected)
+	}
+	if strings.Contains(injected, compact) {
+		t.Fatalf("supplemental instruction leaked into function output history: %s", injected)
+	}
+	if !strings.Contains(turnInputs, "tool results above are complete") ||
+		!strings.Contains(turnInputs, compact) {
+		t.Fatalf("recovery input = %s", turnInputs)
+	}
+}
+
 func TestEngineRecoveryRefusedWithoutHistoryStaysInvalidContinuation(t *testing.T) {
 	// The 400 mapping in writeExecutionError depends on the refused-recovery
 	// error still being an invalidContinuationError; a bare unknown error would
