@@ -110,6 +110,73 @@ func TestTranslateToolsPreservesSchemaAndChoice(t *testing.T) {
 	}
 }
 
+func TestTranslateAliasesReservedMCPToolNames(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-sol",
+		"max_tokens":1024,
+		"messages":[{"role":"user","content":"Fetch the page"}],
+		"tools":[{
+			"name":"mcp__notion__authenticated_fetch",
+			"description":"Fetch a Notion page",
+			"input_schema":{"type":"object"}
+		}],
+		"tool_choice":{"type":"tool","name":"mcp__notion__authenticated_fetch"}
+	}`)
+	if len(got.DynamicTools) != 1 {
+		t.Fatalf("dynamic tools = %#v", got.DynamicTools)
+	}
+	tool := got.DynamicTools[0]
+	if tool.Name != "wisp_mcp__notion__authenticated_fetch" {
+		t.Fatalf("app-server tool name = %q", tool.Name)
+	}
+	if tool.OriginalName != "mcp__notion__authenticated_fetch" {
+		t.Fatalf("Claude tool name = %q", tool.OriginalName)
+	}
+	if !strings.Contains(got.ToolDirective, `must call "wisp_mcp__notion__authenticated_fetch"`) {
+		t.Fatalf("tool directive = %q", got.ToolDirective)
+	}
+}
+
+func TestTranslateReservedMCPAliasDoesNotCollideWithClaudeToolName(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-sol",
+		"max_tokens":1024,
+		"messages":[{"role":"user","content":"Fetch the page"}],
+		"tools":[
+			{"name":"mcp__notion__fetch","description":"MCP fetch","input_schema":{"type":"object"}},
+			{"name":"wisp_mcp__notion__fetch","description":"Ordinary tool","input_schema":{"type":"object"}}
+		]
+	}`)
+	if len(got.DynamicTools) != 2 {
+		t.Fatalf("dynamic tools = %#v", got.DynamicTools)
+	}
+	if got.DynamicTools[0].Name == got.DynamicTools[1].Name {
+		t.Fatalf("app-server tool names collide at %q", got.DynamicTools[0].Name)
+	}
+	if got.DynamicTools[1].Name != "wisp_mcp__notion__fetch" {
+		t.Fatalf("ordinary Claude tool name changed to %q", got.DynamicTools[1].Name)
+	}
+}
+
+func TestTranslateReservedMCPAliasFitsCodexToolNameLimit(t *testing.T) {
+	original := "mcp__" + strings.Repeat("x", 59)
+	tools, _, err := translateTools([]Tool{{
+		Name: original, InputSchema: json.RawMessage(`{"type":"object"}`),
+	}}, ToolChoice{})
+	if err != nil {
+		t.Fatalf("translateTools: %v", err)
+	}
+	if len(tools) != 1 {
+		t.Fatalf("dynamic tools = %#v", tools)
+	}
+	if got := len(tools[0].Name); got > 64 {
+		t.Fatalf("app-server tool name length = %d, want at most 64: %q", got, tools[0].Name)
+	}
+	if tools[0].OriginalName != original {
+		t.Fatalf("Claude tool name = %q", tools[0].OriginalName)
+	}
+}
+
 func TestTranslateToolChoiceNoneExposesNoTools(t *testing.T) {
 	got := parseAndTranslate(t, `{
 		"model":"gpt-5.6-terra",

@@ -62,7 +62,7 @@ type engineTurn struct {
 
 	threadID string
 	turnID   string
-	tools    map[string]bool
+	tools    map[string]string
 
 	events   chan Notification
 	requests chan ServerRequest
@@ -281,12 +281,16 @@ func (e *Engine) start(
 		return AnthropicMessage{}, errors.New("thread/start response is missing thread id")
 	}
 	state := &engineTurn{
-		threadID: started.Thread.ID, tools: make(map[string]bool),
+		threadID: started.Thread.ID, tools: make(map[string]string),
 		events: make(chan Notification, 256), requests: make(chan ServerRequest, 64),
 		errors: make(chan error, 1), pending: make(map[string]*pendingDynamicTool),
 	}
 	for _, tool := range translation.DynamicTools {
-		state.tools[tool.Name] = true
+		originalName := tool.OriginalName
+		if originalName == "" {
+			originalName = tool.Name
+		}
+		state.tools[tool.Name] = originalName
 	}
 	e.mu.Lock()
 	if _, duplicate := e.turns[state.threadID]; duplicate {
@@ -541,7 +545,8 @@ func (e *Engine) acceptDynamicTool(state *engineTurn, request ServerRequest) (Dy
 	if params.ThreadID != state.threadID || params.TurnID != state.turnID {
 		return DynamicToolCall{}, errors.New("dynamic tool request belongs to a different turn")
 	}
-	if params.CallID == "" || params.Tool == "" || !state.tools[params.Tool] {
+	originalName, supplied := state.tools[params.Tool]
+	if params.CallID == "" || params.Tool == "" || !supplied {
 		return DynamicToolCall{}, fmt.Errorf("dynamic tool %q was not supplied by Claude", params.Tool)
 	}
 	if !validJSONObject(params.Arguments) {
@@ -553,11 +558,11 @@ func (e *Engine) acceptDynamicTool(state *engineTurn, request ServerRequest) (Dy
 	}
 	e.mu.Lock()
 	state.pending[bridgeID] = &pendingDynamicTool{
-		request: request, callID: params.CallID, name: params.Tool,
+		request: request, callID: params.CallID, name: originalName,
 	}
 	e.toolIndex[bridgeID] = state
 	e.mu.Unlock()
-	return DynamicToolCall{ID: bridgeID, Name: params.Tool, Arguments: params.Arguments}, nil
+	return DynamicToolCall{ID: bridgeID, Name: originalName, Arguments: params.Arguments}, nil
 }
 
 func rejectCodexOwnedItem(notification Notification) error {

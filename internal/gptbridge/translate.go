@@ -19,6 +19,7 @@ type UserInput struct {
 type DynamicTool struct {
 	Type         string          `json:"type"`
 	Name         string          `json:"name"`
+	OriginalName string          `json:"-"`
 	Description  string          `json:"description"`
 	InputSchema  json.RawMessage `json:"inputSchema"`
 	DeferLoading bool            `json:"deferLoading,omitempty"`
@@ -90,20 +91,30 @@ func validateSampling(request MessagesRequest) error {
 }
 
 func translateTools(tools []Tool, choice ToolChoice) ([]DynamicTool, string, error) {
-	translated := make([]DynamicTool, 0, len(tools))
-	byName := make(map[string]DynamicTool, len(tools))
+	usedNames := make(map[string]bool, len(tools))
 	for index, tool := range tools {
 		if tool.Name == "" {
 			return nil, "", fmt.Errorf("tools[%d]: name is required", index)
 		}
-		if _, duplicate := byName[tool.Name]; duplicate {
+		if usedNames[tool.Name] {
 			return nil, "", fmt.Errorf("tools[%d]: duplicate tool name %q", index, tool.Name)
 		}
 		if !validJSONObject(tool.InputSchema) {
 			return nil, "", fmt.Errorf("tools[%d]: input_schema must be an object", index)
 		}
+		usedNames[tool.Name] = true
+	}
+
+	translated := make([]DynamicTool, 0, len(tools))
+	byName := make(map[string]DynamicTool, len(tools))
+	for _, tool := range tools {
+		name := tool.Name
+		if strings.HasPrefix(name, "mcp__") {
+			name = availableDynamicToolName("wisp_"+name, usedNames)
+			usedNames[name] = true
+		}
 		dynamic := DynamicTool{
-			Type: "function", Name: tool.Name, Description: tool.Description,
+			Type: "function", Name: name, OriginalName: tool.Name, Description: tool.Description,
 			InputSchema: append(json.RawMessage(nil), tool.InputSchema...),
 		}
 		byName[tool.Name] = dynamic
@@ -132,9 +143,27 @@ func translateTools(tools []Tool, choice ToolChoice) ([]DynamicTool, string, err
 		if !ok {
 			return nil, "", fmt.Errorf("tool_choice names unknown tool %q", choice.Name)
 		}
-		return []DynamicTool{tool}, fmt.Sprintf("You must call %q in this response.", choice.Name), nil
+		return []DynamicTool{tool}, fmt.Sprintf("You must call %q in this response.", tool.Name), nil
 	default:
 		return nil, "", fmt.Errorf("unsupported tool_choice type %q", choice.Type)
+	}
+}
+
+func availableDynamicToolName(base string, used map[string]bool) string {
+	const maxBytes = 64
+	for suffix := 1; ; suffix++ {
+		disambiguator := ""
+		if suffix > 1 {
+			disambiguator = fmt.Sprintf("_%d", suffix)
+		}
+		prefix := base
+		if limit := maxBytes - len(disambiguator); len(prefix) > limit {
+			prefix = prefix[:limit]
+		}
+		candidate := prefix + disambiguator
+		if !used[candidate] {
+			return candidate
+		}
 	}
 }
 

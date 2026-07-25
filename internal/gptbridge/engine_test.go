@@ -206,6 +206,35 @@ func TestEngineCompletesTextTurnAndDeletesThread(t *testing.T) {
 	}
 }
 
+func TestEngineRestoresClaudeNameForAliasedDynamicTool(t *testing.T) {
+	rpc := newFakeEngineRPC()
+	rpc.onTurnStart = func(threadID, turnID string) {
+		rpc.requests <- ServerRequest{
+			ID:     fakeRequestID("rpc"),
+			Method: "item/tool/call",
+			Params: json.RawMessage(fmt.Sprintf(
+				`{"threadId":%q,"turnId":%q,"callId":"call","tool":"wisp_mcp__notion__authenticated_fetch","arguments":{}}`,
+				threadID, turnID,
+			)),
+		}
+	}
+	engine := newTestEngine(t, rpc)
+	translation := testTranslation("tools")
+	translation.DynamicTools[0].Name = "wisp_mcp__notion__authenticated_fetch"
+	translation.DynamicTools[0].OriginalName = "mcp__notion__authenticated_fetch"
+
+	message, err := engine.Execute(context.Background(), translation, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.StopReason != "tool_use" || len(message.Content) != 1 {
+		t.Fatalf("response = %+v", message)
+	}
+	if message.Content[0].Name != "mcp__notion__authenticated_fetch" {
+		t.Fatalf("Claude tool name = %q", message.Content[0].Name)
+	}
+}
+
 func TestEngineSuspendsAndResumesParallelDynamicTools(t *testing.T) {
 	rpc := newFakeEngineRPC()
 	rpc.onTurnStart = func(threadID, turnID string) {
