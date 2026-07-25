@@ -444,3 +444,49 @@ func TestStaleToolResultErrorIsNonRetryableInvalidRequest(t *testing.T) {
 		t.Fatalf("error body = %+v", body)
 	}
 }
+
+// The user-visible bug: every WebSearch inside a GPT-backed Claude Code session
+// came back as "API Error: 400 tools[0]: input_schema must be an object".
+// Claude Code's WebSearch tool issues this exact nested request, whose only
+// tool is Anthropic's server-hosted web_search — a tool that carries no
+// input_schema because Anthropic runs it. The bridge validated it as a
+// Claude-hosted tool and rejected the whole request.
+func TestHandlerAcceptsClaudeCodeWebSearchRequest(t *testing.T) {
+	executor := &fakeMessageExecutor{message: AnthropicMessage{
+		ID: "msg_search", Type: "message", Role: "assistant", Model: "gpt-test",
+		Content:    []ResponseContentBlock{{Type: "text", Text: "results"}},
+		StopReason: "end_turn",
+	}}
+	handler, err := NewHandler(executor, "secret", ServerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	// Claude Code's exact nested WebSearch request: one server tool, forced by
+	// name, with the search itself phrased as the user turn.
+	body := `{
+		"model":"gpt-test",
+		"max_tokens":1024,
+		"system":[{"type":"text","text":"You are an assistant for performing a web search tool use"}],
+		"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":8}],
+		"tool_choice":{"type":"tool","name":"web_search"},
+		"messages":[{"role":"user","content":[{"type":"text",
+			"text":"Perform a web search for the query: site:encar.com used cars Korea"}]}]
+	}`
+	response := requestBridge(t, server.Client(), http.MethodPost,
+		server.URL+"/v1/messages", "secret", body)
+	if response.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(response.Body)
+		t.Fatalf("WebSearch request status = %d, want 200: %s", response.StatusCode, data)
+	}
+	var message AnthropicMessage
+	decodeBody(t, response, &message)
+	if len(message.Content) != 1 || message.Content[0].Text != "results" {
+		t.Fatalf("message = %+v", message)
+	}
+	if !executor.translation.WebSearch {
+		t.Fatal("translation did not request Codex web search")
+	}
+}

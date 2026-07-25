@@ -53,6 +53,17 @@ type Translation struct {
 	ToolResults   []TranslatedToolResult
 	Effort        string
 	Stream        bool
+
+	// WebSearch reports that the request declared Anthropic's server-side
+	// web_search tool. Anthropic hosts that tool, so the bridge cannot pass
+	// it to Codex as a host-provided function; it enables Codex's own web
+	// search for the thread instead.
+	WebSearch bool
+
+	// Codex's config.web_search takes only a mode, so these filters cannot be
+	// enforced there; the turn states them to the model that runs the search.
+	WebSearchAllowedDomains []string
+	WebSearchBlockedDomains []string
 }
 
 // TranslateRequest converts a normalized Anthropic request into app-server
@@ -61,15 +72,17 @@ func TranslateRequest(request MessagesRequest) (Translation, error) {
 	if err := validateSampling(request); err != nil {
 		return Translation{}, err
 	}
-	tools, directive, err := translateTools(request.Tools, request.ToolChoice)
+	plan, err := translateTools(request.Tools, request.ToolChoice)
 	if err != nil {
 		return Translation{}, err
 	}
 	translation := Translation{
 		Model: request.Model, MaxTokens: request.MaxTokens,
-		System: normalizedSystem(request.System), DynamicTools: tools,
-		ToolDirective: directive, Effort: reasoningEffort(request.Thinking),
-		Stream: request.Stream,
+		System: normalizedSystem(request.System), DynamicTools: plan.DynamicTools,
+		ToolDirective: plan.Directive, Effort: reasoningEffort(request.Thinking),
+		Stream: request.Stream, WebSearch: plan.WebSearch,
+		WebSearchAllowedDomains: plan.AllowedDomains,
+		WebSearchBlockedDomains: plan.BlockedDomains,
 	}
 	if err := translateMessages(request.Messages, &translation); err != nil {
 		return Translation{}, err
@@ -90,24 +103,55 @@ func validateSampling(request MessagesRequest) error {
 	return nil
 }
 
-func translateTools(tools []Tool, choice ToolChoice) ([]DynamicTool, string, error) {
+// toolPlan is how one request's tools array divides between the Claude-hosted
+// functions the bridge forwards to Codex and the Anthropic server tools it
+// answers with Codex's own capabilities.
+type toolPlan struct {
+	DynamicTools   []DynamicTool
+	Directive      string
+	WebSearch      bool
+	AllowedDomains []string
+	BlockedDomains []string
+}
+
+// translateTools splits the request's tools into the Claude-hosted functions
+// Codex runs through the bridge and the Anthropic server tools it cannot.
+func translateTools(tools []Tool, choice ToolChoice) (toolPlan, error) {
 	usedNames := make(map[string]bool, len(tools))
+	clientTools := make([]Tool, 0, len(tools))
+	serverToolNames := make(map[string]bool, len(tools))
+	plan := toolPlan{}
 	for index, tool := range tools {
 		if tool.Name == "" {
-			return nil, "", fmt.Errorf("tools[%d]: name is required", index)
+			return toolPlan{}, fmt.Errorf("tools[%d]: name is required", index)
 		}
 		if usedNames[tool.Name] {
-			return nil, "", fmt.Errorf("tools[%d]: duplicate tool name %q", index, tool.Name)
-		}
-		if !validJSONObject(tool.InputSchema) {
-			return nil, "", fmt.Errorf("tools[%d]: input_schema must be an object", index)
+			return toolPlan{}, fmt.Errorf("tools[%d]: duplicate tool name %q", index, tool.Name)
 		}
 		usedNames[tool.Name] = true
+		if tool.IsServerTool() {
+			// Anthropic runs these; they have no input_schema to validate and
+			// must never reach Codex as a host-provided function.
+			if !strings.HasPrefix(tool.Type, "web_search") {
+				return toolPlan{}, fmt.Errorf(
+					"tools[%d]: server tool %q is not supported by the ChatGPT subscription bridge",
+					index, tool.Type)
+			}
+			plan.WebSearch = true
+			plan.AllowedDomains = append(plan.AllowedDomains, tool.AllowedDomains...)
+			plan.BlockedDomains = append(plan.BlockedDomains, tool.BlockedDomains...)
+			serverToolNames[tool.Name] = true
+			continue
+		}
+		if !validJSONObject(tool.InputSchema) {
+			return toolPlan{}, fmt.Errorf("tools[%d]: input_schema must be an object", index)
+		}
+		clientTools = append(clientTools, tool)
 	}
 
-	translated := make([]DynamicTool, 0, len(tools))
-	byName := make(map[string]DynamicTool, len(tools))
-	for _, tool := range tools {
+	translated := make([]DynamicTool, 0, len(clientTools))
+	byName := make(map[string]DynamicTool, len(clientTools))
+	for _, tool := range clientTools {
 		name := tool.Name
 		if strings.HasPrefix(name, "mcp__") {
 			name = availableDynamicToolName("wisp_"+name, usedNames)
@@ -123,29 +167,44 @@ func translateTools(tools []Tool, choice ToolChoice) ([]DynamicTool, string, err
 
 	switch choice.Type {
 	case "", "auto":
+		plan.DynamicTools = translated
 		if choice.DisableParallelUse && len(translated) > 0 {
-			return translated, "Call at most one tool in this response.", nil
+			plan.Directive = "Call at most one tool in this response."
 		}
-		return translated, "", nil
+		return plan, nil
 	case "none":
-		return nil, "", nil
+		return plan, nil
 	case "any":
 		if len(translated) == 0 {
-			return nil, "", errors.New("tool_choice any requires at least one tool")
+			// A server tool still satisfies "use a tool", and there is no
+			// Claude-hosted tool left to force.
+			if plan.WebSearch {
+				return plan, nil
+			}
+			return toolPlan{}, errors.New("tool_choice any requires at least one tool")
 		}
-		directive := "You must call at least one available tool in this response."
+		plan.DynamicTools = translated
+		plan.Directive = "You must call at least one available tool in this response."
 		if choice.DisableParallelUse {
-			directive += " Call exactly one tool."
+			plan.Directive += " Call exactly one tool."
 		}
-		return translated, directive, nil
+		return plan, nil
 	case "tool":
 		tool, ok := byName[choice.Name]
 		if !ok {
-			return nil, "", fmt.Errorf("tool_choice names unknown tool %q", choice.Name)
+			// Claude Code's WebSearch request forces the server tool by name.
+			// Anthropic hosts it, so there is no dynamic tool to force — the
+			// thread's own web search already satisfies the choice.
+			if serverToolNames[choice.Name] {
+				return plan, nil
+			}
+			return toolPlan{}, fmt.Errorf("tool_choice names unknown tool %q", choice.Name)
 		}
-		return []DynamicTool{tool}, fmt.Sprintf("You must call %q in this response.", tool.Name), nil
+		plan.DynamicTools = []DynamicTool{tool}
+		plan.Directive = fmt.Sprintf("You must call %q in this response.", tool.Name)
+		return plan, nil
 	default:
-		return nil, "", fmt.Errorf("unsupported tool_choice type %q", choice.Type)
+		return toolPlan{}, fmt.Errorf("unsupported tool_choice type %q", choice.Type)
 	}
 }
 

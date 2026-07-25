@@ -57,11 +57,24 @@ type ImageSource struct {
 	URL       string `json:"url"`
 }
 
-// Tool is one Claude-hosted dynamic tool.
+// Tool is one entry of an Anthropic request's tools array. An empty or
+// "custom" Type marks a Claude-hosted tool that the bridge forwards to Codex
+// as a dynamic tool; any other Type is an Anthropic server tool, which is run
+// on Anthropic's side and therefore carries no input_schema.
 type Tool struct {
+	Type        string          `json:"type"`
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"input_schema"`
+
+	// Server-tool options. Claude Code sets these on web_search.
+	AllowedDomains []string `json:"allowed_domains"`
+	BlockedDomains []string `json:"blocked_domains"`
+}
+
+// IsServerTool reports whether Anthropic hosts this tool rather than Claude.
+func (t Tool) IsServerTool() bool {
+	return t.Type != "" && t.Type != "custom"
 }
 
 // ToolChoice is Anthropic's tool-selection policy.

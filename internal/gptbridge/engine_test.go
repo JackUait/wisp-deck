@@ -773,3 +773,131 @@ func TestDefaultPendingTTLOutlivesLongClaudeToolRuns(t *testing.T) {
 		t.Fatalf("defaultPendingTTL = %s; a live turn must survive long Claude tool runs (want >= 12h)", defaultPendingTTL)
 	}
 }
+
+func threadStartConfig(t *testing.T, rpc *fakeEngineRPC) map[string]any {
+	t.Helper()
+	rpc.mu.Lock()
+	defer rpc.mu.Unlock()
+	for index, method := range rpc.calls {
+		if method != "thread/start" {
+			continue
+		}
+		var params struct {
+			Config           map[string]any `json:"config"`
+			BaseInstructions string         `json:"baseInstructions"`
+		}
+		if err := json.Unmarshal(rpc.callParams[index], &params); err != nil {
+			t.Fatalf("decode thread/start params: %v", err)
+		}
+		params.Config["baseInstructions"] = params.BaseInstructions
+		return params.Config
+	}
+	t.Fatalf("no thread/start call in %v", rpc.calls)
+	return nil
+}
+
+// Codex's own web search is the only way the bridge can answer Anthropic's
+// server-hosted web_search tool, so it must be switched on for exactly those
+// turns — and stay off for every other turn, which is the whole reason the
+// bridge pins it to "disabled" by default.
+func TestEngineEnablesCodexWebSearchOnlyWhenRequested(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		webSearch bool
+		want      string
+	}{
+		{"requested", true, "live"},
+		{"not requested", false, "disabled"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rpc := newFakeEngineRPC()
+			rpc.onTurnStart = func(threadID, turnID string) {
+				completeTextTurn(rpc, threadID, turnID, "ok")
+			}
+			engine := newTestEngine(t, rpc)
+			translation := testTranslation("search")
+			translation.WebSearch = tt.webSearch
+			if _, err := engine.Execute(context.Background(), translation, nil); err != nil {
+				t.Fatal(err)
+			}
+			config := threadStartConfig(t, rpc)
+			if got := config["web_search"]; got != tt.want {
+				t.Fatalf("config.web_search = %v, want %q", got, tt.want)
+			}
+			instructions, _ := config["baseInstructions"].(string)
+			mentionsWeb := strings.Contains(instructions, "web search")
+			if mentionsWeb != tt.webSearch {
+				t.Fatalf("baseInstructions mention web search = %v, want %v: %q",
+					mentionsWeb, tt.webSearch, instructions)
+			}
+		})
+	}
+}
+
+// Codex reports its search as a "webSearch" thread item. It is the capability
+// the turn explicitly asked for, so it must not trip the Codex-owned-tool
+// guard — and it must still trip it on turns that never asked.
+func TestEngineAcceptsWebSearchItemOnlyOnWebSearchTurns(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		webSearch bool
+		wantErr   bool
+	}{
+		{"requested", true, false},
+		{"not requested", false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rpc := newFakeEngineRPC()
+			rpc.onTurnStart = func(threadID, turnID string) {
+				rpc.notifications <- notification(
+					"item/started", threadID, turnID,
+					`"startedAtMs":1,"item":{"id":"ws","type":"webSearch","query":"encar"}`,
+				)
+				rpc.notifications <- notification(
+					"item/completed", threadID, turnID,
+					`"item":{"id":"ws","type":"webSearch","query":"encar","durationMs":12}`,
+				)
+				completeTextTurn(rpc, threadID, turnID, "found it")
+			}
+			engine := newTestEngine(t, rpc)
+			translation := testTranslation("search")
+			translation.WebSearch = tt.webSearch
+			message, err := engine.Execute(context.Background(), translation, nil)
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "forbidden Codex-owned tool") {
+					t.Fatalf("Execute error = %v, want forbidden Codex-owned tool", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("web search aborted the turn: %v", err)
+			}
+			if len(message.Content) != 1 || message.Content[0].Text != "found it" {
+				t.Fatalf("message = %+v", message)
+			}
+		})
+	}
+}
+
+// Domain filters are unenforceable in Codex's config, so the only place they
+// can bind is the model's instructions. Silently unscoped results would look
+// like a working search.
+func TestEngineStatesWebSearchDomainFilters(t *testing.T) {
+	rpc := newFakeEngineRPC()
+	rpc.onTurnStart = func(threadID, turnID string) {
+		completeTextTurn(rpc, threadID, turnID, "ok")
+	}
+	engine := newTestEngine(t, rpc)
+	translation := testTranslation("search")
+	translation.WebSearch = true
+	translation.WebSearchAllowedDomains = []string{"encar.com"}
+	translation.WebSearchBlockedDomains = []string{"spam.example"}
+	if _, err := engine.Execute(context.Background(), translation, nil); err != nil {
+		t.Fatal(err)
+	}
+	instructions, _ := threadStartConfig(t, rpc)["baseInstructions"].(string)
+	if !strings.Contains(instructions, "encar.com") ||
+		!strings.Contains(instructions, "spam.example") {
+		t.Fatalf("baseInstructions omit the domain filters: %q", instructions)
+	}
+}

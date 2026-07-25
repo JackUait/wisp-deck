@@ -251,16 +251,12 @@ func (e *Engine) start(
 		"dynamicTools":               translation.DynamicTools,
 		"environments":               []any{},
 		"runtimeWorkspaceRoots":      []string{},
-		"baseInstructions": strings.Join([]string{
-			"You are the language model inside Claude Code.",
-			"Follow the supplied developer and user instructions.",
-			"Only host-provided dynamic tools are available. Never use or request any Codex-owned shell, filesystem, web, MCP, app, image, collaboration, or environment tool.",
-		}, " "),
+		"baseInstructions":           baseInstructions(translation),
 		"developerInstructions": combinedDeveloperInstructions(
 			translation.System, translation.ToolDirective,
 		),
 		"config": map[string]any{
-			"web_search": "disabled",
+			"web_search": codexWebSearchMode(translation.WebSearch),
 			"features": map[string]bool{
 				"apps": false, "goals": false, "hooks": false,
 				"memories": false, "multi_agent": false, "remote_plugin": false,
@@ -461,7 +457,7 @@ func (e *Engine) runTurnBoundary(
 	for {
 		select {
 		case notification := <-state.events:
-			if err := rejectCodexOwnedItem(notification); err != nil {
+			if err := rejectCodexOwnedItem(notification, translation.WebSearch); err != nil {
 				e.cleanupTurn(state, true)
 				return AnthropicMessage{}, err
 			}
@@ -565,7 +561,46 @@ func (e *Engine) acceptDynamicTool(state *engineTurn, request ServerRequest) (Dy
 	return DynamicToolCall{ID: bridgeID, Name: originalName, Arguments: params.Arguments}, nil
 }
 
-func rejectCodexOwnedItem(notification Notification) error {
+// codexWebSearchMode maps the request's server-tool declaration onto the
+// app-server's web_search config, whose variants are disabled|cached|indexed|live.
+// The bridge otherwise keeps Codex's own tool surface switched off entirely.
+func codexWebSearchMode(requested bool) string {
+	if requested {
+		return "live"
+	}
+	return "disabled"
+}
+
+func baseInstructions(translation Translation) string {
+	lines := []string{
+		"You are the language model inside Claude Code.",
+		"Follow the supplied developer and user instructions.",
+	}
+	if !translation.WebSearch {
+		return strings.Join(append(lines,
+			"Only host-provided dynamic tools are available. Never use or request any Codex-owned shell, filesystem, web, MCP, app, image, collaboration, or environment tool.",
+		), " ")
+	}
+	// Claude Code asked for Anthropic's server-hosted web_search, which this
+	// bridge answers with Codex's own search. Its result schema takes the reply
+	// as prose, so say what belongs in it.
+	lines = append(lines,
+		"Only host-provided dynamic tools and Codex's own web search are available. Never use or request any Codex-owned shell, filesystem, MCP, app, image, collaboration, or environment tool.",
+		"Use web search to answer, then report the findings as plain text with the source URLs inline. Do not answer from memory alone.",
+	)
+	// config.web_search carries only a mode, so these bind here or nowhere.
+	if domains := translation.WebSearchAllowedDomains; len(domains) > 0 {
+		lines = append(lines, fmt.Sprintf(
+			"Report results only from these domains: %s.", strings.Join(domains, ", ")))
+	}
+	if domains := translation.WebSearchBlockedDomains; len(domains) > 0 {
+		lines = append(lines, fmt.Sprintf(
+			"Never report results from these domains: %s.", strings.Join(domains, ", ")))
+	}
+	return strings.Join(lines, " ")
+}
+
+func rejectCodexOwnedItem(notification Notification, webSearch bool) error {
 	if notification.Method != "item/started" && notification.Method != "item/completed" {
 		return nil
 	}
@@ -588,6 +623,13 @@ func rejectCodexOwnedItem(notification Notification) error {
 		// so Codex compacting its private copy is invisible to us. Aborting
 		// here 502'd every sufficiently long turn.
 		return nil
+	case "webSearch":
+		// The turn asked for Anthropic's server-hosted web_search, so Codex
+		// running its own search is the requested capability, not a leak.
+		if webSearch {
+			return nil
+		}
+		return fmt.Errorf("forbidden Codex-owned tool item %q", params.Item.Type)
 	default:
 		return fmt.Errorf("forbidden Codex-owned tool item %q", params.Item.Type)
 	}

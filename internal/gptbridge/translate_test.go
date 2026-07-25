@@ -160,12 +160,13 @@ func TestTranslateReservedMCPAliasDoesNotCollideWithClaudeToolName(t *testing.T)
 
 func TestTranslateReservedMCPAliasFitsCodexToolNameLimit(t *testing.T) {
 	original := "mcp__" + strings.Repeat("x", 59)
-	tools, _, err := translateTools([]Tool{{
+	plan, err := translateTools([]Tool{{
 		Name: original, InputSchema: json.RawMessage(`{"type":"object"}`),
 	}}, ToolChoice{})
 	if err != nil {
 		t.Fatalf("translateTools: %v", err)
 	}
+	tools := plan.DynamicTools
 	if len(tools) != 1 {
 		t.Fatalf("dynamic tools = %#v", tools)
 	}
@@ -611,5 +612,173 @@ func TestParseMessagesRequestRejectsSystemOnlyMessages(t *testing.T) {
 	}`))
 	if err == nil || !strings.Contains(err.Error(), "messages must contain a user or assistant message") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+// Claude Code's WebSearch tool does not run the search itself. It issues a
+// nested Messages request whose entire tools array is Anthropic's server-side
+// web_search tool:
+//
+//	{"type":"web_search_20250305","name":"web_search","max_uses":8}
+//
+// Server tools carry no input_schema by design — Anthropic hosts them. The
+// bridge modelled every tools[] entry as a Claude-hosted custom tool, so this
+// shape 400'd with "tools[0]: input_schema must be an object" and every single
+// WebSearch call in a GPT session failed.
+func TestTranslateAcceptsAnthropicWebSearchServerTool(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"tools":[{
+			"type":"web_search_20250305",
+			"name":"web_search",
+			"max_uses":8
+		}],
+		"messages":[{"role":"user","content":"Perform a web search for the query: encar"}]
+	}`)
+	if !got.WebSearch {
+		t.Fatalf("WebSearch = false, want true for the web_search server tool")
+	}
+	if len(got.DynamicTools) != 0 {
+		t.Fatalf("DynamicTools = %+v, want none (Codex hosts web search itself)", got.DynamicTools)
+	}
+}
+
+// A server tool must never be forwarded to Codex as a host-provided function,
+// and it must not disturb the Claude-hosted tools alongside it.
+func TestTranslateKeepsClientToolsAlongsideServerTool(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"tools":[
+			{"type":"web_search_20250305","name":"web_search","max_uses":8},
+			{"name":"Read","description":"read","input_schema":{"type":"object"}},
+			{"type":"custom","name":"Bash","description":"bash","input_schema":{"type":"object"}}
+		],
+		"messages":[{"role":"user","content":"hi"}]
+	}`)
+	if !got.WebSearch {
+		t.Fatalf("WebSearch = false, want true")
+	}
+	if len(got.DynamicTools) != 2 ||
+		got.DynamicTools[0].Name != "Read" || got.DynamicTools[1].Name != "Bash" {
+		t.Fatalf("DynamicTools = %+v, want exactly Read and Bash", got.DynamicTools)
+	}
+}
+
+// Dropping an unknown server tool silently would let the model answer from
+// memory as though it had used the capability. Name it instead.
+func TestTranslateRejectsUnsupportedServerTool(t *testing.T) {
+	request, err := ParseMessagesRequest([]byte(`{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"tools":[{"type":"code_execution_20260120","name":"code_execution"}],
+		"messages":[{"role":"user","content":"hi"}]
+	}`))
+	if err != nil {
+		t.Fatalf("ParseMessagesRequest: %v", err)
+	}
+	_, err = TranslateRequest(request)
+	if err == nil || !strings.Contains(err.Error(), `code_execution_20260120`) {
+		t.Fatalf("error = %v, want it to name the unsupported server tool type", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "input_schema") {
+		t.Fatalf("error = %v, want a server-tool error, not a schema error", err)
+	}
+}
+
+// The schema requirement still holds for genuinely Claude-hosted tools.
+func TestTranslateStillRequiresInputSchemaForClientTools(t *testing.T) {
+	request, err := ParseMessagesRequest([]byte(`{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"tools":[{"name":"Read","description":"read"}],
+		"messages":[{"role":"user","content":"hi"}]
+	}`))
+	if err != nil {
+		t.Fatalf("ParseMessagesRequest: %v", err)
+	}
+	if _, err := TranslateRequest(request); err == nil ||
+		!strings.Contains(err.Error(), "tools[0]: input_schema must be an object") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+// tool_choice "any" means "use a tool". A request whose only tool is hosted by
+// the server still satisfies that, so it must not be rejected for having no
+// Claude-hosted tools to force.
+func TestTranslateToolChoiceAnyIsSatisfiedByServerTool(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"tool_choice":{"type":"any"},
+		"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":8}],
+		"messages":[{"role":"user","content":"hi"}]
+	}`)
+	if !got.WebSearch || len(got.DynamicTools) != 0 {
+		t.Fatalf("translation = %+v", got)
+	}
+}
+
+// The real Claude Code WebSearch request forces the server tool by name:
+// tool_choice {"type":"tool","name":"web_search"}. Resolving that against the
+// Claude-hosted tools alone leaves nothing to force, so the request must not be
+// rejected as naming an unknown tool.
+func TestTranslateToolChoiceMayNameTheWebSearchServerTool(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"tool_choice":{"type":"tool","name":"web_search"},
+		"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":8}],
+		"messages":[{"role":"user","content":"Perform a web search for the query: encar"}]
+	}`)
+	if !got.WebSearch {
+		t.Fatalf("WebSearch = false, want true")
+	}
+	if len(got.DynamicTools) != 0 {
+		t.Fatalf("DynamicTools = %+v, want none", got.DynamicTools)
+	}
+}
+
+// Naming a tool that was never supplied at all is still an error.
+func TestTranslateToolChoiceStillRejectsUnknownToolName(t *testing.T) {
+	request, err := ParseMessagesRequest([]byte(`{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"tool_choice":{"type":"tool","name":"Nope"},
+		"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":8}],
+		"messages":[{"role":"user","content":"hi"}]
+	}`))
+	if err != nil {
+		t.Fatalf("ParseMessagesRequest: %v", err)
+	}
+	if _, err := TranslateRequest(request); err == nil ||
+		!strings.Contains(err.Error(), `tool_choice names unknown tool "Nope"`) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+// Claude Code's WebSearch exposes allowed_domains/blocked_domains to the user.
+// Codex's config.web_search only takes a mode string, so the filters cannot be
+// enforced there — but dropping them silently would answer a scoped search with
+// unscoped results. Carry them so the turn can state them to the model.
+func TestTranslateCarriesWebSearchDomainFilters(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"tools":[{
+			"type":"web_search_20250305",
+			"name":"web_search",
+			"allowed_domains":["encar.com","kbchachacha.com"],
+			"blocked_domains":["spam.example"],
+			"max_uses":8
+		}],
+		"messages":[{"role":"user","content":"search"}]
+	}`)
+	if strings.Join(got.WebSearchAllowedDomains, ",") != "encar.com,kbchachacha.com" {
+		t.Fatalf("allowed domains = %v", got.WebSearchAllowedDomains)
+	}
+	if strings.Join(got.WebSearchBlockedDomains, ",") != "spam.example" {
+		t.Fatalf("blocked domains = %v", got.WebSearchBlockedDomains)
 	}
 }

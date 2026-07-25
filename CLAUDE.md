@@ -448,6 +448,68 @@ Consequences to respect:
   tests in `internal/usage/codex_test.go` — the last one is the counterweight, so
   a future tightening cannot start eating genuinely busy seconds.
 
+### A request's `tools[]` holds two different kinds of tool
+
+The GPT bridge originally modelled every entry of an Anthropic request's
+`tools[]` as a Claude-hosted function and required each to carry an
+`input_schema`. Anthropic's **server tools** break that assumption: they are
+identified by a `type` (`web_search_20250305`, `code_execution_*`, …), they run
+on Anthropic's side, and they therefore have **no `input_schema` at all**.
+
+That mismatch shipped. Claude Code's WebSearch tool does not search by itself —
+it issues a *nested* Messages request whose entire tools array is the one server
+tool:
+
+```js
+tools:      [{type: "web_search_20250305", name: "web_search", max_uses: 8}]
+tool_choice: {type: "tool", name: "web_search"}
+```
+
+The bridge rejected it, so **every WebSearch in a GPT-backed session** came back
+as `API Error: 400 tools[0]: input_schema must be an object`. The `tools[0]` is
+the tell: the main loop's array starts with a real schema'd tool, so an index-0
+schema complaint can only be that single-server-tool request.
+
+The rules that keep this working:
+
+- **Partition before validating.** `Tool.IsServerTool()` (empty or `"custom"`
+  `type` means Claude-hosted) decides which entries get schema-checked and
+  turned into `dynamicTools`. A server tool must never reach Codex as a
+  host-provided function — Codex would try to call a function nobody hosts.
+- **`tool_choice` can name a server tool.** Resolving `{"type":"tool"}` against
+  the Claude-hosted tools alone reported `tool_choice names unknown tool
+  "web_search"` — a *second*, distinct 400 hiding behind the first. A forced
+  server tool is already satisfied by the thread's own capability, so it yields
+  no dynamic tool and no directive. Naming a tool that was never supplied at
+  all is still an error.
+- **Never silently drop a server tool.** Dropping it lets the model answer
+  "from the web" out of its own memory, which is worse than an error. Only
+  `web_search*` is supported; anything else fails by name.
+- **Web search is answered by Codex's own search**, enabled per-thread via
+  `config.web_search`. The app-server's variants are
+  `disabled | cached | indexed | live` (verified against a live app-server —
+  `enabled`/`auto` are rejected); the bridge asks for `live` and keeps
+  `disabled` for every other turn.
+- **Codex reports it as a `webSearch` thread item**, which must pass
+  `rejectCodexOwnedItem` *only* on turns that asked for it. It stays forbidden
+  otherwise, so the guard still catches a genuine capability leak.
+- **Domain filters bind in the instructions or nowhere.** `config.web_search`
+  accepts only the mode string (an object with `allowed_domains` is rejected),
+  so Claude Code's `allowed_domains`/`blocked_domains` are stated to the model
+  that runs the search. Dropping them would answer a scoped search with
+  unscoped results — which looks like a working search.
+- **A prose answer is a valid result.** Claude Code's WebSearch output schema is
+  `results: Array<hit | string>` — "search results and/or text commentary from
+  the model" — so the bridge does not need to synthesize `server_tool_use` /
+  `web_search_tool_result` blocks. The base instructions tell the model to
+  inline its source URLs, since that text *is* the result.
+
+Guarded by `TestTranslateAcceptsAnthropicWebSearchServerTool` and its
+neighbours in `translate_test.go`, `TestEngineEnablesCodexWebSearchOnlyWhenRequested`
+/ `TestEngineAcceptsWebSearchItemOnlyOnWebSearchTurns` in `engine_test.go`, and
+`TestHandlerAcceptsClaudeCodeWebSearchRequest`, which replays Claude Code's
+exact request body end to end.
+
 ## Code Conventions
 
 ### Avoid Over-Engineering
