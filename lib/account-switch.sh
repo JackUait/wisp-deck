@@ -1421,6 +1421,10 @@ _subscription_choice_ready() {
     case "$lower" in
       *"openai gpt"*|*chatgpt*) provider=openai-chatgpt ;;
       *mimo*|*xiaomi*) provider=mimo ;;
+      # Checked before the bare *kimi* case, matching the catalog's provider
+      # order: the coding subscription and the open platform are separate
+      # gateways that reject each other's keys.
+      *"kimi for coding"*|*"kimi coding"*|*kimi-coding*) provider=moonshot-coding ;;
       *moonshot*|*kimi*) provider=moonshot ;;
       *) provider=zhipu ;;
     esac

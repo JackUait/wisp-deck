@@ -94,7 +94,7 @@ get_claude_config_provider() {
     | select(type == "string")
   ' "$settings_path" 2>/dev/null)" || return 0
   case "$provider" in
-    zhipu|mimo|moonshot|openai-chatgpt) printf '%s\n' "$provider" ;;
+    zhipu|mimo|moonshot|moonshot-coding|openai-chatgpt) printf '%s\n' "$provider" ;;
   esac
 }
 

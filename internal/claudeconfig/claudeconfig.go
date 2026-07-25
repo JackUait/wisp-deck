@@ -395,6 +395,65 @@ func WriteAPIKey(configsDir, file, key string) error {
 	return writeSecure(path, append(out, '\n'))
 }
 
+// codingKeyPrefix marks a Kimi For Coding subscription credential. Moonshot's
+// open-platform keys carry no such prefix, and no other vendor in the catalog
+// issues one, so the prefix identifies the gateway a key belongs to.
+const codingKeyPrefix = "sk-kimi-"
+
+// RepairGatewayForKey re-points a profile at the gateway its stored credential
+// actually authenticates against, and reports whether it changed anything.
+//
+// Moonshot sells the metered open platform and the flat-rate Kimi For Coding
+// subscription behind separate hosts with separate model namespaces, and each
+// rejects the other's credential with a bare "401 Invalid Authentication". A
+// subscription key saved into an open-platform profile therefore produces an
+// endless retry loop in the agent pane with nothing pointing at the endpoint as
+// the cause, so saving the key moves the profile — marker, base URL, and model
+// routing — to the gateway that accepts it.
+//
+// Only the sk-kimi- prefix is treated as evidence, and only within the Moonshot
+// family: an unrecognized key is left exactly where the user put it rather than
+// breaking a working profile to fix one that was never broken.
+func RepairGatewayForKey(configsDir, file string) (bool, error) {
+	path := filepath.Join(configsDir, file)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return false, err
+	}
+	env, _ := settings["env"].(map[string]any)
+	if env == nil {
+		return false, nil
+	}
+	key, _ := env["ANTHROPIC_AUTH_TOKEN"].(string)
+	marker, _ := env["WISP_DECK_SUBSCRIPTION_PROVIDER"].(string)
+	if marker != "moonshot" || !strings.HasPrefix(key, codingKeyPrefix) {
+		return false, nil
+	}
+	provider, ok := providerByKey("moonshot-coding")
+	if !ok {
+		return false, nil
+	}
+
+	env["WISP_DECK_SUBSCRIPTION_PROVIDER"] = provider.Key
+	env["ANTHROPIC_BASE_URL"] = provider.BaseURL
+	for i, envKey := range envKeys {
+		env[envKey] = provider.DefaultModels[i]
+	}
+	settings["env"] = env
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return false, err
+	}
+	if err := writeSecure(path, append(out, '\n')); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // AnthropicAliases are the model alias slots that can be mapped.
 var AnthropicAliases = []string{"opus", "sonnet", "haiku", "fable"}
 

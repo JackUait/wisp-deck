@@ -162,6 +162,49 @@ func TestDefaults_include_Moonshot_Kimi_subscription(t *testing.T) {
 	}
 }
 
+// Kimi ships as two presets because Moonshot runs two gateways: the metered
+// open platform above, and this flat-rate coding subscription. Their keys are
+// not interchangeable — each host answers the other's credential with a bare
+// 401 — so a user holding a coding plan needs a preset that already points at
+// api.kimi.com/coding and its k3 / kimi-for-coding ids.
+func TestDefaults_include_Kimi_For_Coding_subscription(t *testing.T) {
+	root := projectRoot(t)
+	list, err := os.ReadFile(filepath.Join(root, "defaults", "claude-configs.list"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(list), "Kimi For Coding:kimi-coding.json") {
+		t.Fatalf("default list is missing Kimi For Coding:\n%s", list)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "defaults", "claude-configs", "kimi-coding.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("invalid Kimi For Coding settings JSON: %v", err)
+	}
+	want := map[string]string{
+		"WISP_DECK_SUBSCRIPTION_PROVIDER": "moonshot-coding",
+		"ANTHROPIC_BASE_URL":              "https://api.kimi.com/coding",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":    "k3",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL":  "kimi-for-coding",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":   "kimi-for-coding",
+		"ANTHROPIC_DEFAULT_FABLE_MODEL":   "k3",
+	}
+	for key, value := range want {
+		if settings.Env[key] != value {
+			t.Errorf("%s = %q, want %q", key, settings.Env[key], value)
+		}
+	}
+	if settings.Env["ANTHROPIC_AUTH_TOKEN"] != "" {
+		t.Fatal("Kimi For Coding default must not persist an API key")
+	}
+}
+
 // packedFiles returns the paths npm would actually publish.
 func packedFiles(t *testing.T) []string {
 	t.Helper()

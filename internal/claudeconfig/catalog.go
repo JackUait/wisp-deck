@@ -93,6 +93,34 @@ var Providers = []Provider{
 		},
 	},
 	{
+		// Moonshot's flat-rate Kimi For Coding subscription is a different
+		// service from the open platform below: a different host, a different
+		// model namespace, and credentials (sk-kimi-…) each gateway rejects
+		// from the other with a bare 401. It is listed before "moonshot" so the
+		// bare "kimi" alias cannot claim a coding profile that has no explicit
+		// marker and strand it on the gateway that cannot authenticate it.
+		Key:            "moonshot-coding",
+		Name:           "Kimi For Coding",
+		Aliases:        []string{"kimi for coding", "kimi coding", "kimi-coding"},
+		BaseURL:        "https://api.kimi.com/coding",
+		Auth:           AuthAPIKey,
+		MirrorOpenCode: true,
+		DefaultModels:  [4]string{"k3", "kimi-for-coding", "kimi-for-coding", "k3"},
+		// Ids and context windows are the gateway's own /v1/models listing; all
+		// four report a 262144 context. Prices are zero because the plan is a
+		// flat-rate subscription rather than metered per token — pricing.go's
+		// catalog fold skips zero-priced models instead of publishing a false
+		// $0 rate. Max output is the documented default of each model's
+		// underlying family (k3: 131072, k2.7 coding: 32768) and must stay
+		// non-zero: it reaches OpenCode's limit.output verbatim.
+		Models: []Model{
+			{"k3", 0, 0, 262144, 131072},
+			{"k3-256k", 0, 0, 262144, 131072},
+			{"kimi-for-coding", 0, 0, 262144, 32768},
+			{"kimi-for-coding-highspeed", 0, 0, 262144, 32768},
+		},
+	},
+	{
 		Key:            "moonshot",
 		Name:           "Moonshot Kimi",
 		Aliases:        []string{"moonshot", "kimi"},

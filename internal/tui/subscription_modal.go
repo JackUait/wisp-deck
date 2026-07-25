@@ -988,6 +988,21 @@ func (m *MainMenuModel) saveSubscriptionDraft() {
 			m.subscriptionModal.err = err
 			return
 		}
+		// A credential can identify a different gateway than the profile points
+		// at (Moonshot's coding subscription vs. its open platform), and the
+		// mismatch only ever surfaces as a 401 retry loop inside the agent pane.
+		// Repairing rewrites the base URL and model routing, so the draft is
+		// reloaded from disk rather than left holding the old provider's models.
+		repaired, err := claudeconfig.RepairGatewayForKey(m.claudeConfigsDir, draft.file)
+		if err != nil {
+			m.subscriptionModal.err = err
+			return
+		}
+		if repaired {
+			m.loadSubscriptionDraft(m.subscriptionModalProfile())
+			m.syncOpenCode()
+			return
+		}
 	}
 	draft.apiKey = claudeconfig.ReadAPIKey(m.claudeConfigsDir, draft.file)
 	draft.keyEdited = false

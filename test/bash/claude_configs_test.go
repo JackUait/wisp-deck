@@ -81,6 +81,15 @@ func TestGetClaudeConfigProviderReadsOnlyKnownStringMarkers(t *testing.T) {
 			want:    "moonshot",
 		},
 		{
+			// Moonshot's flat-rate coding subscription is a distinct gateway
+			// from its open platform; a marker the allowlist drops falls back to
+			// display-name matching, which cannot tell the two Kimi products
+			// apart and would strand the profile on the gateway that 401s it.
+			name:    "moonshot coding",
+			content: `{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"moonshot-coding"}}`,
+			want:    "moonshot-coding",
+		},
+		{
 			name:    "unknown marker",
 			content: `{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"$(touch /tmp/no)"}}`,
 		},
