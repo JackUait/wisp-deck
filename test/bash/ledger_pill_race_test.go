@@ -39,7 +39,7 @@ func TestNativeLedgerPillAppearsWhenRelaunchContextIsWrittenLate(t *testing.T) {
 	relaunch := filepath.Join(config, "relaunch-testsession")
 
 	session := startNativeLedgerPTY(t, project, snapshot,
-		&pty.Winsize{Rows: 24, Cols: 100}, nil,
+		&pty.Winsize{Rows: 24, Cols: 100}, []string{"WISP_DECK_PLAN=Standard Claude"},
 		"--relaunch-file", relaunch, "--refresh-interval", "200ms")
 
 	if _, raw, ok := session.waitFor("modified", 20*time.Second); !ok {

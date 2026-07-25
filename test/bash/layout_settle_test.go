@@ -196,15 +196,17 @@ func TestWrapperRestore_replays_layout_while_session_alive(t *testing.T) {
 	// The replay watcher must have started before that attach, so the
 	// select-layout record must appear while the attach is still blocked.
 	tmuxMock := `#!/bin/bash
-case "$1" in
-  new-session)
-    exit 0
-    ;;
-  bind-key)
+case " $* " in
+  *" attach-session "*)
     for _ in $(seq 1 100); do
       if [ -f "$GT_LAYOUT_REC" ]; then echo yes > "$GT_DURING_REC"; break; fi
       sleep 0.1
     done
+    exit 0
+    ;;
+esac
+case "$1" in
+  new-session)
     exit 0
     ;;
   select-layout)

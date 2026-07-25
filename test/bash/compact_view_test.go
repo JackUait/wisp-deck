@@ -1559,10 +1559,9 @@ func TestCompactView_ahead_marker_renders_real_escape_not_literal(t *testing.T) 
 // Regression: the panel must size itself to ITS OWN pane, not the active pane.
 // `tmux display-message -p '#{pane_width}'` with no -t target returns the
 // *active* pane's width. In the real layout the AI pane is active and far wider
-// than the (left, inactive) compact-view pane, so the panel built a heading and
-// separator sized for the wide pane that then WRAPPED across several rows in the
-// narrow pane — a wrapped heading and a doubled separator. The fix targets
-// "$TMUX_PANE". Asserts the separator fits on a single row of the narrow pane.
+// than the (left, inactive) compact-view pane, so the panel centered its content
+// for the wide pane and wrapped it in the narrow pane. The fix targets
+// "$TMUX_PANE". Assert the clean-tree label is centered for the narrow pane.
 func TestCompactView_sizes_to_own_pane_not_active_pane(t *testing.T) {
 	tmuxBin, err := exec.LookPath("tmux")
 	if err != nil {
@@ -1628,18 +1627,22 @@ func TestCompactView_sizes_to_own_pane_not_active_pane(t *testing.T) {
 	wOut, _ := tmux("display-message", "-p", "-t", session+".0", "#{pane_width}")
 	paneW := strings.TrimSpace(wOut)
 
-	// Count rows that are a horizontal rule (a long run of box-drawing dashes).
-	// One pinned separator => exactly one such row. The bug sized the rule for
-	// the wide active pane, so it wrapped into several full-dash rows here.
-	ruleRows := 0
+	width := 0
+	if _, err := fmt.Sscanf(paneW, "%d", &width); err != nil {
+		t.Fatalf("parse pane width %q: %v", paneW, err)
+	}
+	label := "working tree clean"
+	expected := strings.Repeat(" ", (width-len(label))/2) + label
+	found := false
 	for _, line := range strings.Split(cap, "\n") {
-		if strings.Count(line, "─") >= 10 {
-			ruleRows++
+		if strings.TrimRight(line, " ") == expected {
+			found = true
+			break
 		}
 	}
-	if ruleRows != 1 {
-		t.Errorf("expected exactly 1 separator row in the narrow (pane_width=%s) pane, got %d:\n%s",
-			paneW, ruleRows, cap)
+	if !found {
+		t.Errorf("clean-tree label was not centered for the narrow (pane_width=%s) pane; want row %q:\n%s",
+			paneW, expected, cap)
 	}
 }
 
