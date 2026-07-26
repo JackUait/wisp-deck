@@ -32,14 +32,35 @@ get_tool_palette() {
   esac
 }
 
+# Print "start_row start_col height width" for the art centred in rows×cols.
+# reserved_rows keeps that many rows free *below* the art and shifts the whole
+# block up to compensate, so a caller that draws under the wordmark (the update
+# screen) centres the pair rather than the art alone.
+loading_art_geometry() {
+  local rows="${1:-24}" cols="${2:-80}" reserved="${3:-0}"
+  local art line height=0 width=0
+  art="$(get_loading_art)"
+  while IFS= read -r line; do
+    height=$(( height + 1 ))
+    if (( ${#line} > width )); then width=${#line}; fi
+  done <<< "$art"
+
+  local start_row=$(( (rows - height - reserved) / 2 + 1 ))
+  local start_col=$(( (cols - width) / 2 + 1 ))
+  if (( start_row < 1 )); then start_row=1; fi
+  if (( start_col < 1 )); then start_col=1; fi
+  echo "$start_row $start_col $height $width"
+}
+
 # Render a single frame of the loading screen.
-# Args: tool_name frame_number term_cols term_rows [palette_override]
+# Args: tool_name frame_number term_cols term_rows [palette_override] [reserved_rows]
 # palette_override is a space-separated 256-colour ramp; when given it wins over
 # the tool's default (so a user-chosen theme preset colours the splash).
 render_loading_frame() {
   local tool="$1" frame="$2"
   local cols="${3:-80}" rows="${4:-24}"
   local palette_override="${5:-}"
+  local reserved="${6:-0}"
 
   # Get art lines into array
   local art
@@ -54,21 +75,9 @@ render_loading_frame() {
   read -ra palette <<< "${palette_override:-$(get_tool_palette "$tool")}"
   local pal_len=${#palette[@]}
 
-  # Calculate art dimensions
-  local art_height=${#lines[@]}
-  local art_width=0
-  for line in "${lines[@]}"; do
-    local len=${#line}
-    if (( len > art_width )); then
-      art_width=$len
-    fi
-  done
-
-  # Center position
-  local start_row=$(( (rows - art_height) / 2 + 1 ))
-  local start_col=$(( (cols - art_width) / 2 + 1 ))
-  if (( start_row < 1 )); then start_row=1; fi
-  if (( start_col < 1 )); then start_col=1; fi
+  local start_row start_col
+  read -r start_row start_col _ _ \
+    <<< "$(loading_art_geometry "$rows" "$cols" "$reserved")"
 
   # Draw each line with gradient color shifted by frame
   local i

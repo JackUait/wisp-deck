@@ -23,10 +23,19 @@ source "$SHARE_DIR/lib/project-actions.sh"
 source "$SHARE_DIR/lib/update.sh"
 
 # ---------- Argument parsing ----------
+# --update: this run was triggered by the in-menu updater, not by a user setting
+# the machine up. It must not ask anything — the screen belongs to the update's
+# progress view and stdin is not the user's, so a prompt hangs with nothing on
+# screen to explain it.
+UPDATE_MODE=0
 case "${1:-}" in
+  --update)
+    UPDATE_MODE=1
+    shift
+    ;;
   --*)
     error "Unknown flag: $1"
-    echo "Usage: wisp-deck"
+    echo "Usage: wisp-deck [--update]"
     exit 1
     ;;
 esac
@@ -52,14 +61,16 @@ fi
 
 # ---------- AI Coding Tools ----------
 header "Setting up AI coding tools..."
-echo ""
-echo -e "  Wisp Deck supports multiple AI coding assistants."
-echo -e "  Select your preferred AI tool:"
-echo ""
+if [ "$UPDATE_MODE" != "1" ] && ! wisp_deck_is_configured; then
+  echo ""
+  echo -e "  Wisp Deck supports multiple AI coding assistants."
+  echo -e "  Select your preferred AI tool:"
+  echo ""
+fi
 
-# Use TUI to select AI tool
-if select_ai_tool_interactive; then
-  # Variable set by select_ai_tool_interactive: _selected_ai_tool
+# Asks only when there is no saved answer; an update reuses it.
+if resolve_setup_ai_tool "$UPDATE_MODE"; then
+  # Variables set by resolve_setup_ai_tool: _selected_ai_tool, _selected_ai_tool_source
   if [[ -z "$_selected_ai_tool" ]]; then
     error "Internal error: TUI did not set AI tool"
     exit 1
@@ -74,19 +85,23 @@ if select_ai_tool_interactive; then
   echo ""
   success "Selected AI tool: $SELECTED_AI_TOOL"
 
-  # Install the selected tool
-  case "$SELECTED_AI_TOOL" in
-    claude)
-      ensure_command "claude" "curl -fsSL https://claude.ai/install.sh | bash" \
-        "Run 'claude' to authenticate before launching Wisp Deck." "Claude Code"
-      ;;
-    opencode)
-      ensure_opencode
-      ;;
-    codex)
-      ensure_codex
-      ;;
-  esac
+  # Install the tool only when it was just chosen. Re-running the installers on
+  # every update buys nothing — the tool is already there — and a missing one
+  # would turn a 5-second update into an unattended curl install.
+  if [ "$_selected_ai_tool_source" = "selected" ]; then
+    case "$SELECTED_AI_TOOL" in
+      claude)
+        ensure_command "claude" "curl -fsSL https://claude.ai/install.sh | bash" \
+          "Run 'claude' to authenticate before launching Wisp Deck." "Claude Code"
+        ;;
+      opencode)
+        ensure_opencode
+        ;;
+      codex)
+        ensure_codex
+        ;;
+    esac
+  fi
 else
   info "AI tool selection cancelled"
   exit 1
@@ -137,7 +152,7 @@ WRAPPER_PATH="$(terminal_get_wrapper_path)"
 # stale, broken bare-path form from an old version) is always repaired by
 # terminal_apply_config, and a missing config is always created.
 config_choice=1
-if [ -f "$TERMINAL_CONFIG" ] && ! terminal_config_has_wisp_command "$TERMINAL_CONFIG"; then
+if [ "$UPDATE_MODE" != "1" ] && [ -f "$TERMINAL_CONFIG" ] && ! terminal_config_has_wisp_command "$TERMINAL_CONFIG"; then
   warn "Existing config found at $TERMINAL_CONFIG"
   echo ""
   echo -e "  ${_BOLD}1)${_NC} Merge — add the wrapper command to your existing config"

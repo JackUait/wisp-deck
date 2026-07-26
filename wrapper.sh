@@ -266,11 +266,13 @@ else
           continue
           ;;
         update)
-          # The header notice's Update button. Run the npm update in the
-          # foreground, then reopen the menu — it re-execs wisp-deck-tui from
-          # disk, so the freshly installed build shows immediately.
+          # The header notice's Update button. Run the npm update behind the
+          # full-screen progress view, then reopen the menu — it re-execs
+          # wisp-deck-tui from disk, so the freshly installed build shows
+          # immediately. The splash's palette is reused so the update wears the
+          # user's theme rather than a stock one.
           if type run_wisp_deck_update &>/dev/null; then
-            run_wisp_deck_update || true
+            run_wisp_deck_update "" "${_splash_palette:-}" || true
           fi
           continue
           ;;
