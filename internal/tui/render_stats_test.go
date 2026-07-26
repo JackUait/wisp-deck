@@ -646,6 +646,37 @@ func TestRenderStatsBox_LoadingState(t *testing.T) {
 	}
 }
 
+func TestRenderStatsBox_omitsUsageSourceHint(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		setup func(*MainMenuModel)
+	}{
+		{
+			name: "loading",
+			setup: func(m *MainMenuModel) {
+				m.statsLoading = true
+			},
+		},
+		{
+			name: "empty",
+			setup: func(m *MainMenuModel) {
+				m.statsLoading = false
+				m.statsMonths = nil
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+			tt.setup(m)
+			m.SetActiveTab(TabStats)
+
+			if out := stripANSI(m.renderStatsBox()); strings.Contains(out, "Usage data is read from") {
+				t.Fatalf("Stats %s state still renders usage-source hint:\n%s", tt.name, out)
+			}
+		})
+	}
+}
+
 // TestRenderStatsBox_DataState verifies that after statsLoadedMsg is applied the
 // stats box renders humanized token figures and the "Total est. cost" footer.
 func TestRenderStatsBox_DataState(t *testing.T) {

@@ -124,8 +124,6 @@ func (m *MainMenuModel) statsRowGroups(leftBorder, rightBorder string) (headerRo
 	if m.statsLoading {
 		headerRows = append(headerRows, textRow(primaryBoldStyle.Render("Crunching token usage…")))
 		headerRows = append(headerRows, emptyRow)
-		headerRows = append(headerRows, textRow(faint.Render("Usage data is read from ~/.claude/usage/")))
-		headerRows = append(headerRows, emptyRow)
 		return headerRows, nil, nil
 	}
 
@@ -139,8 +137,6 @@ func (m *MainMenuModel) statsRowGroups(leftBorder, rightBorder string) (headerRo
 	// Empty state (loaded but no data).
 	if len(m.statsMonths) == 0 {
 		headerRows = append(headerRows, textRow(muted.Render("No usage data found yet.")))
-		headerRows = append(headerRows, emptyRow)
-		headerRows = append(headerRows, textRow(faint.Render("Usage data is read from ~/.claude/usage/")))
 		headerRows = append(headerRows, emptyRow)
 		return headerRows, nil, nil
 	}
