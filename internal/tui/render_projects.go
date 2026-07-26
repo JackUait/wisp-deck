@@ -130,11 +130,12 @@ func (m *MainMenuModel) renderTitleRow(leftBorder, rightBorder string) string {
 		aiPart = agentLabel + nameStyle.Render(aiDisplay)
 	}
 	// AGENT switcher on the left; the wordmark right-aligns here only when there
-	// is no account or PLAN row above to host it. When a row above holds the
-	// wordmark, this row sits directly under it and carries the update notice.
+	// is no account or PLAN row above to host it. The update chip rides just left
+	// of whichever row carries the wordmark, so the header keeps one line of
+	// identity instead of spending the spacer row below on a notice.
 	var title string
 	if m.accountRowCount() == 0 && m.subscriptionRowCount() == 0 {
-		title = m.ghostWordmark()
+		title = m.updateNoticePrefix() + m.ghostWordmark()
 	} else {
 		title = m.updateNotice()
 	}
@@ -238,6 +239,23 @@ func (m *MainMenuModel) renderSubscriptionRow(leftBorder, rightBorder string) st
 	return m.headerRow(content, title, leftBorder, rightBorder)
 }
 
+// updateChipGap is the blank run between the update chip and the wordmark it
+// sits left of. Two cells: enough that the chip's rounded cap does not crowd the
+// ghost glyph, tight enough that the pair still reads as one header cluster.
+const updateChipGap = 2
+
+// updateNoticePrefix is the chip plus that gap, ready to prepend to the
+// wordmark. Empty when no update is pending, so the wordmark stays flush right.
+// updateNoticeSpan derives the chip's clickable columns from the same two
+// pieces, which is what keeps the hit box under the glyphs that were drawn.
+func (m *MainMenuModel) updateNoticePrefix() string {
+	notice := m.updateNotice()
+	if notice == "" {
+		return ""
+	}
+	return notice + strings.Repeat(" ", updateChipGap)
+}
+
 // updateNotice renders the right-aligned "new version available" chip with its
 // inline Update action. Empty when no update is pending. It always sits on
 // the row directly under whichever header row hosts the wordmark, so the eye
@@ -285,12 +303,8 @@ func (m *MainMenuModel) updateNotice() string {
 }
 
 // renderHeaderGapRow renders the blank spacer between the header switchers and
-// the tab bar. When the wordmark sits on the title row (no PLAN row above it),
-// a pending update notice right-aligns here — directly under the wordmark.
+// the tab bar. The update chip shares the wordmark's row, so this stays empty.
 func (m *MainMenuModel) renderHeaderGapRow(leftBorder, rightBorder string) string {
-	if m.updateVersion != "" && m.accountRowCount() == 0 && m.subscriptionRowCount() == 0 {
-		return m.headerRow("", m.updateNotice(), leftBorder, rightBorder)
-	}
 	return m.emptyMenuRow(leftBorder, rightBorder)
 }
 

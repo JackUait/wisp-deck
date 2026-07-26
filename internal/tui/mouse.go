@@ -72,25 +72,26 @@ func (m *MainMenuModel) titleRowIndex() int {
 }
 
 // updateNoticeRowIndex returns the box-relative row of the update notice, or -1
-// when no update is pending. Mirrors the render placement: the notice shares
-// the title row when a header row above hosts the wordmark, else it drops to
-// the spacer row under the wordmark-bearing title row.
+// when no update is pending. Mirrors the render placement: the chip always rides
+// the row that hosts the wordmark.
 func (m *MainMenuModel) updateNoticeRowIndex() int {
 	if m.updateVersion == "" {
 		return -1
 	}
-	if m.accountRowCount() > 0 || m.subscriptionRowCount() > 0 {
-		return m.titleRowIndex()
-	}
-	return m.titleRowIndex() + 1
+	return m.titleRowIndex()
 }
 
 // updateNoticeSpan returns the [start, end) box-relative column span of the
-// right-aligned update notice, mirroring headerRow's layout: the title's last
-// column is the last content column (menuContentWidth) after the left border
-// and leading space.
+// update chip, mirroring headerRow's layout: the title's last column is the last
+// content column (menuContentWidth) after the left border and leading space.
+// When the chip shares the row with the wordmark it is pushed left by the
+// wordmark and the gap between them, so the span stops short of "Wisp Deck" and
+// clicking the wordmark never fires an update.
 func (m *MainMenuModel) updateNoticeSpan() (int, int) {
 	end := 1 + menuContentWidth
+	if m.accountRowCount() == 0 && m.subscriptionRowCount() == 0 {
+		end -= lipgloss.Width(m.ghostWordmark()) + updateChipGap
+	}
 	return end - lipgloss.Width(m.updateNotice()), end
 }
 

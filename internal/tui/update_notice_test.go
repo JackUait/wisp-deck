@@ -11,27 +11,33 @@ import (
 // With the PLAN row present (wordmark host), the update notice right-aligns on
 // the AGENT/title row — directly under the "Wisp Deck" wordmark.
 
-// Without a PLAN row the wordmark sits on the title row, so the notice drops to
-// the header spacer row below it.
-func TestUpdateNotice_OnSpacerRowWithoutPlanRow(t *testing.T) {
+// The chip rides the wordmark's own row, immediately to its left, so the header
+// keeps a single line of identity instead of spending the spacer row on a
+// notice. The spacer below stays blank.
+func TestUpdateNotice_SitsLeftOfTheWordmark(t *testing.T) {
 	m := newTestMenu()
-	m.CycleAITool("next") // switch to opencode: a non-claude agent hides the PLAN row
 	m.SetUpdateVersion("2.24.0")
 	lines := strings.Split(m.renderMenuBox(), "\n")
 
 	titleRow := stripAnsi(lines[1])
 	spacerRow := stripAnsi(lines[2])
 
-	if !strings.Contains(titleRow, "Wisp Deck") {
-		t.Fatalf("expected wordmark on the title row, got %q", titleRow)
+	chipEnd := strings.Index(titleRow, iconPillCapRight)
+	wordmark := strings.Index(titleRow, "Wisp Deck")
+	if chipEnd < 0 || wordmark < 0 {
+		t.Fatalf("expected the chip and the wordmark to share the title row, got %q", titleRow)
 	}
-	if !strings.Contains(spacerRow, "v2.24.0") || !strings.Contains(spacerRow, "U Update") {
-		t.Fatalf("expected update notice on the spacer row, got %q", spacerRow)
+	if chipEnd > wordmark {
+		t.Errorf("chip ends after the wordmark starts; it must sit to its left: %q", titleRow)
 	}
-	borderChar := strings.LastIndex(spacerRow, "│")
-	noticeEnd := strings.Index(spacerRow, iconPillCapRight) + len(iconPillCapRight)
-	if trailing := spacerRow[noticeEnd:borderChar]; len(strings.TrimSpace(trailing)) != 0 {
-		t.Errorf("expected only whitespace between notice and border, got %q", trailing)
+	if strings.Contains(spacerRow, "Update") {
+		t.Errorf("spacer row should be blank again, got %q", spacerRow)
+	}
+	// The wordmark keeps its flush-right position: only whitespace behind it.
+	borderChar := strings.LastIndex(titleRow, "│")
+	nameEnd := wordmark + len("Wisp Deck")
+	if trailing := titleRow[nameEnd:borderChar]; len(strings.TrimSpace(trailing)) != 0 {
+		t.Errorf("expected only whitespace between wordmark and border, got %q", trailing)
 	}
 }
 
@@ -182,22 +188,55 @@ func TestUpdateNotice_ClickTriggersUpdateAction(t *testing.T) {
 	}
 }
 
-// Without a PLAN row the clickable notice moves to the spacer row.
-func TestUpdateNotice_ClickRowFollowsWordmark(t *testing.T) {
+// The clickable span tracks the chip onto the wordmark's row, and stops short of
+// the wordmark itself — clicking "Wisp Deck" must not trigger an update.
+func TestUpdateNotice_ClickRowIsTheWordmarkRow(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		cycle bool
+	}{{"claude", false}, {"opencode", true}} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newTestMenu()
+			if tt.cycle {
+				m.CycleAITool("next")
+			}
+			m.SetUpdateVersion("2.24.0")
+			if got, want := m.updateNoticeRowIndex(), m.titleRowIndex(); got != want {
+				t.Errorf("notice row = %d, want the wordmark's title row %d", got, want)
+			}
+			_, end := m.updateNoticeSpan()
+			wordmarkStart := 1 + menuContentWidth - lipgloss.Width(m.ghostWordmark())
+			if end > wordmarkStart {
+				t.Errorf("notice span ends at %d, past where the wordmark starts (%d)", end, wordmarkStart)
+			}
+		})
+	}
 	m := newTestMenu()
-	m.CycleAITool("next") // opencode: no PLAN row, wordmark on title row
-	m.SetUpdateVersion("2.24.0")
-	if got, want := m.updateNoticeRowIndex(), m.titleRowIndex()+1; got != want {
-		t.Errorf("notice row = %d, want spacer row %d", got, want)
-	}
-	m2 := newTestMenu() // claude: PLAN row removed, so notice sits on the spacer too
-	m2.SetUpdateVersion("2.24.0")
-	if got, want := m2.updateNoticeRowIndex(), m2.titleRowIndex()+1; got != want {
-		t.Errorf("notice row = %d, want spacer row %d", got, want)
-	}
-	m3 := newTestMenu()
-	if got := m3.updateNoticeRowIndex(); got != -1 {
+	if got := m.updateNoticeRowIndex(); got != -1 {
 		t.Errorf("notice row without update = %d, want -1", got)
+	}
+}
+
+// The chip now shares the title row with the AGENT switcher, so one row has two
+// distinct hit regions. Neither may swallow the other.
+func TestUpdateNotice_SharesTitleRowWithTheAgentSwitcher(t *testing.T) {
+	m := newTestMenu()
+	m.SetUpdateVersion("2.24.0")
+	row := m.titleRowIndex()
+
+	if got := m.HitTest(switcherControlStart, row); got.region != regionAI {
+		t.Errorf("AGENT switcher on the shared row = %v, want regionAI", got.region)
+	}
+	start, end := m.updateNoticeSpan()
+	if got := m.HitTest(start+1, row); got.region != regionUpdate {
+		t.Errorf("chip on the shared row = %v, want regionUpdate", got.region)
+	}
+	// The gap between the chip and the wordmark, and the wordmark itself, are inert.
+	if got := m.HitTest(end, row); got.region == regionUpdate {
+		t.Errorf("the gap right of the chip registered as regionUpdate")
+	}
+	if got := m.HitTest(menuContentWidth, row); got.region == regionUpdate {
+		t.Errorf("clicking the wordmark registered as regionUpdate")
 	}
 }
 
