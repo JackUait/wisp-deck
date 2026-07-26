@@ -41,7 +41,7 @@ func TestUpdateNotice_SitsLeftOfTheWordmark(t *testing.T) {
 	}
 }
 
-// The notice is a chip: half-block end caps around a single continuous fill. Idle, that
+// The notice is a chip: thin curved end caps around a single continuous fill. Idle, that
 // fill is the same surface the selected project row uses, so the chip sits in
 // the menu's existing material instead of introducing a filled button — this
 // interface renders every action as unfilled "KEY Label" accent text, and a
@@ -57,10 +57,10 @@ func TestUpdateNotice_IdleChipUsesTheSelectedRowSurface(t *testing.T) {
 
 	plain := stripAnsi(notice)
 	if !strings.HasPrefix(plain, iconChipCapLeft) {
-		t.Errorf("notice does not open with the half-block left cap: %q", plain)
+		t.Errorf("notice does not open with the curved left cap: %q", plain)
 	}
 	if !strings.HasSuffix(plain, iconChipCapRight) {
-		t.Errorf("notice does not close with the half-block right cap: %q", plain)
+		t.Errorf("notice does not close with the curved right cap: %q", plain)
 	}
 	if !strings.Contains(notice, "48;5;"+menuSurface) {
 		t.Errorf("idle chip is not on the selected-row surface %s: %q", menuSurface, notice)

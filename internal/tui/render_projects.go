@@ -25,13 +25,15 @@ const (
 	iconChevronLeft  = "\U000F0141" // nf-md-chevron_left
 	iconChevronRight = "\U000F0142" // nf-md-chevron_right
 
-	// The update chip's end caps. Half blocks, not powerline semicircles: a full
-	// semicircle turned the chip into a lozenge that read as a pill button, and
-	// nothing else here is round. These stop the fill at the cell's midpoint
-	// instead, so the chip keeps square ends with a half-cell inset — and they are
-	// the same block family as the ▌ selection bar and the ▐ tab bar.
-	iconChipCapLeft  = "▐" // right half block — fill starts at the cell midpoint
-	iconChipCapRight = "▌" // left half block  — fill ends at the cell midpoint
+	// The update chip's end caps: THIN powerline semicircles, drawn as a stroke in
+	// the chip's own fill color. A terminal cell has no corner radius — a
+	// background fill is always a full-height rectangle — so the cap glyph is the
+	// only rounding available, and the two extremes both miss: the THICK
+	// semicircle (\ue0b6/\ue0b4) is a solid half-cell-radius mass that turns the
+	// chip into a lozenge, and half blocks end it in a blunt wall. The thin pair
+	// keeps the curve and drops the weight.
+	iconChipCapLeft  = "" // nf-pl-left_half_circle_thin
+	iconChipCapRight = "" // nf-pl-right_half_circle_thin
 )
 
 // menuSurface is the one raised background in the menu box: the selected row's
@@ -268,7 +270,7 @@ func (m *MainMenuModel) updateNotice() string {
 	}
 	hovered := m.isHovered(regionUpdate)
 
-	// One continuous fill between two half-block end caps. Idle, that fill is menuSurface
+	// One continuous fill between two thin curved end caps. Idle, that fill is menuSurface
 	// — the same stripe a selected project row sits on — so the chip reads as a
 	// raised piece of the menu rather than a button bolted onto it. Nothing else
 	// in this box is filled, and a solid block here would also stack a second loud
