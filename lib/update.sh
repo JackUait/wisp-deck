@@ -266,3 +266,57 @@ run_wisp_deck_update() {
   fi
   return "$rc"
 }
+
+# Run a background check against the npm registry.
+# Throttled: only checks at most once every 24 hours.
+# If a newer version exists, writes a flag file for notify_if_update_available.
+# Args: install_dir (where .version marker lives)
+check_for_update() {
+  local install_dir="$1"
+  local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+  local flag="${config_home}/wisp-deck/update-available"
+  local ts_file="${config_home}/wisp-deck/last-update-check"
+
+  # Need npm and a local version to compare
+  command -v npm &>/dev/null || return 0
+  local local_version
+  local_version="$(cat "$install_dir/.version" 2>/dev/null | tr -d '[:space:]')"
+  [ -n "$local_version" ] || return 0
+
+  # Throttle: skip if checked within the last 24 hours
+  # Treat future timestamps (negative elapsed) as expired so a clock correction
+  # cannot permanently suppress the check.
+  if [ -f "$ts_file" ]; then
+    local last_check now elapsed
+    last_check="$(cat "$ts_file" 2>/dev/null | tr -d '[:space:]')"
+    now="$(date +%s)"
+    elapsed=$(( now - last_check ))
+    if [ "$elapsed" -ge 0 ] && [ "$elapsed" -lt 86400 ]; then
+      return 0
+    fi
+  fi
+
+  (
+    local remote_version
+    remote_version="$(npm view wisp-deck version 2>/dev/null | tr -d '[:space:]')" || return
+    [ -n "$remote_version" ] || return
+
+    mkdir -p "${config_home}/wisp-deck"
+    # Always update the timestamp (even when up to date) so we throttle correctly
+    date +%s > "$ts_file"
+
+    if [ "$local_version" = "$remote_version" ]; then
+      # Clear any flag written before the update installed this version.
+      rm -f "$flag"
+      return
+    fi
+    echo "$remote_version" > "$flag"
+    # BOTH streams dropped: this is disowned and outlives the shell that spawned
+    # it, so anything it prints — an npm warning on stdout as readily as a
+    # network error on stderr — surfaces minutes later, on top of whatever holds
+    # the terminal by then: the AI tool's full-screen UI. It also starts before
+    # the wrapper mutes its own stderr, so it cannot rely on that. The result is
+    # communicated through $flag, never through a stream.
+  ) >/dev/null 2>&1 &
+  disown
+}
