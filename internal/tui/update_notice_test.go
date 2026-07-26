@@ -65,6 +65,13 @@ func TestUpdateNotice_IdleChipUsesTheSelectedRowSurface(t *testing.T) {
 	if !strings.Contains(notice, "48;5;"+menuSurface) {
 		t.Errorf("idle chip is not on the selected-row surface %s: %q", menuSurface, notice)
 	}
+	// The caps are the chip's border, so they are drawn in the very color the
+	// container's own rounded corners use — not in the fill, which made them read
+	// as loose parentheses floating beside the chip rather than as its edge.
+	capStyle := "38;5;" + string(m.boxBorderColor()) + "m" + iconChipCapLeft
+	if !strings.Contains(notice, capStyle) {
+		t.Errorf("left cap is not drawn in the container's border color %s: %q", m.boxBorderColor(), notice)
+	}
 	// The theme color may tint text, but must not fill the chip while idle.
 	if bg := "48;5;" + string(m.theme.Primary); strings.Contains(notice, bg) {
 		t.Errorf("idle chip is filled with the theme color %s; that treatment belongs to hover: %q", bg, notice)
@@ -79,6 +86,32 @@ func TestUpdateNotice_IdleChipUsesTheSelectedRowSurface(t *testing.T) {
 	}
 	if !strings.Contains(plain, "v2.24.0") || !strings.Contains(plain, "U Update") {
 		t.Errorf("notice lost its version or action text: %q", plain)
+	}
+}
+
+// The container's border color is not fixed — it turns Primary when focus
+// leaves the body. The chip's caps are that border, so they must track it.
+func TestUpdateNotice_CapsTrackTheContainerBorderColor(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	defer lipgloss.SetColorProfile(prev)
+
+	m := newTestMenu()
+	m.SetUpdateVersion("2.24.0")
+
+	m.focus = FocusBody
+	body := m.boxBorderColor()
+	if !strings.Contains(m.updateNotice(), "38;5;"+string(body)+"m"+iconChipCapLeft) {
+		t.Errorf("cap does not use the body-focus border color %s", body)
+	}
+
+	m.focus = FocusAI
+	away := m.boxBorderColor()
+	if away == body {
+		t.Fatal("border color did not change with focus; test proves nothing")
+	}
+	if !strings.Contains(m.updateNotice(), "38;5;"+string(away)+"m"+iconChipCapLeft) {
+		t.Errorf("cap did not follow the border color to %s when focus left the body", away)
 	}
 }
 

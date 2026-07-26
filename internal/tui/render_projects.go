@@ -297,13 +297,19 @@ func (m *MainMenuModel) updateNotice() string {
 	seg := func(c lipgloss.Color) lipgloss.Style {
 		return lipgloss.NewStyle().Background(fill).Foreground(c)
 	}
+	// The caps are the chip's border, so they take the container's own border
+	// color — the same one its rounded ╭╮╰╯ corners are drawn in. Painting them in
+	// the fill instead made them read as loose parentheses sitting beside the
+	// chip, because a thin arc in the fill color is a detached stroke rather than
+	// an edge. Same stroke weight, same rounding, same color as the box around it.
+	cap := lipgloss.NewStyle().Foreground(m.boxBorderColor())
 	version := "v" + strings.TrimPrefix(m.updateVersion, "v")
-	return lipgloss.NewStyle().Foreground(fill).Render(iconChipCapLeft) +
+	return cap.Render(iconChipCapLeft) +
 		seg(arrowInk).Render(" ⇡ ") +
 		seg(versionInk).Render(version) +
 		seg(sepInk).Render(" · ") +
 		seg(actionInk).Bold(true).Render("U Update ") +
-		lipgloss.NewStyle().Foreground(fill).Render(iconChipCapRight)
+		cap.Render(iconChipCapRight)
 }
 
 // renderHeaderGapRow renders the blank spacer between the header switchers and
