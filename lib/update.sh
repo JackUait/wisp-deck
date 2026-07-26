@@ -135,8 +135,8 @@ render_update_frame() {
   # Four reserved rows: a blank gutter, then title / bar / step. The three are
   # centred on the same axis as the wordmark so the whole screen reads as one
   # stack rather than art with a footer stuck under it.
-  local start_row start_col art_height
-  read -r start_row start_col art_height _ \
+  local start_row art_height
+  read -r start_row _ art_height _ \
     <<< "$(loading_art_geometry "$rows" "$cols" 4)"
 
   render_loading_frame "" "$frame" "$cols" "$rows" "$palette_override" 4
@@ -175,6 +175,43 @@ render_update_frame() {
     "$(( title_row + 2 ))" "$field_col" "$lead" "" "$step" "$trail" ""
 }
 
+# Run one installer invocation behind the progress view, animating until it
+# exits. Returns the installer's status; the caller owns the terminal.
+# Args: log version palette_override [installer args...]
+_run_update_behind_screen() {
+  local log="$1" version="$2" pal_override="$3"
+  shift 3
+
+  local rows cols
+  read -r rows cols <<< "$(_detect_term_size)"
+
+  npx --yes wisp-deck@latest "$@" > "$log" 2>&1 &
+  local pid=$!
+
+  local frame=0 step="Installing files" line label
+  while kill -0 "$pid" 2>/dev/null; do
+    while IFS= read -r line; do
+      # Condition form, not `a && b`: under `set -e` an unrecognised line would
+      # make the list return 1 and kill the update mid-flight.
+      if label="$(update_step_label "$line")"; then step="$label"; fi
+    done < "$log"
+    render_update_frame "$frame" "$cols" "$rows" "$pal_override" "$version" "$step"
+    frame=$(( frame + 1 ))
+    sleep 0.12
+    read -r rows cols <<< "$(_detect_term_size)"
+  done
+
+  local rc=0
+  wait "$pid" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    return "$rc"
+  fi
+
+  render_update_frame "$frame" "$cols" "$rows" "$pal_override" "$version" "Done, reopening menu"
+  if [ -z "${WISP_DECK_UPDATE_NO_WAIT:-}" ]; then sleep 0.5; fi
+  return 0
+}
+
 # Run the update behind a full-screen progress view. @latest forces npx past its
 # cached tarball so the freshly published version installs even when an older
 # one is cached; --update tells the installer this is not a first-time setup.
@@ -194,37 +231,29 @@ run_wisp_deck_update() {
   [ -n "$version" ] || version="$(get_update_version "$share_dir")"
 
   printf '\033[?25l\033[2J\033[3J\033[H'
-  local rows cols
-  read -r rows cols <<< "$(_detect_term_size)"
-
-  npx --yes wisp-deck@latest --update > "$log" 2>&1 &
-  local pid=$!
-
-  local frame=0 step="Installing files"
-  while kill -0 "$pid" 2>/dev/null; do
-    local line label
-    while IFS= read -r line; do
-      # Condition form, not `a && b`: under `set -e` an unrecognised line would
-      # make the list return 1 and kill the update mid-flight.
-      if label="$(update_step_label "$line")"; then step="$label"; fi
-    done < "$log"
-    render_update_frame "$frame" "$cols" "$rows" "$pal_override" "$version" "$step"
-    frame=$(( frame + 1 ))
-    sleep 0.12
-    read -r rows cols <<< "$(_detect_term_size)"
-  done
-
   local rc=0
-  wait "$pid" || rc=$?
-
+  _run_update_behind_screen "$log" "$version" "$pal_override" --update || rc=$?
+  printf '\033[2J\033[3J\033[H\033[0m\033[?25h'
   if [ "$rc" -eq 0 ]; then
-    render_update_frame "$frame" "$cols" "$rows" "$pal_override" "$version" "Done, reopening menu"
-    [ -n "${WISP_DECK_UPDATE_NO_WAIT:-}" ] || sleep 0.5
-    printf '\033[2J\033[3J\033[H\033[0m\033[?25h'
     return 0
   fi
 
-  printf '\033[2J\033[3J\033[H\033[0m\033[?25h'
+  # --update only exists in installers from this version on. An install whose
+  # lib/ is newer than the package @latest resolves to — a dev checkout running
+  # off live symlinks, a cached or pinned tarball — is rejected outright for the
+  # flag. That version is still perfectly installable, so fall back to the
+  # flagless invocation the previous updater used rather than calling a working
+  # update a failure. The terminal goes back to the user for it: the old
+  # installer asks setup questions, and a prompt hidden behind the progress view
+  # hangs with nothing on screen to explain it.
+  if grep -q 'Unknown flag: --update' "$log" 2>/dev/null; then
+    npx --yes wisp-deck@latest 2>&1 | tee "$log"
+    rc="${PIPESTATUS[0]}"
+    if [ "$rc" -eq 0 ]; then
+      return 0
+    fi
+  fi
+
   printf '\n  \033[1;31m✗ Update failed\033[0m  (installer exited %d)\n\n' "$rc"
   printf '  Log: %s\n\n' "$log"
   local line
@@ -236,58 +265,4 @@ run_wisp_deck_update() {
     read -rsn1 < /dev/tty
   fi
   return "$rc"
-}
-
-# Run a background check against the npm registry.
-# Throttled: only checks at most once every 24 hours.
-# If a newer version exists, writes a flag file for notify_if_update_available.
-# Args: install_dir (where .version marker lives)
-check_for_update() {
-  local install_dir="$1"
-  local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
-  local flag="${config_home}/wisp-deck/update-available"
-  local ts_file="${config_home}/wisp-deck/last-update-check"
-
-  # Need npm and a local version to compare
-  command -v npm &>/dev/null || return 0
-  local local_version
-  local_version="$(cat "$install_dir/.version" 2>/dev/null | tr -d '[:space:]')"
-  [ -n "$local_version" ] || return 0
-
-  # Throttle: skip if checked within the last 24 hours
-  # Treat future timestamps (negative elapsed) as expired so a clock correction
-  # cannot permanently suppress the check.
-  if [ -f "$ts_file" ]; then
-    local last_check now elapsed
-    last_check="$(cat "$ts_file" 2>/dev/null | tr -d '[:space:]')"
-    now="$(date +%s)"
-    elapsed=$(( now - last_check ))
-    if [ "$elapsed" -ge 0 ] && [ "$elapsed" -lt 86400 ]; then
-      return 0
-    fi
-  fi
-
-  (
-    local remote_version
-    remote_version="$(npm view wisp-deck version 2>/dev/null | tr -d '[:space:]')" || return
-    [ -n "$remote_version" ] || return
-
-    mkdir -p "${config_home}/wisp-deck"
-    # Always update the timestamp (even when up to date) so we throttle correctly
-    date +%s > "$ts_file"
-
-    if [ "$local_version" = "$remote_version" ]; then
-      # Clear any flag written before the update installed this version.
-      rm -f "$flag"
-      return
-    fi
-    echo "$remote_version" > "$flag"
-    # BOTH streams dropped: this is disowned and outlives the shell that spawned
-    # it, so anything it prints — an npm warning on stdout as readily as a
-    # network error on stderr — surfaces minutes later, on top of whatever holds
-    # the terminal by then: the AI tool's full-screen UI. It also starts before
-    # the wrapper mutes its own stderr, so it cannot rely on that. The result is
-    # communicated through $flag, never through a stream.
-  ) >/dev/null 2>&1 &
-  disown
 }

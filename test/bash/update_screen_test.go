@@ -147,6 +147,68 @@ func TestUpdateScreen_run_update_asks_npx_for_an_update(t *testing.T) {
 	assertContains(t, string(data), "--update")
 }
 
+// --update only exists in installers from this version on. An install whose
+// lib/ is newer than the published package it pulls — a dev machine running off
+// live symlinks, or any resolution that lands on an older tarball — gets
+// "Unknown flag: --update" and exit 1. That must degrade to the previous
+// behaviour (a flagless, interactive install with the terminal handed back),
+// not to a hard "Update failed" for a version that is perfectly installable.
+func TestUpdateScreen_run_update_retries_without_the_flag_on_an_old_installer(t *testing.T) {
+	dir := t.TempDir()
+	callsFile := filepath.Join(dir, "npx-calls")
+	binDir := mockCommand(t, dir, "npx", fmt.Sprintf(`
+echo "$@" >> %q
+for arg in "$@"; do
+  if [ "$arg" = "--update" ]; then
+    echo "Unknown flag: --update" >&2
+    exit 1
+  fi
+done
+echo "Installed wisp-deck 2.24.0"
+`, callsFile))
+	env := buildEnv(t, []string{binDir}, "HOME="+dir, "WISP_DECK_UPDATE_NO_WAIT=1")
+
+	out, code := runBashSnippet(t, updateSnippet(t, `run_wisp_deck_update`), env)
+	assertExitCode(t, code, 0)
+
+	data, err := os.ReadFile(callsFile)
+	if err != nil {
+		t.Fatalf("expected npx to be invoked: %v", err)
+	}
+	calls := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(calls) != 2 {
+		t.Fatalf("expected two npx invocations (flagged, then flagless), got %q", calls)
+	}
+	if !strings.Contains(calls[0], "--update") {
+		t.Errorf("first invocation should carry --update, got %q", calls[0])
+	}
+	if strings.Contains(calls[1], "--update") {
+		t.Errorf("retry should drop --update, got %q", calls[1])
+	}
+	if strings.Contains(stripEscapes(out), "Update failed") {
+		t.Errorf("a recoverable flag rejection was reported as a failed update: %q", out)
+	}
+}
+
+// Any other failure is a real failure — the retry must not swallow it and try
+// again, or a broken registry turns into two identical stalls.
+func TestUpdateScreen_run_update_does_not_retry_other_failures(t *testing.T) {
+	dir := t.TempDir()
+	callsFile := filepath.Join(dir, "npx-calls")
+	binDir := mockCommand(t, dir, "npx", fmt.Sprintf(
+		`echo "$@" >> %q; echo "ENOTFOUND registry.npmjs.org" >&2; exit 1`, callsFile))
+	env := buildEnv(t, []string{binDir}, "HOME="+dir, "WISP_DECK_UPDATE_NO_WAIT=1")
+
+	_, code := runBashSnippet(t, updateSnippet(t, `run_wisp_deck_update`), env)
+	if code == 0 {
+		t.Error("expected a non-zero exit for a genuine failure")
+	}
+	data, _ := os.ReadFile(callsFile)
+	if got := len(strings.Split(strings.TrimSpace(string(data)), "\n")); got != 1 {
+		t.Errorf("expected exactly one npx invocation, got %d", got)
+	}
+}
+
 // Installer output belongs in a log, not on the screen the user is watching.
 // npm's progress bars and warnings scrolling over the art is exactly the mess
 // this screen replaces.
