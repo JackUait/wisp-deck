@@ -275,8 +275,12 @@ fi`, rec, rec, hist, respawned, respawned, sid))
 	if err := os.MkdirAll(filepath.Join(accountsDir, "work"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The switch revalidates the target agent's executable before it may touch
+	// the pane (_tool_choice_ready). Mock it: without one the test would only
+	// pass on a machine that happens to have the real claude installed.
+	claudeCmd := filepath.Join(mockCommand(t, dir, "claude", "exit 0"), "claude")
 	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
-		"tool=claude", "tool_cmd=claude",
+		"tool=claude", "tool_cmd=" + claudeCmd,
 		"settings=", "filter=", "project_dir=/proj",
 		"accounts_dir=" + accountsDir,
 		"pointer=" + filepath.Join(dir, "claude-account"),

@@ -221,10 +221,15 @@ func TestWrapper_restore_resolves_account_from_queue_entry(t *testing.T) {
 // --- the mid-session switch must respawn under the CHOICE ------------------
 
 // relaunchCtx writes a relaunch-context file whose account files live in dir.
+// relaunchCtx writes a claude relaunch context. tool_cmd points at a MOCK
+// claude: a switch revalidates the target agent's executable before it may
+// touch the pane (_tool_choice_ready), so a bare "claude" would make these
+// tests pass only on a machine that happens to have the real one installed.
 func relaunchCtx(t *testing.T, dir string) string {
 	t.Helper()
+	claudeCmd := filepath.Join(mockCommand(t, dir, "claude", "exit 0"), "claude")
 	return writeTempFile(t, dir, "relaunch", strings.Join([]string{
-		"tool=claude", "tool_cmd=claude",
+		"tool=claude", "tool_cmd=" + claudeCmd,
 		"settings=", "filter=", "project_dir=/proj",
 		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
 		"pointer=" + filepath.Join(dir, "claude-account"),
