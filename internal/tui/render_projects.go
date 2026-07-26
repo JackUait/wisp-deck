@@ -25,11 +25,13 @@ const (
 	iconChevronLeft  = "\U000F0141" // nf-md-chevron_left
 	iconChevronRight = "\U000F0142" // nf-md-chevron_right
 
-	// Powerline half-circles. Drawn in the chip's own fill color, they round its
-	// two ends off against whatever sits behind the row. One cell each, like the
-	// nerd-font glyphs above.
-	iconPillCapLeft  = "" // nf-pl-left_half_circle_thick
-	iconPillCapRight = "" // nf-pl-right_half_circle_thick
+	// The update chip's end caps. Half blocks, not powerline semicircles: a full
+	// semicircle turned the chip into a lozenge that read as a pill button, and
+	// nothing else here is round. These stop the fill at the cell's midpoint
+	// instead, so the chip keeps square ends with a half-cell inset — and they are
+	// the same block family as the ▌ selection bar and the ▐ tab bar.
+	iconChipCapLeft  = "▐" // right half block — fill starts at the cell midpoint
+	iconChipCapRight = "▌" // left half block  — fill ends at the cell midpoint
 )
 
 // menuSurface is the one raised background in the menu box: the selected row's
@@ -240,7 +242,7 @@ func (m *MainMenuModel) renderSubscriptionRow(leftBorder, rightBorder string) st
 }
 
 // updateChipGap is the blank run between the update chip and the wordmark it
-// sits left of. Two cells: enough that the chip's rounded cap does not crowd the
+// sits left of. Two cells: enough that the chip's end cap does not crowd the
 // ghost glyph, tight enough that the pair still reads as one header cluster.
 const updateChipGap = 2
 
@@ -266,7 +268,7 @@ func (m *MainMenuModel) updateNotice() string {
 	}
 	hovered := m.isHovered(regionUpdate)
 
-	// One continuous fill between two rounded caps. Idle, that fill is menuSurface
+	// One continuous fill between two half-block end caps. Idle, that fill is menuSurface
 	// — the same stripe a selected project row sits on — so the chip reads as a
 	// raised piece of the menu rather than a button bolted onto it. Nothing else
 	// in this box is filled, and a solid block here would also stack a second loud
@@ -294,12 +296,12 @@ func (m *MainMenuModel) updateNotice() string {
 		return lipgloss.NewStyle().Background(fill).Foreground(c)
 	}
 	version := "v" + strings.TrimPrefix(m.updateVersion, "v")
-	return lipgloss.NewStyle().Foreground(fill).Render(iconPillCapLeft) +
+	return lipgloss.NewStyle().Foreground(fill).Render(iconChipCapLeft) +
 		seg(arrowInk).Render(" ⇡ ") +
 		seg(versionInk).Render(version) +
 		seg(sepInk).Render(" · ") +
 		seg(actionInk).Bold(true).Render("U Update ") +
-		lipgloss.NewStyle().Foreground(fill).Render(iconPillCapRight)
+		lipgloss.NewStyle().Foreground(fill).Render(iconChipCapRight)
 }
 
 // renderHeaderGapRow renders the blank spacer between the header switchers and

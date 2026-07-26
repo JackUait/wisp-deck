@@ -22,7 +22,7 @@ func TestUpdateNotice_SitsLeftOfTheWordmark(t *testing.T) {
 	titleRow := stripAnsi(lines[1])
 	spacerRow := stripAnsi(lines[2])
 
-	chipEnd := strings.Index(titleRow, iconPillCapRight)
+	chipEnd := strings.Index(titleRow, iconChipCapRight)
 	wordmark := strings.Index(titleRow, "Wisp Deck")
 	if chipEnd < 0 || wordmark < 0 {
 		t.Fatalf("expected the chip and the wordmark to share the title row, got %q", titleRow)
@@ -41,7 +41,7 @@ func TestUpdateNotice_SitsLeftOfTheWordmark(t *testing.T) {
 	}
 }
 
-// The notice is a chip: rounded caps around a single continuous fill. Idle, that
+// The notice is a chip: half-block end caps around a single continuous fill. Idle, that
 // fill is the same surface the selected project row uses, so the chip sits in
 // the menu's existing material instead of introducing a filled button — this
 // interface renders every action as unfilled "KEY Label" accent text, and a
@@ -56,11 +56,11 @@ func TestUpdateNotice_IdleChipUsesTheSelectedRowSurface(t *testing.T) {
 	notice := m.updateNotice()
 
 	plain := stripAnsi(notice)
-	if !strings.HasPrefix(plain, iconPillCapLeft) {
-		t.Errorf("notice does not open with the rounded left cap: %q", plain)
+	if !strings.HasPrefix(plain, iconChipCapLeft) {
+		t.Errorf("notice does not open with the half-block left cap: %q", plain)
 	}
-	if !strings.HasSuffix(plain, iconPillCapRight) {
-		t.Errorf("notice does not close with the rounded right cap: %q", plain)
+	if !strings.HasSuffix(plain, iconChipCapRight) {
+		t.Errorf("notice does not close with the half-block right cap: %q", plain)
 	}
 	if !strings.Contains(notice, "48;5;"+menuSurface) {
 		t.Errorf("idle chip is not on the selected-row surface %s: %q", menuSurface, notice)
