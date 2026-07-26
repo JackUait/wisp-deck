@@ -1,46 +1,81 @@
-# Wisp Deck
-
-Launch a ready-to-go AI coding session in one command. Wisp Deck opens a three-pane terminal workspace — your AI assistant, a live view of your git changes, and a spare terminal — and cleans everything up the moment you close the window.
-
-<p>
-  <img src="docs/screenshot-selector.png" width="49%" />
-  <img src="docs/screenshot-session.png" width="49%" />
+<p align="center">
+  <img src="docs/wisp-deck-logo.png" alt="Wisp Deck ghost mascot in a terminal window" width="240" />
 </p>
 
----
+# Wisp Deck
 
-## Quick Start
+Wisp Deck turns one command into a ready-to-use AI coding workspace on macOS: your chosen assistant, a live view of your git changes, and a spare shell, all arranged in tmux. Unlike a bare AI CLI launcher, it manages the whole workspace—from project selection and account routing to session restore and process cleanup—so you can start working quickly and close the window without leaving tools behind.
+
+- **One command.** Run `npx wisp-deck`; Wisp Deck installs the supporting command-line tools it needs.
+- **Three focused panes.** Work with your AI assistant, inspect live git changes, and keep a spare terminal ready.
+- **Three AI tools.** Choose Claude Code, OpenCode, or Codex during setup or from the selector.
+- **Live changes.** Review files, open full diffs, preview images, and discard selected changes from the ledger.
+- **Session restore.** Reopen projects and supported AI conversations after a reboot.
+- **Clean shutdown.** Closing the window stops the processes Wisp Deck started.
 
 ```sh
 npx wisp-deck
+
+# First run: choose Claude Code, OpenCode, or Codex
+# Then: add a project and press Enter
+# Result: AI assistant + live changes + spare terminal
 ```
 
-That's it. The only requirements are **macOS** and **Node.js 16+**. Your AI tool and the supporting pieces (tmux, jq, the Wisp Deck TUI) are installed for you automatically the first time you run it. The one manual step is the terminal itself: if Ghostty isn't installed yet, Wisp Deck opens its download page and waits while you install it.
+## Contents
 
-During setup you'll pick your AI assistant; you add projects afterwards, from the selector (press **A**). After that, opening a session is a couple of keystrokes.
+- [Getting Started](#getting-started)
+- [Your Workspace](#your-workspace)
+- [Project Selector](#project-selector)
+- [Settings](#settings)
+- [Claude Accounts and Subscriptions](#claude-accounts-and-subscriptions)
+- [Stats](#stats)
+- [Screenshots, Videos, and Files](#screenshots-videos-and-files)
+- [Status Line](#status-line)
+- [Hotkeys](#hotkeys)
+- [Restore Your Sessions](#restore-your-sessions)
+- [Update Wisp Deck](#update-wisp-deck)
+- [Credits](#credits)
 
 ---
 
-## What You Get
+## Getting Started
 
-Pick a project and Wisp Deck drops you into a three-pane workspace:
+> **Requirements:** macOS, [Ghostty](https://ghostty.org/), and Node.js 16+.
 
-- **AI assistant** — Claude Code, OpenCode or Codex, focused and ready. Just start typing your prompt.
-- **Changes view** — a live, auto-refreshing ledger of your working-tree changes: added/removed lines per file, with brand-new files in their own group. Click any file to open its full diff in a popup — image files show an actual pixel preview. Hover reveals checkboxes so you can discard one file or several at once (with a yes/no confirmation).
-- **Spare terminal** — a tabbed shell for running commands, with its own tab bar so you can open as many as you need.
+1. Run Wisp Deck from any terminal:
 
-Close the window and Wisp Deck shuts down every process it started — no leftover AI processes quietly running in the background.
+   ```sh
+   npx wisp-deck
+   ```
+
+2. **Choose an AI assistant:** Claude Code, OpenCode, or Codex.
+3. **Add a project:** press **A** in the selector and choose its folder.
+4. **Open the workspace:** select the project and press **Enter**.
+
+Wisp Deck installs your chosen AI tool and its supporting pieces—including tmux, jq, and the Wisp Deck TUI—during first-run setup. Ghostty is the only manual installation: if it is missing, Wisp Deck opens its download page and waits for you to install it.
+
+After setup, open a new Ghostty window whenever you want the project selector. Starting a session takes only a project selection and **Enter**.
+
+---
+
+## Your Workspace
+
+Every project opens with three focused areas:
+
+- **AI assistant.** Claude Code, OpenCode, or Codex starts in your project and is ready for a prompt.
+- **Live changes.** An auto-refreshing ledger groups changed and brand-new files, shows added and removed lines, and opens a full diff when you click a file. Image files show a pixel preview. Hover to reveal checkboxes and discard one or several files after confirmation.
+- **Spare terminal.** A tabbed shell gives you room for commands without covering the assistant. Open as many shell tabs as you need.
 
 > [!CAUTION]
-> Closing the window force-stops everything in the session. Save your work first.
+> Closing the window force-stops everything in that Wisp Deck session. Save your work first.
 
 ---
 
-## Using the Project Selector
+## Project Selector
 
-Open a new window and you're greeted by the selector (glyphs approximated):
+A new Wisp Deck window opens the selector (glyphs approximated):
 
-```
+```text
   AGENT ‹ Claude Code ›                 Wisp Deck
  ────────────────────────────────────────────────
    Projects    Settings    Stats
@@ -55,140 +90,171 @@ Open a new window and you're greeted by the selector (glyphs approximated):
    ↑↓ move · ↵ open · O open once · P plain · L login
 ```
 
-The header rows are switchers — use **←/→** to cycle the AI tool (and, if you have them, the Claude login and plan). Below that, **Projects / Settings / Stats** are tabs (**Tab** cycles them; **S** and **T** jump straight there), and the action bar shows what applies to the selected row.
+The header rows are switchers. Use **←/→** to cycle the AI tool and, when configured, the Claude login and plan. **Tab** cycles Projects, Settings, and Stats; **S** and **T** jump directly to the last two tabs.
 
-- **Arrow keys or mouse** to move, **Enter** or **click** to open
-- **Number keys (1–9)** open that project immediately
-- **A** — add a project (with path autocomplete as you type)
-- **D** — remove a project or one of its worktrees
-- **W** — expand or collapse a project's worktrees
-- **O** — open a folder once without saving it to your list
-- **P** — open a plain shell with no panes, just a terminal
-- **L** — add or switch a Claude login
-- **Shift+↑/↓** — reorder projects in the list
+### Project actions
+
+- **Arrow keys or mouse** — move through the list.
+- **Enter or click** — open the selected project.
+- **1–9** — open the corresponding project immediately.
+- **A** — choose a folder and add it as a project.
+- **D** — remove a project or one of its worktrees.
+- **W** — expand or collapse a project's worktrees.
+- **O** — open a folder once without saving it.
+- **P** — open a plain shell without the three-pane workspace.
+- **L** — add or switch a Claude login.
+- **Shift+↑/↓** — reorder projects.
 
 ### Git worktrees
 
-Projects can expand to show their git worktrees. From the selector you can open a worktree like any project, create a new one from a branch picker (type `/` to search branches), or delete worktrees you're done with.
+Projects can expand to show their git worktrees. Open a worktree like any other project, create one from the branch picker, or delete one you no longer need. Type **/** in the branch picker to search.
 
 ---
 
 ## Settings
 
-Press **S** in the selector to open Settings. Most changes apply immediately to open sessions; a few (like the default AI tool) take effect on the next session or action.
+Press **S** in the selector to open Settings. Most changes apply immediately to open sessions; the default AI tool and a few launch options take effect on the next session or action.
 
-- **Mascot** — show the animated ghost, a static one, or none.
-- **Tab title** — what the window tab shows: project and tool, project only, or let the AI tool set it.
-- **Theme** — Auto (matches your AI tool's colors) or a preset accent: Orange, Purple, Green, Blue, Rose, Cyan.
-- **Usage bars** — which Claude quota bars the status line shows: the 5-hour window, the 7-day window, both, or none.
-- **AI tools** — switch between Claude Code, OpenCode and Codex.
-- **Idle sound** — play one Wisp Deck chime when the AI finishes and is waiting on you. Off by default; choose from the built-in macOS sounds. Wisp Deck suppresses each agent's native hooks, notifications, and terminal bells so this setting is the sole automatic sound control for Claude Code, OpenCode, and Codex sessions.
-- **Keep awake while working** — stop the Mac from sleeping while the AI is busy.
-- **Account** rows — the active Claude login, subscription, and auto-switch (see below).
+- **Mascot** — show the animated ghost, a static ghost, or no mascot.
+- **Tab title** — show the project and tool, the project only, or let the AI tool choose.
+- **Theme** — follow the active AI tool automatically or use Orange, Purple, Green, Blue, Rose, or Cyan.
+- **Usage bars** — show the Claude 5-hour window, 7-day window, both, or neither.
+- **AI tools** — switch between Claude Code, OpenCode, and Codex.
+- **Idle sound** — play one built-in macOS sound when the AI finishes and waits for you. Wisp Deck suppresses the agents' native hooks, notifications, and terminal bells so this setting remains the single automatic sound control. It is off by default.
+- **Keep awake while working** — prevent the Mac from sleeping while the AI is busy.
+- **Account rows** — manage the active Claude login, subscription, and automatic account switching.
 
 ---
 
-## Claude Accounts & Plans
+## Claude Accounts and Subscriptions
 
-If you use Claude Code, Settings also lets you manage **multiple logins** — keep separate work and personal accounts and switch between them without logging in and out each time. The active account is shown at the top of the menu; from the **Account** row you can add, rename, remove, and switch logins. Inside a session, click the account pill at the bottom of the Changes pane to switch mid-conversation.
+### Multiple Claude logins
 
-Turn on **Auto-switch accounts** and Wisp Deck rotates to your next login automatically when the active one runs out of quota, continuing the conversation where it left off.
+Keep work and personal Claude accounts separate without repeatedly logging in and out:
 
-Press **Enter** on the **Subscription** row (or the PLAN header) to open the
-subscription manager. It shows Standard Claude and every configured profile in
-one overlay, with provider, authentication state, endpoint, and all four model
-routes alongside it. From there you can add a profile for any available
-provider, rename or delete it, edit masked API-key authentication where
-required, choose **Save changes** to persist model mappings, and choose **Use
-profile** to select what new sessions use. On narrow terminals the same overlay
-switches to a list-and-details drill-in view.
+- The active account appears at the top of the selector.
+- Press **Enter** on the **Account** row to add, rename, remove, or switch logins.
+- Click the account pill at the bottom of a session's Changes pane to switch mid-conversation.
+- Turn on **Auto-switch accounts** to rotate to the next login when the active account reaches its quota, then continue the conversation where it stopped.
+
+### Subscription profiles
+
+Press **Enter** on **Subscription** or the **PLAN** header to open the subscription manager. It shows Standard Claude and every configured profile in one overlay, including provider, authentication state, endpoint, and all four model routes.
+
+From the manager you can:
+
+- add a profile for a provider, then rename or delete it;
+- edit masked API-key authentication when the provider requires it;
+- save model mappings with **Save changes**;
+- choose what new sessions use with **Use profile**.
+
+On narrow terminals, the overlay switches to a list-and-details view.
 
 ### Use a ChatGPT subscription inside Claude Code
 
-Wisp Deck can keep Claude Code as the interface and tool runner while using GPT models through the ChatGPT subscription already managed by Codex:
+Wisp Deck can keep Claude Code as the interface and tool runner while routing models through the ChatGPT subscription managed by Codex:
 
-1. Install or update Wisp Deck with `npx wisp-deck`; its setup can install Codex for you.
-2. In Wisp Deck, open **Settings → Subscription**, press **Enter**, and use **OpenAI GPT**.
-3. The connection panel shows whether Codex is **Signed in**, **Signed out**, still checking, or unavailable. Choose **Sign in / switch account** at any time to open Codex-managed ChatGPT authentication in your browser, including when you want to change accounts.
-4. When you activate OpenAI GPT while Codex is signed out, Wisp Deck opens ChatGPT sign-in in your browser automatically and waits for it to finish. If the browser cannot open, open the fallback URL shown in the subscription modal.
-5. Open a new session. After updating Wisp Deck, relaunch any existing ledger panes or sessions so they load the new binary and provider environment.
+1. Install or update Wisp Deck with `npx wisp-deck`. Setup can install Codex for you.
+2. Open **Settings → Subscription**, press **Enter**, and choose **OpenAI GPT**.
+3. Check the connection state: **Signed in**, **Signed out**, still checking, or unavailable.
+4. Choose **Sign in / switch account** to open Codex-managed ChatGPT authentication in your browser.
+5. Activate OpenAI GPT. If you are signed out, Wisp Deck opens ChatGPT sign-in in your browser automatically and waits; if the browser cannot open, open the fallback URL shown in the subscription modal.
+6. Open a new session. After updating Wisp Deck, relaunch existing ledger panes or sessions so they load the new binary and provider environment.
 
-This path accepts only Codex-managed ChatGPT authentication. An OpenAI Platform API-key login is rejected so Wisp Deck cannot silently switch to metered API billing. The local adapter never reads or stores your ChatGPT token; Codex owns authentication and refresh, while Claude Code continues to execute tools and enforce permissions.
+> **No silent API billing:** this path accepts only Codex-managed ChatGPT authentication. It rejects OpenAI Platform API-key login, and the local adapter never reads or stores your ChatGPT token. Codex owns authentication and refresh; Claude Code continues to execute tools and enforce permissions.
 
-Deleting an OpenAI profile does not log Codex out: profiles contain Wisp Deck's local model-routing settings, while Codex owns the separate cached ChatGPT login. Use **Sign in / switch account** to change that login, or `codex logout` to clear it.
+Deleting an OpenAI profile does not log Codex out. Profiles contain Wisp Deck's local model-routing settings, while Codex owns the separate cached ChatGPT login. Use **Sign in / switch account** to change that login or run `codex logout` to clear it.
 
-OpenAI GPT requires a compatible Codex version with app-server dynamic-tool support. It is intentionally not mirrored into OpenCode. If launch reports that Codex is missing, update Wisp Deck/Codex and relaunch the session. If Codex is currently authenticated with an API key, run `codex logout` first; the next OpenAI GPT launch will offer ChatGPT sign-in without falling back to metered API usage.
+OpenAI GPT requires a compatible Codex version with app-server dynamic-tool support and is not mirrored into OpenCode. If launch reports that Codex is missing, update Wisp Deck and Codex, then relaunch. If Codex is authenticated with an API key, run `codex logout`; the next OpenAI GPT launch will offer ChatGPT sign-in without falling back to metered API usage.
 
 ---
 
 ## Stats
 
-Press **T** in the selector for a usage dashboard covering **Claude Code, OpenCode and Codex** together. It breaks your usage down by month — tokens used, a per-model breakdown, and estimated cost in USD — with a running total across everything, and a Full/Compact view toggle. Handy for keeping an eye on what you're spending.
+Press **T** in the selector to view Claude Code, OpenCode, and Codex usage together. The dashboard provides:
 
-Observed usage is kept locally in mirrored append-only journals at `~/.config/wisp-deck/usage-history.jsonl` and `usage-history.backup.jsonl`; `usage-cache.json` is only a rebuildable speed-up. Journal history survives transcript pruning, cache resets, upgrades, interrupted writes, and loss or corruption of either journal copy. Like any local-only data, it cannot survive loss of the disk or deliberate deletion of both journals.
+- **Monthly usage** — tokens and estimated cost in USD.
+- **Model breakdown** — usage grouped by model.
+- **Running total** — combined usage across the supported tools.
+- **Full and Compact views** — switch detail levels without leaving the dashboard.
+
+Observed usage is stored locally in mirrored append-only journals:
+
+```text
+~/.config/wisp-deck/usage-history.jsonl
+~/.config/wisp-deck/usage-history.backup.jsonl
+```
+
+`usage-cache.json` is only a rebuildable speed-up. Journal history survives transcript pruning, cache resets, upgrades, interrupted writes, and loss or corruption of either journal copy.
+
+> Local history cannot survive disk loss or deliberate deletion of both journal files.
 
 ---
 
-## Dropping Screenshots & Videos into the AI
+## Screenshots, Videos, and Files
 
-Drag a screenshot, video, or any other file from Finder or your desktop onto the AI pane and Wisp Deck hands it straight to your assistant — no copying paths by hand.
+Drag a screenshot, video, or other file from Finder or the desktop onto the AI pane. Wisp Deck passes it to the assistant without making you copy the path.
 
-If a drag doesn't land where you expect, press **`Ctrl+b` then `i`** inside the session to inject your most recent screenshot (images only) directly into the AI pane.
+If an image drag does not land where expected, press **`Ctrl+b`**, then **`i`**, to inject your most recent screenshot directly into the AI pane.
 
 ---
 
 ## Status Line
 
-For Claude Code, Wisp Deck sets up a compact status line so you always know where you stand (glyphs approximated):
+Claude Code sessions get a compact status line (glyphs approximated):
 
-```
+```text
 my-project | 23.5% | 512M | 4% | Opus 4.8 [high] | 5h ◼◼◻ 7d ◼◻◻
 ```
 
-- **Project** you're in (worktrees get their own marker)
-- **Context %** — how full Claude's context window is
-- **Memory** and **CPU** used by the session's process tree
-- **Model** and its reasoning effort
-- **5h / 7d usage bars** — how much of the active login's quota is used, colored per account (shown with two or more Claude logins, per the Usage bars setting)
+- **Project** — the active project, with a marker for worktrees.
+- **Context %** — how full Claude's context window is.
+- **Memory and CPU** — resources used by the session's process tree.
+- **Model and effort** — the active model and reasoning level.
+- **5h / 7d bars** — quota used by the active login, colored per account and controlled by the Usage bars setting. Account colors appear when two or more Claude logins are configured.
 
 > [!TIP]
-> Watch the context percentage — when it climbs high, it's a good time to start a fresh conversation.
+> When the context percentage climbs high, start a fresh conversation before you run out of room.
 
 ---
 
 ## Hotkeys
 
-**In the terminal window:**
+### Ghostty window
 
 | Shortcut | Action |
 |---|---|
-| `Cmd+N` | New window (opens the selector) |
-| `Cmd+T` | New tab |
-| `Cmd+Shift+Left` | Previous tab |
-| `Cmd+Shift+Right` | Next tab |
-| `Left Option` | Acts as `Alt` instead of typing special characters |
+| `Cmd+N` | Open a new window and project selector |
+| `Cmd+T` | Open a new Wisp Deck tab |
+| `Cmd+Shift+Left` | Move to the previous tab |
+| `Cmd+Shift+Right` | Move to the next tab |
+| `Left Option` | Act as `Alt` instead of typing special characters |
 
-**Inside a session** (press `Ctrl+b`, then the key):
+### Inside a Wisp Deck session
+
+Press `Ctrl+b`, then the second key:
 
 | Shortcut | Action |
 |---|---|
-| `Ctrl+b` then `i` | Drop your latest screenshot into the AI pane |
-| `Ctrl+b` then `t` | New tab in the spare terminal |
-| `Ctrl+b` then `Tab` | Next spare-terminal tab |
-| `Ctrl+b` then `Shift+Tab` | Previous spare-terminal tab |
+| `Ctrl+b` then `i` | Drop the latest screenshot into the AI pane |
+| `Ctrl+b` then `t` | Open a new spare-terminal tab |
+| `Ctrl+b` then `Tab` | Move to the next spare-terminal tab |
+| `Ctrl+b` then `Shift+Tab` | Move to the previous spare-terminal tab |
 | `Ctrl+b` then `w` | Close the current spare-terminal tab |
 
 ---
 
-## Picking Up Where You Left Off
+## Restore Your Sessions
 
-After a reboot, the first launch automatically brings back the projects you had open before — each one reopens in its own tab and the AI conversation resumes where it left off (Claude Code, OpenCode and Codex alike). Codex tabs are restored by their exact durable thread ID, so multiple tabs of the same project remain distinct. If an older snapshot has no recoverable Codex ID, Wisp Deck opens Codex's resume selector for you instead of silently starting an empty conversation. A restart doesn't cost you your workspace.
+After a reboot, the first Wisp Deck launch restores the projects that were open. Each project returns in its own tab, and supported Claude Code, OpenCode, and Codex conversations resume where they stopped.
+
+Codex tabs restore by exact durable thread ID, so multiple tabs from the same project remain distinct. If an older snapshot has no recoverable Codex ID, Wisp Deck opens Codex's resume selector instead of silently starting an empty conversation.
 
 ---
 
-## Staying Up to Date
+## Update Wisp Deck
 
-Wisp Deck quietly checks for new versions and lets you know when one is available. To update, just run it again:
+Wisp Deck checks quietly for new versions and tells you when one is available. Run the same command to update:
 
 ```sh
 npx wisp-deck
