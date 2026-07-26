@@ -24,16 +24,6 @@ const (
 	// caption/value/HitTest column math is unchanged.
 	iconChevronLeft  = "\U000F0141" // nf-md-chevron_left
 	iconChevronRight = "\U000F0142" // nf-md-chevron_right
-
-	// The update chip's end caps: THIN powerline semicircles, drawn as a stroke in
-	// the chip's own fill color. A terminal cell has no corner radius — a
-	// background fill is always a full-height rectangle — so the cap glyph is the
-	// only rounding available, and the two extremes both miss: the THICK
-	// semicircle (\ue0b6/\ue0b4) is a solid half-cell-radius mass that turns the
-	// chip into a lozenge, and half blocks end it in a blunt wall. The thin pair
-	// keeps the curve and drops the weight.
-	iconChipCapLeft  = "" // nf-pl-left_half_circle_thin
-	iconChipCapRight = "" // nf-pl-right_half_circle_thin
 )
 
 // menuSurface is the one raised background in the menu box: the selected row's
@@ -244,7 +234,7 @@ func (m *MainMenuModel) renderSubscriptionRow(leftBorder, rightBorder string) st
 }
 
 // updateChipGap is the blank run between the update chip and the wordmark it
-// sits left of. Two cells: enough that the chip's end cap does not crowd the
+// sits left of. Two cells: enough that the chip's filled edge does not crowd the
 // ghost glyph, tight enough that the pair still reads as one header cluster.
 const updateChipGap = 2
 
@@ -270,7 +260,7 @@ func (m *MainMenuModel) updateNotice() string {
 	}
 	hovered := m.isHovered(regionUpdate)
 
-	// One continuous fill between two thin curved end caps. Idle, that fill is menuSurface
+	// One continuous fill, padded a cell on each side. Idle that fill is menuSurface
 	// — the same stripe a selected project row sits on — so the chip reads as a
 	// raised piece of the menu rather than a button bolted onto it. Nothing else
 	// in this box is filled, and a solid block here would also stack a second loud
@@ -297,19 +287,11 @@ func (m *MainMenuModel) updateNotice() string {
 	seg := func(c lipgloss.Color) lipgloss.Style {
 		return lipgloss.NewStyle().Background(fill).Foreground(c)
 	}
-	// The caps are the chip's border, so they take the container's own border
-	// color — the same one its rounded ╭╮╰╯ corners are drawn in. Painting them in
-	// the fill instead made them read as loose parentheses sitting beside the
-	// chip, because a thin arc in the fill color is a detached stroke rather than
-	// an edge. Same stroke weight, same rounding, same color as the box around it.
-	cap := lipgloss.NewStyle().Foreground(m.boxBorderColor())
 	version := "v" + strings.TrimPrefix(m.updateVersion, "v")
-	return cap.Render(iconChipCapLeft) +
-		seg(arrowInk).Render(" ⇡ ") +
+	return seg(arrowInk).Render(" ⇡ ") +
 		seg(versionInk).Render(version) +
 		seg(sepInk).Render(" · ") +
-		seg(actionInk).Bold(true).Render("U Update ") +
-		cap.Render(iconChipCapRight)
+		seg(actionInk).Bold(true).Render("U Update ")
 }
 
 // renderHeaderGapRow renders the blank spacer between the header switchers and

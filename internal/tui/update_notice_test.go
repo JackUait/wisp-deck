@@ -22,7 +22,7 @@ func TestUpdateNotice_SitsLeftOfTheWordmark(t *testing.T) {
 	titleRow := stripAnsi(lines[1])
 	spacerRow := stripAnsi(lines[2])
 
-	chipEnd := strings.Index(titleRow, iconChipCapRight)
+	chipEnd := strings.Index(titleRow, "U Update")
 	wordmark := strings.Index(titleRow, "Wisp Deck")
 	if chipEnd < 0 || wordmark < 0 {
 		t.Fatalf("expected the chip and the wordmark to share the title row, got %q", titleRow)
@@ -41,11 +41,12 @@ func TestUpdateNotice_SitsLeftOfTheWordmark(t *testing.T) {
 	}
 }
 
-// The notice is a chip: thin curved end caps around a single continuous fill. Idle, that
-// fill is the same surface the selected project row uses, so the chip sits in
-// the menu's existing material instead of introducing a filled button — this
-// interface renders every action as unfilled "KEY Label" accent text, and a
-// solid block would also stack a second loud shape under the orange wordmark.
+// The notice is a plain rectangle: one continuous fill, padded a cell on each
+// side, with no end caps at all. Idle, that fill is the same surface the selected
+// project row uses, so the chip sits in the menu's existing material instead of
+// introducing a filled button — this interface renders every action as unfilled
+// "KEY Label" accent text, and a loud block would also stack a second heavy shape
+// under the orange wordmark.
 func TestUpdateNotice_IdleChipUsesTheSelectedRowSurface(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.ANSI256)
@@ -56,21 +57,18 @@ func TestUpdateNotice_IdleChipUsesTheSelectedRowSurface(t *testing.T) {
 	notice := m.updateNotice()
 
 	plain := stripAnsi(notice)
-	if !strings.HasPrefix(plain, iconChipCapLeft) {
-		t.Errorf("notice does not open with the curved left cap: %q", plain)
+	// Square ends: a cell of padding on each side and nothing else. Cap glyphs
+	// (powerline semicircles, half blocks) are gone for good.
+	if !strings.HasPrefix(plain, " ") || !strings.HasSuffix(plain, " ") {
+		t.Errorf("chip is not padded a cell on each side: %q", plain)
 	}
-	if !strings.HasSuffix(plain, iconChipCapRight) {
-		t.Errorf("notice does not close with the curved right cap: %q", plain)
+	for _, r := range plain {
+		if r >= 0x2580 && r <= 0x259F || r >= 0xE0B0 && r <= 0xE0D4 {
+			t.Errorf("chip still carries a cap glyph %U: %q", r, plain)
+		}
 	}
 	if !strings.Contains(notice, "48;5;"+menuSurface) {
 		t.Errorf("idle chip is not on the selected-row surface %s: %q", menuSurface, notice)
-	}
-	// The caps are the chip's border, so they are drawn in the very color the
-	// container's own rounded corners use — not in the fill, which made them read
-	// as loose parentheses floating beside the chip rather than as its edge.
-	capStyle := "38;5;" + string(m.boxBorderColor()) + "m" + iconChipCapLeft
-	if !strings.Contains(notice, capStyle) {
-		t.Errorf("left cap is not drawn in the container's border color %s: %q", m.boxBorderColor(), notice)
 	}
 	// The theme color may tint text, but must not fill the chip while idle.
 	if bg := "48;5;" + string(m.theme.Primary); strings.Contains(notice, bg) {
@@ -86,32 +84,6 @@ func TestUpdateNotice_IdleChipUsesTheSelectedRowSurface(t *testing.T) {
 	}
 	if !strings.Contains(plain, "v2.24.0") || !strings.Contains(plain, "U Update") {
 		t.Errorf("notice lost its version or action text: %q", plain)
-	}
-}
-
-// The container's border color is not fixed — it turns Primary when focus
-// leaves the body. The chip's caps are that border, so they must track it.
-func TestUpdateNotice_CapsTrackTheContainerBorderColor(t *testing.T) {
-	prev := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.ANSI256)
-	defer lipgloss.SetColorProfile(prev)
-
-	m := newTestMenu()
-	m.SetUpdateVersion("2.24.0")
-
-	m.focus = FocusBody
-	body := m.boxBorderColor()
-	if !strings.Contains(m.updateNotice(), "38;5;"+string(body)+"m"+iconChipCapLeft) {
-		t.Errorf("cap does not use the body-focus border color %s", body)
-	}
-
-	m.focus = FocusAI
-	away := m.boxBorderColor()
-	if away == body {
-		t.Fatal("border color did not change with focus; test proves nothing")
-	}
-	if !strings.Contains(m.updateNotice(), "38;5;"+string(away)+"m"+iconChipCapLeft) {
-		t.Errorf("cap did not follow the border color to %s when focus left the body", away)
 	}
 }
 
