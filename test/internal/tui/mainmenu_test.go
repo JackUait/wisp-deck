@@ -841,7 +841,7 @@ func TestMainMenu_ViewUpdateVersion(t *testing.T) {
 	m.SetUpdateVersion("v1.2.3")
 	m.SetSize(80, 30)
 	view := m.View()
-	if !strings.Contains(view, "v1.2.3 available") {
+	if !strings.Contains(view, "v1.2.3") {
 		t.Error("view should show the pending version in the header notice")
 	}
 	if !strings.Contains(view, "U Update") {

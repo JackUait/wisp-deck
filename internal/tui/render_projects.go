@@ -24,6 +24,11 @@ const (
 	// caption/value/HitTest column math is unchanged.
 	iconChevronLeft  = "\U000F0141" // nf-md-chevron_left
 	iconChevronRight = "\U000F0142" // nf-md-chevron_right
+
+	// Powerline half-circles, drawn in the adjacent segment's fill color to round
+	// off a filled pill. One cell each, like the nerd-font glyphs above.
+	iconPillCapLeft  = "" // nf-pl-left_half_circle_thick
+	iconPillCapRight = "" // nf-pl-right_half_circle_thick
 )
 
 // settingsCaption renders a header-row caption glyph. Idle it is neutral gray;
@@ -234,15 +239,45 @@ func (m *MainMenuModel) updateNotice() string {
 	if m.updateVersion == "" {
 		return ""
 	}
-	versionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	// The leading letter is the real keybinding, mirroring the action bar.
-	buttonStyle := lipgloss.NewStyle().Foreground(m.theme.Accent)
-	if m.isHovered(regionUpdate) {
-		buttonStyle = buttonStyle.Bold(true).Underline(true)
+	hovered := m.isHovered(regionUpdate)
+
+	// Two fills, one silhouette: a muted segment states the fact, a segment in the
+	// theme's own color is the button. The caps carry no background of their own —
+	// they are drawn in their neighbour's fill so the pill rounds off cleanly over
+	// whatever sits behind the header row.
+	button := m.theme.Primary
+	fill := lipgloss.Color("236")
+	// Near-black ink: the three theme Primaries are all mid-bright, so a dark
+	// label is the one foreground that stays legible on every one of them.
+	ink := lipgloss.Color("234")
+	arrowInk, versionInk := button, lipgloss.Color("252")
+	if hovered {
+		// Armed: the muted half floods with the button color so the whole pill
+		// reads as one solid, pressable chip. Flooding is the state change rather
+		// than a brighter fill because neither Bright nor Accent is reliably
+		// lighter than Primary across the three themes (codex's Bright is darker).
+		fill = button
+		arrowInk, versionInk = ink, ink
 	}
+
 	version := "v" + strings.TrimPrefix(m.updateVersion, "v")
-	return versionStyle.Render("⇡ "+version+" available") + dimStyle.Render(" · ") + buttonStyle.Render("U Update")
+	// The arrow takes the button's own color rather than the theme accent: only
+	// Primary is bright enough to read on the muted fill in all three themes.
+	arrow := lipgloss.NewStyle().Background(fill).Foreground(arrowInk).Render("⇡ ")
+	versionSeg := arrow + lipgloss.NewStyle().Background(fill).
+		Foreground(versionInk).Bold(true).Render(version+" ")
+
+	// The leading letter is the real keybinding, mirroring the action bar, so it
+	// is underlined as a mnemonic. On hover the whole label underlines instead.
+	label := lipgloss.NewStyle().Background(button).Foreground(ink).Bold(true)
+	buttonSeg := label.Render(" ") + label.Underline(true).Render("U") + label.Render(" Update ")
+	if hovered {
+		buttonSeg = label.Underline(true).Render(" U Update ")
+	}
+
+	capL := lipgloss.NewStyle().Foreground(fill).Render(iconPillCapLeft)
+	capR := lipgloss.NewStyle().Foreground(button).Render(iconPillCapRight)
+	return capL + versionSeg + buttonSeg + capR
 }
 
 // renderHeaderGapRow renders the blank spacer between the header switchers and

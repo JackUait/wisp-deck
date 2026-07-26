@@ -3,6 +3,9 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 // With the PLAN row present (wordmark host), the update notice right-aligns on
@@ -22,13 +25,68 @@ func TestUpdateNotice_OnSpacerRowWithoutPlanRow(t *testing.T) {
 	if !strings.Contains(titleRow, "Wisp Deck") {
 		t.Fatalf("expected wordmark on the title row, got %q", titleRow)
 	}
-	if !strings.Contains(spacerRow, "v2.24.0 available") || !strings.Contains(spacerRow, "U Update") {
+	if !strings.Contains(spacerRow, "v2.24.0") || !strings.Contains(spacerRow, "U Update") {
 		t.Fatalf("expected update notice on the spacer row, got %q", spacerRow)
 	}
 	borderChar := strings.LastIndex(spacerRow, "│")
-	noticeEnd := strings.Index(spacerRow, "U Update") + len("U Update")
+	noticeEnd := strings.Index(spacerRow, iconPillCapRight) + len(iconPillCapRight)
 	if trailing := spacerRow[noticeEnd:borderChar]; len(strings.TrimSpace(trailing)) != 0 {
 		t.Errorf("expected only whitespace between notice and border, got %q", trailing)
+	}
+}
+
+// The notice reads as one segmented pill: a rounded cap on each end, a muted
+// version segment, and a filled "U Update" button segment. The caps are drawn in
+// their neighbouring segment's fill color, so the pill's silhouette is unbroken.
+func TestUpdateNotice_RendersAsSegmentedPill(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	defer lipgloss.SetColorProfile(prev)
+
+	m := newTestMenu()
+	m.SetUpdateVersion("2.24.0")
+	notice := m.updateNotice()
+
+	plain := stripAnsi(notice)
+	if !strings.HasPrefix(plain, iconPillCapLeft) {
+		t.Errorf("notice does not open with the rounded left cap: %q", plain)
+	}
+	if !strings.HasSuffix(plain, iconPillCapRight) {
+		t.Errorf("notice does not close with the rounded right cap: %q", plain)
+	}
+	// Both segments are filled, so the pill reads as a solid shape rather than
+	// loose colored text: one background for the version, another for the button.
+	if got := strings.Count(notice, "48;5;"); got < 4 {
+		t.Errorf("expected both segments filled, got %d background sequences in %q", got, notice)
+	}
+	// "available" is redundant next to a version chip and cost 10 columns.
+	if strings.Contains(plain, "available") {
+		t.Errorf("expected the wordy notice to be gone, got %q", plain)
+	}
+	if !strings.Contains(plain, "v2.24.0") || !strings.Contains(plain, "U Update") {
+		t.Errorf("notice lost its version or button text: %q", plain)
+	}
+}
+
+// Hovering the pill lights up the button segment without changing its footprint,
+// so the click span stays put under the cursor.
+func TestUpdateNotice_HoverKeepsWidth(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	defer lipgloss.SetColorProfile(prev)
+
+	m := newTestMenu()
+	m.SetUpdateVersion("2.24.0")
+	idle := m.updateNotice()
+
+	m.hover = hitTarget{region: regionUpdate}
+	hovered := m.updateNotice()
+
+	if hovered == idle {
+		t.Error("hovering the update pill changed nothing")
+	}
+	if got, want := lipgloss.Width(hovered), lipgloss.Width(idle); got != want {
+		t.Errorf("hovered pill width = %d, idle = %d; the pill must not resize", got, want)
 	}
 }
 
