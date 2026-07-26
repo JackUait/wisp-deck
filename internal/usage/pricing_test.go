@@ -259,6 +259,33 @@ func TestModelCostUSD_openCodeProviders(t *testing.T) {
 	}
 }
 
+func TestModelCostUSD_kimiForCodingUsesAPIEquivalentRates(t *testing.T) {
+	// Kimi For Coding is a flat-rate subscription, but the Stats tab should
+	// estimate what the same token usage would cost on Moonshot's metered API.
+	// The gateway uses different model ids from the open platform, so each id
+	// needs an API-equivalent pricing alias. Input and output are checked
+	// independently so swapping the asymmetric rates cannot pass.
+	cases := []struct {
+		model           string
+		wantIn, wantOut float64
+	}{
+		{"k3", 3, 15},
+		{"k3-256k", 3, 15},
+		{"kimi-for-coding", 0.95, 4},
+		{"kimi-for-coding-highspeed", 1.9, 8},
+	}
+	for _, c := range cases {
+		inputUSD, inputPriced := ModelCostUSD(ModelUsage{Model: c.model, Input: 1_000_000})
+		outputUSD, outputPriced := ModelCostUSD(ModelUsage{Model: c.model, Output: 1_000_000})
+		if !inputPriced || !approx(inputUSD, c.wantIn) {
+			t.Errorf("%s input = %v priced=%v, want %v/true", c.model, inputUSD, inputPriced, c.wantIn)
+		}
+		if !outputPriced || !approx(outputUSD, c.wantOut) {
+			t.Errorf("%s output = %v priced=%v, want %v/true", c.model, outputUSD, outputPriced, c.wantOut)
+		}
+	}
+}
+
 func TestModelCostUSD_openCodeLongestPrefixWins(t *testing.T) {
 	// Sibling ids that share a shorter prefix but have different prices must NOT
 	// be mispriced as the cheaper/base model. Hammer the randomized map order.

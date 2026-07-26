@@ -105,6 +105,14 @@ var modelRates = map[string]modelRate{
 	"kimi-k2.6":              {0.95, 4},
 	"kimi-k2.7-code":         {0.95, 4},
 
+	// Kimi For Coding is a flat-rate subscription, so its catalog models remain
+	// unpriced there. Stats still estimates their equivalent metered API spend by
+	// mapping the coding gateway's ids to the corresponding Moonshot API rates.
+	"k3":                        {3, 15},
+	"k3-256k":                   {3, 15},
+	"kimi-for-coding":           {0.95, 4},
+	"kimi-for-coding-highspeed": {1.9, 8},
+
 	// Z.ai GLM base model kept as a prefix fallback for historical usage; the
 	// offered glm-5/5.1/5.2/4.6/4.7/4.5-air come from the catalog (folded in init).
 	"glm-4.5": {0.6, 2.2},
