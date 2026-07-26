@@ -782,3 +782,37 @@ func TestTranslateCarriesWebSearchDomainFilters(t *testing.T) {
 		t.Fatalf("blocked domains = %v", got.WebSearchBlockedDomains)
 	}
 }
+
+// The bridge's server-tool blocks are part of the assistant response Claude may
+// replay on a later request. They are lifecycle metadata rather than Codex
+// history items; accept and omit them while preserving the answer text.
+func TestTranslateReplaysBridgeWebSearchResponse(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"messages":[
+			{"role":"user","content":"search Korea"},
+			{"role":"assistant","content":[
+				{"type":"server_tool_use","id":"srvtoolu_wisp_ws-1","name":"web_search",
+				 "input":{"query":"used cars Korea"}},
+				{"type":"web_search_tool_result","tool_use_id":"srvtoolu_wisp_ws-1","content":[]},
+				{"type":"text","text":"Found Encar."}
+			]},
+			{"role":"user","content":"What about Japan?"}
+		]
+	}`)
+	history, err := json.Marshal(got.History)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(history), "Found Encar.") {
+		t.Fatalf("history lost answer text: %s", history)
+	}
+	if strings.Contains(string(history), "server_tool_use") ||
+		strings.Contains(string(history), "web_search_tool_result") {
+		t.Fatalf("history leaked server-tool lifecycle metadata: %s", history)
+	}
+	if len(got.Input) != 1 || got.Input[0].Text != "What about Japan?" {
+		t.Fatalf("input = %#v", got.Input)
+	}
+}

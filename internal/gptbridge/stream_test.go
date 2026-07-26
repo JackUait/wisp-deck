@@ -248,6 +248,49 @@ func TestResponseReducerRequiresUsageOrEstimate(t *testing.T) {
 	}
 }
 
+// Codex can report a webSearch action without a display detail, yielding an
+// empty query. The search still happened and must remain countable rather than
+// aborting the nested Claude Code WebSearch request with a 502.
+func TestResponseReducerReportsWebSearchWithEmptyDisplayQuery(t *testing.T) {
+	reducer := NewResponseReducer(ResponseOptions{
+		MessageID: "msg_search", Model: "gpt-5.6-terra",
+		ThreadID: "thread-1", TurnID: "turn-1", EstimatedInputTokens: 1,
+	})
+	for _, method := range []string{"item/started", "item/completed"} {
+		_, err := reducer.Apply(Notification{
+			Method: method,
+			Params: json.RawMessage(`{
+				"threadId":"thread-1","turnId":"turn-1",
+				"item":{"id":"ws-empty","type":"webSearch","query":"","action":{"type":"other"}}
+			}`),
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+	}
+	if _, err := reducer.Finish("end_turn"); err != nil {
+		t.Fatal(err)
+	}
+	message, err := reducer.Message()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(message.Content) != 2 || message.Content[0].Type != "server_tool_use" ||
+		message.Content[1].Type != "web_search_tool_result" {
+		t.Fatalf("content = %+v", message.Content)
+	}
+	var input map[string]string
+	if err := json.Unmarshal(message.Content[0].Input, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input["query"] != "web search" {
+		t.Fatalf("server tool input = %v", input)
+	}
+	if message.Usage.OutputTokens == 0 {
+		t.Fatal("fallback usage omitted server_tool_use output")
+	}
+}
+
 func TestWriteSSEErrorEvent(t *testing.T) {
 	var output bytes.Buffer
 	err := WriteSSE(&output, []StreamEvent{AnthropicErrorEvent("api_error", "broken")})

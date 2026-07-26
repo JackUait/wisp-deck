@@ -439,6 +439,9 @@ func translateHistoryMessage(message Message, open map[string]string, seen map[s
 			})
 		case "thinking", "redacted_thinking":
 			// Anthropic thinking signatures cannot be replayed to OpenAI.
+		case "server_tool_use", "web_search_tool_result":
+			// Server-tool lifecycle metadata has no injectable Codex history
+			// equivalent. The adjacent answer text carries the findings.
 		default:
 			return nil, fmt.Errorf("unsupported content block %q", block.Type)
 		}

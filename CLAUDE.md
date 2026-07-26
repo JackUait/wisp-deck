@@ -498,15 +498,26 @@ The rules that keep this working:
   so Claude Code's `allowed_domains`/`blocked_domains` are stated to the model
   that runs the search. Dropping them would answer a scoped search with
   unscoped results — which looks like a working search.
-- **A prose answer is a valid result.** Claude Code's WebSearch output schema is
-  `results: Array<hit | string>` — "search results and/or text commentary from
-  the model" — so the bridge does not need to synthesize `server_tool_use` /
-  `web_search_tool_result` blocks. The base instructions tell the model to
-  inline its source URLs, since that text *is* the result.
+- **Prose carries the findings; protocol blocks carry the accounting.** Claude
+  Code accepts text commentary as a WebSearch result, but it computes the
+  displayed search count from `server_tool_use` / `web_search_tool_result`
+  blocks. Reducing Codex's `webSearch` items to prose alone made every successful
+  search say `Did 0 searches`. Preserve each item as a paired server-use/result
+  block, retain the prose with its inline source URLs, and report
+  `usage.server_tool_use.web_search_requests`. A real app-server
+  `item/started` can have an empty query while `item/completed` supplies it, so
+  emit the pair on completion; if completion still has no display detail (for
+  example an `other` action), use a neutral fallback rather than rejecting the
+  valid item. Accept these emitted blocks when Claude
+  replays assistant history, then omit their lifecycle metadata when injecting
+  Codex history because the adjacent prose carries the findings.
 
 Guarded by `TestTranslateAcceptsAnthropicWebSearchServerTool` and its
-neighbours in `translate_test.go`, `TestEngineEnablesCodexWebSearchOnlyWhenRequested`
-/ `TestEngineAcceptsWebSearchItemOnlyOnWebSearchTurns` in `engine_test.go`, and
+neighbours in `translate_test.go`, `TestEngineEnablesCodexWebSearchOnlyWhenRequested`,
+`TestEngineAcceptsWebSearchItemOnlyOnWebSearchTurns`, and
+`TestEngineReportsCodexWebSearchAsAnthropicServerToolUse` in `engine_test.go`,
+`TestResponseReducerReportsWebSearchWithEmptyDisplayQuery` in `stream_test.go`,
+`TestTranslateReplaysBridgeWebSearchResponse` in `translate_test.go`, plus
 `TestHandlerAcceptsClaudeCodeWebSearchRequest`, which replays Claude Code's
 exact request body end to end.
 

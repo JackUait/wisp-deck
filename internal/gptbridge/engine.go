@@ -582,8 +582,8 @@ func baseInstructions(translation Translation) string {
 		), " ")
 	}
 	// Claude Code asked for Anthropic's server-hosted web_search, which this
-	// bridge answers with Codex's own search. Its result schema takes the reply
-	// as prose, so say what belongs in it.
+	// bridge answers with Codex's own search. The reducer supplies the server-tool
+	// lifecycle blocks; these instructions make the findings useful as prose.
 	lines = append(lines,
 		"Only host-provided dynamic tools and Codex's own web search are available. Never use or request any Codex-owned shell, filesystem, MCP, app, image, collaboration, or environment tool.",
 		"Use web search to answer, then report the findings as plain text with the source URLs inline. Do not answer from memory alone.",

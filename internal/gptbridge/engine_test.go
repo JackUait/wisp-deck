@@ -872,7 +872,7 @@ func TestEngineAcceptsWebSearchItemOnlyOnWebSearchTurns(t *testing.T) {
 			if err != nil {
 				t.Fatalf("web search aborted the turn: %v", err)
 			}
-			if len(message.Content) != 1 || message.Content[0].Text != "found it" {
+			if len(message.Content) == 0 || message.Content[len(message.Content)-1].Text != "found it" {
 				t.Fatalf("message = %+v", message)
 			}
 		})
@@ -899,5 +899,134 @@ func TestEngineStatesWebSearchDomainFilters(t *testing.T) {
 	if !strings.Contains(instructions, "encar.com") ||
 		!strings.Contains(instructions, "spam.example") {
 		t.Fatalf("baseInstructions omit the domain filters: %q", instructions)
+	}
+}
+
+// Claude Code derives the WebSearch tool's displayed search count from
+// server_tool_use/web_search_tool_result content blocks. Returning only the
+// final prose makes a completed Codex search appear as "Did 0 searches".
+func TestEngineReportsCodexWebSearchAsAnthropicServerToolUse(t *testing.T) {
+	rpc := newFakeEngineRPC()
+	rpc.onTurnStart = func(threadID, turnID string) {
+		rpc.notifications <- notification(
+			"item/started", threadID, turnID,
+			`"startedAtMs":1,"item":{"id":"ws-1","type":"webSearch","query":""}`,
+		)
+		rpc.notifications <- notification(
+			"item/completed", threadID, turnID,
+			`"item":{"id":"ws-1","type":"webSearch","query":"used cars Korea"}`,
+		)
+		completeTextTurn(rpc, threadID, turnID, "found it")
+	}
+	engine := newTestEngine(t, rpc)
+	translation := testTranslation("search")
+	translation.WebSearch = true
+	var streamed []StreamEvent
+	message, err := engine.Execute(context.Background(), translation, func(events []StreamEvent) error {
+		streamed = append(streamed, events...)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Content []struct {
+			Type      string         `json:"type"`
+			ID        string         `json:"id"`
+			Name      string         `json:"name"`
+			Input     map[string]any `json:"input"`
+			ToolUseID string         `json:"tool_use_id"`
+		} `json:"content"`
+		Usage struct {
+			ServerToolUse struct {
+				WebSearchRequests int64 `json:"web_search_requests"`
+			} `json:"server_tool_use"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if len(wire.Content) != 3 {
+		t.Fatalf("content = %s, want server use, result, and text", encoded)
+	}
+	serverUse := wire.Content[0]
+	if serverUse.Type != "server_tool_use" || serverUse.ID == "" ||
+		serverUse.Name != "web_search" || serverUse.Input["query"] != "used cars Korea" {
+		t.Fatalf("server tool block = %+v", serverUse)
+	}
+	result := wire.Content[1]
+	if result.Type != "web_search_tool_result" || result.ToolUseID != serverUse.ID {
+		t.Fatalf("server tool result = %+v, want tool_use_id %q", result, serverUse.ID)
+	}
+	if wire.Content[2].Type != "text" {
+		t.Fatalf("final content block = %+v, want text", wire.Content[2])
+	}
+	if wire.Usage.ServerToolUse.WebSearchRequests != 1 {
+		t.Fatalf("web_search_requests = %d, want 1", wire.Usage.ServerToolUse.WebSearchRequests)
+	}
+	wantEvents := []string{
+		"message_start",
+		"content_block_start", "content_block_delta", "content_block_stop",
+		"content_block_start", "content_block_stop",
+		"content_block_start", "content_block_delta", "content_block_stop",
+		"message_delta", "message_stop",
+	}
+	if len(streamed) != len(wantEvents) {
+		t.Fatalf("stream event count = %d, want %d: %+v", len(streamed), len(wantEvents), streamed)
+	}
+	for index, want := range wantEvents {
+		if streamed[index].Event != want {
+			t.Fatalf("stream event[%d] = %q, want %q", index, streamed[index].Event, want)
+		}
+	}
+	var serverStart struct {
+		Index        int `json:"index"`
+		ContentBlock struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		} `json:"content_block"`
+	}
+	decodeEventData(t, streamed[1].Data, &serverStart)
+	var resultStart struct {
+		Index        int `json:"index"`
+		ContentBlock struct {
+			Type      string `json:"type"`
+			ToolUseID string `json:"tool_use_id"`
+		} `json:"content_block"`
+	}
+	decodeEventData(t, streamed[4].Data, &resultStart)
+	if serverStart.Index != 0 || serverStart.ContentBlock.Type != "server_tool_use" ||
+		serverStart.ContentBlock.ID == "" || resultStart.Index != 1 ||
+		resultStart.ContentBlock.Type != "web_search_tool_result" ||
+		resultStart.ContentBlock.ToolUseID != serverStart.ContentBlock.ID {
+		t.Fatalf("stream server/result starts = %+v / %+v", serverStart, resultStart)
+	}
+	var finalDelta struct {
+		Usage struct {
+			ServerToolUse struct {
+				WebSearchRequests int64 `json:"web_search_requests"`
+			} `json:"server_tool_use"`
+		} `json:"usage"`
+	}
+	decodeEventData(t, streamed[9].Data, &finalDelta)
+	if finalDelta.Usage.ServerToolUse.WebSearchRequests != 1 {
+		t.Fatalf("stream web_search_requests = %d, want 1",
+			finalDelta.Usage.ServerToolUse.WebSearchRequests)
+	}
+}
+
+func decodeEventData(t *testing.T, data any, destination any) {
+	t.Helper()
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(encoded, destination); err != nil {
+		t.Fatal(err)
 	}
 }

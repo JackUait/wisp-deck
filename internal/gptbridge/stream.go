@@ -11,10 +11,16 @@ import (
 
 // Usage is Anthropic-compatible token usage.
 type Usage struct {
-	InputTokens              int64 `json:"input_tokens"`
-	OutputTokens             int64 `json:"output_tokens"`
-	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens,omitempty"`
-	CacheReadInputTokens     int64 `json:"cache_read_input_tokens,omitempty"`
+	InputTokens              int64            `json:"input_tokens"`
+	OutputTokens             int64            `json:"output_tokens"`
+	CacheCreationInputTokens int64            `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int64            `json:"cache_read_input_tokens,omitempty"`
+	ServerToolUse            *ServerToolUsage `json:"server_tool_use,omitempty"`
+}
+
+// ServerToolUsage is Anthropic-compatible server-tool request usage.
+type ServerToolUsage struct {
+	WebSearchRequests int64 `json:"web_search_requests"`
 }
 
 // ResponseContentBlock is a Messages response block.
@@ -24,6 +30,8 @@ type ResponseContentBlock struct {
 	ID        string          `json:"id,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   any             `json:"content,omitempty"`
 	Thinking  string          `json:"thinking,omitempty"`
 	Signature string          `json:"signature,omitempty"`
 }
@@ -76,11 +84,19 @@ type ResponseReducer struct {
 	usage    Usage
 	usageSet bool
 	stop     string
+
+	webSearchToolUses map[string]string
+	webSearchDone     map[string]bool
+	webSearchRequests int64
 }
 
 // NewResponseReducer constructs a turn-scoped response reducer.
 func NewResponseReducer(options ResponseOptions) *ResponseReducer {
-	return &ResponseReducer{options: options, current: -1}
+	return &ResponseReducer{
+		options: options, current: -1,
+		webSearchToolUses: make(map[string]string),
+		webSearchDone:     make(map[string]bool),
+	}
 }
 
 // Start emits the stream's message_start event once.
@@ -113,6 +129,8 @@ func (r *ResponseReducer) Apply(notification Notification) ([]StreamEvent, error
 		return nil, errors.New("response is already finished")
 	}
 	switch notification.Method {
+	case "item/started", "item/completed":
+		return r.applyWebSearchItem(notification)
 	case "item/agentMessage/delta":
 		var params struct {
 			ThreadID string `json:"threadId"`
@@ -270,6 +288,96 @@ func (r *ResponseReducer) Apply(notification Notification) ([]StreamEvent, error
 	}
 }
 
+func (r *ResponseReducer) applyWebSearchItem(notification Notification) ([]StreamEvent, error) {
+	var params struct {
+		ThreadID string `json:"threadId"`
+		TurnID   string `json:"turnId"`
+		Item     struct {
+			ID    string `json:"id"`
+			Type  string `json:"type"`
+			Query string `json:"query"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(notification.Params, &params); err != nil {
+		return nil, errors.New("malformed web search item notification")
+	}
+	if params.Item.Type != "webSearch" {
+		return nil, nil
+	}
+	if params.Item.ID == "" {
+		return nil, errors.New("malformed web search item notification")
+	}
+	if err := r.acceptScope(params.ThreadID, params.TurnID); err != nil {
+		return nil, err
+	}
+	if notification.Method == "item/started" {
+		return nil, nil
+	}
+	query := params.Item.Query
+	if query == "" {
+		query = "web search"
+	}
+
+	events, toolUseID, err := r.startWebSearch(params.Item.ID, query)
+	if err != nil {
+		return nil, err
+	}
+	if notification.Method != "item/completed" || r.webSearchDone[params.Item.ID] {
+		return events, nil
+	}
+	r.webSearchDone[params.Item.ID] = true
+	events = append(events, r.closeCurrent()...)
+	index := len(r.blocks)
+	r.blocks = append(r.blocks, ResponseContentBlock{
+		Type: "web_search_tool_result", ToolUseID: toolUseID, Content: []any{},
+	})
+	events = append(events,
+		contentStart(index, map[string]any{
+			"type": "web_search_tool_result", "tool_use_id": toolUseID,
+			"content": []any{},
+		}),
+		contentStop(index),
+	)
+	return events, nil
+}
+
+func (r *ResponseReducer) startWebSearch(itemID, query string) ([]StreamEvent, string, error) {
+	if toolUseID := r.webSearchToolUses[itemID]; toolUseID != "" {
+		return nil, toolUseID, nil
+	}
+	input, err := json.Marshal(map[string]string{"query": query})
+	if err != nil {
+		return nil, "", err
+	}
+	toolUseID := "srvtoolu_wisp_" + itemID
+	r.webSearchToolUses[itemID] = toolUseID
+	r.webSearchRequests++
+
+	events := r.Start()
+	events = append(events, r.closeCurrent()...)
+	index := len(r.blocks)
+	r.blocks = append(r.blocks, ResponseContentBlock{
+		Type: "server_tool_use", ID: toolUseID, Name: "web_search", Input: input,
+	})
+	events = append(events,
+		contentStart(index, map[string]any{
+			"type": "server_tool_use", "id": toolUseID,
+			"name": "web_search", "input": map[string]any{},
+		}),
+		StreamEvent{
+			Event: "content_block_delta",
+			Data: map[string]any{
+				"type": "content_block_delta", "index": index,
+				"delta": map[string]any{
+					"type": "input_json_delta", "partial_json": string(input),
+				},
+			},
+		},
+		contentStop(index),
+	)
+	return events, toolUseID, nil
+}
+
 // AddToolCall emits and records one complete dynamic tool-use block.
 func (r *ResponseReducer) AddToolCall(call DynamicToolCall) ([]StreamEvent, error) {
 	if r.finished {
@@ -330,6 +438,9 @@ func (r *ResponseReducer) Finish(stopReason string) ([]StreamEvent, error) {
 			OutputTokens: r.estimatedOutputTokens(),
 		}
 	}
+	if r.webSearchRequests > 0 {
+		r.usage.ServerToolUse = &ServerToolUsage{WebSearchRequests: r.webSearchRequests}
+	}
 	events := r.Start()
 	events = append(events, r.closeCurrent()...)
 	r.stop = stopReason
@@ -342,7 +453,9 @@ func (r *ResponseReducer) Finish(stopReason string) ([]StreamEvent, error) {
 				"delta": map[string]any{
 					"stop_reason": stopReason, "stop_sequence": nil,
 				},
-				"usage": Usage{OutputTokens: r.usage.OutputTokens},
+				"usage": Usage{
+					OutputTokens: r.usage.OutputTokens, ServerToolUse: r.usage.ServerToolUse,
+				},
 			},
 		},
 		StreamEvent{Event: "message_stop", Data: map[string]any{"type": "message_stop"}},
@@ -410,7 +523,7 @@ func (r *ResponseReducer) estimatedOutputTokens() int64 {
 			runes += utf8.RuneCountInString(block.Text)
 		case "thinking":
 			runes += utf8.RuneCountInString(block.Thinking)
-		case "tool_use":
+		case "tool_use", "server_tool_use":
 			runes += len(block.Input)
 		}
 	}

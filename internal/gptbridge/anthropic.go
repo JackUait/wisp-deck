@@ -260,6 +260,22 @@ func parseContent(raw json.RawMessage, role string) ([]ContentBlock, error) {
 				return nil, fmt.Errorf("content[%d]: %w", index, err)
 			}
 			block.ToolUseID, block.ToolContent, block.IsError = wire.ToolUseID, toolContent, wire.IsError
+		case "server_tool_use":
+			if role != "assistant" {
+				return nil, fmt.Errorf("content[%d]: server_tool_use is valid only for assistant messages", index)
+			}
+			if wire.ID == "" || wire.Name == "" || !validJSONObject(wire.Input) {
+				return nil, fmt.Errorf("content[%d]: server_tool_use requires id, name, and object input", index)
+			}
+			block.ID, block.Name, block.Input = wire.ID, wire.Name, wire.Input
+		case "web_search_tool_result":
+			if role != "assistant" {
+				return nil, fmt.Errorf("content[%d]: web_search_tool_result is valid only for assistant messages", index)
+			}
+			if wire.ToolUseID == "" || !validJSONContainer(wire.Content) {
+				return nil, fmt.Errorf("content[%d]: web_search_tool_result requires tool_use_id and array or object content", index)
+			}
+			block.ToolUseID = wire.ToolUseID
 		case "thinking", "redacted_thinking":
 			if role != "assistant" {
 				return nil, fmt.Errorf("content[%d]: %s is valid only for assistant messages", index, wire.Type)
@@ -295,6 +311,19 @@ func parseToolResultContent(raw json.RawMessage) ([]ContentBlock, error) {
 func validJSONObject(raw json.RawMessage) bool {
 	var object map[string]any
 	return json.Unmarshal(raw, &object) == nil && object != nil
+}
+
+func validJSONContainer(raw json.RawMessage) bool {
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return false
+	}
+	switch value.(type) {
+	case []any, map[string]any:
+		return true
+	default:
+		return false
+	}
 }
 
 func imageURL(source ImageSource) (string, error) {
