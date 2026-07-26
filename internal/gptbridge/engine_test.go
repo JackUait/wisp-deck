@@ -796,6 +796,24 @@ func threadStartConfig(t *testing.T, rpc *fakeEngineRPC) map[string]any {
 	return nil
 }
 
+func TestBaseInstructionsKeepClaudeChecklistWorkResumable(t *testing.T) {
+	for _, webSearch := range []bool{false, true} {
+		t.Run(fmt.Sprintf("web_search_%t", webSearch), func(t *testing.T) {
+			instructions := baseInstructions(Translation{WebSearch: webSearch})
+			for _, want := range []string{
+				"fully resolved",
+				"actionable checklist items remain",
+				"background mode from the outset",
+				"registers their completion and automatically resumes you",
+			} {
+				if !strings.Contains(instructions, want) {
+					t.Fatalf("baseInstructions omit %q: %q", want, instructions)
+				}
+			}
+		})
+	}
+}
+
 // Codex's own web search is the only way the bridge can answer Anthropic's
 // server-hosted web_search tool, so it must be switched on for exactly those
 // turns — and stay off for every other turn, which is the whole reason the

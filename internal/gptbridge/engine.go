@@ -575,6 +575,8 @@ func baseInstructions(translation Translation) string {
 	lines := []string{
 		"You are the language model inside Claude Code.",
 		"Follow the supplied developer and user instructions.",
+		"Continue working until the user's request is fully resolved; never claim completion while actionable checklist items remain.",
+		"Start host commands that may approach their timeout in background mode from the outset, so Claude Code registers their completion and automatically resumes you.",
 	}
 	if !translation.WebSearch {
 		return strings.Join(append(lines,
