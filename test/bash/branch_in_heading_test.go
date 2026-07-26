@@ -10,9 +10,10 @@ import (
 	"time"
 )
 
-// The branch name moved out of the ledger entirely — and so did the push/pull
-// commit counts (↑N/↓M), which now sit right of the branch in the Claude
-// statusline. With the top header gone, the changed-file stamp rides the bottom
+// The branch name moved out of the ledger entirely — and in a CLAUDE pane so did
+// the push/pull commit counts (↑N/↓M), which now sit right of the branch in the
+// statusline (a Codex pane keeps them on the bar — see
+// TestCompactView_bottom_bar_divergence_follows_the_tool). With the top header gone, the changed-file stamp rides the bottom
 // bar, right-aligned. Runs the shell renderer piped (deterministic fixture path)
 // against a repo whose branch is ahead of upstream by 2, and asserts neither the
 // branch name nor the divergence appears anywhere, while the stamp survives.
@@ -73,7 +74,7 @@ func TestCompactView_heading_omits_branch_keeps_stamp(t *testing.T) {
 		t.Errorf("ledger still names the branch somewhere:\n%q", clean)
 	}
 	if strings.Contains(clean, "↑2") {
-		t.Errorf("ledger still shows the push count — it rides the statusline now:\n%q", clean)
+		t.Errorf("a claude pane's ledger still shows the push count — the statusline has it:\n%q", clean)
 	}
 	// The changed-file stamp still rides the bottom bar, right-aligned.
 	barLine := ""

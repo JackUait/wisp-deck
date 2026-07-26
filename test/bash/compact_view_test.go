@@ -1489,12 +1489,28 @@ func TestCompactView_draws_no_top_header_or_separator(t *testing.T) {
 	}
 }
 
-// The upstream divergence (↑N/↓M) belongs to the Claude statusline, right of
-// the branch name it describes. The shell fallback renderer must drop it from
-// the bottom bar exactly like the native ledger does — the pane picks between
-// the two by binary capability, so a fix in one is a fix for only half the
-// users.
-func TestCompactView_bottom_bar_omits_ahead_behind(t *testing.T) {
+// A Claude pane reads the upstream divergence (↑N/↓M) off the statusline, right
+// of the branch name it describes, so its bottom bar must not repeat it. Only
+// Claude Code renders that statusline: a CODEX pane keeps the counts on the
+// bottom bar, or loses them entirely. The shell fallback renderer must draw the
+// same line the native ledger does — the pane picks between the two by binary
+// capability, so a fix in one is a fix for only half the users.
+func TestCompactView_bottom_bar_divergence_follows_the_tool(t *testing.T) {
+	for _, tc := range []struct {
+		tool string
+		want bool
+	}{
+		{tool: "claude", want: false},
+		{tool: "codex", want: true},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			compactViewDivergenceCase(t, tc.tool, tc.want)
+		})
+	}
+}
+
+func compactViewDivergenceCase(t *testing.T, tool string, want bool) {
+	t.Helper()
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
 		t.Skip("zsh not available")
@@ -1539,16 +1555,21 @@ func TestCompactView_bottom_bar_omits_ahead_behind(t *testing.T) {
 		}
 		env = append(env, e)
 	}
-	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=0.1", "TERM=xterm")
+	cmd.Env = append(env, "COMPACT_VIEW_INTERVAL=0.1", "TERM=xterm", "WISP_DECK_TOOL="+tool)
 	out, _ := cmd.CombinedOutput()
 	got := string(out)
 
 	// The scroll indicator has arrows of its own, so match the divergence
-	// marker's own cyan/yellow escapes rather than a bare arrow.
-	if strings.Contains(got, "\x1b[36m↑") || strings.Contains(got, "\x1b[33m↓") {
-		t.Errorf("ledger still renders the upstream divergence — it lives in the statusline now:\n%q", got)
+	// marker's own cyan escape rather than a bare arrow.
+	shown := strings.Contains(got, "\x1b[36m↑1")
+	if shown != want {
+		if want {
+			t.Errorf("a %s pane has no statusline to carry the push count — the bottom bar must keep it:\n%q", tool, got)
+		} else {
+			t.Errorf("a %s pane duplicates the statusline's push count on the bottom bar:\n%q", tool, got)
+		}
 	}
-	// The pane itself still renders — only the marker left.
+	// The pane itself still renders either way.
 	if !strings.Contains(got, "working tree clean") {
 		t.Errorf("ledger stopped rendering entirely:\n%q", got)
 	}

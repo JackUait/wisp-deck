@@ -643,7 +643,7 @@ func (m *LedgerModel) View() string {
 		lines = append(lines, "")
 		bodyLines++
 	}
-	lines = append(lines, renderLedgerFooter(m.state, width, m.actionError, m.session.Pill, m.accountHover))
+	lines = append(lines, renderLedgerFooter(m.state, width, m.actionError, m.session.Pill, m.accountHover, m.sessionTool()))
 	return strings.Join(lines, "\n")
 }
 
@@ -857,7 +857,7 @@ func renderLedgerFileRow(row ledger.Row, width int, visual ledger.RowVisualState
 
 // renderLedgerFooter draws the account pill (and any status/error) on the left
 // and the changed-file stamp right-aligned, with a 1-col right margin.
-func renderLedgerFooter(state *ledger.State, width int, actionError error, pill *ledger.SessionPill, pillHover bool) string {
+func renderLedgerFooter(state *ledger.State, width int, actionError error, pill *ledger.SessionPill, pillHover bool, tool string) string {
 	metadata := state.Snapshot.Metadata
 	stampWidth := visibleRuneWidth(ledgerStampText(metadata))
 	leftBudget := width
@@ -868,7 +868,7 @@ func renderLedgerFooter(state *ledger.State, width int, actionError error, pill 
 			leftBudget = 0
 		}
 	}
-	left := renderLedgerFooterLeft(state, leftBudget, actionError, pill, pillHover)
+	left := renderLedgerFooterLeft(state, leftBudget, actionError, pill, pillHover, tool)
 	if stampWidth == 0 {
 		return left
 	}
@@ -879,7 +879,7 @@ func renderLedgerFooter(state *ledger.State, width int, actionError error, pill 
 	return left + strings.Repeat(" ", pad) + renderLedgerStamp(metadata)
 }
 
-func renderLedgerFooterLeft(state *ledger.State, width int, actionError error, pill *ledger.SessionPill, pillHover bool) string {
+func renderLedgerFooterLeft(state *ledger.State, width int, actionError error, pill *ledger.SessionPill, pillHover bool, tool string) string {
 	if width <= 0 {
 		return ""
 	}
@@ -900,9 +900,20 @@ func renderLedgerFooterLeft(state *ledger.State, width int, actionError error, p
 		return pillRendered + message(" · "+ledgerFitPlain(actionError.Error(), remaining))
 	}
 	// The upstream divergence (↑N/↓M) followed the branch name into the Claude
-	// statusline, where it sits right of the branch it describes — so the footer
-	// carries only the scroll position beside the pill.
+	// statusline, where it sits right of the branch it describes — so a Claude
+	// pane's footer would only duplicate it. Only Claude Code renders that
+	// statusline, though: a Codex pane has nowhere else to read the counts, so
+	// there they stay on the footer.
 	parts := []string{}
+	if ledgerToolNeedsDivergence(tool) {
+		metadata := state.Snapshot.Metadata
+		if metadata.Ahead > 0 {
+			parts = append(parts, fmt.Sprintf("↑%d", metadata.Ahead))
+		}
+		if metadata.Behind > 0 {
+			parts = append(parts, fmt.Sprintf("↓%d", metadata.Behind))
+		}
+	}
 	if state.MaxScroll() > 0 {
 		first := state.Scroll + 1
 		last := state.Scroll + state.ViewportHeight()
@@ -930,6 +941,25 @@ func renderLedgerFooterLeft(state *ledger.State, width int, actionError error, p
 		return pillStyle.Render(ledgerFitPlain(pillText, width))
 	}
 	return pillRendered + dim.Render(" · "+ledgerFitPlain(status, remaining))
+}
+
+// sessionTool is the pane's CURRENT agent. The relaunch context wins because a
+// mid-session tool switch rewrites it under a live pane; the launch flag covers
+// every tick before that context has loaded (it can be absent, half-written, or
+// simply late — see the reload comment in Update).
+func (m *LedgerModel) sessionTool() string {
+	if m.session.Tool != "" {
+		return m.session.Tool
+	}
+	return m.tool
+}
+
+// ledgerToolNeedsDivergence reports whether this pane's agent leaves the
+// upstream counts homeless. The empty tool is Claude (the relaunch context's own
+// default), so a missing or not-yet-loaded session context never double-prints
+// what the statusline already shows.
+func ledgerToolNeedsDivergence(tool string) bool {
+	return tool == "codex"
 }
 
 func ledgerHumanBytes(bytes int64) string {

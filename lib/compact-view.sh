@@ -225,6 +225,25 @@ viewport_slice() {
   done
 }
 
+# cv_session_tool names the agent this pane belongs to. The relaunch context
+# wins over the launch env: a mid-session tool switch rewrites its `tool=` under
+# a live ledger, exactly as the account pill's re-read handles a mid-session
+# account switch. Falls back to the pane's launch env, then to claude (the same
+# default the context parser applies), so a pane with no context never guesses
+# its way into showing an agent something its statusline already shows.
+# Usage: cv_session_tool  =>  "claude" | "codex" | ...
+cv_session_tool() {
+  local ctx="${WISP_DECK_RELAUNCH_FILE:-}" line
+  if [ -n "$ctx" ] && [ -f "$ctx" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        tool=?*) printf '%s\n' "${line#tool=}"; return 0 ;;
+      esac
+    done < "$ctx"
+  fi
+  printf '%s\n' "${WISP_DECK_TOOL:-claude}"
+}
+
 # scroll_status renders the bottom position indicator "first-last/total" with
 # ↑/↓ arrows showing whether more content sits above/below the viewport.
 # Usage: scroll_status <scroll> <viewport_lines> <total_lines>
@@ -1197,12 +1216,22 @@ compact_view_shell() {
     confirm_yes_start=0; confirm_yes_end=0; confirm_no_start=0; confirm_no_end=0
     discard_overlay=""
     local dot=$'\033[90m·\033[0m'
-    # Bottom bar: the account pill (when shown) and the scroll position (on
-    # overflow). Both the branch NAME and the upstream divergence (↑N commits to
-    # push, ↓M to pull) live in the Claude statusline now. Every piece is
-    # optional, so the dim-dot separator is added only between present pieces —
-    # never dangling. The batch-discard button and its confirm no longer live
-    # here — they overlay the TOP group header (see $discard_overlay below).
+    # Bottom bar: the account pill (when shown), the upstream divergence (↑N
+    # commits to push, ↓M to pull) on the agents that have nowhere else to show
+    # it, and the scroll position (on overflow). The branch NAME lives in the
+    # Claude statusline, and so does the divergence for a Claude pane — where
+    # $div is therefore empty (see the build tick). Every piece is optional, so
+    # the dim-dot separator is added only between present pieces — never
+    # dangling. The batch-discard button and its confirm no longer live here —
+    # they overlay the TOP group header (see $discard_overlay below).
+    local div=""
+    if [ "$ahead" -gt 0 ] 2>/dev/null; then
+      div="$(printf '\033[36m↑%s\033[0m' "$ahead")"
+    fi
+    if [ "$behind" -gt 0 ] 2>/dev/null; then
+      [ -n "$div" ] && div="${div} ${dot} "
+      div="${div}$(printf '\033[33m↓%s\033[0m' "$behind")"
+    fi
     bottom_bar=""
     if [ -n "$account_pill_str" ]; then
       if [ "$pill_hover" = 1 ]; then
@@ -1210,6 +1239,9 @@ compact_view_shell() {
       else
         bottom_bar="$account_pill_str"
       fi
+      [ -n "$div" ] && bottom_bar="${bottom_bar} ${dot} ${div}"
+    elif [ -n "$div" ]; then
+      bottom_bar=" ${div}"
     fi
     if [ "$body_total" -gt "$avail" ]; then
       if [ -n "$bottom_bar" ]; then
@@ -1318,13 +1350,14 @@ compact_view_shell() {
   local w h content header body body_total avail mbtn draw_body frame draw_first
   local header_rows=2
   local staged unstaged untracked body_map
-  # Changed-file stamp figures (count + net +/-), computed on the build tick and
-  # reused across hover ticks. They MUST be declared here, ONCE, not with an
+  # ahead/behind + ab_counts are (re)assigned every build tick below, like the
+  # changed-file stamp figures. They MUST be declared here, ONCE, not with an
   # in-loop `local`: under zsh (the pane's shell) `local NAME` without an
   # assignment on an already-set variable is a *display* command that dumps
-  # "NAME=value" to stdout — the bottom bar blinked a raw value on every tick
-  # after the first (see the NOTE above). build_bottom_bar reads them to
-  # draw the right-aligned stamp on the bottom bar.
+  # "NAME=value" to stdout — the bottom bar blinked a raw `ab_counts=$'8\t0'` on
+  # every tick after the first (see the NOTE above). build_bottom_bar reads them
+  # all to draw the divergence and the right-aligned stamp on the bottom bar.
+  local ahead behind ab_counts
   local stamp_total_files=0 stamp_added=0 stamp_deleted=0 _stamp_sums
   local mterm mrest mcol mrow bl cpath prev_hover prev_scroll hover_keep
   local prev_pill_hover pill_hover_keep
@@ -1660,9 +1693,21 @@ compact_view_shell() {
     # body) via $(), so both shed their trailing blank identically and the Nth
     # map line keeps describing the Nth body line.
     body_map=$(body_path_map "$staged" "$unstaged" "$untracked")
-    # Neither the branch NAME nor the upstream divergence (↑N/↓M) is gathered
-    # here — both live in the Claude statusline now, so the build tick spends no
-    # git call on them.
+    # Upstream divergence, gathered ONCE here (on the build tick, not the hover
+    # hot path): ahead (commits to push) and behind (commits to pull) feed the
+    # bottom bar's ↑N/↓M marker, built outside the content subshell. The branch
+    # NAME is not gathered at all — it lives in the Claude statusline. So does
+    # the divergence for a Claude pane, which is why only the agents WITHOUT
+    # that statusline pay for these two git calls (and show the marker).
+    ahead=0; behind=0
+    if [ "$(cv_session_tool)" = codex ] \
+       && git -C "$project_dir" rev-parse '@{u}' &>/dev/null 2>&1; then
+      ab_counts=$(git -C "$project_dir" rev-list --left-right --count "HEAD...@{u}" 2>/dev/null)
+      if [ -n "$ab_counts" ]; then
+        ahead=$(echo "$ab_counts" | cut -f1)
+        behind=$(echo "$ab_counts" | cut -f2)
+      fi
+    fi
     # Changed-file stamp figures for the bottom bar: total changed files and the
     # net line +/- across staged+unstaged+untracked. A new file's every line
     # counts as an addition, so untracked rows feed the +total too. Gathered here

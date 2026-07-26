@@ -1257,13 +1257,14 @@ func TestCompactView_shows_hover_checkbox(t *testing.T) {
 	}
 }
 
-// The branch NAME and the push/pull commit counts both live in the Claude
-// statusline now, and there is no pinned top header at all: the changed-file
+// In a CLAUDE pane the branch NAME and the push/pull commit counts both live in
+// the statusline, and there is no pinned top header at all: the changed-file
 // stamp rides the BOTTOM bar below the listed files, right-aligned. Drives the
 // real loop under zsh with an upstream two commits ahead, and asserts the first
 // row is the group header (not a stamp), no line names the branch or the
 // divergence, the last content line carries the stamp, and the file list sits
-// above it.
+// above it. (A Codex pane keeps the counts — see
+// TestCompactView_bottom_bar_divergence_follows_the_tool.)
 func TestCompactView_stamp_at_bottom(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
@@ -1369,7 +1370,7 @@ func TestCompactView_stamp_at_bottom(t *testing.T) {
 	// The stamp rides the bottom bar, right-aligned; the push count is gone.
 	bottom := lines[len(lines)-1]
 	if strings.Contains(frame, "↑2") {
-		t.Errorf("ledger still shows the push count — it rides the statusline now; frame:\n%s", frame)
+		t.Errorf("a claude pane's ledger still shows the push count — the statusline has it; frame:\n%s", frame)
 	}
 	if !strings.Contains(bottom, "1 file  +1 −0") {
 		t.Errorf("bottom bar must carry the right-aligned changed-file stamp; got %q\nframe:\n%s", bottom, frame)

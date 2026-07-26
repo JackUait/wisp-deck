@@ -50,8 +50,8 @@ func TestLedgerFooterStampFitsNarrowPane(t *testing.T) {
 }
 
 // The commits to push (↑N) and pull (↓M) followed the branch name into the
-// Claude statusline — the footer names neither.
-func TestLedgerFooterOmitsAheadBehind(t *testing.T) {
+// Claude statusline — the footer names neither, in a Claude pane.
+func TestLedgerFooterOmitsAheadBehindForClaude(t *testing.T) {
 	m := NewLedgerModel(fakeLedgerSource{}, ledgerTestSnapshot(3), LedgerOptions{})
 	sizeLedger(m, 80, 14)
 
@@ -62,6 +62,46 @@ func TestLedgerFooterOmitsAheadBehind(t *testing.T) {
 	for _, gone := range []string{"↑3", "↓2"} {
 		if strings.Contains(plain, gone) {
 			t.Fatalf("footer still carries %q — it belongs to the statusline now: %q", gone, plain)
+		}
+	}
+}
+
+// Only Claude Code renders the statusline that now carries the divergence, so a
+// CODEX pane would lose the counts entirely. There the footer keeps them, right
+// of the account pill.
+func TestLedgerFooterKeepsAheadBehindForCodex(t *testing.T) {
+	m := NewLedgerModel(fakeLedgerSource{}, ledgerTestSnapshot(3), LedgerOptions{})
+	sizeLedger(m, 80, 14)
+	m.Update(ledgerSessionMsg{session: ledger.SessionContext{
+		Tool: "codex", Pill: &ledger.SessionPill{Label: "Codex", Color: 78},
+	}})
+
+	lines := strings.Split(m.View(), "\n")
+	footer := stripANSI(lines[len(lines)-1])
+	for _, want := range []string{"Codex", "↑3", "↓2"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("codex footer lost %q: %q", want, footer)
+		}
+	}
+	if strings.Index(footer, "Codex") > strings.Index(footer, "↑3") {
+		t.Fatalf("the divergence must follow the account pill: %q", footer)
+	}
+}
+
+// A Claude pane that DOES carry a session context still omits them — the
+// statusline right beside it already says so.
+func TestLedgerFooterOmitsAheadBehindForClaudeSession(t *testing.T) {
+	m := NewLedgerModel(fakeLedgerSource{}, ledgerTestSnapshot(3), LedgerOptions{})
+	sizeLedger(m, 80, 14)
+	m.Update(ledgerSessionMsg{session: ledger.SessionContext{
+		Tool: "claude", Pill: &ledger.SessionPill{Label: "Personal", Color: 78},
+	}})
+
+	lines := strings.Split(m.View(), "\n")
+	footer := stripANSI(lines[len(lines)-1])
+	for _, gone := range []string{"↑3", "↓2"} {
+		if strings.Contains(footer, gone) {
+			t.Fatalf("claude footer duplicates the statusline's %q: %q", gone, footer)
 		}
 	}
 }
@@ -104,5 +144,21 @@ func TestLedgerFooterPillAloneHasNoDanglingSeparator(t *testing.T) {
 	}
 	if !strings.Contains(footer, "Personal") {
 		t.Fatalf("footer lost the account pill: %q", footer)
+	}
+}
+
+// The relaunch context can be absent or late for a pane's first ticks, so a
+// Codex pane must read its own launch flag until one arrives — otherwise the
+// counts blink in only after the context lands.
+func TestLedgerFooterKeepsAheadBehindForCodexBeforeSessionLoads(t *testing.T) {
+	m := NewLedgerModel(fakeLedgerSource{}, ledgerTestSnapshot(3), LedgerOptions{Tool: "codex"})
+	sizeLedger(m, 80, 14)
+
+	lines := strings.Split(m.View(), "\n")
+	footer := stripANSI(lines[len(lines)-1])
+	for _, want := range []string{"↑3", "↓2"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("codex footer lost %q before its session context loaded: %q", want, footer)
+		}
 	}
 }
