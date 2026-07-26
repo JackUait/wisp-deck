@@ -899,14 +899,10 @@ func renderLedgerFooterLeft(state *ledger.State, width int, actionError error, p
 		}
 		return pillRendered + message(" · "+ledgerFitPlain(actionError.Error(), remaining))
 	}
-	metadata := state.Snapshot.Metadata
+	// The upstream divergence (↑N/↓M) followed the branch name into the Claude
+	// statusline, where it sits right of the branch it describes — so the footer
+	// carries only the scroll position beside the pill.
 	parts := []string{}
-	if metadata.Ahead > 0 {
-		parts = append(parts, fmt.Sprintf("↑%d", metadata.Ahead))
-	}
-	if metadata.Behind > 0 {
-		parts = append(parts, fmt.Sprintf("↓%d", metadata.Behind))
-	}
 	if state.MaxScroll() > 0 {
 		first := state.Scroll + 1
 		last := state.Scroll + state.ViewportHeight()

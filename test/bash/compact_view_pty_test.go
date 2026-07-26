@@ -1257,13 +1257,14 @@ func TestCompactView_shows_hover_checkbox(t *testing.T) {
 	}
 }
 
-// The branch NAME lives in the Claude statusline now, and there is no pinned top
-// header at all: the changed-file stamp AND the push/pull commit counts both ride
-// the BOTTOM bar below the listed files (counts left, stamp right-aligned). Drives
-// the real loop under zsh with an upstream two commits ahead, and asserts the
-// first row is the group header (not a stamp), no line names the branch, the last
-// content line carries both "↑2" and the stamp, and the file list sits above it.
-func TestCompactView_stamp_push_pull_at_bottom(t *testing.T) {
+// The branch NAME and the push/pull commit counts both live in the Claude
+// statusline now, and there is no pinned top header at all: the changed-file
+// stamp rides the BOTTOM bar below the listed files, right-aligned. Drives the
+// real loop under zsh with an upstream two commits ahead, and asserts the first
+// row is the group header (not a stamp), no line names the branch or the
+// divergence, the last content line carries the stamp, and the file list sits
+// above it.
+func TestCompactView_stamp_at_bottom(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
 		t.Skip("zsh not available")
@@ -1365,11 +1366,10 @@ func TestCompactView_stamp_push_pull_at_bottom(t *testing.T) {
 	if strings.Contains(heading, "1 file  +1 −0") {
 		t.Errorf("the stamp must not be pinned at the top anymore; got %q\nframe:\n%s", heading, frame)
 	}
-	// The stamp and push count now share the bottom bar: ↑2 on the left, the
-	// stamp right-aligned.
+	// The stamp rides the bottom bar, right-aligned; the push count is gone.
 	bottom := lines[len(lines)-1]
-	if !strings.Contains(bottom, "↑2") {
-		t.Errorf("bottom line must keep the push count (\"↑2\"); got %q\nframe:\n%s", bottom, frame)
+	if strings.Contains(frame, "↑2") {
+		t.Errorf("ledger still shows the push count — it rides the statusline now; frame:\n%s", frame)
 	}
 	if !strings.Contains(bottom, "1 file  +1 −0") {
 		t.Errorf("bottom bar must carry the right-aligned changed-file stamp; got %q\nframe:\n%s", bottom, frame)
@@ -1394,7 +1394,7 @@ func TestCompactView_stamp_push_pull_at_bottom(t *testing.T) {
 
 	// It must sit at the VERY bottom of the pane, not just below the (short) list:
 	// the body is padded with blank rows so the bar lands on the last screen row.
-	// Keep every row (blanks included) and confirm the ↑2 bar is the last row,
+	// Keep every row (blanks included) and confirm the stamp bar is the last row,
 	// with blank filler on the row directly above it.
 	var rows []string
 	for _, ln := range strings.Split(frame, "\n") {
@@ -1406,13 +1406,13 @@ func TestCompactView_stamp_push_pull_at_bottom(t *testing.T) {
 	for last > 0 && rows[last] == "" {
 		last--
 	}
-	if !strings.Contains(rows[last], "↑2") {
-		t.Errorf("the very last rendered row must be the push/pull bar; got %q", rows[last])
+	if !strings.Contains(rows[last], "1 file  +1 −0") {
+		t.Errorf("the very last rendered row must be the bottom bar; got %q", rows[last])
 	}
 	// A 1-file list is far shorter than the 12-row pane, so there is blank filler
 	// pushing the bar down: the row directly above it is empty.
 	if last < 1 || rows[last-1] != "" {
-		t.Errorf("push/pull bar must be pushed to the pane bottom with blank filler above it; row above = %q\nrows:\n%s", func() string {
+		t.Errorf("bottom bar must be pushed to the pane bottom with blank filler above it; row above = %q\nrows:\n%s", func() string {
 			if last >= 1 {
 				return rows[last-1]
 			}
@@ -1667,8 +1667,8 @@ func TestCompactView_idle_frames_are_stable_no_blink(t *testing.T) {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	// Bare remote so HEAD can be ahead of its upstream (branch bar shows ↑N),
-	// running the exact build path that leaked ab_counts.
+	// Bare remote so HEAD can be ahead of its upstream, running the exact build
+	// path that leaked ab_counts.
 	remote := t.TempDir()
 	if out, err := exec.Command("git", "init", "-q", "--bare", remote).CombinedOutput(); err != nil {
 		t.Fatalf("git init bare: %v\n%s", err, out)

@@ -10,13 +10,12 @@ import (
 	"time"
 )
 
-// The branch name moved out of the ledger entirely — it lives in the Claude
-// statusline now. With the top header gone, the changed-file stamp AND the
-// push/pull commit counts (↑N/↓M) both ride the bottom bar: the counts on the
-// left, the stamp right-aligned — and neither names the branch. Runs the shell
-// renderer piped (deterministic fixture path) against a repo whose branch is
-// ahead of upstream by 2, and asserts the branch name appears NOWHERE while the
-// stamp and ↑2 survive, with the stamp right of the push count.
+// The branch name moved out of the ledger entirely — and so did the push/pull
+// commit counts (↑N/↓M), which now sit right of the branch in the Claude
+// statusline. With the top header gone, the changed-file stamp rides the bottom
+// bar, right-aligned. Runs the shell renderer piped (deterministic fixture path)
+// against a repo whose branch is ahead of upstream by 2, and asserts neither the
+// branch name nor the divergence appears anywhere, while the stamp survives.
 func TestCompactView_heading_omits_branch_keeps_stamp(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
@@ -73,30 +72,25 @@ func TestCompactView_heading_omits_branch_keeps_stamp(t *testing.T) {
 	if strings.Contains(clean, "hdrbranch") {
 		t.Errorf("ledger still names the branch somewhere:\n%q", clean)
 	}
-	// The stamp and the push count now share the bottom-bar line: ↑2 on the left,
-	// the stamp right-aligned. Find that line by the push count.
+	if strings.Contains(clean, "↑2") {
+		t.Errorf("ledger still shows the push count — it rides the statusline now:\n%q", clean)
+	}
+	// The changed-file stamp still rides the bottom bar, right-aligned.
 	barLine := ""
 	for _, line := range strings.Split(clean, "\n") {
-		if strings.Contains(line, "↑2") {
+		if strings.Contains(line, "1 file  +1 −0") {
 			barLine = line
 			break
 		}
 	}
 	if barLine == "" {
-		t.Fatalf("bottom bar lost the push count (\"↑2\"):\n%q", clean)
+		t.Fatalf("bottom bar lost the changed-file stamp:\n%q", clean)
 	}
-	if !strings.Contains(barLine, "1 file  +1 −0") {
-		t.Errorf("bottom bar lost the changed-file stamp:\n%q", barLine)
-	}
-	// Stamp sits to the RIGHT of the push count, separated by right-align padding
-	// (the piped run has no tty, so a "/dev/tty" error may trail the bar line —
-	// assert order and a padding gap, not a strict suffix).
-	up := strings.Index(barLine, "↑2")
+	// Right-aligned: padding separates it from the pane's left edge (the piped run
+	// has no tty, so a "/dev/tty" error may trail the bar line — assert the gap,
+	// not a strict prefix).
 	stamp := strings.Index(barLine, "1 file  +1 −0")
-	if stamp <= up {
-		t.Errorf("stamp must sit right of the push count; got %q", barLine)
-	}
-	if !strings.Contains(barLine[up:stamp], "     ") {
-		t.Errorf("stamp should be right-aligned (padded away from the push count); got %q", barLine)
+	if !strings.Contains(barLine[:stamp], "     ") {
+		t.Errorf("stamp should be right-aligned (padded away from the left edge); got %q", barLine)
 	}
 }

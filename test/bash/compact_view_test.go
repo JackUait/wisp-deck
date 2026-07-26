@@ -1489,14 +1489,12 @@ func TestCompactView_draws_no_top_header_or_separator(t *testing.T) {
 	}
 }
 
-// Regression: the ahead/behind marker must render as a REAL ANSI escape, not the
-// literal text "\033[36m↑1\033[0m". The color vars are stored as the literal
-// string "\033[36m" (backslash-0-3-3), which printf only interprets when it sits
-// in the FORMAT string. `ahead_behind` was printed via `printf "%s" "$ahead_behind"`
-// — a %s ARGUMENT — where printf does NOT process backslash escapes, so the raw
-// "\033[36m↑1\033[0m" leaked onto the branch line. The fix prints it with %b (or
-// embeds it in the format) so the escapes are interpreted.
-func TestCompactView_ahead_marker_renders_real_escape_not_literal(t *testing.T) {
+// The upstream divergence (↑N/↓M) belongs to the Claude statusline, right of
+// the branch name it describes. The shell fallback renderer must drop it from
+// the bottom bar exactly like the native ledger does — the pane picks between
+// the two by binary capability, so a fix in one is a fix for only half the
+// users.
+func TestCompactView_bottom_bar_omits_ahead_behind(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
 		t.Skip("zsh not available")
@@ -1545,14 +1543,14 @@ func TestCompactView_ahead_marker_renders_real_escape_not_literal(t *testing.T) 
 	out, _ := cmd.CombinedOutput()
 	got := string(out)
 
-	// The bug printed the four literal chars backslash-0-3-3. After the fix the
-	// output carries only real ESC (0x1b) bytes.
-	if strings.Contains(got, `\033`) {
-		t.Errorf("ahead marker leaked literal escape text %q:\n%q", `\033`, got)
+	// The scroll indicator has arrows of its own, so match the divergence
+	// marker's own cyan/yellow escapes rather than a bare arrow.
+	if strings.Contains(got, "\x1b[36m↑") || strings.Contains(got, "\x1b[33m↓") {
+		t.Errorf("ledger still renders the upstream divergence — it lives in the statusline now:\n%q", got)
 	}
-	// And the arrow must be there, preceded by a real cyan escape.
-	if !strings.Contains(got, "\x1b[36m↑") {
-		t.Errorf("expected a real cyan escape before the up-arrow (\\x1b[36m↑):\n%q", got)
+	// The pane itself still renders — only the marker left.
+	if !strings.Contains(got, "working tree clean") {
+		t.Errorf("ledger stopped rendering entirely:\n%q", got)
 	}
 }
 

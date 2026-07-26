@@ -1188,8 +1188,8 @@ compact_view_shell() {
   # the clickable column spans on it (row $h). While a discard is armed the row is
   # the confirm — "Discard N file(s)? [ yes ] [ no ]" — and confirm_{yes,no}_*
   # bound its two buttons. Otherwise the row leads with the account pill (when
-  # shown), then the ↑N/↓M push/pull marker, the scroll position (on overflow),
-  # and — when 1+ files are marked — the right-hand "[ discard N ]" button, whose span is
+  # shown), then the scroll position (on overflow), and — when 1+ files are
+  # marked — the right-hand "[ discard N ]" button, whose span is
   # discard_btn_start..discard_btn_end (0 when unmarked). Reads the loop-scope
   # state via dynamic scope; called on the draw path only when bar_dirty.
   build_bottom_bar() {
@@ -1197,20 +1197,12 @@ compact_view_shell() {
     confirm_yes_start=0; confirm_yes_end=0; confirm_no_start=0; confirm_no_end=0
     discard_overlay=""
     local dot=$'\033[90m·\033[0m'
-    # Bottom bar: the account pill (when shown), the upstream divergence (↑N
-    # commits to push, ↓M to pull — the branch NAME lives in the Claude
-    # statusline now), and the scroll position (on overflow). Every piece is
+    # Bottom bar: the account pill (when shown) and the scroll position (on
+    # overflow). Both the branch NAME and the upstream divergence (↑N commits to
+    # push, ↓M to pull) live in the Claude statusline now. Every piece is
     # optional, so the dim-dot separator is added only between present pieces —
     # never dangling. The batch-discard button and its confirm no longer live
     # here — they overlay the TOP group header (see $discard_overlay below).
-    local div=""
-    if [ "$ahead" -gt 0 ] 2>/dev/null; then
-      div="$(printf '\033[36m↑%s\033[0m' "$ahead")"
-    fi
-    if [ "$behind" -gt 0 ] 2>/dev/null; then
-      [ -n "$div" ] && div="${div} ${dot} "
-      div="${div}$(printf '\033[33m↓%s\033[0m' "$behind")"
-    fi
     bottom_bar=""
     if [ -n "$account_pill_str" ]; then
       if [ "$pill_hover" = 1 ]; then
@@ -1218,9 +1210,6 @@ compact_view_shell() {
       else
         bottom_bar="$account_pill_str"
       fi
-      [ -n "$div" ] && bottom_bar="${bottom_bar} ${dot} ${div}"
-    elif [ -n "$div" ]; then
-      bottom_bar=" ${div}"
     fi
     if [ "$body_total" -gt "$avail" ]; then
       if [ -n "$bottom_bar" ]; then
@@ -1329,16 +1318,13 @@ compact_view_shell() {
   local w h content header body body_total avail mbtn draw_body frame draw_first
   local header_rows=2
   local staged unstaged untracked body_map
-  # ahead/behind + ab_counts are (re)assigned every build tick below. They
-  # MUST be declared here, ONCE, not with an in-loop `local`: under zsh (the
-  # pane's shell) `local NAME` without an assignment on an already-set variable is
-  # a *display* command that dumps "NAME=value" to stdout — the bottom bar blinked
-  # a raw `ab_counts=$'8\t0'` on every tick after the first (see the NOTE above).
-  local ahead behind ab_counts
   # Changed-file stamp figures (count + net +/-), computed on the build tick and
-  # reused across hover ticks like ahead/behind. build_bottom_bar reads them to
-  # draw the right-aligned stamp on the bottom bar. Declared ONCE (zsh display
-  # gotcha above).
+  # reused across hover ticks. They MUST be declared here, ONCE, not with an
+  # in-loop `local`: under zsh (the pane's shell) `local NAME` without an
+  # assignment on an already-set variable is a *display* command that dumps
+  # "NAME=value" to stdout — the bottom bar blinked a raw value on every tick
+  # after the first (see the NOTE above). build_bottom_bar reads them to
+  # draw the right-aligned stamp on the bottom bar.
   local stamp_total_files=0 stamp_added=0 stamp_deleted=0 _stamp_sums
   local mterm mrest mcol mrow bl cpath prev_hover prev_scroll hover_keep
   local prev_pill_hover pill_hover_keep
@@ -1388,7 +1374,7 @@ compact_view_shell() {
   # Per-build pill scratch — declared ONCE here, never with an in-loop `local`
   # (under zsh, the pane's shell, `local NAME` without assignment on an already-set
   # var is a *display* command that leaks "NAME=value" onto the frame; see the
-  # ab_counts NOTE above).
+  # stamp-figures NOTE above).
   local _pill_label _pill_color _pill_glyph _pill
   local _rc_relaunch="${WISP_DECK_RELAUNCH_FILE:-}"
   local _rc_pointer="" _rc_list="" _rc_colors="" _rc_default_label="" \
@@ -1674,18 +1660,9 @@ compact_view_shell() {
     # body) via $(), so both shed their trailing blank identically and the Nth
     # map line keeps describing the Nth body line.
     body_map=$(body_path_map "$staged" "$unstaged" "$untracked")
-    # Upstream divergence, gathered ONCE here (on the build tick, not the hover
-    # hot path): ahead (commits to push) and behind (commits to pull) feed the
-    # bottom bar's ↑N/↓M marker, built outside the content subshell. The branch
-    # NAME is not gathered at all — it lives in the Claude statusline now.
-    ahead=0; behind=0
-    if git -C "$project_dir" rev-parse '@{u}' &>/dev/null 2>&1; then
-      ab_counts=$(git -C "$project_dir" rev-list --left-right --count "HEAD...@{u}" 2>/dev/null)
-      if [ -n "$ab_counts" ]; then
-        ahead=$(echo "$ab_counts" | cut -f1)
-        behind=$(echo "$ab_counts" | cut -f2)
-      fi
-    fi
+    # Neither the branch NAME nor the upstream divergence (↑N/↓M) is gathered
+    # here — both live in the Claude statusline now, so the build tick spends no
+    # git call on them.
     # Changed-file stamp figures for the bottom bar: total changed files and the
     # net line +/- across staged+unstaged+untracked. A new file's every line
     # counts as an addition, so untracked rows feed the +total too. Gathered here

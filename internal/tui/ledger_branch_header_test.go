@@ -49,21 +49,40 @@ func TestLedgerFooterStampFitsNarrowPane(t *testing.T) {
 	}
 }
 
-// The footer keeps the commits to push (↑N) and pull (↓M) but no longer names
-// the branch.
-func TestLedgerFooterKeepsAheadBehindWithoutBranchName(t *testing.T) {
+// The commits to push (↑N) and pull (↓M) followed the branch name into the
+// Claude statusline — the footer names neither.
+func TestLedgerFooterOmitsAheadBehind(t *testing.T) {
 	m := NewLedgerModel(fakeLedgerSource{}, ledgerTestSnapshot(3), LedgerOptions{})
 	sizeLedger(m, 80, 14)
 
-	lines := strings.Split(m.View(), "\n")
-	footer := stripANSI(lines[len(lines)-1])
-	if strings.Contains(footer, "feature/native-ledger") {
-		t.Fatalf("footer still names the branch: %q", footer)
+	plain := stripANSI(m.View())
+	if strings.Contains(plain, "feature/native-ledger") {
+		t.Fatalf("footer still names the branch: %q", plain)
 	}
-	for _, want := range []string{"↑3", "↓2"} {
-		if !strings.Contains(footer, want) {
-			t.Fatalf("footer lost %q: %q", want, footer)
+	for _, gone := range []string{"↑3", "↓2"} {
+		if strings.Contains(plain, gone) {
+			t.Fatalf("footer still carries %q — it belongs to the statusline now: %q", gone, plain)
 		}
+	}
+}
+
+// With the divergence gone, an account pill and a scroll position still share
+// the footer with a single separator between them — and nothing dangles when
+// the list fits.
+func TestLedgerFooterPillAndScrollKeepOneSeparator(t *testing.T) {
+	m := NewLedgerModel(fakeLedgerSource{}, ledgerTestSnapshot(3), LedgerOptions{})
+	sizeLedger(m, 80, 14)
+	m.Update(ledgerSessionMsg{session: ledger.SessionContext{
+		Tool: "claude", Pill: &ledger.SessionPill{Label: "Personal", Color: 78},
+	}})
+
+	lines := strings.Split(m.View(), "\n")
+	footer := strings.TrimRight(stripANSI(lines[len(lines)-1]), " ")
+	if !strings.Contains(footer, "Personal") {
+		t.Fatalf("footer lost the account pill: %q", footer)
+	}
+	if n := strings.Count(footer, "·"); n > 1 {
+		t.Fatalf("footer keeps a stale separator from the dropped divergence (%d): %q", n, footer)
 	}
 }
 
