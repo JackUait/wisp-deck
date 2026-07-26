@@ -162,7 +162,7 @@ git diff -- internal/gptbridge/engine.go internal/gptbridge/engine_test.go docs/
 
 Expected: only the two bridge files and this plan are owned by this implementation; existing README/logo files remain unstaged.
 
-- [ ] **Step 4: Commit only owned implementation files**
+- [x] **Step 4: Commit only owned implementation files**
 
 Run:
 
@@ -173,7 +173,7 @@ git commit -m "fix(gptbridge): finish Claude checklists" -m "Co-Authored-By: Cla
 
 Expected: commit succeeds without staging `README.md` or `docs/wisp-deck-logo.png`.
 
-- [ ] **Step 5: Rebase, push, and verify synchronization**
+- [x] **Step 5: Rebase, push, and verify synchronization**
 
 Run:
 
