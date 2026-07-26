@@ -35,10 +35,12 @@ func TestUpdateNotice_OnSpacerRowWithoutPlanRow(t *testing.T) {
 	}
 }
 
-// The notice reads as one segmented pill: a rounded cap on each end, a muted
-// version segment, and a filled "U Update" button segment. The caps are drawn in
-// their neighbouring segment's fill color, so the pill's silhouette is unbroken.
-func TestUpdateNotice_RendersAsSegmentedPill(t *testing.T) {
+// The notice is a chip: rounded caps around a single continuous fill. Idle, that
+// fill is the same surface the selected project row uses, so the chip sits in
+// the menu's existing material instead of introducing a filled button — this
+// interface renders every action as unfilled "KEY Label" accent text, and a
+// solid block would also stack a second loud shape under the orange wordmark.
+func TestUpdateNotice_IdleChipUsesTheSelectedRowSurface(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.ANSI256)
 	defer lipgloss.SetColorProfile(prev)
@@ -54,23 +56,30 @@ func TestUpdateNotice_RendersAsSegmentedPill(t *testing.T) {
 	if !strings.HasSuffix(plain, iconPillCapRight) {
 		t.Errorf("notice does not close with the rounded right cap: %q", plain)
 	}
-	// Both segments are filled, so the pill reads as a solid shape rather than
-	// loose colored text: one background for the version, another for the button.
-	if got := strings.Count(notice, "48;5;"); got < 4 {
-		t.Errorf("expected both segments filled, got %d background sequences in %q", got, notice)
+	if !strings.Contains(notice, "48;5;"+menuSurface) {
+		t.Errorf("idle chip is not on the selected-row surface %s: %q", menuSurface, notice)
+	}
+	// The theme color may tint text, but must not fill the chip while idle.
+	if bg := "48;5;" + string(m.theme.Primary); strings.Contains(notice, bg) {
+		t.Errorf("idle chip is filled with the theme color %s; that treatment belongs to hover: %q", bg, notice)
+	}
+	// The action reads exactly like the action bar's "W Worktrees": accent text.
+	if !strings.Contains(notice, "38;5;"+string(m.theme.Accent)) {
+		t.Errorf("the U Update action does not use the action-bar accent: %q", notice)
 	}
 	// "available" is redundant next to a version chip and cost 10 columns.
 	if strings.Contains(plain, "available") {
 		t.Errorf("expected the wordy notice to be gone, got %q", plain)
 	}
 	if !strings.Contains(plain, "v2.24.0") || !strings.Contains(plain, "U Update") {
-		t.Errorf("notice lost its version or button text: %q", plain)
+		t.Errorf("notice lost its version or action text: %q", plain)
 	}
 }
 
-// Hovering the pill lights up the button segment without changing its footprint,
-// so the click span stays put under the cursor.
-func TestUpdateNotice_HoverKeepsWidth(t *testing.T) {
+// Hover is where the chip is allowed to be loud: the surface floods with the
+// theme color so it reads as armed. The footprint must not move, or the click
+// span shifts out from under the cursor that is hovering it.
+func TestUpdateNotice_HoverFloodsWithoutResizing(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.ANSI256)
 	defer lipgloss.SetColorProfile(prev)
@@ -83,10 +92,13 @@ func TestUpdateNotice_HoverKeepsWidth(t *testing.T) {
 	hovered := m.updateNotice()
 
 	if hovered == idle {
-		t.Error("hovering the update pill changed nothing")
+		t.Error("hovering the update chip changed nothing")
+	}
+	if bg := "48;5;" + string(m.theme.Primary); !strings.Contains(hovered, bg) {
+		t.Errorf("hovered chip does not flood with the theme color %s: %q", bg, hovered)
 	}
 	if got, want := lipgloss.Width(hovered), lipgloss.Width(idle); got != want {
-		t.Errorf("hovered pill width = %d, idle = %d; the pill must not resize", got, want)
+		t.Errorf("hovered chip width = %d, idle = %d; the chip must not resize", got, want)
 	}
 }
 

@@ -415,7 +415,7 @@ func (m BranchPickerModel) renderSelectBox() string {
 
 			var row string
 			if selected {
-				selectedBgStyle := lipgloss.NewStyle().Background(lipgloss.Color("236"))
+				selectedBgStyle := lipgloss.NewStyle().Background(lipgloss.Color(menuSurface))
 				marker := primaryBoldStyle.Render("\u258c")
 				branchText := primaryBoldStyle.Render(truncBranch)
 				content := " " + marker + branchText
@@ -434,7 +434,7 @@ func (m BranchPickerModel) renderSelectBox() string {
 					padding = 0
 				}
 				if i == m.hover {
-					hoverBgStyle := lipgloss.NewStyle().Background(lipgloss.Color("236"))
+					hoverBgStyle := lipgloss.NewStyle().Background(lipgloss.Color(menuSurface))
 					row = leftBorder + hoverBgStyle.Render(content+strings.Repeat(" ", padding)) + rightBorder
 				} else {
 					row = leftBorder + content + strings.Repeat(" ", padding) + rightBorder

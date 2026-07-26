@@ -25,11 +25,18 @@ const (
 	iconChevronLeft  = "\U000F0141" // nf-md-chevron_left
 	iconChevronRight = "\U000F0142" // nf-md-chevron_right
 
-	// Powerline half-circles, drawn in the adjacent segment's fill color to round
-	// off a filled pill. One cell each, like the nerd-font glyphs above.
+	// Powerline half-circles. Drawn in the chip's own fill color, they round its
+	// two ends off against whatever sits behind the row. One cell each, like the
+	// nerd-font glyphs above.
 	iconPillCapLeft  = "" // nf-pl-left_half_circle_thick
 	iconPillCapRight = "" // nf-pl-right_half_circle_thick
 )
+
+// menuSurface is the one raised background in the menu box: the selected row's
+// stripe, and the idle update chip. Everything else in this interface is text on
+// the terminal background, so anything that needs to read as a surface reuses
+// this rather than introducing a second fill.
+const menuSurface = "236"
 
 // settingsCaption renders a header-row caption glyph. Idle it is neutral gray;
 // when the row is targeted (keyboard focus or hover) it brightens to the accent
@@ -231,8 +238,8 @@ func (m *MainMenuModel) renderSubscriptionRow(leftBorder, rightBorder string) st
 	return m.headerRow(content, title, leftBorder, rightBorder)
 }
 
-// updateNotice renders the right-aligned "new version available" notice with
-// its inline Update button. Empty when no update is pending. It always sits on
+// updateNotice renders the right-aligned "new version available" chip with its
+// inline Update action. Empty when no update is pending. It always sits on
 // the row directly under whichever header row hosts the wordmark, so the eye
 // falls from "Wisp Deck" straight onto the notice.
 func (m *MainMenuModel) updateNotice() string {
@@ -241,43 +248,40 @@ func (m *MainMenuModel) updateNotice() string {
 	}
 	hovered := m.isHovered(regionUpdate)
 
-	// Two fills, one silhouette: a muted segment states the fact, a segment in the
-	// theme's own color is the button. The caps carry no background of their own —
-	// they are drawn in their neighbour's fill so the pill rounds off cleanly over
-	// whatever sits behind the header row.
-	button := m.theme.Primary
-	fill := lipgloss.Color("236")
-	// Near-black ink: the three theme Primaries are all mid-bright, so a dark
-	// label is the one foreground that stays legible on every one of them.
-	ink := lipgloss.Color("234")
-	arrowInk, versionInk := button, lipgloss.Color("252")
+	// One continuous fill between two rounded caps. Idle, that fill is menuSurface
+	// — the same stripe a selected project row sits on — so the chip reads as a
+	// raised piece of the menu rather than a button bolted onto it. Nothing else
+	// in this box is filled, and a solid block here would also stack a second loud
+	// shape directly under the orange wordmark.
+	fill := lipgloss.Color(menuSurface)
+	// Inside, the parts speak the vocabulary already on screen: the arrow carries
+	// the wordmark's Primary, the version reads like a project name, the separator
+	// is the footer hint's dim "·", and "U Update" is styled exactly like the
+	// action bar's "W Worktrees" — an unfilled key-plus-label in the accent.
+	arrowInk := m.theme.Primary
+	versionInk := lipgloss.Color("252")
+	sepInk := lipgloss.Color("245")
+	actionInk := m.theme.Accent
 	if hovered {
-		// Armed: the muted half floods with the button color so the whole pill
-		// reads as one solid, pressable chip. Flooding is the state change rather
-		// than a brighter fill because neither Bright nor Accent is reliably
-		// lighter than Primary across the three themes (codex's Bright is darker).
-		fill = button
-		arrowInk, versionInk = ink, ink
+		// Armed: the surface floods with the theme color and the text inverts to
+		// near-black, which is the one ink legible on all three themes' Primary.
+		// Flooding is the hover signal rather than a brighter fill because neither
+		// Bright nor Accent is reliably lighter than Primary (codex's is darker).
+		fill = m.theme.Primary
+		ink := lipgloss.Color("234")
+		arrowInk, versionInk, sepInk, actionInk = ink, ink, ink, ink
 	}
 
+	seg := func(c lipgloss.Color) lipgloss.Style {
+		return lipgloss.NewStyle().Background(fill).Foreground(c)
+	}
 	version := "v" + strings.TrimPrefix(m.updateVersion, "v")
-	// The arrow takes the button's own color rather than the theme accent: only
-	// Primary is bright enough to read on the muted fill in all three themes.
-	arrow := lipgloss.NewStyle().Background(fill).Foreground(arrowInk).Render("⇡ ")
-	versionSeg := arrow + lipgloss.NewStyle().Background(fill).
-		Foreground(versionInk).Bold(true).Render(version+" ")
-
-	// The leading letter is the real keybinding, mirroring the action bar, so it
-	// is underlined as a mnemonic. On hover the whole label underlines instead.
-	label := lipgloss.NewStyle().Background(button).Foreground(ink).Bold(true)
-	buttonSeg := label.Render(" ") + label.Underline(true).Render("U") + label.Render(" Update ")
-	if hovered {
-		buttonSeg = label.Underline(true).Render(" U Update ")
-	}
-
-	capL := lipgloss.NewStyle().Foreground(fill).Render(iconPillCapLeft)
-	capR := lipgloss.NewStyle().Foreground(button).Render(iconPillCapRight)
-	return capL + versionSeg + buttonSeg + capR
+	return lipgloss.NewStyle().Foreground(fill).Render(iconPillCapLeft) +
+		seg(arrowInk).Render(" ⇡ ") +
+		seg(versionInk).Render(version) +
+		seg(sepInk).Render(" · ") +
+		seg(actionInk).Bold(true).Render("U Update ") +
+		lipgloss.NewStyle().Foreground(fill).Render(iconPillCapRight)
 }
 
 // renderHeaderGapRow renders the blank spacer between the header switchers and
@@ -301,7 +305,7 @@ func (m *MainMenuModel) renderProjectRows(leftBorder, rightBorder string) []stri
 	deleteStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
 	staleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
 	deleteDimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	selectedBgStyle := lipgloss.NewStyle().Background(lipgloss.Color("236"))
+	selectedBgStyle := lipgloss.NewStyle().Background(lipgloss.Color(menuSurface))
 
 	var rows []string
 

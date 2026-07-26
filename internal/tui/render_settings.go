@@ -9,7 +9,7 @@ import (
 // renderSettingsItem renders a single settings item row with state right-aligned.
 func (m *MainMenuModel) renderSettingsItem(index int, label, stateText string, stateStyle, brightBoldStyle lipgloss.Style, leftBorder, rightBorder string) string {
 	stateRendered := stateStyle.Render(stateText)
-	selectedBgStyle := lipgloss.NewStyle().Background(lipgloss.Color("236"))
+	selectedBgStyle := lipgloss.NewStyle().Background(lipgloss.Color(menuSurface))
 	if m.settingsSelected == index {
 		// Loud selection only when the body holds focus; off-focus the row drops
 		// to a faint neutral cursor marker with no wash, so the nav pill is the
@@ -42,7 +42,7 @@ func (m *MainMenuModel) renderSettingsItem(index int, label, stateText string, s
 		if gap < 1 {
 			gap = 1
 		}
-		wash := lipgloss.NewStyle().Background(lipgloss.Color("236"))
+		wash := lipgloss.NewStyle().Background(lipgloss.Color(menuSurface))
 		return leftBorder + wash.Render(prefix+strings.Repeat(" ", gap)+stateRendered+" ") + rightBorder
 	}
 
