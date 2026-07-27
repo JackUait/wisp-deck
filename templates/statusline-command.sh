@@ -18,13 +18,17 @@ fi
 # ledger's bottom bar, where it competed with the account pill for the row):
 # ↑N commits to push, ↓M to pull. Both are omitted when the branch is in sync,
 # and the whole marker is absent when the branch tracks no upstream at all.
+# The two carry OPPOSITE meanings (mine to send vs. theirs to take), so each gets
+# its own hue: green for push, yellow for pull. Neither may reuse the branch
+# label's cyan — a cyan count reads as part of the branch name (bolding alone is
+# not a distinction on screen).
 divergence=""
 if git -C "$cwd" rev-parse '@{u}' >/dev/null 2>&1; then
   counts=$(git -C "$cwd" rev-list --left-right --count 'HEAD...@{u}' 2>/dev/null)
   ahead=$(echo "$counts" | cut -f1)
   behind=$(echo "$counts" | cut -f2)
   if [ -n "$ahead" ] && [ "$ahead" -gt 0 ] 2>/dev/null; then
-    divergence=$(printf ' \033[36m↑%s\033[00m' "$ahead")
+    divergence=$(printf ' \033[32m↑%s\033[00m' "$ahead")
   fi
   if [ -n "$behind" ] && [ "$behind" -gt 0 ] 2>/dev/null; then
     divergence="${divergence}$(printf ' \033[33m↓%s\033[00m' "$behind")"

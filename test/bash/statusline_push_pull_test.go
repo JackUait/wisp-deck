@@ -95,6 +95,64 @@ func TestStatusline_names_push_and_pull_counts_after_the_branch(t *testing.T) {
 	}
 }
 
+// The two counts mean opposite things (my commits to send vs. someone else's to
+// take), so they must be told apart at a glance: each carries its own SGR color,
+// and neither may borrow the branch label's color — a push count painted in the
+// branch's cyan reads as part of the branch name rather than as a count.
+func TestStatusline_colors_push_and_pull_differently(t *testing.T) {
+	out := runStatuslineCommand(t, statuslinePushPullRepo(t, 2, 1))
+
+	push := statuslineColorBefore(t, out, "↑2")
+	pull := statuslineColorBefore(t, out, "↓1")
+	branch := statuslineColorBefore(t, out, "󰙅")
+
+	if push == pull {
+		t.Errorf("push and pull counts share color %q: %q", push, out)
+	}
+	if push == branch {
+		t.Errorf("push count wears the branch color %q: %q", push, out)
+	}
+	if pull == branch {
+		t.Errorf("pull count wears the branch color %q: %q", pull, out)
+	}
+}
+
+// statuslineColorBefore returns the SGR parameters of the last color escape
+// preceding needle (e.g. "01;36"), failing if the text is uncolored.
+func statuslineColorBefore(t *testing.T, value, needle string) string {
+	t.Helper()
+	at := strings.Index(value, needle)
+	if at < 0 {
+		t.Fatalf("statusline lacks %q: %q", needle, value)
+	}
+	head := value[:at]
+	start := strings.LastIndex(head, "\x1b[")
+	if start < 0 {
+		t.Fatalf("%q carries no color: %q", needle, value)
+	}
+	end := strings.Index(head[start:], "m")
+	if end < 0 {
+		t.Fatalf("unterminated escape before %q: %q", needle, value)
+	}
+	code := head[start+2 : start+end]
+	if code == "00" || code == "0" {
+		t.Fatalf("%q is painted with a reset, not a color: %q", needle, value)
+	}
+	// Compare the HUE, not the raw escape: "36" and "01;36" are different
+	// strings but the same cyan on screen, so bolding alone cannot be what
+	// distinguishes two counts.
+	for _, param := range strings.Split(code, ";") {
+		switch param {
+		case "", "0", "00", "01", "1", "02", "2", "03", "3", "04", "4":
+			continue // attribute (bold/dim/italic/underline), not a color
+		default:
+			return param
+		}
+	}
+	t.Fatalf("%q carries only attributes, no color: %q", needle, value)
+	return ""
+}
+
 func TestStatusline_omits_push_pull_when_in_sync(t *testing.T) {
 	plain := stripStatuslineANSI(runStatuslineCommand(t, statuslinePushPullRepo(t, 0, 0)))
 	if !strings.Contains(plain, "main") {
