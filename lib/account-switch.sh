@@ -778,7 +778,8 @@ stage_claude_relaunch_settings() {
     source="$previous"
   fi
   stage_dir="$(umask 077; mktemp -d "$root/generation.XXXXXX")" || return 1
-  if ! stage_path="$(write_claude_launch_settings "$stage_dir" "$source")"; then
+  if ! stage_path="$(write_claude_launch_settings "$stage_dir" "$source" \
+    "$HOME/.claude/settings.json")"; then
     rmdir "$stage_dir" 2>/dev/null || true
     return 1
   fi

@@ -442,7 +442,7 @@ migrate_legacy_claude_notif_channel "$HOME/.claude/settings.json" "$_gt_cfg_root
 if [ "$SELECTED_AI_TOOL" = "claude" ]; then
   if ! WISP_DECK_CLAUDE_SETTINGS="$(
     write_claude_launch_settings "${WISP_DECK_ATTENTION_FILE%/state}" \
-      "$WISP_DECK_CLAUDE_SETTINGS_SOURCE"
+      "$WISP_DECK_CLAUDE_SETTINGS_SOURCE" "$HOME/.claude/settings.json"
   )"; then
     printf '\033[31mError:\033[0m Could not prepare Claude launch settings.\n' >&3
     exit 1

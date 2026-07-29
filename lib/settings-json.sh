@@ -52,20 +52,30 @@ CSEOF
   fi
 }
 
-# write_claude_launch_settings <generation-dir> [active-wisp-settings]
+# write_claude_launch_settings <generation-dir> [active-wisp-settings] [user-settings]
 #
 # Build the additional settings overlay passed to Claude for one attention
 # generation. The selected Wisp config is copied when present, then
 # preferredNotifChannel is disabled so Claude cannot emit an audible terminal
 # notification while Wisp Deck owns notification playback. ChatGPT-backed
 # profiles also disable claude.ai connectors, which cannot authenticate through
-# the alternate bridge auth source. Lifecycle hooks and status lines remain
-# governed by the source settings because Claude couples both behind
-# disableAllHooks. The source is never modified. A sibling temporary file is
+# the alternate bridge auth source. Lifecycle hooks remain governed by the source
+# settings because Claude couples them behind disableAllHooks.
+#
+# The status lines are the one user setting that is pinned. Wisp Deck installs
+# them into the USER settings, which a project's own .claude/settings.json
+# outranks — so any project declaring a statusLine silently replaced the Wisp
+# status line for its sessions. This overlay is passed on the command line, which
+# outranks project settings, so the user's statusLine/subagentStatusLine are
+# copied in when the active Wisp config does not define its own. Everything else
+# in the user settings keeps its normal precedence. An absent or unparseable user
+# settings file is not an error: the launch simply keeps Claude's own precedence.
+#
+# The source is never modified. A sibling temporary file is
 # renamed over the target so readers cannot observe partial JSON. Prints the
 # generated path on success.
 write_claude_launch_settings() {
-  local generation_dir="${1:-}" source_settings="${2:-}"
+  local generation_dir="${1:-}" source_settings="${2:-}" user_settings="${3:-}"
   local generation suffix target tmp
 
   [ -d "$generation_dir" ] || return 1
@@ -81,11 +91,12 @@ write_claude_launch_settings() {
   target="$generation_dir/claude-settings.json"
   tmp="$(umask 077; mktemp "$generation_dir/.claude-settings.XXXXXX")" || return 1
   if ! chmod 600 "$tmp" \
-     || ! python3 - "$source_settings" "$tmp" << 'PYEOF'
+     || ! python3 - "$source_settings" "$tmp" "$user_settings" << 'PYEOF'
 import json
 import sys
 
 source_path, output_path = sys.argv[1], sys.argv[2]
+user_path = sys.argv[3] if len(sys.argv) > 3 else ""
 settings = {}
 
 if source_path:
@@ -93,6 +104,17 @@ if source_path:
         settings = json.load(source)
     if not isinstance(settings, dict):
         raise ValueError("Claude settings overlay must be a JSON object")
+
+if user_path:
+    try:
+        with open(user_path, "r", encoding="utf-8") as user_file:
+            user_settings = json.load(user_file)
+    except (OSError, ValueError):
+        user_settings = None
+    if isinstance(user_settings, dict):
+        for key in ("statusLine", "subagentStatusLine"):
+            if key not in settings and key in user_settings:
+                settings[key] = user_settings[key]
 
 settings["preferredNotifChannel"] = "notifications_disabled"
 env = settings.get("env")

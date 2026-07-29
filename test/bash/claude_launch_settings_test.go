@@ -193,6 +193,113 @@ func TestSettingsJsonClaudeLaunchSettingsWithoutActiveConfigOnlyDisablesNativeNo
 	}
 }
 
+// A project's own .claude/settings.json outranks the user settings Wisp Deck
+// installs its status line into, so a project that declares statusLine used to
+// silently replace the Wisp status line for that project's sessions. The launch
+// overlay is passed on the command line, which outranks project settings, so the
+// user's status line is pinned into it.
+func TestSettingsJsonClaudeLaunchSettingsPinsUserStatusLineOverProjectSettings(t *testing.T) {
+	dir := t.TempDir()
+	generationDir := filepath.Join(dir, "generation.Status1")
+	if err := os.Mkdir(generationDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	active := writeTempFile(t, dir, "active.json", `{"model":"opus"}`+"\n")
+	user := writeTempFile(t, dir, "user-settings.json", `{
+  "statusLine": {"type": "command", "command": "bash ~/.claude/statusline-wrapper.sh"},
+  "subagentStatusLine": {"type": "command", "command": "bash ~/.claude/subagent-statusline.sh"},
+  "model": "sonnet",
+  "permissions": {"allow": ["Read"]}
+}
+`)
+
+	snippet := settingsJsonSnippet(t,
+		fmt.Sprintf(`write_claude_launch_settings %q %q %q`, generationDir, active, user))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	got := readJSONMap(t, filepath.Join(generationDir, "claude-settings.json"))
+	statusLine, ok := got["statusLine"].(map[string]any)
+	if !ok || statusLine["command"] != "bash ~/.claude/statusline-wrapper.sh" {
+		t.Fatalf("statusLine = %#v, want the user status line pinned", got["statusLine"])
+	}
+	subagent, ok := got["subagentStatusLine"].(map[string]any)
+	if !ok || subagent["command"] != "bash ~/.claude/subagent-statusline.sh" {
+		t.Fatalf("subagentStatusLine = %#v, want the user subagent status line pinned",
+			got["subagentStatusLine"])
+	}
+	// Only the status lines are pinned — every other user setting keeps its
+	// normal precedence, so a project may still override it.
+	if got["model"] != "opus" {
+		t.Fatalf("model = %#v, want the active config's opus", got["model"])
+	}
+	if _, ok := got["permissions"]; ok {
+		t.Fatalf("permissions = %#v, want user settings left at normal precedence", got["permissions"])
+	}
+}
+
+func TestSettingsJsonClaudeLaunchSettingsKeepsActiveConfigStatusLineOverUserSettings(t *testing.T) {
+	dir := t.TempDir()
+	generationDir := filepath.Join(dir, "generation.Status2")
+	if err := os.Mkdir(generationDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	active := writeTempFile(t, dir, "active.json",
+		`{"statusLine":{"type":"command","command":"config-line"}}`+"\n")
+	user := writeTempFile(t, dir, "user-settings.json",
+		`{"statusLine":{"type":"command","command":"user-line"}}`+"\n")
+
+	snippet := settingsJsonSnippet(t,
+		fmt.Sprintf(`write_claude_launch_settings %q %q %q`, generationDir, active, user))
+	_, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+
+	got := readJSONMap(t, filepath.Join(generationDir, "claude-settings.json"))
+	statusLine, ok := got["statusLine"].(map[string]any)
+	if !ok || statusLine["command"] != "config-line" {
+		t.Fatalf("statusLine = %#v, want the active config's own status line", got["statusLine"])
+	}
+}
+
+// A missing, unreadable or malformed user settings file must not fail the
+// launch — the session simply keeps Claude's own precedence for the status line.
+func TestSettingsJsonClaudeLaunchSettingsToleratesUnusableUserSettings(t *testing.T) {
+	dir := t.TempDir()
+	for name, user := range map[string]string{
+		"Missing1": filepath.Join(dir, "absent.json"),
+		"Broken1":  writeTempFile(t, dir, "broken.json", "{not json"),
+		"NotAMap1": writeTempFile(t, dir, "list.json", "[]"),
+	} {
+		generationDir := filepath.Join(dir, "generation."+name)
+		if err := os.Mkdir(generationDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		snippet := settingsJsonSnippet(t,
+			fmt.Sprintf(`write_claude_launch_settings %q "" %q`, generationDir, user))
+		_, code := runBashSnippet(t, snippet, nil)
+		assertExitCode(t, code, 0)
+
+		got := readJSONMap(t, filepath.Join(generationDir, "claude-settings.json"))
+		if len(got) != 1 || got["preferredNotifChannel"] != "notifications_disabled" {
+			t.Fatalf("%s: launch settings = %#v, want only the notification override", name, got)
+		}
+	}
+}
+
+// Both call sites that build a launch overlay must supply the user settings, or
+// half the sessions (a mid-session account switch rebuilds its own overlay)
+// would lose the pin.
+func TestClaudeLaunchSettingsCallersSupplyUserSettings(t *testing.T) {
+	root := projectRoot(t)
+	for _, file := range []string{"wrapper.sh", filepath.Join("lib", "account-switch.sh")} {
+		data, err := os.ReadFile(filepath.Join(root, file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertContains(t, string(data), `"$HOME/.claude/settings.json"`)
+	}
+}
+
 func TestSettingsJsonClaudeLaunchSettingsFailureKeepsPreviousAtomicFile(t *testing.T) {
 	dir := t.TempDir()
 	generationDir := filepath.Join(dir, "generation.Atomic1")
