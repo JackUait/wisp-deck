@@ -141,13 +141,13 @@ func TestRenderStatsBox_compactHidesModels(t *testing.T) {
 	mm := updated.(*MainMenuModel)
 
 	full := stripANSI(mm.renderStatsBox())
-	if !strings.Contains(full, "opus-4-8") {
+	if !strings.Contains(full, "Opus 4.8") {
 		t.Fatalf("full mode should list per-model rows:\n%s", full)
 	}
 
 	mm.statsCompact = true
 	compact := stripANSI(mm.renderStatsBox())
-	if strings.Contains(compact, "opus-4-8") || strings.Contains(compact, "sonnet-5") {
+	if strings.Contains(compact, "Opus 4.8") || strings.Contains(compact, "Sonnet 5") {
 		t.Errorf("compact mode must hide per-model rows:\n%s", compact)
 	}
 	// Month headline and its gauge stay.
@@ -408,14 +408,42 @@ func TestRenderStatsBox_showsPerModelBreakdown(t *testing.T) {
 	updated, _ := m.Update(statsLoadedMsg{months: months})
 	out := stripANSI(updated.(*MainMenuModel).renderStatsBox())
 
-	for _, want := range []string{"opus-4-8", "haiku-4-5"} {
+	// Rows name the model the way its vendor writes it, not by raw id.
+	for _, want := range []string{"Opus 4.8", "Haiku 4.5"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stats box missing per-model row %q:\n%s", want, out)
 		}
 	}
-	// The raw claude- prefix should be stripped for compactness.
-	if strings.Contains(out, "claude-opus-4-8") {
-		t.Errorf("per-model row should strip the claude- prefix:\n%s", out)
+	for _, raw := range []string{"claude-opus-4-8", "opus-4-8", "haiku-4-5"} {
+		if strings.Contains(out, raw) {
+			t.Errorf("per-model row should not show the raw id %q:\n%s", raw, out)
+		}
+	}
+}
+
+// A long name must survive the fixed-width column intact — the whole point of
+// prettifying is defeated if "GPT-5.1 Codex Mini" comes out as "gpt-5.1-codex…".
+func TestRenderStatsBox_longModelNameNotTruncated(t *testing.T) {
+	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
+	m.SetActiveTab(TabStats)
+
+	months := []usage.MonthlyUsage{
+		{Month: "2026-06", Input: 1_000_000, Output: 500_000,
+			Models: []usage.ModelUsage{
+				{Model: "gpt-5.1-codex-mini", Input: 800_000, Output: 400_000},
+				{Model: "claude-haiku-4-5-20251001", Input: 200_000, Output: 100_000},
+			}},
+	}
+	updated, _ := m.Update(statsLoadedMsg{months: months})
+	out := stripANSI(updated.(*MainMenuModel).renderStatsBox())
+
+	for _, want := range []string{"GPT-5.1 Codex Mini", "Haiku 4.5"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stats box should show %q in full:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "…") {
+		t.Errorf("no model name should need truncating:\n%s", out)
 	}
 }
 
@@ -540,7 +568,7 @@ func TestRenderStatsBox_costColumnRightAligned(t *testing.T) {
 		switch {
 		case strings.Contains(p, "Jun 2026"):
 			totalRow = l
-		case strings.Contains(p, "opus-4-8"):
+		case strings.Contains(p, "Opus 4.8"):
 			modelRow = l
 		case strings.Contains(p, "%"): // bar row carries the percent + month cost
 			barRow = l
@@ -577,13 +605,13 @@ func TestRenderStatsBox_perModelTreeBranches(t *testing.T) {
 	updated, _ := m.Update(statsLoadedMsg{months: months})
 	box := updated.(*MainMenuModel).renderStatsBox()
 
-	for _, mid := range []string{"opus-4-8", "fable-5"} {
+	for _, mid := range []string{"Opus 4.8", "Fable 5"} {
 		line := stripANSI(findLineContaining(box, mid))
 		if !strings.Contains(line, "├─") {
 			t.Errorf("non-last model row %q should carry a ├─ branch: %q", mid, line)
 		}
 	}
-	last := stripANSI(findLineContaining(box, "haiku-4-5"))
+	last := stripANSI(findLineContaining(box, "Haiku 4.5"))
 	if !strings.Contains(last, "└─") {
 		t.Errorf("last model row should close the tree with a └─ branch: %q", last)
 	}

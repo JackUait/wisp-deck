@@ -14,6 +14,13 @@ var statsModeLabels = []string{"Full", "Compact"}
 
 const statsModeCaption = "View: "
 
+// statsModelColWidth is the label column in the per-model breakdown. It is sized
+// to the longest name usage.DisplayModelName produces for the ids that actually
+// occur ("GPT-5.1 Codex Mini", 18), with slack, so names render in full instead
+// of truncating the way raw ids used to. The row has ~27 cells of padding to
+// spare at menuContentWidth, so widening it costs no other column.
+const statsModelColWidth = 20
+
 // renderStatsModeRow renders the Full/Compact toggle to match the top tab
 // switcher: when the Stats body is focused (so ←/→ switches the mode), the
 // selected mode is a solid filled pill (dark ink on the Primary background); when
@@ -214,6 +221,7 @@ func (m *MainMenuModel) statsRowGroups(leftBorder, rightBorder string) (headerRo
 		}
 
 		// Per-model breakdown: which models drove the month's spend. Drawn as a tree
+		// (see statsModelColWidth for the label budget)
 		// hanging off the month (├─ for each model, └─ for the last) and muted so the
 		// rows read as children of the month, not new months.
 		branchStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
@@ -222,16 +230,21 @@ func (m *MainMenuModel) statsRowGroups(leftBorder, rightBorder string) (headerRo
 			if j == len(mu.Models)-1 {
 				connector = "└─"
 			}
-			label := strings.TrimPrefix(md.Model, "claude-")
-			if len(label) > 16 {
-				label = label[:15] + "…"
+			// Name the model the way its vendor writes it rather than by raw id —
+			// "Opus 4.8", not "claude-opus-4-8". The column is wide enough for
+			// every name the id space produces (longest is "GPT-5.1 Codex Mini"),
+			// so the ellipsis is a backstop for a future id, not the normal case.
+			label := usage.DisplayModelName(md.Model)
+			if r := []rune(label); len(r) > statsModelColWidth {
+				label = string(r[:statsModelColWidth-1]) + "…"
 			}
 			usd, priced := usage.ModelCostUSD(md)
 			modelCost := "—"
 			if priced {
 				modelCost = dollarFmt(usd)
 			}
-			modelLine := "  " + branchStyle.Render(connector) + " " + muted.Render(fmt.Sprintf("%-16s %8s", label, humanizeTokens(md.Total())))
+			modelLine := "  " + branchStyle.Render(connector) + " " +
+				muted.Render(fmt.Sprintf("%-*s %8s", statsModelColWidth, label, humanizeTokens(md.Total())))
 			modelPad := menuContentWidth - lipgloss.Width(modelLine) - lipgloss.Width(modelCost)
 			if modelPad < 1 {
 				modelPad = 1
