@@ -134,6 +134,7 @@ shellcheck lib/*.sh lib/terminals/*.sh bin/wisp-deck wrapper.sh  # Lint all scri
 make release                            # Create a new release
 WISP_DECK_LIVE_CLAUDE_E2E=1 go test ./test/bash/ -run TestLiveClaude -v  # After a claude upgrade: verify the real-claude behaviors draft preservation depends on
 WISP_DECK_TMUX_WIDTH_E2E=1 go test ./internal/tui/ -run TestCellWidth_matches_a_live_tmux  # After a tmux/go-runewidth/uniseg bump: re-check the diff pager's width model against a real tmux
+WISP_DECK_LIVE_IMAGE_E2E=1 go test ./internal/gptbridge/ -run TestLiveImageEndToEnd -v  # After a codex upgrade: verify a generated image still reports a savedPath that exists, and still round-trips back into Codex (costs one real image generation)
 ```
 
 ### Reading a red CI run
@@ -555,7 +556,9 @@ frame-to-frame editing work at all.
 
 Guarded by `TestResponseReducerReportsCodexImageSavedPath`,
 `TestEngineToleratesCodexImageGenerationItem`, and
-`TestBaseInstructionsAllowCodexImageGeneration`.
+`TestBaseInstructionsAllowCodexImageGeneration` — plus
+`TestLiveImageEndToEnd`, which is the only check that can catch Codex changing
+its side (run it after a codex upgrade; see Commands).
 
 ## Code Conventions
 
