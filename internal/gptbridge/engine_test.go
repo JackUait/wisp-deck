@@ -722,6 +722,47 @@ func TestEngineToleratesContextCompactionItem(t *testing.T) {
 	}
 }
 
+// Codex's image generation is a built-in model capability with no client-side
+// off switch: the app-server publishes no feature flag for it, and the base
+// instructions forbidding "any Codex-owned ... image ... tool" are only prose
+// the model demonstrably ignores. It runs entirely on Codex's servers and
+// returns the image inline, so it reaches nothing on the host and must never
+// abort the turn — doing so surfaced to users as a fatal "502 forbidden
+// Codex-owned tool item \"imageGeneration\"" that no retry could clear.
+func TestEngineToleratesCodexImageGenerationItem(t *testing.T) {
+	rpc := newFakeEngineRPC()
+	rpc.onTurnStart = func(threadID, turnID string) {
+		rpc.notifications <- notification(
+			"item/started", threadID, turnID,
+			`"startedAtMs":1,"item":{"id":"img","type":"imageGeneration","status":"in_progress"}`,
+		)
+		rpc.notifications <- notification(
+			"item/completed", threadID, turnID,
+			`"item":{"id":"img","type":"imageGeneration","status":"completed",`+
+				`"revisedPrompt":"a red apple on wood","result":"iVBORw0KGgo="}`,
+		)
+		completeTextTurn(rpc, threadID, turnID, "Generated the image.")
+	}
+	engine := newTestEngine(t, rpc)
+	message, err := engine.Execute(context.Background(), testTranslation("draw"), nil)
+	if err != nil {
+		t.Fatalf("image generation aborted the turn: %v", err)
+	}
+	var joined string
+	for _, block := range message.Content {
+		joined += block.Text
+	}
+	if !strings.Contains(joined, "Generated the image.") {
+		t.Fatalf("agent text was lost: %+v", message)
+	}
+	// The model tells the user it produced an image. Dropping the item silently
+	// leaves that claim standing with nothing behind it, which is worse than the
+	// error it replaces — the turn must say the image could not be delivered.
+	if !strings.Contains(joined, "a red apple on wood") {
+		t.Fatalf("image generation was dropped silently: %+v", message)
+	}
+}
+
 func TestEnginePendingToolTurnExpires(t *testing.T) {
 	rpc := newFakeEngineRPC()
 	rpc.onTurnStart = func(threadID, turnID string) {

@@ -291,6 +291,55 @@ func TestResponseReducerReportsWebSearchWithEmptyDisplayQuery(t *testing.T) {
 	}
 }
 
+// The Anthropic Messages API has no assistant-role image block, so a Codex
+// image can never be handed to Claude Code. The reducer therefore states
+// plainly that one was produced and could not be returned: the accompanying
+// agent prose ("Generated the image.") would otherwise be an invisible lie.
+// The base64 payload stays out of the transcript — it is megabytes of context
+// the model can do nothing with.
+func TestResponseReducerSurfacesCodexImageGeneration(t *testing.T) {
+	reducer := NewResponseReducer(ResponseOptions{
+		MessageID: "msg_img", Model: "gpt-5.6-terra", EstimatedInputTokens: 5,
+	})
+	for _, params := range []string{
+		`{"threadId":"thread-1","turnId":"turn-1","item":{"id":"img",` +
+			`"type":"imageGeneration","status":"in_progress","result":""}}`,
+		`{"threadId":"thread-1","turnId":"turn-1","item":{"id":"img",` +
+			`"type":"imageGeneration","status":"completed",` +
+			`"revisedPrompt":"a red apple on wood","result":"iVBORw0KGgoAAAANS"}}`,
+	} {
+		method := "item/started"
+		if strings.Contains(params, "completed") {
+			method = "item/completed"
+		}
+		if _, err := reducer.Apply(Notification{
+			Method: method, Params: json.RawMessage(params),
+		}); err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+	}
+	if _, err := reducer.Finish("end_turn"); err != nil {
+		t.Fatal(err)
+	}
+	message, err := reducer.Message()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var joined string
+	for _, block := range message.Content {
+		if block.Type != "text" {
+			t.Fatalf("unexpected block type %q: %+v", block.Type, message.Content)
+		}
+		joined += block.Text
+	}
+	if !strings.Contains(joined, "image") || !strings.Contains(joined, "a red apple on wood") {
+		t.Fatalf("image generation was not surfaced: %q", joined)
+	}
+	if strings.Contains(joined, "iVBORw0KGgoAAAANS") {
+		t.Fatalf("base64 image payload leaked into the transcript: %q", joined)
+	}
+}
+
 func TestWriteSSEErrorEvent(t *testing.T) {
 	var output bytes.Buffer
 	err := WriteSSE(&output, []StreamEvent{AnthropicErrorEvent("api_error", "broken")})

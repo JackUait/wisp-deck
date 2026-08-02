@@ -625,6 +625,16 @@ func rejectCodexOwnedItem(notification Notification, webSearch bool) error {
 		// so Codex compacting its private copy is invisible to us. Aborting
 		// here 502'd every sufficiently long turn.
 		return nil
+	case "imageGeneration":
+		// Not a host capability: Codex generates the image on its own servers
+		// and returns it inline, so nothing on this machine is touched. It also
+		// cannot be switched off — the app-server publishes no feature flag for
+		// image generation, which leaves the "never use any Codex-owned image
+		// tool" line in baseInstructions advisory only, and the model reaches
+		// for it anyway whenever a turn calls for a picture. Failing here
+		// aborted the entire turn as a 502 that no retry could clear. The
+		// reducer reports the image instead, so it is neither fatal nor silent.
+		return nil
 	case "webSearch":
 		// The turn asked for Anthropic's server-hosted web_search, so Codex
 		// running its own search is the requested capability, not a leak.

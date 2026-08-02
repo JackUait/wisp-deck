@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -88,6 +89,8 @@ type ResponseReducer struct {
 	webSearchToolUses map[string]string
 	webSearchDone     map[string]bool
 	webSearchRequests int64
+
+	imageGenerations map[string]bool
 }
 
 // NewResponseReducer constructs a turn-scoped response reducer.
@@ -96,6 +99,7 @@ func NewResponseReducer(options ResponseOptions) *ResponseReducer {
 		options: options, current: -1,
 		webSearchToolUses: make(map[string]string),
 		webSearchDone:     make(map[string]bool),
+		imageGenerations:  make(map[string]bool),
 	}
 }
 
@@ -130,7 +134,7 @@ func (r *ResponseReducer) Apply(notification Notification) ([]StreamEvent, error
 	}
 	switch notification.Method {
 	case "item/started", "item/completed":
-		return r.applyWebSearchItem(notification)
+		return r.applyItem(notification)
 	case "item/agentMessage/delta":
 		var params struct {
 			ThreadID string `json:"threadId"`
@@ -286,6 +290,83 @@ func (r *ResponseReducer) Apply(notification Notification) ([]StreamEvent, error
 	default:
 		return nil, nil
 	}
+}
+
+// applyItem routes the app-server item types that carry a user-visible result.
+// Everything else is Codex's own bookkeeping and reduces to no output.
+func (r *ResponseReducer) applyItem(notification Notification) ([]StreamEvent, error) {
+	var probe struct {
+		Item struct {
+			Type string `json:"type"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(notification.Params, &probe); err != nil {
+		return nil, errors.New("malformed app-server item notification")
+	}
+	if probe.Item.Type == "imageGeneration" {
+		return r.applyImageGenerationItem(notification)
+	}
+	return r.applyWebSearchItem(notification)
+}
+
+// applyImageGenerationItem reports an image Codex generated on its own.
+//
+// Codex's image generation cannot be disabled from the client, so the model
+// uses it whenever a turn calls for a picture. The Messages API has no
+// assistant-role image block, so the picture itself cannot reach Claude Code —
+// but dropping the item in silence is the worse failure: the model's own
+// "Generated the image." prose would stand with nothing behind it, and the user
+// would never learn why nothing appeared. The base64 payload stays out of the
+// transcript; it is megabytes of context that neither Claude nor the user can
+// act on through this channel.
+func (r *ResponseReducer) applyImageGenerationItem(notification Notification) ([]StreamEvent, error) {
+	if notification.Method != "item/completed" {
+		return nil, nil
+	}
+	var params struct {
+		ThreadID string `json:"threadId"`
+		TurnID   string `json:"turnId"`
+		Item     struct {
+			ID            string `json:"id"`
+			RevisedPrompt string `json:"revisedPrompt"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(notification.Params, &params); err != nil {
+		return nil, errors.New("malformed image generation item notification")
+	}
+	if err := r.acceptScope(params.ThreadID, params.TurnID); err != nil {
+		return nil, err
+	}
+	if params.Item.ID != "" {
+		if r.imageGenerations[params.Item.ID] {
+			return nil, nil
+		}
+		r.imageGenerations[params.Item.ID] = true
+	}
+
+	notice := "[Codex generated an image, but this bridge cannot return images " +
+		"to Claude Code, so it was discarded."
+	if prompt := strings.TrimSpace(params.Item.RevisedPrompt); prompt != "" {
+		notice += " Prompt used: " + prompt
+	}
+	notice += "]"
+
+	events := r.Start()
+	events = append(events, r.closeCurrent()...)
+	index := len(r.blocks)
+	r.blocks = append(r.blocks, ResponseContentBlock{Type: "text", Text: notice})
+	events = append(events,
+		contentStart(index, map[string]any{"type": "text", "text": ""}),
+		StreamEvent{
+			Event: "content_block_delta",
+			Data: map[string]any{
+				"type": "content_block_delta", "index": index,
+				"delta": map[string]any{"type": "text_delta", "text": notice},
+			},
+		},
+		contentStop(index),
+	)
+	return events, nil
 }
 
 func (r *ResponseReducer) applyWebSearchItem(notification Notification) ([]StreamEvent, error) {
