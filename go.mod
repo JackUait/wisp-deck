@@ -37,5 +37,6 @@ require (
 	github.com/sahilm/fuzzy v0.1.1 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/text v0.3.8 // indirect
+	golang.org/x/image v0.30.0 // indirect
+	golang.org/x/text v0.28.0 // indirect
 )

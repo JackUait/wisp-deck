@@ -820,15 +820,42 @@ discard_worktree_files() {
 }
 
 # is_image_file reports (via exit status) whether <path> has an image extension
-# the preview popup can decode — only the formats the Go stdlib ships decoders
-# for (png/jpg/jpeg/gif), case-insensitive. Everything else (webp, svg, …)
-# keeps the regular diff popup.
+# the preview popup can decode, case-insensitively. That is every popular image
+# format: the pager decodes the raster ones it has Go decoders for in process
+# and hands the rest (avif/heic/ico/icns/svg) to macOS ImageIO. The Go renderer
+# keeps the same list as a map (previewableImageExts in internal/tui) — a pane
+# picks between the two renderers by binary capability, so the lists are pinned
+# to each other by TestIsImageFile_matches_the_Go_renderers_list.
+#
+# Matching is spelled as character classes rather than lowercasing the path:
+# ${v,,} is bash 4 only (macOS ships 3.2) and a `tr` would fork a subshell PER
+# FILE on every ledger build tick.
 # Usage: is_image_file <path>
 is_image_file() {
   case "$1" in
-    *.[pP][nN][gG]|*.[jJ][pP][gG]|*.[jJ][pP][eE][gG]|*.[gG][iI][fF]) return 0 ;;
+    *.[pP][nN][gG]|*.[aA][pP][nN][gG]) return 0 ;;
+    *.[jJ][pP][gG]|*.[jJ][pP][eE][gG]|*.[jJ][pP][eE]|*.[jJ][fF][iI][fF]) return 0 ;;
+    *.[gG][iI][fF]|*.[wW][eE][bB][pP]|*.[aA][vV][iI][fF]) return 0 ;;
+    *.[bB][mM][pP]|*.[dD][iI][bB]) return 0 ;;
+    *.[tT][iI][fF]|*.[tT][iI][fF][fF]) return 0 ;;
+    *.[iI][cC][oO]|*.[iI][cC][nN][sS]) return 0 ;;
+    *.[hH][eE][iI][cC]|*.[hH][eE][iI][fF]) return 0 ;;
+    *.[sS][vV][gG]) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# is_binary_image_file is is_image_file minus the formats git tracks as TEXT.
+# It gates the ledger ROW format, not the popup: a raster image's numstat is a
+# meaningless "+0 −0" and is replaced by a byte-size delta, but an SVG has real
+# line counts and no hydrated byte size, so sizing it would print "±0" on every
+# edit. It still previews — that gate is is_image_file.
+# Usage: is_binary_image_file <path>
+is_binary_image_file() {
+  case "$1" in
+    *.[sS][vV][gG]) return 1 ;;
+  esac
+  is_image_file "$1"
 }
 
 # file_diff_command echoes the shell command whose output feeds the diff-view
@@ -1332,7 +1359,7 @@ compact_view_shell() {
       # FILE on every build tick (over a second at a few hundred files).
       format_file "$file" "$name_width" >/dev/null
       display="$FORMAT_FILE"
-      if is_image_file "$file"; then
+      if is_binary_image_file "$file"; then
         format_image_row "$project_dir" "$sizeref" "$file" "$display" "$gcolor"
       else
         [ "$added" = "-" ] && added=0

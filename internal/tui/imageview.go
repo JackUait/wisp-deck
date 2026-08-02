@@ -1,13 +1,10 @@
 package tui
 
 import (
-	"bytes"
 	"fmt"
 	"image"
-	_ "image/gif"  // register decoders for the formats is_image_file routes here
-	_ "image/jpeg" //
-	_ "image/png"  //
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -112,8 +109,9 @@ func renderImagePreview(img image.Image, width, maxRows int) string {
 }
 
 // NewImageView builds the popup pager in IMAGE mode: instead of a diff body it
-// shows a half-block truecolor preview of the image bytes, re-rendered to the
-// box width on resize. There is only the one view (no layout/context tabs),
+// shows a half-block truecolor preview of the image bytes (title names the
+// file, whose extension routes the decode), re-rendered to the box width on
+// resize. There is only the one view (no layout/context tabs),
 // like a whole-file add/delete. The status badge can't be derived from a
 // binary body, so the caller passes it ("added" | "modified" | "deleted").
 // Undecodable data falls back to an in-popup message rather than failing.
@@ -126,7 +124,9 @@ func NewImageView(title string, data []byte, status string) DiffViewModel {
 		hoverMode:  -1,
 		hoverCtx:   -1,
 	}
-	img, _, err := image.Decode(bytes.NewReader(data))
+	// The title carries the file's path, and its extension is what tells the
+	// decoder how to read bytes no magic number identifies (SVG).
+	img, err := decodeImage(data, strings.ToLower(filepath.Ext(title)))
 	if err != nil {
 		m.imgErr = err.Error()
 		return m

@@ -6,24 +6,81 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jackuait/wisp-deck/internal/tui"
 )
 
 // Clicking an image in the file ledger must open a PREVIEW popup (wisp-deck-tui
 // diff-view --image, raw bytes on stdin) instead of the useless "Binary files
-// differ" diff. is_image_file gates the branch by extension — only the formats
-// the Go stdlib decodes (png/jpg/jpeg/gif).
+// differ" diff. is_image_file gates the branch by extension — every popular
+// image format, since the pager decodes each of them (pure Go where a decoder
+// exists, macOS ImageIO via sips for the rest).
 
-func TestIsImageFile_matches_stdlib_decodable_extensions(t *testing.T) {
-	yes := []string{"a.png", "b.jpg", "c.jpeg", "d.gif", "UP.PNG", "x/y/z.JpG"}
+func TestIsImageFile_matches_every_popular_image_extension(t *testing.T) {
+	yes := []string{
+		"a.png", "a.apng", "b.jpg", "c.jpeg", "c.jpe", "c.jfif", "d.gif",
+		"e.webp", "f.bmp", "f.dib", "g.tif", "g.tiff", "h.ico", "h.icns",
+		"i.heic", "i.heif", "j.avif", "k.svg",
+		"UP.PNG", "x/y/z.JpG", "deep/dir/Shot.HEIC", "logo.SVG",
+	}
 	for _, p := range yes {
 		if _, code := cvFuncArgv(t, "is_image_file", p); code != 0 {
 			t.Errorf("is_image_file %q = %d, want 0", p, code)
 		}
 	}
-	no := []string{"a.txt", "b.sh", "png", "a.png.bak", "c.webp", "d.svg", ""}
+	no := []string{"a.txt", "b.sh", "png", "a.png.bak", "c.mp4", "d.pdf", ""}
 	for _, p := range no {
 		if _, code := cvFuncArgv(t, "is_image_file", p); code == 0 {
 			t.Errorf("is_image_file %q = 0, want non-zero", p)
+		}
+	}
+}
+
+// The shell and Go renderers each own a copy of the extension list (one is a
+// case glob, the other a map), and a pane picks between them by binary
+// capability — so a format added to one and not the other previews for half the
+// users. This pins them to each other.
+func TestIsImageFile_matches_the_Go_renderers_list(t *testing.T) {
+	for _, ext := range tui.PreviewableImageExtensions() {
+		if _, code := cvFuncArgv(t, "is_image_file", "sample"+ext); code != 0 {
+			t.Errorf("Go previews %q but is_image_file rejects it", ext)
+		}
+	}
+}
+
+// A byte-size delta is the right row for a raster image (its line count is
+// meaningless) but the WRONG one for an SVG: git tracks it as text, reports
+// real line counts, and never hydrates a byte size — so sizing it would print
+// "±0" on every edit. The preview gate and the row-format gate are therefore
+// different sets.
+func TestIsBinaryImageFile_excludes_text_vector_formats(t *testing.T) {
+	yes := []string{"a.png", "e.webp", "i.heic", "j.avif", "h.ico", "g.tiff"}
+	for _, p := range yes {
+		if _, code := cvFuncArgv(t, "is_binary_image_file", p); code != 0 {
+			t.Errorf("is_binary_image_file %q = %d, want 0", p, code)
+		}
+	}
+	no := []string{"k.svg", "logo.SVG", "a.txt", ""}
+	for _, p := range no {
+		if _, code := cvFuncArgv(t, "is_binary_image_file", p); code == 0 {
+			t.Errorf("is_binary_image_file %q = 0, want non-zero", p)
+		}
+	}
+}
+
+// Every popular format reaches the preview branch of the popup, not just PNG.
+func TestOpenDiffPopup_previews_every_popular_format(t *testing.T) {
+	for _, name := range []string{
+		"a.webp", "b.avif", "c.heic", "d.bmp", "e.tiff", "f.ico", "g.svg", "h.gif",
+	} {
+		repo := t.TempDir()
+		git := discardGitRepo(t, repo)
+		git("init", "-q")
+		writeTempFile(t, repo, name, "bytes")
+
+		got := imagePopupCmd(t, repo, name)
+		if !strings.Contains(got, "--image") {
+			t.Errorf("%s did not open the preview popup:\n%q", name, got)
 		}
 	}
 }

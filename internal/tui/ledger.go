@@ -3,7 +3,9 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -512,6 +514,21 @@ func (m *LedgerModel) hoveredPath() (string, bool) {
 	return row.Path, true
 }
 
+// opensImagePreview reports whether clicking row should open the image PREVIEW
+// popup rather than the diff popup: an extension the pager decodes, whose file
+// is on disk right now. Presence is checked directly (not via row.NewBytes,
+// which git hydrates only for BINARY changes) so a text-tracked image like an
+// SVG previews too, and so a deleted image still falls back to the diff instead
+// of cat-ing a path that is gone. Same two conditions the shell renderer
+// applies — `is_image_file` and `[ -f ]`.
+func opensImagePreview(projectDir string, row ledger.Row) bool {
+	if row.Path == "" || !IsPreviewableImage(row.Path) {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(projectDir, row.Path))
+	return err == nil && info.Mode().IsRegular()
+}
+
 func (m *LedgerModel) openHovered() tea.Cmd {
 	row, ok := m.hoveredRow()
 	if !ok || m.popup == nil || m.opening {
@@ -523,8 +540,7 @@ func (m *LedgerModel) openHovered() tea.Cmd {
 			backdrop = latest
 		}
 	}
-	extension := strings.ToLower(path.Ext(row.Path))
-	image := row.Binary && row.NewBytes > 0 && (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".gif")
+	image := opensImagePreview(m.projectDir, row)
 	status := "modified"
 	if row.ID.Group == ledger.GroupNew {
 		status = "added"

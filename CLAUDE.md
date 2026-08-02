@@ -313,6 +313,46 @@ spawn here is dead screen time. Three launch invariants, each with a guard:
    (backgrounded around the launch) rebuilds whatever panes are missing once
    the window has real space — guarded by `test/bash/pane_heal_test.go`.
 
+### An image preview decodes in Go first, and falls back to macOS ImageIO
+
+Clicking an image in the ledger opens a PREVIEW popup instead of the useless
+"Binary files differ" diff. Which files that covers is one list kept in two
+places — `previewableImageExts` (`internal/tui/imageformats.go`) and the
+`is_image_file` case glob (`lib/compact-view.sh`) — because a pane picks its
+renderer by binary capability, so a format added to one and not the other
+previews for half the users. `TestIsImageFile_matches_the_Go_renderers_list`
+pins them together, and `TestPreviewableImageExtensions_all_decode` refuses an
+extension that has no fixture in `internal/tui/testdata/img` proving it decodes.
+
+`decodeImage` (`internal/tui/imagedecode.go`) tries the registered Go decoders
+first — stdlib PNG/JPEG/GIF plus `x/image`'s WebP/BMP/TIFF — so the formats a
+repo is mostly made of cost nothing but the decode. AVIF, HEIC/HEIF, ICO/ICNS
+and SVG have no pure-Go decoder here, and each shells out to `sips`, which is
+ImageIO and reads all of them. Rules that fell out of building it:
+
+- **The extension travels with the bytes.** ImageIO sniffs every container from
+  its magic number except SVG, which is plain text and is recognized only by the
+  scratch file's extension. `NewImageView` takes it from the title (the path).
+- **Convert at `previewRasterMaxSide`, but only downward.** A 24-megapixel phone
+  photo converted at full size cost **9 seconds** of popup-open latency for
+  pixels nothing keeps (the cap is `kittyMaxSide`); converting at the ceiling is
+  1.4s. `--resampleHeightWidthMax` resizes in BOTH directions, so a cheap
+  `sips -g pixelWidth` probe (~30ms) gates it — passing it unconditionally would
+  blow an 8px icon up to 2048 and sneak a blurry enlargement past the renderer's
+  deliberate no-upscale rule.
+- **A vector is the one thing to enlarge.** An SVG has no pixels of its own, so
+  it is rasterized AT the ceiling rather than at its declared size — otherwise a
+  16px icon previews as a speck.
+- **An SVG previews but is not a byte-delta row.** git tracks it as text: it has
+  real line counts and no hydrated byte size, so `is_binary_image_file` (and, on
+  the Go side, `row.Binary`) keeps it on the `+N −N` row while `is_image_file`
+  still routes its click to the preview. Sizing it would print "±0" on every
+  edit.
+- **The gate is extension + presence, not `NewBytes`.** `opensImagePreview`
+  stats the file, exactly like the shell's `[ -f ]`: byte sizes exist only for
+  binary changes, and a deleted image must still fall back to the diff rather
+  than cat a path that is gone.
+
 ### The diff pager measures text in cells, never in runes
 
 Everything the file preview lays out — `fitColumn`, `wrapColumns`, `tintColumn`,

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -878,7 +880,16 @@ func TestLedgerOpenUsesCachedBackdropAndImageMetadata(t *testing.T) {
 	}, ledger.Metadata{TotalFiles: 1})
 	popup := &fakeLedgerPopup{}
 	cache := &fakeBackdropCache{path: "/tmp/cached-backdrop", ready: true}
-	m := NewLedgerModel(nil, snapshot, LedgerOptions{ProjectDir: "/repo", Popup: popup, BackdropCache: cache})
+	// The image gate stats the file: a preview can only show bytes that are on
+	// disk, so the row needs a real one behind it.
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, "art"), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "art", "shot.png"), []byte("bytes"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	m := NewLedgerModel(nil, snapshot, LedgerOptions{ProjectDir: repo, Popup: popup, BackdropCache: cache})
 	sizeLedger(m, 80, 14)
 
 	_, cmd := m.Update(tea.MouseMsg{X: 12, Y: 1, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
