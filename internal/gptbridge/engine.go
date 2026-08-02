@@ -578,16 +578,24 @@ func baseInstructions(translation Translation) string {
 		"Continue working until the user's request is fully resolved; never claim completion while actionable checklist items remain.",
 		"Start host commands that may approach their timeout in background mode from the outset, so Claude Code registers their completion and automatically resumes you.",
 	}
+	// Image generation is permitted, not merely tolerated. It has no client-side
+	// off switch, so forbidding it bought nothing and cost consistency: the model
+	// either obeyed by substituting SVG for a requested picture or ignored the
+	// line and generated one anyway. The reducer hands over the saved file, so
+	// generating is the right answer and the instructions now say so.
+	lines = append(lines,
+		"You may generate images. Every image you generate is saved to a file and its path is reported to the user, so refer to that path instead of claiming an image cannot be shown.",
+	)
 	if !translation.WebSearch {
 		return strings.Join(append(lines,
-			"Only host-provided dynamic tools are available. Never use or request any Codex-owned shell, filesystem, web, MCP, app, image, collaboration, or environment tool.",
+			"Only host-provided dynamic tools and your own image generation are available. Never use or request any Codex-owned shell, filesystem, web, MCP, app, collaboration, or environment tool.",
 		), " ")
 	}
 	// Claude Code asked for Anthropic's server-hosted web_search, which this
 	// bridge answers with Codex's own search. The reducer supplies the server-tool
 	// lifecycle blocks; these instructions make the findings useful as prose.
 	lines = append(lines,
-		"Only host-provided dynamic tools and Codex's own web search are available. Never use or request any Codex-owned shell, filesystem, MCP, app, image, collaboration, or environment tool.",
+		"Only host-provided dynamic tools, Codex's own web search, and your own image generation are available. Never use or request any Codex-owned shell, filesystem, MCP, app, collaboration, or environment tool.",
 		"Use web search to answer, then report the findings as plain text with the source URLs inline. Do not answer from memory alone.",
 	)
 	// config.web_search carries only a mode, so these bind here or nowhere.
@@ -626,14 +634,12 @@ func rejectCodexOwnedItem(notification Notification, webSearch bool) error {
 		// here 502'd every sufficiently long turn.
 		return nil
 	case "imageGeneration":
-		// Not a host capability: Codex generates the image on its own servers
-		// and returns it inline, so nothing on this machine is touched. It also
-		// cannot be switched off — the app-server publishes no feature flag for
-		// image generation, which leaves the "never use any Codex-owned image
-		// tool" line in baseInstructions advisory only, and the model reaches
-		// for it anyway whenever a turn calls for a picture. Failing here
-		// aborted the entire turn as a 502 that no retry could clear. The
-		// reducer reports the image instead, so it is neither fatal nor silent.
+		// Not a host capability: the model draws on Codex's servers, and the
+		// app-server writes the result to a file of its own under CODEX_HOME —
+		// it never runs anything here. It also cannot be switched off, since
+		// the app-server publishes no feature flag for image generation. The
+		// reducer hands the saved path to Claude Code; failing here instead
+		// aborted the entire turn as a 502 that no retry could clear.
 		return nil
 	case "webSearch":
 		// The turn asked for Anthropic's server-hosted web_search, so Codex

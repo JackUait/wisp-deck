@@ -723,13 +723,18 @@ func TestEngineToleratesContextCompactionItem(t *testing.T) {
 }
 
 // Codex's image generation is a built-in model capability with no client-side
-// off switch: the app-server publishes no feature flag for it, and the base
-// instructions forbidding "any Codex-owned ... image ... tool" are only prose
-// the model demonstrably ignores. It runs entirely on Codex's servers and
-// returns the image inline, so it reaches nothing on the host and must never
-// abort the turn — doing so surfaced to users as a fatal "502 forbidden
-// Codex-owned tool item \"imageGeneration\"" that no retry could clear.
+// off switch: the app-server publishes no feature flag for it, so the model
+// reaches for it whenever a turn calls for a picture. Aborting the turn
+// surfaced as a fatal "502 forbidden Codex-owned tool item
+// \"imageGeneration\"" that no retry could clear.
+//
+// The item is also the only place the picture's location is announced. Codex
+// writes the file itself (savedPath) and the bridge never sees another mention
+// of it, so a turn that keeps going but drops the path leaves a real image
+// stranded on disk — which is what users hit next, as "this bridge cannot
+// return images to Claude Code, so it was discarded".
 func TestEngineToleratesCodexImageGenerationItem(t *testing.T) {
+	const saved = "/Users/dev/.codex/generated_images/thread/exec-img.png"
 	rpc := newFakeEngineRPC()
 	rpc.onTurnStart = func(threadID, turnID string) {
 		rpc.notifications <- notification(
@@ -739,7 +744,8 @@ func TestEngineToleratesCodexImageGenerationItem(t *testing.T) {
 		rpc.notifications <- notification(
 			"item/completed", threadID, turnID,
 			`"item":{"id":"img","type":"imageGeneration","status":"completed",`+
-				`"revisedPrompt":"a red apple on wood","result":"iVBORw0KGgo="}`,
+				`"revisedPrompt":"a red apple on wood","result":"iVBORw0KGgo=",`+
+				`"savedPath":"`+saved+`"}`,
 		)
 		completeTextTurn(rpc, threadID, turnID, "Generated the image.")
 	}
@@ -755,11 +761,15 @@ func TestEngineToleratesCodexImageGenerationItem(t *testing.T) {
 	if !strings.Contains(joined, "Generated the image.") {
 		t.Fatalf("agent text was lost: %+v", message)
 	}
-	// The model tells the user it produced an image. Dropping the item silently
-	// leaves that claim standing with nothing behind it, which is worse than the
-	// error it replaces — the turn must say the image could not be delivered.
+	if !strings.Contains(joined, saved) {
+		t.Fatalf("the generated image's path never reached Claude Code: %+v", message)
+	}
 	if !strings.Contains(joined, "a red apple on wood") {
 		t.Fatalf("image generation was dropped silently: %+v", message)
+	}
+	// The same picture the path points at; megabytes of it, per image.
+	if strings.Contains(joined, "iVBORw0KGgo=") {
+		t.Fatalf("base64 image payload leaked into the transcript: %+v", message)
 	}
 }
 
@@ -849,6 +859,38 @@ func TestBaseInstructionsKeepClaudeChecklistWorkResumable(t *testing.T) {
 			} {
 				if !strings.Contains(instructions, want) {
 					t.Fatalf("baseInstructions omit %q: %q", want, instructions)
+				}
+			}
+		})
+	}
+}
+
+// The prohibition on Codex-owned tools must not cover image generation. It has
+// no client-side off switch, so forbidding it only makes the model waver: it
+// obeys by answering an image request with SVG or an apology, or ignores the
+// instruction and generates the picture — the same prompt doing different
+// things on different runs. Now that the bridge hands over the saved file,
+// generating is the correct behavior and the instructions must say so.
+func TestBaseInstructionsAllowCodexImageGeneration(t *testing.T) {
+	for _, webSearch := range []bool{false, true} {
+		t.Run(fmt.Sprintf("web_search_%t", webSearch), func(t *testing.T) {
+			instructions := baseInstructions(Translation{WebSearch: webSearch})
+			forbidden, _, _ := strings.Cut(instructions, ".")
+			for _, sentence := range strings.Split(instructions, ". ") {
+				if strings.Contains(sentence, "Never use or request") {
+					forbidden = sentence
+				}
+			}
+			if strings.Contains(forbidden, "image") {
+				t.Fatalf("image generation is still forbidden: %q", forbidden)
+			}
+			if !strings.Contains(instructions, "generate images") {
+				t.Fatalf("baseInstructions never permit image generation: %q", instructions)
+			}
+			// Still forbidden: the tools that would touch this machine.
+			for _, want := range []string{"shell", "filesystem", "MCP"} {
+				if !strings.Contains(forbidden, want) {
+					t.Fatalf("%s tools are no longer forbidden: %q", want, forbidden)
 				}
 			}
 		})

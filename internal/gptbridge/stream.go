@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -309,16 +310,20 @@ func (r *ResponseReducer) applyItem(notification Notification) ([]StreamEvent, e
 	return r.applyWebSearchItem(notification)
 }
 
-// applyImageGenerationItem reports an image Codex generated on its own.
+// applyImageGenerationItem hands over the image Codex generated on its own.
 //
 // Codex's image generation cannot be disabled from the client, so the model
-// uses it whenever a turn calls for a picture. The Messages API has no
-// assistant-role image block, so the picture itself cannot reach Claude Code —
-// but dropping the item in silence is the worse failure: the model's own
-// "Generated the image." prose would stand with nothing behind it, and the user
-// would never learn why nothing appeared. The base64 payload stays out of the
-// transcript; it is megabytes of context that neither Claude nor the user can
-// act on through this channel.
+// uses it whenever a turn calls for a picture. The picture itself cannot travel
+// as a content block — the Messages API has no assistant-role image — but it
+// does not have to: the app-server writes every generated image to a file and
+// reports the absolute location in the item's savedPath. That path is the
+// deliverable. Claude Code can read it, show it, copy it into the project, and
+// feed it back as the input image of the next edit turn (a Read tool_result
+// carries it to Codex as inputImage), which is what makes multi-frame work
+// possible at all.
+//
+// The base64 in `result` stays out of the transcript: it is the same picture
+// the path points at, and it is megabytes of context per image.
 func (r *ResponseReducer) applyImageGenerationItem(notification Notification) ([]StreamEvent, error) {
 	if notification.Method != "item/completed" {
 		return nil, nil
@@ -328,7 +333,9 @@ func (r *ResponseReducer) applyImageGenerationItem(notification Notification) ([
 		TurnID   string `json:"turnId"`
 		Item     struct {
 			ID            string `json:"id"`
+			Status        string `json:"status"`
 			RevisedPrompt string `json:"revisedPrompt"`
+			SavedPath     string `json:"savedPath"`
 		} `json:"item"`
 	}
 	if err := json.Unmarshal(notification.Params, &params); err != nil {
@@ -344,8 +351,22 @@ func (r *ResponseReducer) applyImageGenerationItem(notification Notification) ([
 		r.imageGenerations[params.Item.ID] = true
 	}
 
-	notice := "[Codex generated an image, but this bridge cannot return images " +
-		"to Claude Code, so it was discarded."
+	// Silence is never an option here: the model's own "Generated the image."
+	// prose would stand with nothing behind it and the user would never learn
+	// why nothing appeared. Each branch below says exactly what happened.
+	var notice string
+	switch saved := strings.TrimSpace(params.Item.SavedPath); {
+	case saved != "":
+		notice = "[Codex generated an image and saved it to " + saved +
+			" — read that path to view it, and pass it back as the input image " +
+			"to keep editing it."
+	case params.Item.Status != "" && params.Item.Status != "completed":
+		notice = "[Codex's image generation ended with status " +
+			strconv.Quote(params.Item.Status) + " and produced no image."
+	default:
+		notice = "[Codex generated an image, but the app-server reported no saved " +
+			"file for it, so it could not be delivered."
+	}
 	if prompt := strings.TrimSpace(params.Item.RevisedPrompt); prompt != "" {
 		notice += " Prompt used: " + prompt
 	}

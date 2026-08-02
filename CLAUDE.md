@@ -521,6 +521,42 @@ neighbours in `translate_test.go`, `TestEngineEnablesCodexWebSearchOnlyWhenReque
 `TestHandlerAcceptsClaudeCodeWebSearchRequest`, which replays Claude Code's
 exact request body end to end.
 
+### A generated image is delivered as a path, never as a block
+
+Codex generates images on its own servers, but the app-server **writes every one
+to a file** under `$CODEX_HOME/generated_images/<threadId>/<itemId>.png` and
+reports the absolute location as `savedPath` on the `imageGeneration` item.
+`item/completed` carries `savedPath`, `revisedPrompt`, `status`, and `result` —
+the last being the same picture again as ~2MB of base64.
+
+`savedPath` is the deliverable and the item is the only place it is ever
+announced. Parsing the item without it shipped as *"[Codex generated an image,
+but this bridge cannot return images to Claude Code, so it was discarded]"* —
+printed while the finished picture sat on disk, unreferenced. The Messages API
+having no assistant-role image block is true and beside the point: the path
+travels as text, Claude Code reads the file from it, and a `Read` tool_result
+carries the picture back to Codex as `inputImage`, which is what makes
+frame-to-frame editing work at all.
+
+- **Never drop `savedPath`,** and never re-word the notice into a claim that the
+  image is gone. If it is ever absent, say *that* — report a non-`completed`
+  `status` as the failure it is, and never fall back to "discarded".
+- **Keep `result` out of the transcript.** It duplicates the file at megabytes
+  per image.
+- **The path outlives the turn.** Bridge threads are `ephemeral`, so the
+  `thread/delete` in `cleanupTurn` answers `-32600 thread is not persisted and
+  cannot be deleted` and the file is untouched.
+- **The instructions permit image generation.** It has no client-side off
+  switch, so the old "never use any Codex-owned … image … tool" line bought
+  nothing and cost consistency: the model either obeyed by answering an image
+  request with SVG or ignored it and drew anyway — the same prompt behaving
+  differently run to run. Do not restore it; the shell/filesystem/MCP
+  prohibitions (the ones that would touch this machine) stay.
+
+Guarded by `TestResponseReducerReportsCodexImageSavedPath`,
+`TestEngineToleratesCodexImageGenerationItem`, and
+`TestBaseInstructionsAllowCodexImageGeneration`.
+
 ## Code Conventions
 
 ### Avoid Over-Engineering

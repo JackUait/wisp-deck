@@ -291,12 +291,91 @@ func TestResponseReducerReportsWebSearchWithEmptyDisplayQuery(t *testing.T) {
 	}
 }
 
-// The Anthropic Messages API has no assistant-role image block, so a Codex
-// image can never be handed to Claude Code. The reducer therefore states
-// plainly that one was produced and could not be returned: the accompanying
-// agent prose ("Generated the image.") would otherwise be an invisible lie.
-// The base64 payload stays out of the transcript — it is megabytes of context
-// the model can do nothing with.
+// Codex saves every image it generates to a file and reports the absolute
+// location in the item's savedPath. That path is the deliverable: Claude Code
+// can read it, show it, copy it into the project, and hand it back as the input
+// image of the next edit turn. Dropping it stranded a picture that exists on
+// disk behind the claim that it "was discarded".
+func TestResponseReducerReportsCodexImageSavedPath(t *testing.T) {
+	reducer := NewResponseReducer(ResponseOptions{
+		MessageID: "msg_img", Model: "gpt-5.6-terra", EstimatedInputTokens: 5,
+	})
+	saved := "/Users/dev/.codex/generated_images/019fc333/exec-b2e9851e.png"
+	for method, params := range map[string]string{
+		"item/started": `{"threadId":"thread-1","turnId":"turn-1","item":{"id":"img",` +
+			`"type":"imageGeneration","status":"in_progress","result":""}}`,
+		"item/completed": `{"threadId":"thread-1","turnId":"turn-1","item":{"id":"img",` +
+			`"type":"imageGeneration","status":"completed",` +
+			`"revisedPrompt":"a red apple on wood","result":"success",` +
+			`"savedPath":"` + saved + `"}}`,
+	} {
+		if _, err := reducer.Apply(Notification{
+			Method: method, Params: json.RawMessage(params),
+		}); err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+	}
+	if _, err := reducer.Finish("end_turn"); err != nil {
+		t.Fatal(err)
+	}
+	message, err := reducer.Message()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var joined string
+	for _, block := range message.Content {
+		if block.Type != "text" {
+			t.Fatalf("unexpected block type %q: %+v", block.Type, message.Content)
+		}
+		joined += block.Text
+	}
+	if !strings.Contains(joined, saved) {
+		t.Fatalf("saved image path was not reported: %q", joined)
+	}
+	if strings.Contains(joined, "discarded") {
+		t.Fatalf("an image that exists on disk was reported as discarded: %q", joined)
+	}
+	if !strings.Contains(joined, "a red apple on wood") {
+		t.Fatalf("revised prompt was dropped: %q", joined)
+	}
+}
+
+// A completed item always names a file; one that ends any other way names none.
+// Reporting that as "generated an image" would be the same lie in the other
+// direction, so the reducer reports the status the item itself carries.
+func TestResponseReducerReportsFailedCodexImageGeneration(t *testing.T) {
+	reducer := NewResponseReducer(ResponseOptions{
+		MessageID: "msg_img", Model: "gpt-5.6-terra", EstimatedInputTokens: 5,
+	})
+	if _, err := reducer.Apply(Notification{
+		Method: "item/completed",
+		Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1",` +
+			`"item":{"id":"img","type":"imageGeneration","status":"failed","result":""}}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reducer.Finish("end_turn"); err != nil {
+		t.Fatal(err)
+	}
+	message, err := reducer.Message()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var joined string
+	for _, block := range message.Content {
+		joined += block.Text
+	}
+	if !strings.Contains(joined, "failed") {
+		t.Fatalf("failed image generation was not reported as failed: %q", joined)
+	}
+	if strings.Contains(joined, "generated an image") {
+		t.Fatalf("a failed generation was reported as a produced image: %q", joined)
+	}
+}
+
+// Without a savedPath there is nothing to hand over, so the reducer must still
+// say so rather than let the model's "Generated the image." prose stand with
+// nothing behind it.
 func TestResponseReducerSurfacesCodexImageGeneration(t *testing.T) {
 	reducer := NewResponseReducer(ResponseOptions{
 		MessageID: "msg_img", Model: "gpt-5.6-terra", EstimatedInputTokens: 5,
