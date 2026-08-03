@@ -10951,6 +10951,8 @@ func auditedProductionProcessCalls() map[string]int {
 		`internal/opencodeadapter/supervisor.go:Supervisor.runDefaultPTY:exec.Command(spec.Argv[0], spec.Argv[1:]...)`:                                      1,
 		`internal/opencodeadapter/supervisor.go:startManagedProcess:exec.Command(spec.Argv[0], spec.Argv[1:]...)`:                                           1,
 		`internal/tui/ai_tools_panel.go:bashLibCmd:exec.Command("bash", "-c", script)`:                                                                      1,
+		`internal/tui/imagedecode.go:sipsConvert:exec.CommandContext(ctx, "sips", args...)`:                                                                 1,
+		`internal/tui/imagedecode.go:sipsExceedsPreviewCeiling:exec.CommandContext(ctx, "sips", "-g", "pixelWidth", "-g", "pixelHeight", path)`:             1,
 		`internal/tui/imageview.go:openInPreview:exec.Command("open", "-a", "Preview", path)`:                                                               1,
 		`internal/tui/mainmenu.go:MainMenuModel.Update:exec.Command("git", "-C", projectPath, "worktree", "add", worktreePath, branch)`:                     1,
 		`internal/tui/mainmenu.go:MainMenuModel.selectCurrent:exec.Command("git", "-C", m.projects[projectIdx].Path, "worktree", "list", "--porcelain")`:    1,
