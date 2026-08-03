@@ -165,20 +165,52 @@ func TestRunSelectProject_EmptyProjectsFile(t *testing.T) {
 	}
 }
 
+// A fresh install has no projects file at all — that is "no projects yet",
+// not a startup failure (the shipped bug: the wrapper treated the resulting
+// error as a user quit and the window closed with no explanation). Missing
+// must behave exactly like empty.
 func TestRunSelectProject_MissingFile(t *testing.T) {
 	rootCmd.SetArgs([]string{"select-project", "--projects-file", "/nonexistent/path/projects"})
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
 	err := rootCmd.Execute()
 
-	if err == nil {
-		t.Error("Expected error for missing projects file")
+	w.Close()
+	os.Stdout = old
+
+	if err != nil {
+		t.Fatalf("Expected no error for a missing projects file (fresh install), got: %v", err)
+	}
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	if !strings.Contains(buf.String(), `"selected":false`) {
+		t.Errorf("Expected {\"selected\":false} for a missing projects file, got: %s", buf.String())
 	}
 }
 
 func TestRunMainMenu_MissingProjectsFile(t *testing.T) {
 	rootCmd.SetArgs([]string{"main-menu", "--projects-file", "/nonexistent/projects"})
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
 	err := rootCmd.Execute()
-	if err == nil {
-		t.Error("Expected error for missing projects file")
+
+	w.Close()
+	os.Stdout = old
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+
+	// Missing must behave like empty: loading succeeds with 0 projects and the
+	// menu still opens (its add-project flow is the only way out of a fresh
+	// install). The only tolerated error here is the test harness's missing TTY.
+	if err != nil && !strings.Contains(err.Error(), "TTY") && !strings.Contains(err.Error(), "tty") {
+		t.Fatalf("Expected the menu to open on a missing projects file, got: %v", err)
 	}
 }
 

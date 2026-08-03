@@ -109,11 +109,14 @@ else
 fi
 
 # Setup runs in the user's real shell — the only wisp-deck process that sees
-# an nvm/volta PATH. Record where claude lives so the Ghostty-launched
-# wrapper (a bash -l with no such PATH) can still find it. Run on every
-# setup/update, whatever tool was selected: the answer changes with node
-# version switches, and a claude session may be launched later regardless.
-cache_claude_cmd "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/claude-cmd"
+# an nvm/volta PATH. Record where every agent CLI lives so the Ghostty-launched
+# wrapper (a bash -l with no such PATH) can still find them. Run on every
+# setup/update, whatever tool was selected: the answers change with node
+# version switches, and any tool may be launched later regardless.
+for _agent in claude codex opencode; do
+  cache_agent_cmd "$_agent" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/${_agent}-cmd"
+done
+unset _agent
 
 # ---------- Terminal Installation ----------
 header "Checking Ghostty..."

@@ -75,30 +75,32 @@ resolve_opencode_cmd() {
 }
 
 # Ghostty launches wrapper.sh through `bash -l`, which never reads a zsh
-# user's ~/.zshrc — so a claude that lives on a PATH built there (an npm
-# install under nvm/volta/asdf, the legacy ~/.claude/local alias install, a
-# custom npm prefix) is invisible to `command -v` here even though it runs
+# user's ~/.zshrc — so an agent CLI that lives on a PATH built there (an npm
+# install under nvm/volta/asdf/bun, the legacy ~/.claude/local alias install,
+# a custom npm prefix) is invisible to `command -v` here even though it runs
 # fine in the user's own terminal. That shipped as "Claude Code is not
-# installed", with no way out, on a machine where it was installed.
+# installed", with no way out, on a machine where it was installed — and the
+# blindness is identical for codex and opencode.
 #
-# resolve_claude_cmd answers "where is claude?" without ever spawning a
+# resolve_agent_cmd answers "where is this tool?" without ever spawning a
 # language runtime (this runs on the launch critical path): PATH first, then
 # the location setup cached from the user's real shell, then the well-known
 # install homes.
-# Usage: resolve_claude_cmd [cache_file]
-# Echoes the absolute path; exit 1 when claude is nowhere to be found.
-resolve_claude_cmd() {
+# Usage: resolve_agent_cmd <tool> [cache_file]
+# Echoes the absolute path; exit 1 when the tool is nowhere to be found.
+resolve_agent_cmd() {
   # May run under zsh, where an unmatched glob is fatal by default.
   [ -n "${ZSH_VERSION:-}" ] && setopt local_options no_nomatch 2>/dev/null
-  local _c
-  if _c="$(command -v claude 2>/dev/null)" && [ -n "$_c" ]; then
+  local _tool="${1:-}" _c
+  [ -n "$_tool" ] || return 1
+  if _c="$(command -v "$_tool" 2>/dev/null)" && [ -n "$_c" ]; then
     echo "$_c"
     return 0
   fi
   # Setup (bin/wisp-deck) runs in the user's real shell and records what
-  # `command -v claude` said there. Trust it only while it still points at an
-  # executable — an nvm claude vanishes with its node version.
-  local cache_file="${1:-}"
+  # `command -v` said there. Trust it only while it still points at an
+  # executable — an nvm-installed tool vanishes with its node version.
+  local cache_file="${2:-}"
   if [ -n "$cache_file" ] && [ -f "$cache_file" ]; then
     { IFS= read -r _c < "$cache_file"; } 2>/dev/null || _c=""
     if [ -n "$_c" ] && [ -x "$_c" ]; then
@@ -106,16 +108,27 @@ resolve_claude_cmd() {
       return 0
     fi
   fi
-  for _c in "$HOME/.claude/local/claude" "$HOME/.volta/bin/claude" "$HOME/.asdf/shims/claude"; do
+  local _homes=()
+  case "$_tool" in
+    claude) _homes+=("$HOME/.claude/local/claude") ;;
+  esac
+  _homes+=(
+    "$HOME/.volta/bin/$_tool"
+    "$HOME/.asdf/shims/$_tool"
+    "$HOME/.bun/bin/$_tool"
+    "$HOME/.npm-global/bin/$_tool"
+    "${PNPM_HOME:-$HOME/Library/pnpm}/$_tool"
+  )
+  for _c in "${_homes[@]}"; do
     if [ -x "$_c" ]; then
       echo "$_c"
       return 0
     fi
   done
   # nvm keeps one global bin per node version; prefer the newest version that
-  # has claude (version order — lexically v9 sorts after v22).
+  # has the tool (version order — lexically v9 sorts after v22).
   local _best
-  _best="$(for _c in "${NVM_DIR:-$HOME/.nvm}/versions/node"/*/bin/claude; do
+  _best="$(for _c in "${NVM_DIR:-$HOME/.nvm}/versions/node"/*/bin/"$_tool"; do
     [ -x "$_c" ] && printf '%s\n' "$_c"
   done | sort -V | tail -n 1)"
   if [ -n "$_best" ]; then
@@ -125,31 +138,51 @@ resolve_claude_cmd() {
   return 1
 }
 
-# activate_claude_cmd — resolve claude AND make the find launchable: sets
-# CLAUDE_CMD, and when claude was found off-PATH prepends its bin dir so
-# `claude` resolves for everything downstream — the Go menu's own detection
-# (exec.LookPath), the tmux panes that exec claude, and, for npm installs,
-# the sibling `node` its shebang needs.
-# Usage: activate_claude_cmd [cache_file]
-activate_claude_cmd() {
-  CLAUDE_CMD="$(resolve_claude_cmd "${1:-}")" || CLAUDE_CMD=""
-  if [ -n "$CLAUDE_CMD" ] && ! command -v claude &>/dev/null; then
-    PATH="${CLAUDE_CMD%/*}:$PATH"
+# Back-compat alias — the original claude-only resolver, now a delegate.
+# Usage: resolve_claude_cmd [cache_file]
+resolve_claude_cmd() {
+  resolve_agent_cmd claude "${1:-}"
+}
+
+# activate_agent_cmd — resolve a tool AND make the find launchable: assigns
+# the resolved path (empty when not found) to the named variable, and when
+# the tool was found off-PATH prepends its bin dir so it resolves for
+# everything downstream — the Go menu's own detection (exec.LookPath), the
+# tmux panes that exec the tool, and, for npm installs, the sibling `node`
+# its shebang needs. Runs in the caller's shell: the PATH export is the
+# point, so never call it from a command substitution.
+# Usage: activate_agent_cmd <VAR> <tool> [cache_file]
+activate_agent_cmd() {
+  local _var="$1" _tool="$2" _cmd
+  _cmd="$(resolve_agent_cmd "$_tool" "${3:-}")" || _cmd=""
+  printf -v "$_var" '%s' "$_cmd"
+  if [ -n "$_cmd" ] && ! command -v "$_tool" &>/dev/null; then
+    PATH="${_cmd%/*}:$PATH"
     export PATH
   fi
 }
 
-# cache_claude_cmd — record where the user's own shell finds claude. Setup is
+# Usage: activate_claude_cmd [cache_file] — sets CLAUDE_CMD.
+activate_claude_cmd() {
+  activate_agent_cmd CLAUDE_CMD claude "${1:-}"
+}
+
+# cache_agent_cmd — record where the user's own shell finds a tool. Setup is
 # the only wisp-deck process that runs in that shell (the only place an
 # nvm/volta PATH is loaded), so this is the one moment the answer is knowable.
-# No claude on PATH writes nothing: a wrong cache is worse than none.
-# Usage: cache_claude_cmd <cache_file>
-cache_claude_cmd() {
-  local cache_file="$1" _c
-  _c="$(command -v claude 2>/dev/null)" || return 0
+# A tool that is not on PATH writes nothing: a wrong cache is worse than none.
+# Usage: cache_agent_cmd <tool> <cache_file>
+cache_agent_cmd() {
+  local _tool="$1" cache_file="$2" _c
+  _c="$(command -v "$_tool" 2>/dev/null)" || return 0
   [ -n "$_c" ] || return 0
   mkdir -p "$(dirname "$cache_file")" 2>/dev/null || return 0
   printf '%s\n' "$_c" > "$cache_file" 2>/dev/null || true
+}
+
+# Back-compat alias. Usage: cache_claude_cmd <cache_file>
+cache_claude_cmd() {
+  cache_agent_cmd claude "$1"
 }
 
 # Map a tool identifier onto the command that launches it.

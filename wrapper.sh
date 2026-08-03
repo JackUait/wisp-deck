@@ -90,15 +90,18 @@ warm_tui_binary
 
 TMUX_CMD="$(command -v tmux)"
 # Not a plain `command -v`: this shell is `bash -l`, which never loads a zsh
-# user's PATH edits, so an nvm/volta-installed claude (or the legacy
+# user's PATH edits, so an nvm/volta-installed claude or codex (or the legacy
 # ~/.claude/local one) is invisible here while working fine in their own
-# terminal. activate_claude_cmd (lib/ai-tools.sh) checks PATH, then the
+# terminal. activate_agent_cmd (lib/ai-tools.sh) checks PATH, then the
 # location setup cached from the user's real shell, then the known install
-# homes — and prepends the find's bin dir so claude resolves for the Go
+# homes — and prepends the find's bin dir so the tool resolves for the Go
 # menu's own detection and for the panes. Filesystem probes only; the launch
 # critical path stays subprocess-free.
 activate_claude_cmd "$SHARE_DIR/claude-cmd"
-CODEX_CMD="$(command -v codex)"
+activate_agent_cmd CODEX_CMD codex "$SHARE_DIR/codex-cmd"
+# OpenCode's direct binary hides the same way; activating it lets the plain
+# PATH check in opencode_available (and resolve_opencode_cmd later) succeed.
+activate_agent_cmd _WD_OPENCODE_BIN opencode "$SHARE_DIR/opencode-cmd"
 
 # NOT resolved here. resolve_opencode_cmd's npx branch spawns node to find out
 # WHICH npx invocation can launch OpenCode (6-13s, warm cache) — and this runs

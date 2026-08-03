@@ -187,18 +187,9 @@ func TestCacheClaudeCmd_writes_nothing_when_claude_is_missing(t *testing.T) {
 	}
 }
 
-// Setup must actually write the cache: it is the only process that ever sees
-// the user's real PATH, so skipping it there loses the answer for good.
-func TestSetup_caches_the_claude_command_for_the_wrapper(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join(projectRoot(t), "bin", "wisp-deck"))
-	if err != nil {
-		t.Fatalf("read bin/wisp-deck: %v", err)
-	}
-	if !strings.Contains(string(data), "cache_claude_cmd") {
-		t.Error("bin/wisp-deck must call cache_claude_cmd — setup runs in the user's " +
-			"real shell, the only place an nvm/volta claude is on PATH at all")
-	}
-}
+// Setup must actually write the caches — see
+// TestSetup_caches_every_agent_command_for_the_wrapper (agent_cmd_resolve_test.go),
+// which pins claude alongside the other agent CLIs.
 
 // wrapperSandbox builds the minimal installed layout wrapper.sh needs to reach
 // the project picker: an isolated $HOME, the config dir with its lib symlink,
