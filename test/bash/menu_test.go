@@ -147,6 +147,39 @@ select_project_interactive %q
 	}
 }
 
+// A wisp-deck-tui that DIES (nonzero exit) is not the user pressing ESC, and
+// conflating the two made every startup failure close the window silently —
+// the missing-projects-file first-run bug took an external AI to diagnose
+// because the binary's own error message went to /dev/null. The contract:
+// quit returns 1, a TUI failure returns 2 and surfaces the binary's stderr.
+func TestMenu_surfaces_tui_failure_distinct_from_quit(t *testing.T) {
+	dir := t.TempDir()
+	binDir := mockCommand(t, dir, "wisp-deck-tui",
+		`echo "Error: failed to load projects: kaboom" >&2; exit 1`)
+	projectsFile := writeTempFile(t, dir, "projects", "proj1:/tmp/p1\n")
+	root := projectRoot(t)
+	env := buildEnv(t, []string{binDir},
+		"XDG_CONFIG_HOME="+filepath.Join(dir, "config"),
+	)
+
+	script := fmt.Sprintf(`
+source %q 2>/dev/null || true
+source %q
+error() { echo "ERROR: $*" >&2; }
+AI_TOOLS_AVAILABLE=("claude")
+SELECTED_AI_TOOL="claude"
+_update_version=""
+select_project_interactive %q
+echo "rc=$?"
+`, filepath.Join(root, "lib/tui.sh"),
+		filepath.Join(root, "lib/menu-tui.sh"),
+		projectsFile)
+
+	out, _ := runBashSnippet(t, script, env)
+	assertContains(t, out, "rc=2")
+	assertContains(t, out, "kaboom")
+}
+
 func TestMenu_handles_open_once_action(t *testing.T) {
 	dir := t.TempDir()
 	binDir := mockCommand(t, dir, "wisp-deck-tui", `echo '{"action":"open-once","name":"temp","path":"/tmp/temp","ai_tool":"claude"}'`)

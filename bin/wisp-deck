@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHARE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$SHARE_DIR/lib/tui.sh"
+source "$SHARE_DIR/lib/ai-tools.sh"
 source "$SHARE_DIR/lib/install.sh"
 source "$SHARE_DIR/lib/terminals/ghostty.sh"
 source "$SHARE_DIR/lib/settings-json.sh"
@@ -106,6 +107,13 @@ else
   info "AI tool selection cancelled"
   exit 1
 fi
+
+# Setup runs in the user's real shell — the only wisp-deck process that sees
+# an nvm/volta PATH. Record where claude lives so the Ghostty-launched
+# wrapper (a bash -l with no such PATH) can still find it. Run on every
+# setup/update, whatever tool was selected: the answer changes with node
+# version switches, and a claude session may be launched later regardless.
+cache_claude_cmd "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/claude-cmd"
 
 # ---------- Terminal Installation ----------
 header "Checking Ghostty..."

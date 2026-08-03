@@ -74,6 +74,84 @@ resolve_opencode_cmd() {
   fi
 }
 
+# Ghostty launches wrapper.sh through `bash -l`, which never reads a zsh
+# user's ~/.zshrc — so a claude that lives on a PATH built there (an npm
+# install under nvm/volta/asdf, the legacy ~/.claude/local alias install, a
+# custom npm prefix) is invisible to `command -v` here even though it runs
+# fine in the user's own terminal. That shipped as "Claude Code is not
+# installed", with no way out, on a machine where it was installed.
+#
+# resolve_claude_cmd answers "where is claude?" without ever spawning a
+# language runtime (this runs on the launch critical path): PATH first, then
+# the location setup cached from the user's real shell, then the well-known
+# install homes.
+# Usage: resolve_claude_cmd [cache_file]
+# Echoes the absolute path; exit 1 when claude is nowhere to be found.
+resolve_claude_cmd() {
+  # May run under zsh, where an unmatched glob is fatal by default.
+  [ -n "${ZSH_VERSION:-}" ] && setopt local_options no_nomatch 2>/dev/null
+  local _c
+  if _c="$(command -v claude 2>/dev/null)" && [ -n "$_c" ]; then
+    echo "$_c"
+    return 0
+  fi
+  # Setup (bin/wisp-deck) runs in the user's real shell and records what
+  # `command -v claude` said there. Trust it only while it still points at an
+  # executable — an nvm claude vanishes with its node version.
+  local cache_file="${1:-}"
+  if [ -n "$cache_file" ] && [ -f "$cache_file" ]; then
+    { IFS= read -r _c < "$cache_file"; } 2>/dev/null || _c=""
+    if [ -n "$_c" ] && [ -x "$_c" ]; then
+      echo "$_c"
+      return 0
+    fi
+  fi
+  for _c in "$HOME/.claude/local/claude" "$HOME/.volta/bin/claude" "$HOME/.asdf/shims/claude"; do
+    if [ -x "$_c" ]; then
+      echo "$_c"
+      return 0
+    fi
+  done
+  # nvm keeps one global bin per node version; prefer the newest version that
+  # has claude (version order — lexically v9 sorts after v22).
+  local _best
+  _best="$(for _c in "${NVM_DIR:-$HOME/.nvm}/versions/node"/*/bin/claude; do
+    [ -x "$_c" ] && printf '%s\n' "$_c"
+  done | sort -V | tail -n 1)"
+  if [ -n "$_best" ]; then
+    echo "$_best"
+    return 0
+  fi
+  return 1
+}
+
+# activate_claude_cmd — resolve claude AND make the find launchable: sets
+# CLAUDE_CMD, and when claude was found off-PATH prepends its bin dir so
+# `claude` resolves for everything downstream — the Go menu's own detection
+# (exec.LookPath), the tmux panes that exec claude, and, for npm installs,
+# the sibling `node` its shebang needs.
+# Usage: activate_claude_cmd [cache_file]
+activate_claude_cmd() {
+  CLAUDE_CMD="$(resolve_claude_cmd "${1:-}")" || CLAUDE_CMD=""
+  if [ -n "$CLAUDE_CMD" ] && ! command -v claude &>/dev/null; then
+    PATH="${CLAUDE_CMD%/*}:$PATH"
+    export PATH
+  fi
+}
+
+# cache_claude_cmd — record where the user's own shell finds claude. Setup is
+# the only wisp-deck process that runs in that shell (the only place an
+# nvm/volta PATH is loaded), so this is the one moment the answer is knowable.
+# No claude on PATH writes nothing: a wrong cache is worse than none.
+# Usage: cache_claude_cmd <cache_file>
+cache_claude_cmd() {
+  local cache_file="$1" _c
+  _c="$(command -v claude 2>/dev/null)" || return 0
+  [ -n "$_c" ] || return 0
+  mkdir -p "$(dirname "$cache_file")" 2>/dev/null || return 0
+  printf '%s\n' "$_c" > "$cache_file" 2>/dev/null || true
+}
+
 # Map a tool identifier onto the command that launches it.
 # Usage: resolve_ai_tool_cmd <tool> <claude_cmd> <opencode_cmd> <codex_cmd>
 # Unknown identifiers resolve to claude, matching every other per-tool switch.

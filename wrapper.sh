@@ -89,7 +89,15 @@ unset _gt_libs _gt_lib
 warm_tui_binary
 
 TMUX_CMD="$(command -v tmux)"
-CLAUDE_CMD="$(command -v claude)"
+# Not a plain `command -v`: this shell is `bash -l`, which never loads a zsh
+# user's PATH edits, so an nvm/volta-installed claude (or the legacy
+# ~/.claude/local one) is invisible here while working fine in their own
+# terminal. activate_claude_cmd (lib/ai-tools.sh) checks PATH, then the
+# location setup cached from the user's real shell, then the known install
+# homes — and prepends the find's bin dir so claude resolves for the Go
+# menu's own detection and for the panes. Filesystem probes only; the launch
+# critical path stays subprocess-free.
+activate_claude_cmd "$SHARE_DIR/claude-cmd"
 CODEX_CMD="$(command -v codex)"
 
 # NOT resolved here. resolve_opencode_cmd's npx branch spawns node to find out
@@ -282,6 +290,16 @@ else
           ;;
       esac
     else
+      _menu_rc=$?
+      if [ "$_menu_rc" -eq 2 ]; then
+        # The picker itself DIED (select_project_interactive already printed
+        # its error). Exiting 0 here would close the window as if the user
+        # quit — which is how the first-run missing-projects-file failure
+        # stayed invisible. Hold the window so the message can be read.
+        printf 'Press any key to exit...\n' >&2
+        read -rsn1
+        exit 1
+      fi
       # User quit (ESC/Ctrl-C) — still propagate any settings change they made
       # before quitting to the other running sessions.
       apply_settings_to_all_sessions_if_changed "$TMUX_CMD" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" "$_settings_before" 2>/dev/null || true

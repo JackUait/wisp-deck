@@ -503,6 +503,16 @@ func (m *MainMenuModel) renderAIToolsPanel() string {
 			right = grayStyle.Render("not installed")
 		}
 		lines = append(lines, row(left, right))
+
+		// Claude is deliberately not installable from here (its installer is
+		// curl|bash), so its "not installed" row must name the ways out itself:
+		// the real installer, and re-running setup — which runs in the user's
+		// real shell and re-finds a claude the wrapper's PATH cannot see.
+		if tool.Name == "claude" && !tool.Installed && !tool.Disabled {
+			lines = append(lines,
+				row(helpStyle.Render("    install: curl -fsSL https://claude.ai/install.sh | bash"), ""),
+				row(grayStyle.Render("    already installed? re-run wisp-deck to detect it"), ""))
+		}
 	}
 
 	if m.aiToolsErr != nil {

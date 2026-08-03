@@ -3,7 +3,8 @@
 # Uses wisp-deck-tui main-menu subcommand
 
 # Interactive project selection using wisp-deck-tui main-menu
-# Returns 0 if an actionable item was selected, 1 if quit/cancelled
+# Returns 0 if an actionable item was selected, 1 if quit/cancelled,
+# 2 if the TUI itself failed (its error is surfaced, not discarded)
 # Sets: _selected_project_name, _selected_project_path, _selected_project_action, _selected_ai_tool
 select_project_interactive() {
   local projects_file="$1"
@@ -90,9 +91,21 @@ select_project_interactive() {
     cmd_args+=("--update-version" "$_update_version")
   fi
 
-  local result
-  if ! result=$(wisp-deck-tui "${cmd_args[@]}" 2>/dev/null); then
-    return 1
+  # The TUI paints on /dev/tty, so stderr carries nothing but errors — capture
+  # it. A nonzero exit is the binary DYING (a user quit is exit 0 with action
+  # "quit"), and its stderr is the only diagnostic; discarding it shipped a
+  # first-run failure that closed the window with nothing to read.
+  local result rc _tui_err_file detail=""
+  _tui_err_file="$(mktemp 2>/dev/null)" || _tui_err_file=""
+  result=$(wisp-deck-tui "${cmd_args[@]}" 2>"${_tui_err_file:-/dev/null}")
+  rc=$?
+  if [ -n "$_tui_err_file" ]; then
+    detail="$(head -n 1 "$_tui_err_file" 2>/dev/null)"
+    rm -f "$_tui_err_file" 2>/dev/null
+  fi
+  if [ "$rc" -ne 0 ]; then
+    error "Project menu failed (wisp-deck-tui exit $rc)${detail:+: $detail}"
+    return 2
   fi
 
   # One jq spawn instead of one per field (this path sits between menu close

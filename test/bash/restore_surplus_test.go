@@ -207,7 +207,10 @@ echo "builder=${WISP_DECK_RESTORE_BUILDER:-0}"
 // wrapperHomeWithMocks builds a temp HOME with the wrapper's required mocks
 // in ~/.local/bin (wrapper.sh line 2 puts $HOME/.local/bin first in PATH) and
 // an empty wisp-deck config dir. The wisp-deck-tui mock records every
-// invocation so tests can assert whether the picker was reached.
+// invocation so tests can assert whether the picker was reached, and declines
+// the picker the way a real user does — exit 0 with a quit action. It must
+// NOT decline by exiting nonzero: that is the TUI *dying*, which the wrapper
+// deliberately treats as a failure (error + exit 1), not a quit.
 func wrapperHomeWithMocks(t *testing.T) (home, confDir, tuiRec string) {
 	t.Helper()
 	home = t.TempDir()
@@ -220,7 +223,8 @@ func wrapperHomeWithMocks(t *testing.T) (home, confDir, tuiRec string) {
 		"tmux":          "#!/bin/bash\nexit 0\n",
 		"claude":        "#!/bin/bash\nexit 0\n",
 		"opencode":      "#!/bin/bash\nexit 0\n",
-		"wisp-deck-tui": "#!/bin/bash\nprintf '%s\\n' \"$*\" >> \"$GT_TUI_REC\"\nexit 1\n",
+		"wisp-deck-tui": "#!/bin/bash\nprintf '%s\\n' \"$*\" >> \"$GT_TUI_REC\"\n" +
+			"case \"$*\" in *main-menu*) echo '{\"action\":\"quit\"}';; esac\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
 	}
 	for name, body := range mocks {

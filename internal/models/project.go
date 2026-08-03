@@ -41,6 +41,12 @@ func ParseProjectPath(line string) string {
 func LoadProjects(filepath string) ([]Project, error) {
 	file, err := os.Open(filepath)
 	if err != nil {
+		// A fresh install has no projects file until the first project is added
+		// from the main menu — missing means "no projects yet" (matching
+		// load_projects in lib/projects.sh), not a startup failure.
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("failed to open projects file: %w", err)
 	}
 	defer file.Close()

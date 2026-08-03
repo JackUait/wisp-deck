@@ -205,6 +205,33 @@ func TestAIToolsPanel_enter_on_claude_never_installs(t *testing.T) {
 	}
 }
 
+// Claude is deliberately not installable from this panel (its installer is
+// curl|bash), which left a missing claude as a dead-end gray "not installed"
+// — the row a user stared at while their perfectly-installed nvm claude sat
+// outside the wrapper's PATH. The row must name both ways out: the real
+// installer, and re-running setup so an already-installed claude is re-found.
+func TestAIToolsPanel_missing_claude_row_names_the_way_out(t *testing.T) {
+	m := panelMenu(t,
+		models.AITool{Name: "claude"},
+		models.AITool{Name: "codex"},
+	)
+	out := m.renderAIToolsPanel()
+	if !strings.Contains(out, "claude.ai/install.sh") {
+		t.Error("a missing claude must show its installer — bare \"not installed\" is a dead end")
+	}
+	if !strings.Contains(out, "wisp-deck") {
+		t.Error("a missing claude must suggest re-running wisp-deck setup, which re-detects " +
+			"an installed claude from the user's real shell PATH")
+	}
+}
+
+func TestAIToolsPanel_installed_claude_shows_no_install_hint(t *testing.T) {
+	m := panelMenu(t, models.AITool{Name: "claude", Installed: true})
+	if strings.Contains(m.renderAIToolsPanel(), "claude.ai/install.sh") {
+		t.Error("an installed claude must not advertise its installer")
+	}
+}
+
 func TestAIToolInstallDone_success_marks_installed_and_extends_aiTools(t *testing.T) {
 	m := panelMenu(t,
 		models.AITool{Name: "claude", Installed: true},
