@@ -215,6 +215,177 @@ func TestClaudeRegistryMapperKeepsInteractiveForegroundAuthoritativeOverSubagent
 	}
 }
 
+// A parked session hands its turn to a background job whose process the daemon
+// owns, so the job is NEVER a descendant of the supervised launch root. Park and
+// unpark write only parkedJobId — they never touch status — so the interactive
+// record's own status freezes at whatever it held when the turn moved away.
+const (
+	registryDaemonStart = "Mon Jul 13 09:00:05 2026"
+	registryJobStart    = "Mon Jul 13 09:00:06 2026"
+)
+
+func parkedSnapshot() string {
+	return psSnapshot(
+		psProcess(100, 1, registryRootStart),
+		psProcess(101, 100, registryChildStart),
+		psProcess(200, 1, registryDaemonStart),
+		psProcess(300, 200, registryJobStart),
+	)
+}
+
+func parkedInteractiveRecord(jobID string) string {
+	return `{"pid":101,"kind":"interactive","procStart":"` + registryChildStart +
+		`","status":"idle","updatedAt":100,"parkedJobId":"` + jobID + `"}`
+}
+
+func TestClaudeRegistryMapperReportsParkedSessionAsTheJobRunningItsTurn(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	writeRegistryRecord(t, configDir, 101, parkedInteractiveRecord("59870622"))
+	writeRegistryRecord(t, configDir, 300, `{"pid":300,"kind":"bg","jobId":"59870622","procStart":"`+
+		registryJobStart+`","status":"busy","updatedAt":200}`)
+
+	mapper := registryMapper(configDir, parkedSnapshot())
+	got, found, err := mapper.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	want := ClaudeRegistryStatus{PID: 101, Status: "busy", StatusIdentity: "200"}
+	if !found || got != want {
+		t.Fatalf("Poll() = (%#v, %v), want %#v; a parked session's frozen idle must not end the turn", got, found, want)
+	}
+}
+
+func TestClaudeRegistryMapperReportsParkedJobWaitingForTheUser(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	writeRegistryRecord(t, configDir, 101, parkedInteractiveRecord("59870622"))
+	writeRegistryRecord(t, configDir, 300, `{"pid":300,"kind":"bg","jobId":"59870622","procStart":"`+
+		registryJobStart+`","status":"waiting","waitingFor":"permission prompt","updatedAt":201}`)
+
+	mapper := registryMapper(configDir, parkedSnapshot())
+	got, found, err := mapper.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	want := ClaudeRegistryStatus{PID: 101, Status: "waiting", StatusIdentity: "201", WaitingFor: "permission prompt"}
+	if !found || got != want {
+		t.Fatalf("Poll() = (%#v, %v), want %#v; a parked job's prompt still needs the user", got, found, want)
+	}
+}
+
+func TestClaudeRegistryMapperFailsClosedWhenTheParkedJobIsUnresolvable(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		jobPID int
+		record string
+	}{
+		{name: "no job record at all"},
+		{
+			name:   "record belongs to a different job",
+			jobPID: 300,
+			record: `{"pid":300,"kind":"bg","jobId":"other","procStart":"` + registryJobStart + `","status":"busy","updatedAt":200}`,
+		},
+		{
+			name:   "job process is gone and its PID was reused",
+			jobPID: 300,
+			record: `{"pid":300,"kind":"bg","jobId":"59870622","procStart":"Mon Jul 13 08:00:00 2026","status":"busy","updatedAt":200}`,
+		},
+		{
+			name:   "record is not a background job",
+			jobPID: 300,
+			record: `{"pid":300,"kind":"interactive","jobId":"59870622","procStart":"` + registryJobStart + `","status":"busy","updatedAt":200}`,
+		},
+		{
+			name:   "record does not describe its own process",
+			jobPID: 300,
+			record: `{"pid":301,"kind":"bg","jobId":"59870622","procStart":"` + registryJobStart + `","status":"busy","updatedAt":200}`,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			configDir := t.TempDir()
+			writeRegistryRecord(t, configDir, 101, parkedInteractiveRecord("59870622"))
+			if tt.record != "" {
+				writeRegistryRecord(t, configDir, tt.jobPID, tt.record)
+			}
+
+			mapper := registryMapper(configDir, parkedSnapshot())
+			got, found, err := mapper.Poll(context.Background())
+			if err != nil {
+				t.Fatalf("Poll() error = %v", err)
+			}
+			if found {
+				t.Fatalf("Poll() = (%#v, true), want uncertainty; a parked session's own status is stale", got)
+			}
+		})
+	}
+}
+
+func TestClaudeRegistryMapperFailsClosedOnAmbiguousParkedJobRecords(t *testing.T) {
+	t.Parallel()
+
+	const secondJobStart = "Mon Jul 13 09:00:07 2026"
+	configDir := t.TempDir()
+	writeRegistryRecord(t, configDir, 101, parkedInteractiveRecord("59870622"))
+	writeRegistryRecord(t, configDir, 300, `{"pid":300,"kind":"bg","jobId":"59870622","procStart":"`+
+		registryJobStart+`","status":"busy","updatedAt":200}`)
+	writeRegistryRecord(t, configDir, 301, `{"pid":301,"kind":"bg","jobId":"59870622","procStart":"`+
+		secondJobStart+`","status":"idle","updatedAt":202}`)
+
+	mapper := registryMapper(configDir, psSnapshot(
+		psProcess(100, 1, registryRootStart),
+		psProcess(101, 100, registryChildStart),
+		psProcess(200, 1, registryDaemonStart),
+		psProcess(300, 200, registryJobStart),
+		psProcess(301, 200, secondJobStart),
+	))
+	got, found, err := mapper.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if found {
+		t.Fatalf("Poll() = (%#v, true), want ambiguity to fail closed", got)
+	}
+}
+
+func TestClaudeRegistryMapperReadsNoJobRecordsWhenSessionIsNotParked(t *testing.T) {
+	t.Parallel()
+
+	configDir := t.TempDir()
+	writeRegistryRecord(t, configDir, 101, `{"pid":101,"kind":"interactive","procStart":"`+
+		registryChildStart+`","status":"idle","updatedAt":100}`)
+	writeRegistryRecord(t, configDir, 300, `{"pid":300,"kind":"bg","jobId":"59870622","procStart":"`+
+		registryJobStart+`","status":"busy","updatedAt":200}`)
+
+	var paths []string
+	mapper := registryMapper(configDir, parkedSnapshot())
+	mapper.ReadFile = ReadFileFunc(func(path string) ([]byte, error) {
+		paths = append(paths, path)
+		return os.ReadFile(path)
+	})
+
+	got, found, err := mapper.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	want := ClaudeRegistryStatus{PID: 101, Status: "idle", StatusIdentity: "100"}
+	if !found || got != want {
+		t.Fatalf("Poll() = (%#v, %v), want %#v", got, found, want)
+	}
+	for _, path := range paths {
+		if filepath.Base(path) == "300.json" {
+			t.Fatalf("Poll() read %q; an unparked session must not consult background jobs", path)
+		}
+	}
+}
+
 func TestClaudeRegistryMapperRejectsSymlinkedSessionRecord(t *testing.T) {
 	t.Parallel()
 

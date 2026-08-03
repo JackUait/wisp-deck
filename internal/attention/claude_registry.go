@@ -21,10 +21,16 @@ import (
 
 const (
 	maxClaudeRegistryRecordBytes = 256 * 1024
-	claudePSExecutable           = "/bin/ps"
+	maxClaudeRegistryJobIDBytes  = 256
+	// A bound on the account-local registry directory, which holds one file per
+	// live Claude process. Anything past it is not a session list.
+	maxClaudeRegistrySessionFiles = 4096
+	claudePSExecutable            = "/bin/ps"
 )
 
 var psSnapshotLine = regexp.MustCompile(`^[ \t]*([0-9]+)[ \t]+([0-9]+)[ \t]+(.+?)[ \t]*$`)
+
+var claudeRegistryFileName = regexp.MustCompile(`^([0-9]+)\.json$`)
 
 // ProcessSnapshotFunc captures one complete process table. A mapper calls it
 // exactly once per Poll, so ancestry and process start identities come from the
@@ -69,6 +75,10 @@ func (s PSSnapshotter) Snapshot(ctx context.Context) ([]byte, error) {
 // observation. StatusIdentity is the canonical decimal updatedAt marker; the
 // reducer can use it to deduplicate repeated observations without importing
 // registry schema details.
+//
+// PID always names the supervised interactive session. While that session is
+// parked, the status fields come from the background job running its turn — see
+// resolveParkedJob.
 type ClaudeRegistryStatus struct {
 	PID            int
 	Status         string
@@ -147,6 +157,7 @@ func (m ClaudeRegistryMapper) Poll(ctx context.Context) (ClaudeRegistryStatus, b
 	})
 
 	var best ClaudeRegistryStatus
+	bestParkedJobID := ""
 	bestDepth := 0
 	found := false
 	ambiguous := false
@@ -157,12 +168,14 @@ func (m ClaudeRegistryMapper) Poll(ctx context.Context) (ClaudeRegistryStatus, b
 			continue
 		}
 		record, parseErr := parseClaudeRegistryRecord(recordData)
-		if parseErr != nil || record.PID != candidate.pid || record.procStart != candidate.start {
+		if parseErr != nil || record.kind != "interactive" ||
+			record.PID != candidate.pid || record.procStart != candidate.start {
 			continue
 		}
 
 		if !found || candidate.depth < bestDepth {
 			best = record.ClaudeRegistryStatus
+			bestParkedJobID = record.parkedJobID
 			bestDepth = candidate.depth
 			found = true
 			ambiguous = false
@@ -175,7 +188,81 @@ func (m ClaudeRegistryMapper) Poll(ctx context.Context) (ClaudeRegistryStatus, b
 	if !found || ambiguous {
 		return ClaudeRegistryStatus{}, false, nil
 	}
+	if bestParkedJobID != "" {
+		job, resolved := resolveParkedJob(m.ConfigDir, readFile, processes, bestParkedJobID)
+		if !resolved {
+			return ClaudeRegistryStatus{}, false, nil
+		}
+		best.Status = job.Status
+		best.StatusIdentity = job.StatusIdentity
+		best.WaitingFor = job.WaitingFor
+	}
 	return best, true, nil
+}
+
+// resolveParkedJob answers what a parked session is actually doing.
+//
+// Claude parks a turn by handing it to a background job process the daemon owns.
+// That process is claimed from the daemon's own pool, so it is never a
+// descendant of the supervised launch root and tree-scoped discovery
+// structurally cannot reach it. Worse, parking writes only parkedJobId and
+// unparking only clears it — neither ever touches status — so a parked session's
+// own status stays frozen at whatever it held when the turn moved away, for as
+// long as the park lasts. Reading it as the session's current state is how a
+// working agent came to be reported idle, ending its turn and raising a
+// notification that then had nothing left to clear it.
+//
+// The link out of the tree is the session's own parkedJobId, so the job record
+// is trusted no further than a launch-tree one: it must be a background record
+// naming that job, and it must describe its own live process, so a leftover file
+// for a recycled PID can never speak for the session. Ambiguity and an
+// unresolvable job are uncertainty, never a guess.
+func resolveParkedJob(
+	configDir string,
+	readFile ReadFileFunc,
+	processes map[int]snapshotProcess,
+	jobID string,
+) (ClaudeRegistryStatus, bool) {
+	sessionsDir := filepath.Join(configDir, "sessions")
+	entries, err := os.ReadDir(sessionsDir)
+	if err != nil || len(entries) > maxClaudeRegistrySessionFiles {
+		return ClaudeRegistryStatus{}, false
+	}
+
+	var job ClaudeRegistryStatus
+	found := false
+	for _, entry := range entries {
+		match := claudeRegistryFileName.FindStringSubmatch(entry.Name())
+		if match == nil {
+			continue
+		}
+		pid, pidErr := parsePositiveInt(match[1])
+		if pidErr != nil {
+			continue
+		}
+		// The point-in-time process table prunes every dead session's leftover
+		// record without opening it, keeping the scan proportional to the live
+		// ones.
+		process, live := processes[pid]
+		if !live {
+			continue
+		}
+		recordData, readErr := readFile(filepath.Join(sessionsDir, entry.Name()))
+		if readErr != nil {
+			continue
+		}
+		record, parseErr := parseClaudeRegistryRecord(recordData)
+		if parseErr != nil || record.kind != "bg" || record.jobID != jobID ||
+			record.PID != pid || record.procStart != process.start {
+			continue
+		}
+		if found {
+			return ClaudeRegistryStatus{}, false
+		}
+		job = record.ClaudeRegistryStatus
+		found = true
+	}
+	return job, found
 }
 
 // readClaudeRegistryFile reads one bounded regular registry record without
@@ -280,6 +367,12 @@ func processDepth(processes map[int]snapshotProcess, pid, root int) (int, bool) 
 type claudeRegistryRecord struct {
 	ClaudeRegistryStatus
 	procStart string
+	// kind is validated but not filtered here: the caller decides which kind it
+	// is asking about — "interactive" for the supervised session, "bg" for the
+	// job a parked session handed its turn to.
+	kind        string
+	jobID       string
+	parkedJobID string
 }
 
 func parseClaudeRegistryRecord(data []byte) (claudeRegistryRecord, error) {
@@ -340,8 +433,8 @@ func parseClaudeRegistryRecord(data []byte) (claudeRegistryRecord, error) {
 		return claudeRegistryRecord{}, fmt.Errorf("invalid Claude registry pid: %w", err)
 	}
 	kind, err := parseJSONString(fields["kind"])
-	if err != nil || kind != "interactive" {
-		return claudeRegistryRecord{}, errors.New("Claude registry kind is not interactive")
+	if err != nil || kind == "" {
+		return claudeRegistryRecord{}, errors.New("invalid Claude registry kind")
 	}
 	procStart, err := parseJSONString(fields["procStart"])
 	if err != nil {
@@ -372,6 +465,15 @@ func parseClaudeRegistryRecord(data []byte) (claudeRegistryRecord, error) {
 		}
 	}
 
+	jobID, err := parseClaudeRegistryJobID(fields, "jobId")
+	if err != nil {
+		return claudeRegistryRecord{}, err
+	}
+	parkedJobID, err := parseClaudeRegistryJobID(fields, "parkedJobId")
+	if err != nil {
+		return claudeRegistryRecord{}, err
+	}
+
 	return claudeRegistryRecord{
 		ClaudeRegistryStatus: ClaudeRegistryStatus{
 			PID:            pid,
@@ -379,8 +481,28 @@ func parseClaudeRegistryRecord(data []byte) (claudeRegistryRecord, error) {
 			StatusIdentity: identity,
 			WaitingFor:     waitingFor,
 		},
-		procStart: procStart,
+		procStart:   procStart,
+		kind:        kind,
+		jobID:       jobID,
+		parkedJobID: parkedJobID,
 	}, nil
+}
+
+// parseClaudeRegistryJobID reads an optional job identifier. Absent is the
+// common case — only background records carry jobId and only a parked session
+// carries parkedJobId — but a present one must be a plain bounded string,
+// because it is matched between two records to decide which one speaks.
+func parseClaudeRegistryJobID(fields map[string]json.RawMessage, key string) (string, error) {
+	raw, ok := fields[key]
+	if !ok {
+		return "", nil
+	}
+	value, err := parseJSONString(raw)
+	if err != nil || len(value) > maxClaudeRegistryJobIDBytes ||
+		strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return "", fmt.Errorf("invalid Claude registry %s", key)
+	}
+	return value, nil
 }
 
 func parseJSONString(raw json.RawMessage) (string, error) {

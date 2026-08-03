@@ -430,6 +430,46 @@ over a pty with the context published late), plus the model-level tests in
 `internal/tui/ledger_session_reload_test.go` and the atomic-publish test in
 `test/bash/relaunch_context_ready_test.go`.
 
+### A parked Claude turn runs outside the session, and the session's status freezes
+
+The 🔔 on a tab is `phase=attention` in the attention state file, and for Claude
+that phase has ONE source: the `status` field of the account-local record Claude
+writes at `<config-dir>/sessions/<pid>.json`. An `idle` following a `busy` means
+the turn ended — it rings the bell and plays the sound.
+
+Claude 2.1.220 can **park** a turn: it hands the work to a background job process
+claimed from its own daemon pool and stamps `parkedJobId` on the interactive
+record. Two consequences, and both broke the bell:
+
+- The job process is a child of the daemon, **never** a descendant of the
+  supervised launch root, so `ClaudeRegistryMapper`'s tree-scoped discovery
+  cannot reach the work at all.
+- Parking writes only `parkedJobId` and unparking only clears it — **neither ever
+  touches `status`**. The interactive record's `status` therefore freezes at
+  whatever it held when the turn moved away, and stays frozen for every turn the
+  job then runs.
+
+Read literally, that reports a working agent as `idle`: the turn is declared
+done, the bell rings, and then — because attention is sticky and only a `busy`
+observation clears it — nothing ever clears it. This shipped; a session sat at 🔔
+through 40+ minutes of continuous work while its record read
+`status:"idle", statusUpdatedAt:<40 minutes ago>, parkedJobId:"…"`.
+
+So `resolveParkedJob` follows `parkedJobId` to the `kind:"bg"` record carrying
+that `jobId` and takes the status from there. That record is outside the tree, so
+it is trusted no further than a launch-tree one: it must name the job, and it
+must describe its own live process (PID present in the point-in-time `ps` table,
+with a matching `procStart`), so a leftover file for a recycled PID can never
+speak for the session. Ambiguity or an unresolvable job is uncertainty
+(`found=false`), never a guess.
+
+**Follow the job — don't just suppress the false `idle`.** Parking persists
+across turns, so a session that merely ignored a parked `idle` would never ring
+when the work actually finished, trading a false bell for no bell at all.
+
+Guarded by `TestClaudeRegistryMapperReportsParkedSessionAsTheJobRunningItsTurn`
+and its neighbours in `internal/attention/claude_registry_test.go`.
+
 ### Restore-queue pops are authorized, never ambient
 
 An interactive launch may consume a restore-queue entry only through
