@@ -104,7 +104,7 @@ func TestRepairGatewayForKey_movesCodingKeyToCodingGateway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const key = "sk-kimi-0i7PaMyeHsU3JKQNp7b58xo1DclZSOseiff18MbcAf1JXS8RWwXdeAPwqWbCCHuQ"
+	const key = "sk-kimi-a-fake-coding-subscription-key"
 	if err := WriteAPIKey(configsDir, file, key); err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestRepairGatewayForKey_leavesEveryOtherKeyAlone(t *testing.T) {
 		provider string
 		key      string
 	}{
-		{"moonshot", "sk-abcdef0123456789abcdef0123456789abcdef01"},
+		{"moonshot", "sk-an-open-platform-key-without-the-coding-prefix"},
 		{"moonshot", ""},
 		{"zhipu", "sk-kimi-looks-like-coding-but-is-a-glm-profile"},
 		{"mimo", "sk-kimi-looks-like-coding-but-is-a-mimo-profile"},

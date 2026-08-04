@@ -30,7 +30,7 @@ func TestSubscriptionModal_savingCodingKeyRepointsProfileGateway(t *testing.T) {
 		m.moveSubscriptionProfile(1)
 	}
 
-	const key = "sk-kimi-0i7PaMyeHsU3JKQNp7b58xo1DclZSOseiff18MbcAf1JXS8RWwXdeAPwqWbCCHuQ"
+	const key = "sk-kimi-a-fake-coding-subscription-key"
 	m.subscriptionModal.draft.apiKey = key
 	m.subscriptionModal.draft.keyEdited = true
 	m.subscriptionModal.draft.dirty = true
