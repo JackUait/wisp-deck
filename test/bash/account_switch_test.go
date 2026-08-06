@@ -237,21 +237,22 @@ func TestOpenAccountSwitcher_launches_fullscreen_borderless_popup(t *testing.T) 
 // NOT stretched over the pane. The user sees a small floating card in the agent
 // view; the rest of the agent pane, the ledger, and the spare pane all stay
 // visible. No backdrop is captured: a card-sized popup has no margin to dim.
-func TestOpenAccountSwitcher_confines_to_agent_pane(t *testing.T) {
+func TestOpenAccountSwitcher_centers_the_card_in_the_window(t *testing.T) {
 	dir := t.TempDir()
 	rec := filepath.Join(dir, "tmux.log")
-	// Mock tmux: report a marked AI pane (%1) at offset 50,0 sized 120x40, echo
-	// its geometry for display-message, and a sentinel for capture-pane. Every
+	// Mock tmux: a 200x50 window holding a marked AI pane (%1) offset 50,0. Every
 	// call is logged so we can assert the display-popup flags and backdrop scope.
 	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`printf '%%s\n' "$*" >> %q
 case "$1" in
   list-panes)
     case "$*" in
       *@gt_ai*) printf '%%s\n' "%%0 0" "%%1 1" "%%2 0" ;;
+      *pane_left*) printf '%%s\n' "%%0 0 0" "%%1 50 0" "%%2 0 20" ;;
     esac
     ;;
   display-message)
     case "$*" in
+      *window_width*) printf '%%s\n' "200 50" ;;
       *pane_left*) printf '%%s\n' "50 0 120 40" ;;
       *client_width*) printf '%%s\n' "200 50" ;;
     esac
@@ -278,8 +279,10 @@ esac`)
 	assertExitCode(t, code, 0)
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
 
-	// The popup is the measured card, centered in the AI pane's rectangle:
-	// x = 50 + (120-41)/2 = 89, y = 0 + (40-8)/2 = 16.
+	// The popup is the measured card, centered in the WINDOW's rectangle:
+	// x = (200-41)/2 = 79, y = (50-8)/2 = 21. Centering it in the AI pane
+	// instead would put it at 89,16 — visibly right of the terminal's middle,
+	// because the ledger column occupies the window's left edge.
 	popupLine := ""
 	for _, line := range strings.Split(logOut, "\n") {
 		if strings.HasPrefix(line, "display-popup") {
@@ -290,22 +293,23 @@ esac`)
 	if popupLine == "" {
 		t.Fatalf("no display-popup invocation logged; got:\n%s", logOut)
 	}
-	assertContains(t, popupLine, "-x 89")
-	assertContains(t, popupLine, "-y 16")
+	assertContains(t, popupLine, "-x 79")
+	assertContains(t, popupLine, "-y 21")
 	assertContains(t, popupLine, "-w 41")
 	assertContains(t, popupLine, "-h 8")
 	assertContains(t, popupLine, "-B")
 	assertNotContains(t, popupLine, "100%")   // NOT the full-screen fallback
-	assertNotContains(t, popupLine, "-w 120") // NOT stretched over the pane
+	assertNotContains(t, popupLine, "-w 120") // NOT stretched over a pane
 	// A card-sized popup has no margin to dim, so no backdrop is captured.
 	assertNotContains(t, popupLine, "--backdrop-file")
 	assertNotContains(t, logOut, "capture-pane")
 }
 
-// When the popup binary is too old to answer --measure, the switcher falls back
-// to covering the AI pane's full rectangle with the dimmed-backdrop treatment —
-// still confined to the agent view, never the whole window.
-func TestOpenAccountSwitcher_pane_fallback_when_measure_fails(t *testing.T) {
+// When the popup binary is too old to answer --measure, the switcher cannot
+// size a card, so it falls back to the full window with the dimmed-backdrop
+// treatment — the whole session shows through, dimmed, around the card it draws
+// itself.
+func TestOpenAccountSwitcher_window_fallback_when_measure_fails(t *testing.T) {
 	dir := t.TempDir()
 	rec := filepath.Join(dir, "tmux.log")
 	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`printf '%%s\n' "$*" >> %q
@@ -313,10 +317,12 @@ case "$1" in
   list-panes)
     case "$*" in
       *@gt_ai*) printf '%%s\n' "%%0 0" "%%1 1" "%%2 0" ;;
+      *pane_left*) printf '%%s\n' "%%0 0 0" "%%1 50 0" "%%2 0 20" ;;
     esac
     ;;
   display-message)
     case "$*" in
+      *window_width*) printf '%%s\n' "200 50" ;;
       *pane_left*) printf '%%s\n' "50 0 120 40" ;;
       *client_width*) printf '%%s\n' "200 50" ;;
     esac
@@ -350,23 +356,21 @@ esac`, rec))
 	if popupLine == "" {
 		t.Fatalf("no display-popup invocation logged; got:\n%s", logOut)
 	}
-	assertContains(t, popupLine, "-x 50")
-	assertContains(t, popupLine, "-y 0")
-	assertContains(t, popupLine, "-w 120")
-	assertContains(t, popupLine, "-h 40")
-	assertNotContains(t, popupLine, "100%")
+	assertContains(t, popupLine, "-w 100%")
+	assertContains(t, popupLine, "-h 100%")
 	assertContains(t, popupLine, "--backdrop-file")
 
-	// The pane-sized fallback still snapshots ONLY the AI pane for its backdrop.
+	// The full-window fallback snapshots EVERY pane: the popup covers them all,
+	// so anything left uncaptured would show as a blank hole rather than a
+	// dimmed session.
 	captures := 0
 	for _, line := range strings.Split(logOut, "\n") {
 		if strings.HasPrefix(line, "capture-pane") {
 			captures++
-			assertContains(t, line, "%1")
 		}
 	}
-	if captures != 1 {
-		t.Fatalf("expected exactly 1 capture-pane (the AI pane only), got %d:\n%s", captures, logOut)
+	if captures != 3 {
+		t.Fatalf("expected one capture-pane per pane (3), got %d:\n%s", captures, logOut)
 	}
 }
 
