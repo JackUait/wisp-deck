@@ -85,7 +85,8 @@ reload_switcher_lib() {
 _probe_switcher_capabilities() {
   if [ -n "${_GT_SWITCHER_FLAGS_PROBE:-}" ] \
      && [ -n "${_GT_SWITCHER_TOOLS_PROBE:-}" ] \
-     && [ -n "${_GT_SWITCHER_CONFIGS_PROBE:-}" ]; then
+     && [ -n "${_GT_SWITCHER_CONFIGS_PROBE:-}" ] \
+     && [ -n "${_GT_SWITCHER_WORKTREES_PROBE:-}" ]; then
     return 0
   fi
   local help has_command=0
@@ -107,6 +108,11 @@ _probe_switcher_capabilities() {
     1:*--active-config*) _GT_SWITCHER_CONFIGS_PROBE=ok ;;
     1:*) _GT_SWITCHER_CONFIGS_PROBE=legacy ;;
     *) _GT_SWITCHER_CONFIGS_PROBE=ok ;;
+  esac
+  case "$has_command:$help" in
+    1:*--active-worktree*) _GT_SWITCHER_WORKTREES_PROBE=ok ;;
+    1:*) _GT_SWITCHER_WORKTREES_PROBE=legacy ;;
+    *) _GT_SWITCHER_WORKTREES_PROBE=ok ;;
   esac
 }
 
@@ -133,6 +139,96 @@ switcher_supports_subscription_rows() {
   [ "$_GT_SWITCHER_CONFIGS_PROBE" = ok ]
 }
 
+# switcher_supports_worktree_rows — exit 0 when the installed wisp-deck-tui
+# accepts --worktrees/--active-worktree on claude-account-switch (checkout rows).
+# Same legacy-detection contract as the probes above: only a help output that
+# positively shows the command WITHOUT --active-worktree counts as legacy.
+switcher_supports_worktree_rows() {
+  _probe_switcher_capabilities
+  [ "$_GT_SWITCHER_WORKTREES_PROBE" = ok ]
+}
+
+# _session_worktrees <project_dir> — print the project's checkouts as
+# "branch:path" lines, in git's own order (the main checkout is always its first
+# porcelain block, so it leads). A detached checkout reports "(detached)".
+# Silent and successful outside a repo, or without git at all: the switcher then
+# simply shows no checkout group.
+_session_worktrees() {
+  local dir="$1" line path="" branch=""
+  [ -n "$dir" ] && [ -d "$dir" ] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*)
+        path="${line#worktree }"
+        branch=""
+        ;;
+      "branch refs/heads/"*)
+        branch="${line#branch refs/heads/}"
+        ;;
+      detached)
+        branch="(detached)"
+        ;;
+      "")
+        [ -n "$path" ] && printf '%s:%s\n' "${branch:-(detached)}" "$path"
+        path=""
+        branch=""
+        ;;
+    esac
+  done < <(git -C "$dir" worktree list --porcelain 2>/dev/null)
+  # git ends every block with a blank line, so this only fires for a truncated
+  # final block.
+  [ -n "$path" ] && printf '%s:%s\n' "${branch:-(detached)}" "$path"
+  return 0
+}
+
+# _resolve_dir <path> — print the physical path (symlinks resolved), or the
+# input unchanged when it is not a reachable directory. `git worktree list`
+# always reports resolved paths, so every comparison against that listing has to
+# be made in the same terms: a project reached through a symlink (a macOS
+# /var → /private/var temp dir, a symlinked checkout) would otherwise match no
+# row at all, losing both the running checkout's marker and the no-op guard.
+_resolve_dir() {
+  local dir="$1" resolved
+  [ -n "$dir" ] || return 0
+  resolved="$(cd "$dir" 2>/dev/null && pwd -P)" || resolved=""
+  printf '%s\n' "${resolved:-$dir}"
+}
+
+# _worktree_choice_ready <project_dir> <path> — revalidate a chosen checkout
+# immediately before mutation. The popup can sit open while worktrees are
+# removed elsewhere, and an unvalidated path would respawn all three panes into
+# an arbitrary directory.
+_worktree_choice_ready() {
+  local project_dir="$1" wanted="$2" line
+  [ -n "$wanted" ] && [ -d "$wanted" ] || return 1
+  wanted="$(_resolve_dir "$wanted")"
+  while IFS= read -r line; do
+    [ "${line#*:}" = "$wanted" ] && return 0
+  done < <(_session_worktrees "$project_dir")
+  return 1
+}
+
+# _session_side_panes <tmux_cmd> — print "<ledger_pane> <spare_pane>" (either
+# may be empty). The agent pane carries @gt_ai; of the two that don't, the
+# ledger is the one whose start command runs compact_view and the spare is the
+# other. Identifying them by start command rather than by index survives a pane
+# heal, which rebuilds them in whatever order the splits succeeded. The field
+# separator is '|' because an unset @gt_ai renders EMPTY — space-separated
+# fields would then collapse and shift the start command into the flag.
+_session_side_panes() {
+  local tmux_cmd="$1" id flag cmd ledger="" spare=""
+  while IFS='|' read -r id flag cmd; do
+    [ -n "$id" ] || continue
+    [ "$flag" = "1" ] && continue
+    case "$cmd" in
+      *compact_view*) [ -z "$ledger" ] && ledger="$id" ;;
+      *) [ -z "$spare" ] && spare="$id" ;;
+    esac
+  done < <("$tmux_cmd" list-panes -s -F '#{pane_id}|#{@gt_ai}|#{pane_start_command}' 2>/dev/null)
+  printf '%s %s\n' "$ledger" "$spare"
+}
+
 # account_pill_enabled <relaunch_file> <list_file> — exit 0 when the ledger
 # should show the switch pill: the relaunch file exists AND there is anything
 # to switch to — 2+ claude logins (a single managed login + the implicit
@@ -150,7 +246,26 @@ account_pill_enabled() {
   # A configured subscription is switchable too, so the pill must show even with
   # a single login and no other agent.
   configs_list="$(sed -n 's/^configs_list=//p' "$relaunch_file" 2>/dev/null)"
-  [ -n "$configs_list" ] && [ -s "$configs_list" ]
+  [ -n "$configs_list" ] && [ -s "$configs_list" ] && return 0
+  # So are the project's other checkouts — without this the worktree rows are
+  # unreachable for a single-login, single-agent session.
+  local project_dir
+  project_dir="$(sed -n 's/^project_dir=//p' "$relaunch_file" 2>/dev/null)"
+  _project_has_worktrees "$project_dir"
+}
+
+# _project_has_worktrees <dir> — exit 0 when the project has more than one
+# checkout. Decided by two stats rather than a `git worktree list` subprocess:
+# this runs on every ledger refresh tick, and the pane's hot path must stay free
+# of spawns. A linked worktree has a .git FILE (the main checkout is always
+# there to go back to); a main checkout with linked worktrees has a
+# .git/worktrees directory. Deliberately no glob over that directory — this
+# also runs under the compact-view pane's zsh, where an unmatched glob is fatal.
+_project_has_worktrees() {
+  local dir="$1"
+  [ -n "$dir" ] || return 1
+  [ -f "$dir/.git" ] && return 0
+  [ -d "$dir/.git/worktrees" ]
 }
 
 # pill_current <tool> <pointer_file> <list_file> <default_label_file> \
@@ -917,8 +1032,14 @@ relaunch_ai_pane() {
   # so the switch carries over THIS session rather than the cwd's most-recent one.
   # An empty sid means the previous account had no active session — the switch
   # then launches a fresh claude rather than resuming (see build_switch_launch_cmd).
+  #
+  # A caller in the enclosing scope can force a FRESH launch instead
+  # (_gt_fresh_launch, the same dynamic-scoping contract _gt_send_continue
+  # uses): a worktree switch moves the pane to a different checkout, and the
+  # stamped conversation belongs to the tree being left.
   local sid
   sid="$(current_ai_session "$tmux_cmd")"
+  [ -n "${_gt_fresh_launch:-}" ] && sid=""
   staged_settings="$(stage_claude_relaunch_settings "$_rc_tool" \
     "$_rc_settings" "$_rc_settings_source" "$_rc_attention_root")" || {
     [ "$attention_lock_held" = 1 ] \
@@ -1438,6 +1559,71 @@ _subscription_choice_ready() {
   jq -er '.env.ANTHROPIC_AUTH_TOKEN | select(type == "string" and length > 0)' "$config_path" >/dev/null 2>&1
 }
 
+# _apply_worktree_switch <tmux_cmd> <relaunch_file> <new_project_dir>
+# Rebuild this tab at another checkout of the same project. Reads _rc_* from the
+# caller's scope and retargets _rc_project_dir there (the same dynamic-scoping
+# contract _read_relaunch_ctx uses). Every step after the context rewrite is
+# fail-open: a pane that cannot be found simply keeps its old cwd rather than
+# aborting a switch the agent pane has already made.
+_apply_worktree_switch() {
+  local tmux_cmd="$1" relaunch_file="$2" new_dir="$3"
+  local lib_dir session share_dir ledger="" spare="" accent
+  local spare_label spare_conf spare_zdotdir project
+
+  # The context FIRST: relaunch_ai_pane re-reads this file for the pane's cwd,
+  # and it is also what every later switch, tab_view_new_window and
+  # gt_ensure_panes_watch read.
+  _set_relaunch_kv "$relaunch_file" project_dir "$new_dir" || return 1
+  _rc_project_dir="$new_dir"
+
+  # A crash-restore rebuilds the tab from the session env; without this it would
+  # reopen the checkout the user just left.
+  "$tmux_cmd" set-environment WISP_DECK_PATH "$new_dir" 2>/dev/null || true
+
+  # The agent, through the established draft-preserving path so attention
+  # fencing, the settings overlay and the unsent-draft replay all still apply —
+  # but launched fresh, never resuming the old tree's conversation.
+  local _gt_fresh_launch=1
+  _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" ""
+
+  read -r ledger spare < <(_session_side_panes "$tmux_cmd")
+  lib_dir="$(_pool_tmux_env "$tmux_cmd" WISP_DECK_LIB_DIR)"
+  [ -n "$lib_dir" ] || return 0
+
+  if [ -n "$ledger" ]; then
+    "$tmux_cmd" respawn-pane -k -t "$ledger" -c "$new_dir" \
+      "source \"$lib_dir/compact-view.sh\" && compact_view \"$new_dir\"; exec bash" \
+      2>/dev/null || true
+  fi
+
+  [ -n "$spare" ] || return 0
+  session="$("$tmux_cmd" display-message -p '#{session_name}' 2>/dev/null)" || session=""
+  [ -n "$session" ] || return 0
+  share_dir="${relaunch_file%/*}"
+  # shellcheck source=/dev/null
+  declare -f spare_tabs_socket >/dev/null 2>&1 || source "$lib_dir/spare-tabs.sh"
+  spare_label="$(spare_tabs_socket "$session")"
+  spare_conf="$share_dir/spare-${session}.conf"
+  spare_zdotdir="$share_dir/spare-zdotdir-${session}"
+  [ -d "$spare_zdotdir" ] || spare_zdotdir=""
+  accent="$(get_tool_accent "${_rc_tool:-claude}" 2>/dev/null)" || accent=""
+  project="$(_pool_tmux_env "$tmux_cmd" WISP_DECK_PROJECT)"
+  # The inner spare server runs `exit-unattached on`, so respawning its pane
+  # restarts it and it re-reads this config — its @gt_dir (the + button) and its
+  # own prefix+t follow from the regenerated file rather than needing live
+  # tmux calls against a server that is about to die.
+  spare_tabs_config "$project" "$new_dir" "$lib_dir/spare-tabs.sh" \
+    "$spare_label" "${accent:-209}" "$session" > "$spare_conf" 2>/dev/null || true
+  "$tmux_cmd" respawn-pane -k -t "$spare" -c "$new_dir" \
+    "$(spare_tabs_launch_cmd "$spare_label" "$spare_conf" "$new_dir" "$spare_zdotdir")" \
+    2>/dev/null || true
+  # The OUTER prefix+t opens a spare tab too, with the dir baked in at launch.
+  "$tmux_cmd" bind-key t run-shell \
+    "env -u TMUX -u TMUX_PANE tmux -L $spare_label new-window -c \"$new_dir\"" \
+    2>/dev/null || true
+  return 0
+}
+
 # _apply_account_switch_choice_loaded <tmux_cmd> <relaunch_file>
 #   <account|subscription|tool> <value> <session-account> <session-config>
 # Dispatch one exact switch choice after the caller has loaded _rc_* and, when
@@ -1484,6 +1670,16 @@ _apply_account_switch_choice_loaded() {
         _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" "$session_acct" "$value"
       fi
       ;;
+    worktree)
+      [ -n "$value" ] || return 1
+      _worktree_choice_ready "$_rc_project_dir" "$value" || return 1
+      # Compared (and applied) in git's own terms — see _resolve_dir.
+      value="$(_resolve_dir "$value")"
+      # The checkout already running: rebuilding the tab would throw away a live
+      # conversation for nothing.
+      [ "$value" = "$(_resolve_dir "$_rc_project_dir")" ] && return 0
+      _apply_worktree_switch "$tmux_cmd" "$relaunch_file" "$value" || return 1
+      ;;
     *)
       return 1
       ;;
@@ -1512,6 +1708,10 @@ apply_account_switch_choice() {
   local session_acct="" session_config=""
   case "$kind" in
     tool)
+      ;;
+    worktree)
+      # The checkout switch keeps the pane's login and backend exactly as they
+      # are, so it needs neither identity query.
       ;;
     subscription)
       _current_session_identities "$tmux_cmd" "$_rc_pointer" "$_rc_config_pointer"
@@ -1579,6 +1779,28 @@ open_account_switcher() {
     session_flags="${session_flags}--configs $(printf '%q' "$_rc_configs_list") \
 --configs-dir $(printf '%q' "$_rc_configs_dir") \
 --active-config $(printf '%q' "$session_config") "
+  fi
+
+  # Offer the project's other checkouts as rows (the popup marks the one this
+  # pane runs via --active-worktree). The list is handed over as a FILE, like
+  # the accounts and subscriptions lists, so a path never has to survive
+  # quoting. A project with a single checkout has nothing to switch to, so the
+  # flags are left off entirely and the popup renders no group.
+  local worktree_file="" worktree_count=0
+  if [ -n "$result_file" ] && switcher_supports_worktree_rows; then
+    worktree_file=$(mktemp "${TMPDIR:-/tmp}/gtswitchwt.XXXXXX" 2>/dev/null) || worktree_file=""
+    if [ -n "$worktree_file" ]; then
+      _session_worktrees "$_rc_project_dir" > "$worktree_file" 2>/dev/null || true
+      worktree_count=$(grep -c . "$worktree_file" 2>/dev/null) || worktree_count=0
+      if [ "${worktree_count:-0}" -gt 1 ]; then
+        # Resolved, so the marker matches a row git printed — see _resolve_dir.
+        session_flags="${session_flags}--worktrees $(printf '%q' "$worktree_file") \
+--active-worktree $(printf '%q' "$(_resolve_dir "$_rc_project_dir")") "
+      else
+        rm -f "$worktree_file"
+        worktree_file=""
+      fi
+    fi
   fi
 
   # The switcher's full flag string, shared by the --measure probe and the popup
@@ -1670,6 +1892,7 @@ ${session_flags}"
   "$tmux_cmd" display-popup -E -B "${popup_geom[@]}" \
     "wisp-deck-tui claude-account-switch ${switcher_flags}${backdrop_arg}" 2>/dev/null || true
   [ -n "$backdrop" ] && rm -f "$backdrop"
+  [ -n "$worktree_file" ] && rm -f "$worktree_file"
 
   # No result file = the popup was cancelled (or never ran) — a clean no-op.
   # Otherwise relaunch iff the chosen login differs from what this pane runs.
@@ -1687,6 +1910,10 @@ ${session_flags}"
         config:*)
           kind=subscription
           value="${chosen#config:}"
+          ;;
+        worktree:*)
+          kind=worktree
+          value="${chosen#worktree:}"
           ;;
       esac
       if ! _apply_account_switch_choice_loaded "$tmux_cmd" "$relaunch_file" \

@@ -446,13 +446,14 @@ func TestAccountSwitch_selectToolResultJSON(t *testing.T) {
 	}
 }
 
-// With agent rows present the popup is an agent switcher, so the title says so;
-// without them it keeps the claude-only wording.
+// With agent rows present the popup moves more than a claude login — the agent,
+// the backend, the checkout — so the title drops the claude-only wording;
+// without them it keeps it.
 func TestAccountSwitch_titleSwitchAgentWithToolRows(t *testing.T) {
 	rows := []switchRow{{Label: "Default"}, {Label: "OpenCode", Tool: "opencode"}}
 	m := newAccountSwitchModel(rows, 0, "")
-	if got := m.titleText(); got != "Switch agent" {
-		t.Fatalf("title must read Switch agent, got %q", got)
+	if got := m.titleText(); got != "Switch" {
+		t.Fatalf("title must read Switch, got %q", got)
 	}
 	m2 := newAccountSwitchModel([]switchRow{{Label: "Default"}}, 0, "")
 	if got := m2.titleText(); got != "Switch Claude login" {
@@ -669,8 +670,8 @@ func TestAccountSwitch_innerLines_inactiveRowsGrayed(t *testing.T) {
 	}
 }
 
-// The title lives on the card's top border ("╭─ Switch agent ───╮"), not in
-// the content block, so the rows start right at the top of the card.
+// The title lives on the card's top border ("╭─ Switch ───╮"), not in the
+// content block, so the rows start right at the top of the card.
 func TestAccountSwitchModel_titleEmbeddedInTopBorder(t *testing.T) {
 	lipgloss.SetColorProfile(termenv.Ascii)
 	rows := []switchRow{
@@ -687,12 +688,12 @@ func TestAccountSwitchModel_titleEmbeddedInTopBorder(t *testing.T) {
 			break
 		}
 	}
-	if !strings.Contains(borderLine, "─ Switch agent ") {
+	if !strings.Contains(borderLine, "─ Switch ") {
 		t.Errorf("top border must carry the title, got %q", borderLine)
 	}
 	// The content block no longer holds the title: it starts at the rows.
 	lines := m.innerLines()
-	if strings.Contains(strings.Join(lines, "\n"), "Switch agent") {
+	if strings.Contains(strings.Join(lines, "\n"), "Switch") {
 		t.Errorf("title must not be in the content block:\n%s", strings.Join(lines, "\n"))
 	}
 	if !strings.Contains(lines[0], "Claude") {

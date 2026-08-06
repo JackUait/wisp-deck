@@ -153,7 +153,8 @@ func (s *SessionSource) Load(ctx context.Context, path string) (SessionContext, 
 	}
 	accounts := claudeaccount.Load(result.List)
 	configs := claudeconfig.Load(result.ConfigsList)
-	if len(accounts) == 0 && len(result.Tools) < 2 && len(configs) == 0 {
+	if len(accounts) == 0 && len(result.Tools) < 2 && len(configs) == 0 &&
+		!projectHasWorktrees(result.ProjectDir) {
 		return result, nil
 	}
 	activeAccount, activeConfig := s.activeSessionIdentities(ctx, result.Pointer, result.ConfigPointer)
@@ -287,6 +288,26 @@ func sessionToolExecutableReady(session SessionContext, tool string) bool {
 	}
 	_, err := exec.LookPath(command)
 	return err == nil
+}
+
+// projectHasWorktrees reports whether the project has more than one checkout,
+// which makes the switcher useful even for a session with a single login, no
+// other agent and no subscription. Decided by two stats rather than a
+// `git worktree list` subprocess: the ledger reloads this context on every
+// refresh tick, and the pane's hot path must stay free of spawns. A linked
+// worktree has a .git FILE (the main checkout is always there to go back to); a
+// main checkout with linked worktrees has a .git/worktrees directory. Mirrors
+// _project_has_worktrees in lib/account-switch.sh — the pane picks its renderer
+// by binary capability, so a gate in one is a gate for half the users.
+func projectHasWorktrees(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	if info, err := os.Stat(filepath.Join(dir, ".git")); err == nil && !info.IsDir() {
+		return true
+	}
+	info, err := os.Stat(filepath.Join(dir, ".git", "worktrees"))
+	return err == nil && info.IsDir()
 }
 
 func sessionSwitchOptions(

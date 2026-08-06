@@ -245,7 +245,8 @@ func TestLedgerAccountCommandWiresSessionAndPopupAdapters(t *testing.T) {
 		if openCommand == nil {
 			t.Fatal("account pill did not return the switcher popup command")
 		}
-		if view := ledgerModel.View(); strings.Contains(view, "Switch agent") {
+		// The switcher card's help line — a marker that does not drift with its title.
+		if view := ledgerModel.View(); strings.Contains(view, "↑↓ move · ⏎ switch") {
 			t.Fatalf("account pill painted an in-ledger chooser instead of floating the popup:\n%s", view)
 		}
 		return model, nil

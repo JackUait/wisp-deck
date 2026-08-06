@@ -1087,7 +1087,8 @@ func TestLedgerAccountClickOpensSwitcherPopupOverAgentPane(t *testing.T) {
 	if cmd == nil || !m.switchingAccount {
 		t.Fatalf("account click cmd=%v switching=%v", cmd, m.switchingAccount)
 	}
-	if view := stripANSI(m.View()); strings.Contains(view, "Switch agent") {
+	// The switcher card's help line — a marker that does not drift with its title.
+	if view := stripANSI(m.View()); strings.Contains(view, "↑↓ move · ⏎ switch") {
 		t.Fatalf("switcher must not paint an in-ledger card:\n%s", view)
 	}
 	if calls, _ := switcher.recorded(); calls != 0 {

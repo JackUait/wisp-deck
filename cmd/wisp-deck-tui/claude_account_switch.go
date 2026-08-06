@@ -40,22 +40,68 @@ var (
 	casActiveTool   string
 	casConfigs      string
 	casConfigsDir   string
-	casActiveConfig string
-	casMeasure      bool
+	casActiveConfig   string
+	casWorktrees      string
+	casActiveWorktree string
+	casMeasure        bool
 )
 
 // switchRow is one selectable entry in the switcher: a claude login (Dir set,
 // "" = the implicit Default/Keychain login), a subscription/backend (Config set
-// — the settings filename launched via `claude --settings`), or another AI
-// agent (Tool set, e.g. "opencode"). Exactly one of Dir/Config/Tool is
+// — the settings filename launched via `claude --settings`), another AI agent
+// (Tool set, e.g. "opencode"), or a git worktree of the project (Worktree set —
+// the checkout's absolute path). Exactly one of Dir/Config/Tool/Worktree is
 // meaningful per row. Ready is honored only for subscription rows: a keyless
-// API provider is shown but not selectable.
+// API provider is shown but not selectable. Active marks the WORKTREE the
+// session runs: every other group's active row is the one the cursor opens on,
+// but the cursor opens on the running account, so a checkout's dot cannot be
+// derived from it.
 type switchRow struct {
-	Label  string
-	Dir    string
-	Tool   string
-	Config string
-	Ready  bool
+	Label    string
+	Dir      string
+	Tool     string
+	Config   string
+	Worktree string
+	Ready    bool
+	Active   bool
+}
+
+// worktreeEntry is one checkout the switcher can move this tab to.
+type worktreeEntry struct {
+	Branch string
+	Path   string
+}
+
+// isClaudeGroup reports whether the row belongs under the "Claude" header — a
+// login or a subscription backend, i.e. neither an agent nor a checkout.
+func (r switchRow) isClaudeGroup() bool { return r.Tool == "" && r.Worktree == "" }
+
+// loadWorktrees reads the "branch:path" lines bash writes for --worktrees.
+// Split on the FIRST colon: git forbids ':' in a ref name, so everything after
+// it is the path, however many colons the path itself holds. Blank lines and
+// '#' comments are skipped, and an absent file simply yields no rows — an older
+// bash lib passes no list at all.
+func loadWorktrees(path string) []worktreeEntry {
+	if path == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var out []worktreeEntry
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		branch, dir, ok := strings.Cut(line, ":")
+		if !ok || branch == "" || dir == "" {
+			continue
+		}
+		out = append(out, worktreeEntry{Branch: branch, Path: dir})
+	}
+	return out
 }
 
 // selectable reports whether the row can be chosen. Account and agent rows
@@ -76,6 +122,8 @@ type switchRowsInput struct {
 	configsList      string   // subscriptions list file (name:file)
 	configsDir       string   // subscriptions dir (for readiness)
 	activeConfig     string   // subscription filename THIS pane runs ("" = standard)
+	worktrees        []worktreeEntry
+	activeWorktree   string // checkout THIS pane runs; carries the group's dot
 }
 
 // switchRowsForActive builds the ordered row list — Default first, then each
@@ -133,6 +181,17 @@ func buildSwitchRows(in switchRowsInput) ([]switchRow, int) {
 		}
 		rows = append(rows, switchRow{Label: models.DisplayName(tool), Tool: tool})
 	}
+	// The project's other checkouts, last. A lone main worktree is not a choice,
+	// so the whole group is omitted rather than offering the row you are on.
+	if len(in.worktrees) > 1 {
+		for _, wt := range in.worktrees {
+			rows = append(rows, switchRow{
+				Label:    wt.Branch,
+				Worktree: wt.Path,
+				Active:   wt.Path == in.activeWorktree,
+			})
+		}
+	}
 	cursor := 0
 	for i, r := range rows {
 		if in.activeTool != "" && in.activeTool != "claude" {
@@ -149,7 +208,9 @@ func buildSwitchRows(in switchRowsInput) ([]switchRow, int) {
 			}
 			continue
 		}
-		if r.Tool == "" && r.Config == "" && r.Dir == in.active {
+		// A checkout row never takes the opening cursor — it has no Dir/Tool/Config
+		// of its own and would otherwise match the Default account's empty dir.
+		if r.Worktree == "" && r.Tool == "" && r.Config == "" && r.Dir == in.active {
 			cursor = i
 			break
 		}
@@ -166,6 +227,11 @@ func switchResultValue(r switchRow) string {
 	}
 	if r.Config != "" {
 		return "config:" + r.Config
+	}
+	// Checked before the Dir fallback: a checkout row carries no account dir, so
+	// it would otherwise report as the Default login and switch the account.
+	if r.Worktree != "" {
+		return "worktree:" + r.Worktree
 	}
 	return r.Dir
 }
@@ -239,6 +305,22 @@ func configResultJSON(file, activeConfig string) (string, error) {
 	return string(out), nil
 }
 
+// worktreeResultJSON is the JSON for a checkout-row choice. Like an agent
+// choice it touches no pointer: the bash side owns retargeting the session's
+// project dir and rebuilding the panes. changed reports whether the chosen
+// checkout differs from the one the pane was running.
+func worktreeResultJSON(path, activeWorktree string) (string, error) {
+	out, err := json.Marshal(struct {
+		Selected bool   `json:"selected"`
+		Worktree string `json:"worktree"`
+		Changed  bool   `json:"changed"`
+	}{Selected: true, Worktree: path, Changed: path != activeWorktree})
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 // cancelResultJSON returns the JSON emitted when the user cancels (no pointer
 // write).
 func cancelResultJSON() string {
@@ -287,6 +369,8 @@ func runClaudeAccountSwitch(cmd *cobra.Command, args []string) error {
 		configsList:      casConfigs,
 		configsDir:       casConfigsDir,
 		activeConfig:     casActiveConfig,
+		worktrees:        loadWorktrees(casWorktrees),
+		activeWorktree:   casActiveWorktree,
 	})
 	prevActive := claudeaccount.GetActive(casPointer)
 
@@ -336,6 +420,8 @@ func runClaudeAccountSwitch(cmd *cobra.Command, args []string) error {
 		out, err = selectToolResultJSON(chosen.Tool, activeTool)
 	case chosen.Config != "":
 		out, err = configResultJSON(chosen.Config, casActiveConfig)
+	case chosen.Worktree != "":
+		out, err = worktreeResultJSON(chosen.Worktree, casActiveWorktree)
 	default:
 		out, err = selectResultJSON(casPointer, chosen.Dir, prevActive)
 	}
@@ -383,25 +469,70 @@ func (m accountSwitchModel) withBackdrop(rows []string) accountSwitchModel {
 	return m
 }
 
-// headerLines is the number of non-selectable group-header lines rendered
-// inside the rows block: 1 for the "󰚩 Claude" subgroup header when agent rows
-// are present, 0 for the legacy claude-only popup. Layout and mouse mapping
-// must both add it, or clicks land one row off.
-func (m accountSwitchModel) headerLines() int {
-	for _, r := range m.rows {
-		if r.Tool != "" {
-			return 1
+// Non-row display entries. displayEntries returns a row index per rendered
+// line, or one of these for the lines that are chrome rather than choices.
+const (
+	entryBlank          = -1
+	entryClaudeHeader   = -2
+	entryWorktreeHeader = -3
+)
+
+// displayEntries maps each line of the card's rows block to what it shows: a
+// row index, or a header/blank marker. Rendering, card sizing (--measure) and
+// mouse mapping all read it, so a group header can never be counted by one and
+// missed by another — which is how a click lands on the wrong row.
+//
+// Order: the "Claude" header (only when agent rows are present) over the logins
+// and subscriptions, then the agent rows, then — when the project has more than
+// one checkout — a blank separator, the "Worktree" header, and the checkouts.
+func (m accountSwitchModel) displayEntries() []int {
+	var entries []int
+	if m.hasToolRows() {
+		entries = append(entries, entryClaudeHeader)
+	}
+	for i, r := range m.rows {
+		if r.Worktree == "" {
+			entries = append(entries, i)
 		}
 	}
-	return 0
+	if m.hasWorktreeRows() {
+		entries = append(entries, entryBlank, entryWorktreeHeader)
+		for i, r := range m.rows {
+			if r.Worktree != "" {
+				entries = append(entries, i)
+			}
+		}
+	}
+	return entries
 }
 
-// titleText is the popup's title, rendered on the card's top border: with
-// agent rows present the popup switches between agents, not just claude
-// logins — the title says so.
+// hasToolRows reports whether any other AI agent is offered — the condition
+// that turns the claude logins into a named subgroup.
+func (m accountSwitchModel) hasToolRows() bool {
+	for _, r := range m.rows {
+		if r.Tool != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasWorktreeRows reports whether the project's other checkouts are offered.
+func (m accountSwitchModel) hasWorktreeRows() bool {
+	for _, r := range m.rows {
+		if r.Worktree != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// titleText is the popup's title, rendered on the card's top border. The modern
+// popup moves the agent, the login, the backend and the checkout, so it is
+// titled for all of them; the legacy claude-only popup keeps its own wording.
 func (m accountSwitchModel) titleText() string {
-	if m.headerLines() > 0 {
-		return "Switch agent"
+	if m.hasToolRows() || m.hasWorktreeRows() {
+		return "Switch"
 	}
 	return "Switch Claude login"
 }
@@ -448,12 +579,18 @@ func (m accountSwitchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			firstRowY, cardLeft, cardWidth := accountSwitchLayout(m.width, m.height, len(m.rows)+m.headerLines(), m.contentWidth())
-			// The group header line (when present) sits at firstRowY and is not
-			// selectable — the first real row is one line below it.
-			idx := msg.Y - firstRowY - m.headerLines()
+			entries := m.displayEntries()
+			firstRowY, cardLeft, cardWidth := accountSwitchLayout(m.width, m.height, len(entries), m.contentWidth())
+			// Resolve the clicked LINE to what it displays. Group headers and the
+			// separator are lines without a row, so a click on one is inert.
+			line := msg.Y - firstRowY
 			onCard := msg.X >= cardLeft && msg.X < cardLeft+cardWidth
-			if onCard && idx >= 0 && idx < len(m.rows) {
+			if onCard && line >= 0 && line < len(entries) {
+				idx := entries[line]
+				if idx < 0 {
+					// A header or the separator: ignore, keep the popup open.
+					return m, nil
+				}
 				if !m.rows[idx].selectable() {
 					// A not-ready subscription: ignore the click, keep the popup open.
 					return m, nil
@@ -516,24 +653,40 @@ func (m accountSwitchModel) innerLines() []string {
 	// block starts right at the rows. With agent rows present the claude
 	// logins render as a subgroup under a non-selectable "Claude" header so
 	// they visibly belong to the Claude agent while the other agents stay
-	// top-level rows.
-	grouped := m.headerLines() > 0
+	// top-level rows; the project's checkouts get a subgroup of their own.
+	grouped := m.hasToolRows()
 	var lines []string
 	// Inactive rows gray out so the brand colors highlight only the running
 	// row and the cursor. The 244 matches the footer's dim gray.
 	const grayRow = 244
-	if grouped {
-		// The header is "active" while the pane runs claude or the cursor sits
-		// on one of its nested logins; otherwise it grays with the rest.
-		headerColor := grayRow
-		if m.rows[m.active].Tool == "" || m.rows[m.cursor].Tool == "" {
-			headerColor = toolRowColor("claude")
-		}
-		headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(headerColor)))
-		lines = append(lines, "  "+headerStyle.Render(toolRowGlyph("claude")+" Claude"))
-	}
 
-	for i, r := range m.rows {
+	for _, entry := range m.displayEntries() {
+		switch entry {
+		case entryBlank:
+			lines = append(lines, "")
+			continue
+		case entryClaudeHeader:
+			// The header is "active" while the pane runs claude or the cursor sits
+			// on one of its nested logins; otherwise it grays with the rest.
+			headerColor := grayRow
+			if m.rows[m.active].isClaudeGroup() || m.rows[m.cursor].isClaudeGroup() {
+				headerColor = toolRowColor("claude")
+			}
+			headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(headerColor)))
+			lines = append(lines, "  "+headerStyle.Render(toolRowGlyph("claude")+" Claude"))
+			continue
+		case entryWorktreeHeader:
+			headerColor := grayRow
+			if m.rows[m.cursor].Worktree != "" {
+				headerColor = worktreeRowColor()
+			}
+			headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(headerColor)))
+			lines = append(lines, "  "+headerStyle.Render(worktreeRowGlyph()+" Worktree"))
+			continue
+		}
+
+		i := entry
+		r := m.rows[i]
 		color := claudeaccount.ColorFor(m.colorsFile, r.Dir, m.configColorsFile)
 		glyph := "󰀄"
 		if r.Tool != "" {
@@ -548,7 +701,14 @@ func (m accountSwitchModel) innerLines() []string {
 			color = m.configRowColor(r.Config)
 			glyph = configRowGlyph()
 		}
-		if i != m.cursor && i != m.active {
+		if r.Worktree != "" {
+			// Checkout rows: their own hue, and no glyph of their own — the
+			// group header already carries the branch mark, and a per-row icon
+			// would compete with the person/spark/brand marks above.
+			color = worktreeRowColor()
+			glyph = ""
+		}
+		if i != m.cursor && i != m.active && !r.Active {
 			color = grayRow
 		}
 		if r.Config != "" && !r.Ready {
@@ -558,21 +718,27 @@ func (m accountSwitchModel) innerLines() []string {
 		}
 		labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(color)))
 
+		text := r.Label
+		if glyph != "" {
+			text = glyph + " " + r.Label
+		}
 		marker := "  "
-		label := labelStyle.Render(glyph + " " + r.Label)
+		label := labelStyle.Render(text)
 		if i == m.cursor {
 			marker = lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(color))).Bold(true).Render("▌ ")
-			label = labelStyle.Bold(true).Render(glyph + " " + r.Label)
+			label = labelStyle.Bold(true).Render(text)
 		}
-		// Nested login rows indent BEFORE the marker so the cursor bar moves in
-		// with the row instead of floating at the card's left edge. Four
-		// columns past the agent rows, so the hierarchy reads clearly.
+		// Nested rows indent BEFORE the marker so the cursor bar moves in with
+		// the row instead of floating at the card's left edge. Four columns past
+		// the agent rows, so the hierarchy reads clearly.
 		indent := ""
-		if grouped && r.Tool == "" {
+		if (grouped && r.isClaudeGroup()) || r.Worktree != "" {
 			indent = "    "
 		}
 		line := indent + marker + label
-		if i == m.active {
+		// The running checkout carries its own dot: the cursor opens on the
+		// running account, so a checkout's active row is never m.active.
+		if i == m.active || r.Active {
 			line += "  " + activeDot
 		}
 		lines = append(lines, line)
@@ -618,6 +784,15 @@ func toolRowColor(tool string) int {
 // configRowGlyph is the mark for a subscription/backend row — a four-pointed
 // spark, distinct from the account person and the agent brand icons.
 func configRowGlyph() string { return "✦" }
+
+// worktreeRowGlyph is the mark on the Worktree group header — the source-branch
+// glyph, distinct from the person, the spark and the agent brand icons.
+func worktreeRowGlyph() string { return "󰘬" }
+
+// worktreeRowColor is the hue for the checkout group. Deliberately outside
+// claudeaccount.Palette (which the subscriptions also draw from), so a checkout
+// can never be mistaken for a login at a glance.
+func worktreeRowColor() int { return 114 }
 
 // configRowColor is the accent hue for a ready subscription row: the
 // subscription's persistent identity color from claude-config-colors (assigned
@@ -676,7 +851,7 @@ func (m accountSwitchModel) View() string {
 	}
 	card := accountSwitchCardStyle().Render(strings.Join(m.innerLines(), "\n"))
 	card = embedBorderTitle(card, m.titleText(), m.contentWidth()+2*accountSwitchPadX)
-	firstRowY, cardLeft, cardWidth := accountSwitchLayout(m.width, m.height, len(m.rows)+m.headerLines(), m.contentWidth())
+	firstRowY, cardLeft, cardWidth := accountSwitchLayout(m.width, m.height, len(m.displayEntries()), m.contentWidth())
 	cardTop := firstRowY - accountSwitchBorder - accountSwitchPadY - accountSwitchHeader
 	return m.composite(card, cardLeft, cardTop, cardWidth)
 }
@@ -761,6 +936,8 @@ func init() {
 	claudeAccountSwitchCmd.Flags().StringVar(&casConfigs, "configs", "", "Path to subscriptions list (name:file), each shown as a backend row under Claude")
 	claudeAccountSwitchCmd.Flags().StringVar(&casConfigsDir, "configs-dir", "", "Path to the subscriptions directory (for readiness checks)")
 	claudeAccountSwitchCmd.Flags().StringVar(&casActiveConfig, "active-config", "", "Subscription filename THIS pane is running (empty = standard Claude); marks the active row")
+	claudeAccountSwitchCmd.Flags().StringVar(&casWorktrees, "worktrees", "", "Path to the project's worktree list (branch:path), each shown as a checkout row")
+	claudeAccountSwitchCmd.Flags().StringVar(&casActiveWorktree, "active-worktree", "", "Checkout THIS pane is running; marks the active row")
 	claudeAccountSwitchCmd.Flags().BoolVar(&casMeasure, "measure", false, "Print the card size as \"cols rows\" and exit (bash popup-sizing seam)")
 	_ = claudeAccountSwitchCmd.Flags().MarkHidden("measure")
 	rootCmd.AddCommand(claudeAccountSwitchCmd)
