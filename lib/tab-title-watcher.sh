@@ -292,7 +292,9 @@ model_tab_title() {
 
 # Write the terminal tab title for the given state, honoring the title mode.
 # Usage: apply_tab_title <state> <mode> <project> <tool>
-#   state: "waiting" (needs attention — bell emoji prefixed) or "active" (plain)
+#   state: "waiting" (needs attention — bell emoji prefixed), "seen" (still
+#          needs attention, but the user has looked at the tab without
+#          answering — eyes emoji prefixed) or "active" (plain)
 #   mode:  "full" (project · tool), "project" (project only), or
 #          "model" (leave the AI tool's own title alone — it set the title
 #          itself; the per-tick model re-emit carries the bell instead)
@@ -304,18 +306,18 @@ apply_tab_title() {
       return 0
       ;;
     full)
-      if [ "$state" = "waiting" ]; then
-        set_tab_title_waiting "$project" "$tool"
-      else
-        set_tab_title "$project" "$tool"
-      fi
+      case "$state" in
+        waiting) set_tab_title_waiting "$project" "$tool" ;;
+        seen) set_tab_title_seen "$project" "$tool" ;;
+        *) set_tab_title "$project" "$tool" ;;
+      esac
       ;;
     *)
-      if [ "$state" = "waiting" ]; then
-        set_tab_title_waiting "$project"
-      else
-        set_tab_title "$project"
-      fi
+      case "$state" in
+        waiting) set_tab_title_waiting "$project" ;;
+        seen) set_tab_title_seen "$project" ;;
+        *) set_tab_title "$project" ;;
+      esac
       ;;
   esac
 }
@@ -351,6 +353,22 @@ EOF
   printf '%s\n' "$found"
 }
 
+# True when the terminal tab hosting this session currently holds the user's
+# focus. One Ghostty tab is exactly one client of the session, and tmux marks a
+# client "focused" from the terminal's own focus reporting — which is why the
+# wrapper turns `focus-events on` before attaching. Where focus reporting is
+# unavailable tmux calls every client focused, so this degrades to "the user has
+# seen it", never to a bell that outlives the visit.
+# Usage: attention_watcher_tab_focused <session> <tmux_cmd>
+attention_watcher_tab_focused() {
+  local session_name="${1-}" tmux_cmd="${2-}" flags
+  flags="$("$tmux_cmd" list-clients -t "$session_name" -F '#{client_flags}' 2>/dev/null)" || return 1
+  case ",$flags," in
+    *,focused,*) return 0 ;;
+  esac
+  return 1
+}
+
 # Reset the reducer state. Public for deterministic shell tests; production
 # calls it once inside the watcher subshell.
 attention_watcher_reset() {
@@ -361,6 +379,8 @@ attention_watcher_reset() {
   _ATTENTION_WATCH_LAST_PRESENT_PHASE=""
   _ATTENTION_WATCH_LAST_TOOL=""
   _ATTENTION_WATCH_LAST_TITLE_MODE=""
+  _ATTENTION_WATCH_LAST_TITLE_STATE=""
+  _ATTENTION_WATCH_SEEN=""
   _ATTENTION_WATCH_LAST_ACCENT=""
   _ATTENTION_WATCH_HOST="$(hostname 2>/dev/null)"
 }
@@ -444,13 +464,28 @@ attention_watcher_tick() {
 
   case "$phase" in
     attention)
-      title_state="waiting"
+      # Sticky for the whole waiting turn: the user looked once, and wandering
+      # off again does not un-see it. Cleared below when the turn ends — an
+      # `unknown` (a state read that was missing, malformed or stale) is not a
+      # turn ending, so a transient miss must never re-ring a seen bell.
+      if [ "$_ATTENTION_WATCH_SEEN" = "1" ] \
+         || attention_watcher_tab_focused "$session_name" "$tmux_cmd"; then
+        _ATTENTION_WATCH_SEEN=1
+        title_state="seen"
+      else
+        title_state="waiting"
+      fi
       keep_state="waiting"
       ;;
     ready)
       keep_state="waiting"
+      _ATTENTION_WATCH_SEEN=""
       ;;
-    working|unknown)
+    working)
+      keep_state="active"
+      _ATTENTION_WATCH_SEEN=""
+      ;;
+    unknown)
       keep_state="active"
       ;;
   esac
@@ -463,14 +498,17 @@ attention_watcher_tick() {
     local pane_title model_title
     pane_title="$("$tmux_cmd" display-message -p -t "$current_pane" '#{pane_title}' 2>/dev/null)"
     model_title="$(model_tab_title "$pane_title" "$_ATTENTION_WATCH_HOST" "$project_name")"
-    if [ "$title_state" = "waiting" ]; then
-      set_tab_title_waiting "$model_title"
-    else
-      set_tab_title "$model_title"
-    fi
+    case "$title_state" in
+      waiting) set_tab_title_waiting "$model_title" ;;
+      seen) set_tab_title_seen "$model_title" ;;
+      *) set_tab_title "$model_title" ;;
+    esac
   fi
 
+  # The bell → eyes swap moves no phase, tool or mode, so the rendered state is
+  # part of the guard or the tab keeps ringing at a user who already looked.
   if [ "$phase" != "$_ATTENTION_WATCH_LAST_PRESENT_PHASE" ] \
+     || [ "$title_state" != "$_ATTENTION_WATCH_LAST_TITLE_STATE" ] \
      || [ "$tool" != "$previous_tool" ] \
      || [ "$current_title" != "$_ATTENTION_WATCH_LAST_TITLE_MODE" ]; then
     apply_tab_title "$title_state" "$current_title" "$project_name" "$tool"
@@ -484,6 +522,7 @@ attention_watcher_tick() {
   fi
 
   _ATTENTION_WATCH_LAST_PRESENT_PHASE="$phase"
+  _ATTENTION_WATCH_LAST_TITLE_STATE="$title_state"
   _ATTENTION_WATCH_LAST_TITLE_MODE="$current_title"
 }
 

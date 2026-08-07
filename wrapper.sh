@@ -841,6 +841,12 @@ if [ -n "$_gt_spare_reap" ]; then
     "run-shell -b \"$_gt_spare_reap\"" ';')
 fi
 
+# focus-events is what makes tmux ask the terminal to report focus, and it is
+# read once per client when its tty starts — so it must be set BEFORE the attach
+# below, and it is server-global (the `-t` form silently sets the same option).
+# Without it tmux calls every client focused, and the attention watcher can
+# never tell "the user looked at this tab" from "the user never came".
+
 "$TMUX_CMD" \
   "${_gt_tabbar_chain[@]}" \
   bind-key i run-shell "$_screenshot_bind" \; \
@@ -855,5 +861,6 @@ fi
   bind-key -n MouseDown1StatusLeft run-shell "$_tab_view_dispatch_bind" \; \
   bind-key -n MouseDown1StatusRight run-shell "$_tab_view_dispatch_bind" \; \
   run-shell -b "$_ledger_hover_setup" \; \
+  set-option -g focus-events on \; \
   attach-session -t "$SESSION_NAME" \; \
   set-option exit-unattached on 2>&3

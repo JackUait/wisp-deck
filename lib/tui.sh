@@ -66,6 +66,14 @@ set_tab_title_waiting() {
   set_tab_title "🔔 $1" "${2:-}"
 }
 
+# Set terminal/tab title for the seen state: still waiting on the user, but the
+# user has already looked at the tab and left without answering. The bell has
+# done its job by then; the eyes say "you know about this one" so a glance at
+# the tab strip separates it from a tab that has not been read at all.
+set_tab_title_seen() {
+  set_tab_title "👀 $1" "${2:-}"
+}
+
 # Extended TUI variables for interactive full-screen UIs.
 # Call this before using any of the extended variables.
 tui_init_interactive() {
