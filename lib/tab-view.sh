@@ -165,6 +165,51 @@ tab_view_new_window() {
   return 0
 }
 
+# tab_view_close_window <tmux_cmd> <lib_dir> <session> [window]
+# Close ONE tab and kill everything that was running in its terminals.
+#
+# tmux's own kill-window only SIGHUPs each pane's process group. That reaps a
+# plain background job but reaches neither a descendant that left the group nor
+# — the leak this exists for — the spare pane's terminals: that pane runs a
+# client of a nested tmux server shared by every tab, so the tab's inner
+# session and every shell in it reparent away from the pane and outlive the
+# close forever. Session-wide cleanup covers this when the whole Ghostty tab
+# goes (cleanup_tmux_session + spare_tabs_cleanup); a per-tab close had
+# nothing, so this is the window-scoped mirror of it: inner spare session
+# first (while the pane ttys that identify it still exist), then each pane's
+# process tree, then the window.
+#
+# Fail-open like the rest of this file. Closing the last window ends the
+# session, which is the wrapper's own cleanup path and is left to it.
+tab_view_close_window() {
+  local tmux_cmd="$1" lib_dir="$2" session="$3" window="${4:-}"
+  local label pid tty inner
+  local pids=()
+
+  [ -n "$window" ] || window="$("$tmux_cmd" display-message -p -t "$session" \
+    '#{window_id}' 2>/dev/null)" || return 0
+  [ -n "$window" ] || return 0
+
+  # shellcheck source=/dev/null
+  declare -f kill_tree >/dev/null 2>&1 || source "$lib_dir/process.sh"
+  # shellcheck source=/dev/null
+  declare -f spare_tabs_socket >/dev/null 2>&1 || source "$lib_dir/spare-tabs.sh"
+  label="$(spare_tabs_socket "$session")"
+
+  while read -r pid tty; do
+    [ -n "$pid" ] || continue
+    pids+=("$pid")
+    inner="$(spare_tabs_session_for_tty "$label" "$tty")"
+    [ -n "$inner" ] && spare_tabs_kill_session "$label" "$inner"
+  done < <("$tmux_cmd" list-panes -t "$window" -F '#{pane_pid} #{pane_tty}' 2>/dev/null)
+
+  for pid in ${pids[@]+"${pids[@]}"}; do kill_tree "$pid" TERM; done
+  "$tmux_cmd" kill-window -t "$window" 2>/dev/null || true
+  sleep 0.3
+  for pid in ${pids[@]+"${pids[@]}"}; do kill_tree "$pid" KILL; done
+  return 0
+}
+
 # tab_view_dispatch <tmux_cmd> <lib_dir> <session> <mouse_status_range>
 # Route a status-bar click by its user-range tag. Bound server-globally in
 # wrapper.sh with #{q:session_name}/#{q:mouse_status_range}, so it always acts

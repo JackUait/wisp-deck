@@ -200,6 +200,71 @@ spare_tabs_dispatch() {
   esac
 }
 
+# Print the inner session whose client is attached to <tty>, empty if none.
+# The spare pane runs the inner client on the pane's own pty, so the outer
+# pane's #{pane_tty} and the inner #{client_tty} are the same device — that is
+# the only link between a tab (outer window) and its inner spare session, which
+# is otherwise just an anonymous session on a server shared by every tab.
+# Args: <socket_label> <tty>
+spare_tabs_session_for_tty() {
+  local label="$1" tty="$2" ctty cses
+  [ -n "$tty" ] || return 0
+  while read -r ctty cses; do
+    [ "$ctty" = "$tty" ] || continue
+    printf '%s\n' "$cses"
+    return 0
+  done < <(tmux -L "$label" list-clients -F '#{client_tty} #{session_name}' 2>/dev/null)
+  return 0
+}
+
+# Kill one inner spare session AND everything running in its terminals.
+#
+# kill-session alone is not enough, and neither is killing the outer pane: the
+# inner server is detached, so a shell in an inner tab — and whatever it is
+# running — is no descendant of the outer pane and no descendant of anything
+# tmux signals on the outer side. Tree-kill each inner pane first (TERM, then
+# KILL for what ignored it), exactly like the session-wide cleanup does.
+# Args: <socket_label> <inner_session>
+spare_tabs_kill_session() {
+  local label="$1" session="$2" pid
+  local pids=()
+  [ -n "$session" ] || return 0
+  # shellcheck source=/dev/null
+  declare -f kill_tree >/dev/null 2>&1 || source "${BASH_SOURCE[0]%/*}/process.sh"
+  while read -r pid; do
+    [ -n "$pid" ] && pids+=("$pid")
+  done < <(tmux -L "$label" list-panes -s -t "$session" -F '#{pane_pid}' 2>/dev/null)
+
+  for pid in ${pids[@]+"${pids[@]}"}; do kill_tree "$pid" TERM; done
+  tmux -L "$label" kill-session -t "$session" 2>/dev/null || true
+  sleep 0.3
+  for pid in ${pids[@]+"${pids[@]}"}; do kill_tree "$pid" KILL; done
+  return 0
+}
+
+# Reap inner spare sessions whose tab is gone.
+#
+# The safety net for every close path that does not run tab_view_close_window
+# — a bare `kill-window`, prefix+&, the last pane exiting. An inner session is
+# attached from its pane for its whole life, so once it has no client it can
+# never get one again: it and everything in its terminals would run forever.
+# A session younger than <min_age> seconds is left alone — one is briefly
+# unattached between new-session and its client attaching, and killing it there
+# would take out a tab that is still opening.
+# Args: <socket_label> [min_age_seconds]
+spare_tabs_reap_orphans() {
+  local label="$1" min_age="${2:-5}" now name attached created
+  now="$(date +%s)"
+  while read -r name attached created; do
+    [ -n "$name" ] || continue
+    [ "$attached" = "0" ] || continue
+    [ -n "$created" ] && [ "$((now - created))" -ge "$min_age" ] || continue
+    spare_tabs_kill_session "$label" "$name"
+  done < <(tmux -L "$label" list-sessions \
+    -F '#{session_name} #{session_attached} #{session_created}' 2>/dev/null)
+  return 0
+}
+
 # Tear down the detached inner tmux server (it reparents away from the pane, so
 # killing the pane tree alone would leak it).
 # Args: <socket_label>

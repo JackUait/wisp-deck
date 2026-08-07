@@ -417,6 +417,8 @@ cleanup() {
   rm -f "$SHARE_DIR/proxy-${SESSION_NAME}.log"
   rm -f "$SHARE_DIR/proxy-account-${SESSION_NAME}"
   rm -f "$SHARE_DIR/relaunch-${SESSION_NAME}"
+  rm -f "$SHARE_DIR/tab-close-${SESSION_NAME}.sh"
+  rm -f "$SHARE_DIR/spare-reap-${SESSION_NAME}.sh"
   rm -rf "$SHARE_DIR/spare-zdotdir-${SESSION_NAME}"
 }
 trap cleanup EXIT HUP TERM INT
@@ -699,6 +701,28 @@ _gt_tabbar_refresh="$SHARE_DIR/tabbar-refresh-${SESSION_NAME}.sh"
   printf 'tab_view_refresh_bar %q %q %q\n' "$TMUX_CMD" "$_WRAPPER_DIR/lib" "$SESSION_NAME"
 } > "$_gt_tabbar_refresh" 2>/dev/null && chmod +x "$_gt_tabbar_refresh" 2>/dev/null || _gt_tabbar_refresh=""
 
+# Closing ONE tab must kill everything that was running in its terminals.
+# tmux's kill-window only SIGHUPs each pane's process group, which never
+# reaches the spare pane's terminals — that pane is a client of a nested tmux
+# server shared by every tab, so the tab's inner session outlives its pane.
+# Two scripts, script files for the same reason as the bar refresh (no nested
+# quoting in the bind): the close itself, and the reap that catches every close
+# path the binding does not own.
+_gt_tab_close="$SHARE_DIR/tab-close-${SESSION_NAME}.sh"
+{
+  printf '#!/bin/bash\n'
+  printf 'source %q/tab-view.sh 2>/dev/null || exit 0\n' "$_WRAPPER_DIR/lib"
+  # shellcheck disable=SC2016  # $1/$2 must reach the generated script, not expand here
+  printf 'tab_view_close_window %q %q "$1" "$2"\n' "$TMUX_CMD" "$_WRAPPER_DIR/lib"
+} > "$_gt_tab_close" 2>/dev/null && chmod +x "$_gt_tab_close" 2>/dev/null || _gt_tab_close=""
+
+_gt_spare_reap="$SHARE_DIR/spare-reap-${SESSION_NAME}.sh"
+{
+  printf '#!/bin/bash\n'
+  printf 'source %q/spare-tabs.sh 2>/dev/null || exit 0\n' "$_WRAPPER_DIR/lib"
+  printf 'spare_tabs_reap_orphans %q\n' "$_spare_label"
+} > "$_gt_spare_reap" 2>/dev/null && chmod +x "$_gt_spare_reap" 2>/dev/null || _gt_spare_reap=""
+
 # ---- The agent is booting in its pane from here on; everything below runs ----
 # ---- in the shadow of that boot, before the attach at the end.            ----
 
@@ -801,6 +825,22 @@ for ((_gt_tab_n = 1; _gt_tab_n <= 9; _gt_tab_n++)); do
   _gt_tab_switch_binds+=(bind-key "$_gt_tab_n" select-window -t ":$((_gt_tab_n - 1))" ';')
 done
 
+# Tab close. prefix+& is tmux's own close key; rebound so it runs the cleanup
+# close (spare terminals first, then every pane's process tree) instead of a
+# bare kill-window. #{q:...} expands at event time, so the bind never bakes a
+# session or window. The window-unlinked hook is the net for every other close
+# path — the last pane exiting, a kill-window from anywhere — and is set even
+# when the close script could not be written.
+_gt_tab_close_binds=()
+if [ -n "$_gt_tab_close" ]; then
+  _gt_tab_close_binds+=(bind-key '&' confirm-before -p "close this tab? (y/n)" \
+    "run-shell -b \"$_gt_tab_close #{q:session_name} #{q:window_id}\"" ';')
+fi
+if [ -n "$_gt_spare_reap" ]; then
+  _gt_tab_close_binds+=(set-hook -t "$SESSION_NAME" window-unlinked \
+    "run-shell -b \"$_gt_spare_reap\"" ';')
+fi
+
 "$TMUX_CMD" \
   "${_gt_tabbar_chain[@]}" \
   bind-key i run-shell "$_screenshot_bind" \; \
@@ -810,6 +850,7 @@ done
   bind-key BTab run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label previous-window" \; \
   bind-key c run-shell "$_tab_view_new_bind" \; \
   "${_gt_tab_switch_binds[@]}" \
+  ${_gt_tab_close_binds[@]+"${_gt_tab_close_binds[@]}"} \
   bind-key -n MouseDown1Status run-shell "$_tab_view_dispatch_bind" \; \
   bind-key -n MouseDown1StatusLeft run-shell "$_tab_view_dispatch_bind" \; \
   bind-key -n MouseDown1StatusRight run-shell "$_tab_view_dispatch_bind" \; \
