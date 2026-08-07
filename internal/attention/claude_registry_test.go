@@ -96,12 +96,89 @@ func TestClaudeRegistryMapperAcceptsCurrentRegistrySchema(t *testing.T) {
 	}
 	want := ClaudeRegistryStatus{
 		PID:            101,
+		SessionID:      "session-current",
 		Status:         "idle",
 		StatusIdentity: "1783926000123",
 	}
 	if got != want {
 		t.Fatalf("Poll() = %#v, want %#v", got, want)
 	}
+}
+
+// The conversation a session is currently holding is what a cleared chat
+// replaces, so the record's sessionId has to reach the reducer. A session that
+// parked its turn still owns the conversation — the job it handed the turn to
+// speaks only for the status.
+func TestClaudeRegistryMapperReportsTheSessionsCurrentConversation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("parked session keeps its own conversation", func(t *testing.T) {
+		t.Parallel()
+		configDir := t.TempDir()
+		writeRegistryRecord(t, configDir, 101, `{"pid":101,"kind":"interactive","sessionId":"conversation-1",`+
+			`"procStart":"`+registryChildStart+`","status":"idle","updatedAt":100,"parkedJobId":"59870622"}`)
+		writeRegistryRecord(t, configDir, 300, `{"pid":300,"kind":"bg","jobId":"59870622","sessionId":"job-conversation",`+
+			`"procStart":"`+registryJobStart+`","status":"busy","updatedAt":200}`)
+
+		got, found, err := registryMapper(configDir, parkedSnapshot()).Poll(context.Background())
+		if err != nil {
+			t.Fatalf("Poll() error = %v", err)
+		}
+		want := ClaudeRegistryStatus{PID: 101, SessionID: "conversation-1", Status: "busy", StatusIdentity: "200"}
+		if !found || got != want {
+			t.Fatalf("Poll() = (%#v, %v), want %#v", got, found, want)
+		}
+	})
+
+	// A Claude too old to report one is an absent conversation, not a record to
+	// discard: every other field it publishes is still the truth.
+	t.Run("an absent conversation is empty, not a rejection", func(t *testing.T) {
+		t.Parallel()
+		configDir := t.TempDir()
+		writeRegistryRecord(t, configDir, 101, `{"pid":101,"kind":"interactive","procStart":"`+
+			registryChildStart+`","status":"idle","updatedAt":100}`)
+
+		got, found, err := registryMapper(configDir, psSnapshot(
+			psProcess(100, 1, registryRootStart),
+			psProcess(101, 100, registryChildStart),
+		)).Poll(context.Background())
+		if err != nil {
+			t.Fatalf("Poll() error = %v", err)
+		}
+		want := ClaudeRegistryStatus{PID: 101, Status: "idle", StatusIdentity: "100"}
+		if !found || got != want {
+			t.Fatalf("Poll() = (%#v, %v), want %#v", got, found, want)
+		}
+	})
+
+	// The conversation decides whether attention is retired, so a value that is
+	// not a plain bounded string is uncertainty, never a guess.
+	t.Run("a malformed conversation rejects the record", func(t *testing.T) {
+		t.Parallel()
+		for name, sessionID := range map[string]string{
+			"not a string":   `12`,
+			"control chars":  `"conversation\n1"`,
+			"absurdly large": `"` + strings.Repeat("c", maxClaudeRegistryJobIDBytes+1) + `"`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				configDir := t.TempDir()
+				writeRegistryRecord(t, configDir, 101, `{"pid":101,"kind":"interactive","sessionId":`+sessionID+
+					`,"procStart":"`+registryChildStart+`","status":"idle","updatedAt":100}`)
+
+				_, found, err := registryMapper(configDir, psSnapshot(
+					psProcess(100, 1, registryRootStart),
+					psProcess(101, 100, registryChildStart),
+				)).Poll(context.Background())
+				if err != nil {
+					t.Fatalf("Poll() error = %v", err)
+				}
+				if found {
+					t.Fatal("Poll() found = true, want a rejected record")
+				}
+			})
+		}
+	})
 }
 
 func TestClaudeRegistryMapperAcceptsLaunchRootAfterShellExec(t *testing.T) {

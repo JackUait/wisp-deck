@@ -159,6 +159,42 @@ func TestClaudeRegistryObservation_maps_validated_status(t *testing.T) {
 	}
 }
 
+// The reducer retires attention when the conversation is replaced, so the
+// mapper's conversation identity has to survive this translation — including on
+// a turn whose status could not be read, where a dropped conversation would
+// read as one that changed.
+func TestClaudeRegistryObservation_carries_the_conversation(t *testing.T) {
+	tests := []struct {
+		name   string
+		status attention.ClaudeRegistryStatus
+		found  bool
+		want   string
+	}{
+		{
+			name:   "reported alongside a status",
+			found:  true,
+			status: attention.ClaudeRegistryStatus{Status: "idle", StatusIdentity: "10", SessionID: "conversation-1"},
+			want:   "conversation-1",
+		},
+		{
+			name:   "unreadable status carries no conversation",
+			status: attention.ClaudeRegistryStatus{Status: "idle", StatusIdentity: "10", SessionID: "conversation-1"},
+		},
+		{
+			name:   "unmappable status carries no conversation",
+			found:  true,
+			status: attention.ClaudeRegistryStatus{Status: "paused", StatusIdentity: "16", SessionID: "conversation-1"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := claudeRegistryObservation(tt.status, tt.found).SessionID; got != tt.want {
+				t.Fatalf("observation session = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestClaudeAttentionCommand_is_registered(t *testing.T) {
 	cmd, _, err := rootCmd.Find([]string{"claude-attention"})
 	if err != nil {

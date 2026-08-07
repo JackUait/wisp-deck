@@ -261,6 +261,137 @@ func TestClaudeReducerUnknownPreservesOnlyAttentionAndArming(t *testing.T) {
 	})
 }
 
+// A cleared chat (/new, /clear) replaces the conversation the attention was
+// raised about. Claude reports the replacement by changing the registry
+// record's sessionId while its status stays idle — nothing else moves — so
+// without this the bell (or the eyes it decayed into) is sticky forever: only a
+// busy observation clears attention, and the user just threw the turn away.
+func TestClaudeReducerClearedConversationRetiresAttention(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		raise func(*ClaudeReducer)
+	}{
+		{
+			name: "finished turn",
+			raise: func(reducer *ClaudeReducer) {
+				reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedBusy, SessionID: "conversation-1"})
+				reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedIdle, SessionID: "conversation-1"})
+			},
+		},
+		{
+			name: "unanswered question",
+			raise: func(reducer *ClaudeReducer) {
+				reducer.Reduce(ClaudeReducerObservation{
+					Status:          ClaudeObservedWaiting,
+					WaitingReason:   ClaudeWaitingQuestion,
+					StatusUpdatedAt: "question-cleared",
+					SessionID:       "conversation-1",
+				})
+			},
+		},
+		{
+			name: "unanswered permission",
+			raise: func(reducer *ClaudeReducer) {
+				reducer.Reduce(ClaudeReducerObservation{
+					Status:          ClaudeObservedWaiting,
+					WaitingReason:   ClaudeWaitingPermission,
+					StatusUpdatedAt: "permission-cleared",
+					SessionID:       "conversation-1",
+				})
+			},
+		},
+		{
+			name: "failed launch",
+			raise: func(reducer *ClaudeReducer) {
+				reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedBusy, SessionID: "conversation-1"})
+				reducer.ReduceExit(ClaudeReducerExit{Code: 17})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			reducer := newTestClaudeReducer(t)
+			tt.raise(reducer)
+			if got := reducer.Reduce(ClaudeReducerObservation{
+				Status:    ClaudeObservedIdle,
+				SessionID: "conversation-1",
+			}); got.Phase != PhaseAttention {
+				t.Fatalf("state before the clear = %#v, want attention", got)
+			}
+
+			got := reducer.Reduce(ClaudeReducerObservation{
+				Status:    ClaudeObservedIdle,
+				SessionID: "conversation-2",
+			})
+			assertClaudeState(t, got, PhaseReady, ReasonNone, "")
+
+			// The retired request must not come back on the next poll of the same
+			// fresh conversation.
+			got = reducer.Reduce(ClaudeReducerObservation{
+				Status:    ClaudeObservedIdle,
+				SessionID: "conversation-2",
+			})
+			assertClaudeState(t, got, PhaseReady, ReasonNone, "")
+		})
+	}
+}
+
+func TestClaudeReducerKeepsAttentionWithoutAConversationChange(t *testing.T) {
+	t.Parallel()
+
+	t.Run("the same conversation keeps its request", func(t *testing.T) {
+		t.Parallel()
+		reducer := newTestClaudeReducer(t)
+		reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedBusy, SessionID: "conversation-1"})
+		want := reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedIdle, SessionID: "conversation-1"})
+		got := reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedIdle, SessionID: "conversation-1"})
+		if got != want {
+			t.Fatalf("same conversation = %#v, want retained %#v", got, want)
+		}
+	})
+
+	// A registry read that failed, or a Claude too old to report a conversation,
+	// says nothing about the conversation. Reading its absence as a change would
+	// silence a real request on the next transient miss.
+	t.Run("an unreported conversation is not a change", func(t *testing.T) {
+		t.Parallel()
+		reducer := newTestClaudeReducer(t)
+		reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedBusy, SessionID: "conversation-1"})
+		want := reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedIdle, SessionID: "conversation-1"})
+
+		got := reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedUnknown})
+		if got != want {
+			t.Fatalf("unknown observation = %#v, want retained %#v", got, want)
+		}
+		got = reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedIdle})
+		if got != want {
+			t.Fatalf("idle without a conversation = %#v, want retained %#v", got, want)
+		}
+		got = reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedIdle, SessionID: "conversation-1"})
+		if got != want {
+			t.Fatalf("conversation reported again = %#v, want retained %#v", got, want)
+		}
+	})
+}
+
+// A conversation replaced mid-turn (a fork or a compaction, not a user clear)
+// still owes the user the completion bell for the work that is still running.
+func TestClaudeReducerClearedConversationKeepsTheRunningTurnArmed(t *testing.T) {
+	t.Parallel()
+
+	reducer := newTestClaudeReducer(t)
+	reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedBusy, SessionID: "conversation-1"})
+	got := reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedBusy, SessionID: "conversation-2"})
+	assertClaudeState(t, got, PhaseWorking, ReasonNone, "")
+
+	got = reducer.Reduce(ClaudeReducerObservation{Status: ClaudeObservedIdle, SessionID: "conversation-2"})
+	assertClaudeState(t, got, PhaseAttention, ReasonDone, "done:1")
+}
+
 func TestClaudeReducerExitHandling(t *testing.T) {
 	t.Parallel()
 

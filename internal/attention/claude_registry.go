@@ -76,11 +76,12 @@ func (s PSSnapshotter) Snapshot(ctx context.Context) ([]byte, error) {
 // reducer can use it to deduplicate repeated observations without importing
 // registry schema details.
 //
-// PID always names the supervised interactive session. While that session is
-// parked, the status fields come from the background job running its turn — see
-// resolveParkedJob.
+// PID and SessionID always name the supervised interactive session and the
+// conversation it currently holds. While that session is parked, the status
+// fields come from the background job running its turn — see resolveParkedJob.
 type ClaudeRegistryStatus struct {
 	PID            int
+	SessionID      string
 	Status         string
 	StatusIdentity string
 	WaitingFor     string
@@ -465,11 +466,15 @@ func parseClaudeRegistryRecord(data []byte) (claudeRegistryRecord, error) {
 		}
 	}
 
-	jobID, err := parseClaudeRegistryJobID(fields, "jobId")
+	sessionID, err := parseClaudeRegistryIdentifier(fields, "sessionId")
 	if err != nil {
 		return claudeRegistryRecord{}, err
 	}
-	parkedJobID, err := parseClaudeRegistryJobID(fields, "parkedJobId")
+	jobID, err := parseClaudeRegistryIdentifier(fields, "jobId")
+	if err != nil {
+		return claudeRegistryRecord{}, err
+	}
+	parkedJobID, err := parseClaudeRegistryIdentifier(fields, "parkedJobId")
 	if err != nil {
 		return claudeRegistryRecord{}, err
 	}
@@ -477,6 +482,7 @@ func parseClaudeRegistryRecord(data []byte) (claudeRegistryRecord, error) {
 	return claudeRegistryRecord{
 		ClaudeRegistryStatus: ClaudeRegistryStatus{
 			PID:            pid,
+			SessionID:      sessionID,
 			Status:         status,
 			StatusIdentity: identity,
 			WaitingFor:     waitingFor,
@@ -488,11 +494,13 @@ func parseClaudeRegistryRecord(data []byte) (claudeRegistryRecord, error) {
 	}, nil
 }
 
-// parseClaudeRegistryJobID reads an optional job identifier. Absent is the
-// common case — only background records carry jobId and only a parked session
-// carries parkedJobId — but a present one must be a plain bounded string,
-// because it is matched between two records to decide which one speaks.
-func parseClaudeRegistryJobID(fields map[string]json.RawMessage, key string) (string, error) {
+// parseClaudeRegistryIdentifier reads one optional record identifier. Absent is
+// an ordinary answer — only background records carry jobId, only a parked
+// session carries parkedJobId, and a Claude predating the field reports no
+// sessionId — but a present one must be a plain bounded string, because these
+// identifiers are compared: between two records to decide which one speaks, and
+// across polls to decide whether the conversation was replaced.
+func parseClaudeRegistryIdentifier(fields map[string]json.RawMessage, key string) (string, error) {
 	raw, ok := fields[key]
 	if !ok {
 		return "", nil

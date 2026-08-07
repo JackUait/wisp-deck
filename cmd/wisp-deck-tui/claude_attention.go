@@ -140,7 +140,10 @@ func claudeRegistryObservation(
 	if !found {
 		return attention.ClaudeReducerObservation{Status: attention.ClaudeObservedUnknown}
 	}
-	observation := attention.ClaudeReducerObservation{StatusUpdatedAt: status.StatusIdentity}
+	observation := attention.ClaudeReducerObservation{
+		StatusUpdatedAt: status.StatusIdentity,
+		SessionID:       status.SessionID,
+	}
 	switch status.Status {
 	case "idle":
 		observation.Status = attention.ClaudeObservedIdle

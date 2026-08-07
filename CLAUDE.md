@@ -470,6 +470,39 @@ when the work actually finished, trading a false bell for no bell at all.
 Guarded by `TestClaudeRegistryMapperReportsParkedSessionAsTheJobRunningItsTurn`
 and its neighbours in `internal/attention/claude_registry_test.go`.
 
+### A cleared chat retires the attention it threw away
+
+Attention is sticky by design: once `phase=attention` is published, only a `busy`
+observation clears it. Clearing the chat (`/new`, `/clear`, picking another
+conversation with `/resume`) never produces one — the turn the 🔔 (or the 👀 it
+decayed into) was raised about is simply gone, and the tab keeps ringing at a
+conversation that no longer exists.
+
+The only thing that moves is the registry record's **`sessionId`**: Claude
+replaces it the moment the chat is cleared, while `status` stays `idle`. So
+`ClaudeRegistryMapper` reports the conversation alongside the status, and
+`ClaudeReducer.observeConversation` retires every pending request — question,
+permission, error, and the sticky attention phase itself — when it changes.
+
+- **The interactive session owns the conversation.** A parked session's job
+  record speaks for the status only (see above); `SessionID` always comes from
+  the launch-tree record.
+- **An empty conversation is not a change.** A failed registry read, or a Claude
+  too old to report `sessionId`, must leave attention alone — reading absence as
+  a change would silence a real request on the next transient miss.
+- **Arming survives the change.** A conversation replaced mid-turn is a fork or a
+  compaction, not a user clear, and the work still running still owes the user
+  its completion bell — so only pending attention is cleared, never `armed`.
+- **A present `sessionId` is validated like a job id.** It decides whether
+  attention is retired, so a non-string, control-character or oversized value
+  rejects the record rather than being guessed at.
+
+Guarded by `TestClaudeReducerClearedConversationRetiresAttention`,
+`TestClaudeReducerKeepsAttentionWithoutAConversationChange`,
+`TestClaudeReducerClearedConversationKeepsTheRunningTurnArmed`,
+`TestClaudeRegistryMapperReportsTheSessionsCurrentConversation`, and
+`TestClaudeRegistryObservation_carries_the_conversation`.
+
 ### Restore-queue pops are authorized, never ambient
 
 An interactive launch may consume a restore-queue entry only through

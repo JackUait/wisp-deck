@@ -29,9 +29,12 @@ const (
 
 // ClaudeReducerObservation is one validated registry observation. The registry
 // update time is adapter-private identity, allowing a second request of the same
-// kind to advance AtomicWriter without exposing the timestamp on disk.
+// kind to advance AtomicWriter without exposing the timestamp on disk. SessionID
+// names the conversation the observation describes, and is empty when the
+// registry could not be read or does not report one.
 type ClaudeReducerObservation struct {
 	Status          ClaudeObservedStatus
+	SessionID       string
 	WaitingReason   ClaudeWaitingReason
 	StatusUpdatedAt string
 }
@@ -55,6 +58,7 @@ type ClaudeReducer struct {
 	questionIdentity   string
 	permissionIdentity string
 	errorIdentity      string
+	sessionID          string
 }
 
 // NewClaudeReducer creates a reducer fenced to one launch generation.
@@ -76,6 +80,8 @@ func NewClaudeReducer(generation string) (*ClaudeReducer, error) {
 // normalized state. Repeating an observation returns the same identity, so an
 // AtomicWriter will not advance its sequence.
 func (r *ClaudeReducer) Reduce(observation ClaudeReducerObservation) State {
+	r.observeConversation(observation.SessionID)
+
 	switch observation.Status {
 	case ClaudeObservedIdle:
 		if pending, ok := r.highestAttention(); ok {
@@ -138,6 +144,29 @@ func (r *ClaudeReducer) ReduceExit(exit ClaudeReducerExit) State {
 	r.errorIdentity = "error:" + strconv.Itoa(exit.Code)
 	pending, _ := r.highestAttention()
 	return pending
+}
+
+// observeConversation retires attention the user threw away. Clearing the chat
+// (/new, /clear) replaces the conversation, which Claude reports by changing the
+// registry record's sessionId while its status stays idle. Attention is sticky
+// and only a busy observation clears it, so without this the notification of a
+// conversation that no longer exists outlives it forever.
+//
+// An empty conversation is no observation at all — a registry read that failed,
+// or a Claude too old to report one — and must never be read as a change.
+// Arming is deliberately untouched: a conversation replaced mid-turn (a fork,
+// not a user clear) still owes the user the bell for the work still running.
+func (r *ClaudeReducer) observeConversation(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	if r.sessionID != "" && sessionID != r.sessionID {
+		r.clearPendingAttention()
+		if r.state.Phase == PhaseAttention {
+			r.setState(PhaseUnknown, ReasonNone, "")
+		}
+	}
+	r.sessionID = sessionID
 }
 
 func (r *ClaudeReducer) reduceUnknown() State {
