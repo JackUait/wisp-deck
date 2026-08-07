@@ -74,6 +74,17 @@ bind $n run-shell \"$envpfx select-window -t $outer:$((n - 1)) 2>/dev/null || tr
     done
   fi
 
+  # Status-bar click handler. tmux runs every run-shell command with /bin/sh
+  # (never default-shell), and /bin/sh is bash in POSIX mode on macOS, where
+  # this file's process substitutions are a syntax error — sourcing it there
+  # fails to parse and the click dies as `... returned 1` before dispatch ever
+  # runs. So re-enter bash explicitly, exactly like wrapper.sh's binds do, and
+  # pass the lib path, socket label and clicked range positionally so the range
+  # never has to survive another layer of quoting.
+  local click
+  click="bash -c 'source \\\"\$1\\\" && spare_tabs_dispatch \\\"\$2\\\" \\\"\$3\\\"'"
+  click="$click wisp-spare-tabs \\\"$lib\\\" \\\"$label\\\" \\\"#{mouse_status_range}\\\""
+
   cat <<EOF
 set -g mouse on
 set -g status-position top
@@ -102,9 +113,9 @@ set -g @gt_dir "$dir"
 # prefix+t binding so the shortcut works the same regardless of pane focus.
 bind t new-window -c "$dir"
 $fwd
-bind -n MouseDown1Status run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""
-bind -n MouseDown1StatusLeft run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""
-bind -n MouseDown1StatusRight run-shell ". \"$lib\" && spare_tabs_dispatch \"$label\" \"#{mouse_status_range}\""
+bind -n MouseDown1Status run-shell "$click"
+bind -n MouseDown1StatusLeft run-shell "$click"
+bind -n MouseDown1StatusRight run-shell "$click"
 set-hook -g pane-died "if -F \"#{==:#{session_windows},1}\" \"respawn-pane -k\" \"kill-window\""
 EOF
 }
