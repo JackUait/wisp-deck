@@ -148,7 +148,7 @@ func (h *bridgeHandler) handleMessages(writer http.ResponseWriter, request *http
 		return
 	}
 	if window, known := modelContextWindow(translation.Model); known {
-		if estimate := estimatePromptTokens(messages); estimate > window {
+		if estimate := translation.EstimatedInputTokens; estimate > int64(window) {
 			writeAnthropicError(writer, http.StatusBadRequest, "invalid_request_error",
 				fmt.Sprintf("prompt is too long: %d tokens > %d maximum", estimate, window))
 			return
@@ -207,17 +207,14 @@ func (h *bridgeHandler) handleCountTokens(writer http.ResponseWriter, request *h
 		object["max_tokens"] = 1
 	}
 	normalized, _ := json.Marshal(object)
-	if _, err := ParseMessagesRequest(normalized); err != nil {
+	messages, err := ParseMessagesRequest(normalized)
+	if err != nil {
 		writeAnthropicError(writer, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
-	// Codex app-server does not expose exact preflight tokenization. One token
-	// per three request bytes is intentionally conservative for mixed JSON,
-	// Unicode, tool schemas, and base64 image metadata.
-	tokens := (len(payload) + 2) / 3
-	if tokens < 1 {
-		tokens = 1
-	}
+	// Codex app-server does not expose exact preflight tokenization. Count the
+	// normalized semantic content, not JSON escaping or base64 transport bytes.
+	tokens := estimatePromptTokens(messages)
 	writeJSON(writer, http.StatusOK, map[string]int{"input_tokens": tokens})
 }
 

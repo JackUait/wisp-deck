@@ -66,6 +66,28 @@ func TestEstimatePromptTokensCountsImagesFlatNotByBase64Size(t *testing.T) {
 	}
 }
 
+func TestEstimatePromptTokensCountsSemanticContentNotJSONEscapes(t *testing.T) {
+	content := strings.Repeat(`{"path":"C:\\repo\\file","quoted":"value"}`+"\n", 200)
+	body := fmt.Sprintf(
+		`{"model":"gpt-test","max_tokens":10,"messages":[{"role":"user","content":%q}]}`,
+		content,
+	)
+	request, err := ParseMessagesRequest([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := estimatePromptTokens(request)
+	want := len(content) / promptGuardBytesPerToken
+	if got != want {
+		t.Fatalf("semantic estimate = %d, want %d", got, want)
+	}
+	if transportEstimate := len(body) / 3; got >= transportEstimate {
+		t.Fatalf("semantic estimate = %d, transport estimate = %d; JSON escaping was counted as model input",
+			got, transportEstimate)
+	}
+}
+
 func oversizedMessagesBody(model string, bytes int) string {
 	return fmt.Sprintf(
 		`{"model":%q,"max_tokens":100,"messages":[{"role":"user","content":%q}]}`,

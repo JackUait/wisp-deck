@@ -421,11 +421,15 @@ func (e *Engine) runTurnBoundary(
 		e.cleanupTurn(state, true)
 		return AnthropicMessage{}, err
 	}
+	estimatedInputTokens := translation.EstimatedInputTokens
+	if estimatedInputTokens < 1 {
+		estimatedInputTokens = 1
+	}
 	reducer := NewResponseReducer(ResponseOptions{
 		MessageID: messageID, Model: translation.Model,
 		ThreadID: state.threadID, TurnID: state.turnID,
 		IncludeThinking:      translation.Effort != "",
-		EstimatedInputTokens: estimateTranslationTokens(translation),
+		EstimatedInputTokens: estimatedInputTokens,
 	})
 	if err := emitEvents(emit, reducer.Start()); err != nil {
 		e.cleanupTurn(state, true)
@@ -782,23 +786,6 @@ func emitEvents(emit func([]StreamEvent) error, events []StreamEvent) error {
 		return nil
 	}
 	return emit(events)
-}
-
-func estimateTranslationTokens(translation Translation) int64 {
-	data, _ := json.Marshal(struct {
-		System  string
-		History []map[string]any
-		Input   []UserInput
-		Results []TranslatedToolResult
-	}{
-		System: translation.System, History: translation.History,
-		Input: translation.Input, Results: translation.ToolResults,
-	})
-	tokens := (len(data) + 3) / 4
-	if tokens < 1 {
-		tokens = 1
-	}
-	return int64(tokens)
 }
 
 func randomBridgeID(prefix string) (string, error) {

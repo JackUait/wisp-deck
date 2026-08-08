@@ -2,6 +2,7 @@ package gptbridge
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -53,6 +54,27 @@ func TestTranslateSimpleMessagesRequest(t *testing.T) {
 	}
 	if len(got.Input) != 1 || got.Input[0].Type != "text" || got.Input[0].Text != "Current question" {
 		t.Fatalf("input = %#v", got.Input)
+	}
+}
+
+func TestTranslateRecordsSemanticInputEstimate(t *testing.T) {
+	content := strings.Repeat(`{"path":"C:\\repo\\file"}`+"\n", 200)
+	body := fmt.Sprintf(
+		`{"model":"gpt-5.6-terra","max_tokens":100,"messages":[{"role":"user","content":%q}]}`,
+		content,
+	)
+	request, err := ParseMessagesRequest([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := TranslateRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := int64(estimatePromptTokens(request))
+	if got.EstimatedInputTokens != want {
+		t.Fatalf("estimated input tokens = %d, want semantic estimate %d",
+			got.EstimatedInputTokens, want)
 	}
 }
 

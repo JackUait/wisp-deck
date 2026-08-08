@@ -67,5 +67,9 @@ func estimatePromptTokens(request MessagesRequest) int {
 	for _, tool := range request.Tools {
 		textBytes += len(tool.Name) + len(tool.Description) + len(tool.InputSchema)
 	}
-	return textBytes/promptGuardBytesPerToken + images*promptGuardImageTokens
+	tokens := textBytes/promptGuardBytesPerToken + images*promptGuardImageTokens
+	if tokens < 1 {
+		return 1
+	}
+	return tokens
 }

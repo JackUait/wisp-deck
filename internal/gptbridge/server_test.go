@@ -207,6 +207,40 @@ func TestHandlerCountTokensAndHealthRequireAuth(t *testing.T) {
 	}
 }
 
+func TestHandlerCountTokensUsesSemanticPromptEstimate(t *testing.T) {
+	handler, err := NewHandler(&fakeMessageExecutor{}, "secret", ServerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	content := strings.Repeat(`{"path":"C:\\repo\\file","quoted":"value"}`+"\n", 200)
+	body := fmt.Sprintf(
+		`{"model":"gpt-test","max_tokens":1,"messages":[{"role":"user","content":%q}]}`,
+		content,
+	)
+	request, err := ParseMessagesRequest([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := int64(estimatePromptTokens(request))
+
+	response := requestBridge(t, server.Client(), http.MethodPost,
+		server.URL+"/v1/messages/count_tokens", "secret", body)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("count status = %d", response.StatusCode)
+	}
+	var count struct {
+		InputTokens int64 `json:"input_tokens"`
+	}
+	decodeBody(t, response, &count)
+	if count.InputTokens != want {
+		t.Fatalf("count_tokens = %d, want semantic estimate %d",
+			count.InputTokens, want)
+	}
+}
+
 func TestHandlerValidatesHeadersMethodPathAndBodyLimit(t *testing.T) {
 	handler, err := NewHandler(&fakeMessageExecutor{}, "secret", ServerOptions{MaxBodyBytes: 64})
 	if err != nil {

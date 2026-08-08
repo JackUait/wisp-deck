@@ -43,16 +43,17 @@ type TranslatedToolResult struct {
 // Translation contains the pure request translation consumed by the turn
 // engine.
 type Translation struct {
-	Model         string
-	MaxTokens     int
-	System        string
-	History       []map[string]any
-	Input         []UserInput
-	DynamicTools  []DynamicTool
-	ToolDirective string
-	ToolResults   []TranslatedToolResult
-	Effort        string
-	Stream        bool
+	Model                string
+	MaxTokens            int
+	EstimatedInputTokens int64
+	System               string
+	History              []map[string]any
+	Input                []UserInput
+	DynamicTools         []DynamicTool
+	ToolDirective        string
+	ToolResults          []TranslatedToolResult
+	Effort               string
+	Stream               bool
 
 	// WebSearch reports that the request declared Anthropic's server-side
 	// web_search tool. Anthropic hosts that tool, so the bridge cannot pass
@@ -78,7 +79,8 @@ func TranslateRequest(request MessagesRequest) (Translation, error) {
 	}
 	translation := Translation{
 		Model: request.Model, MaxTokens: request.MaxTokens,
-		System: normalizedSystem(request.System), DynamicTools: plan.DynamicTools,
+		EstimatedInputTokens: int64(estimatePromptTokens(request)),
+		System:               normalizedSystem(request.System), DynamicTools: plan.DynamicTools,
 		ToolDirective: plan.Directive, Effort: reasoningEffort(request.Thinking),
 		Stream: request.Stream, WebSearch: plan.WebSearch,
 		WebSearchAllowedDomains: plan.AllowedDomains,

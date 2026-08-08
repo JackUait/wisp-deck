@@ -206,6 +206,76 @@ func TestEngineCompletesTextTurnAndDeletesThread(t *testing.T) {
 	}
 }
 
+func TestEngineReportsRequestSemanticEstimate(t *testing.T) {
+	rpc := newFakeEngineRPC()
+	rpc.onTurnStart = func(threadID, turnID string) {
+		completeTextTurn(rpc, threadID, turnID, "done")
+	}
+	engine := newTestEngine(t, rpc)
+	translation := testTranslation(strings.Repeat(`{"path":"C:\\repo\\file"}`, 200))
+	translation.EstimatedInputTokens = 12345
+
+	var events []StreamEvent
+	_, err := engine.Execute(context.Background(), translation, func(got []StreamEvent) error {
+		events = append(events, got...)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 || events[0].Event != "message_start" {
+		t.Fatalf("events = %+v, want message_start first", events)
+	}
+	var start struct {
+		Message struct {
+			Usage Usage `json:"usage"`
+		} `json:"message"`
+	}
+	decodeEventData(t, events[0].Data, &start)
+	if start.Message.Usage.InputTokens != translation.EstimatedInputTokens {
+		t.Fatalf("message_start input tokens = %d, want request estimate %d",
+			start.Message.Usage.InputTokens, translation.EstimatedInputTokens)
+	}
+}
+
+func TestEngineDefaultsMissingSemanticEstimateToOne(t *testing.T) {
+	rpc := newFakeEngineRPC()
+	rpc.onTurnStart = func(threadID, turnID string) {
+		rpc.notifications <- notification(
+			"item/agentMessage/delta", threadID, turnID,
+			`"itemId":"agent","delta":"done"`,
+		)
+		rpc.notifications <- Notification{
+			Method: "turn/completed",
+			Params: json.RawMessage(fmt.Sprintf(
+				`{"threadId":%q,"turn":{"id":%q,"status":"completed","items":[]}}`,
+				threadID, turnID,
+			)),
+		}
+	}
+	engine := newTestEngine(t, rpc)
+	translation := testTranslation("direct translation")
+
+	var events []StreamEvent
+	_, err := engine.Execute(context.Background(), translation, func(got []StreamEvent) error {
+		events = append(events, got...)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var start struct {
+		Message struct {
+			Usage Usage `json:"usage"`
+		} `json:"message"`
+	}
+	decodeEventData(t, events[0].Data, &start)
+	if start.Message.Usage.InputTokens != 1 {
+		t.Fatalf("message_start input tokens = %d, want minimum fallback 1",
+			start.Message.Usage.InputTokens)
+	}
+}
+
 func TestEngineRestoresClaudeNameForAliasedDynamicTool(t *testing.T) {
 	rpc := newFakeEngineRPC()
 	rpc.onTurnStart = func(threadID, turnID string) {
