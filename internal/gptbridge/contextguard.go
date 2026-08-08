@@ -6,16 +6,17 @@ import (
 	"github.com/jackuait/wisp-deck/internal/claudeconfig"
 )
 
-// Claude Code owns the transcript but sizes it against its own models'
-// context windows (200K/1M), not the Codex model's real one, so it never
-// auto-compacts before Codex overflows — and Codex's internal contextCompaction
-// masks the growth until even ingesting the injected history fails, past the
-// point where a compaction request could still fit. The only overflow signal
-// Claude Code answers with compaction instead of a blind retry is a 400
-// invalid_request_error whose message says "prompt is too long". This guard
-// therefore (a) predicts overflow against the catalog's real window before a
-// turn ever reaches Codex, and (b) classifies Codex-reported overflow so the
-// server maps it to that same error shape rather than a retryable 502.
+// Claude Code owns the transcript but does not know Codex models' real context
+// windows. The GPT adapter disables Claude's assumed-window enforcement for
+// unrecognized model IDs so inherited sessions reach this model-aware guard.
+// Codex's internal contextCompaction can otherwise mask growth until even
+// ingesting the injected history fails, past the point where a compaction
+// request could still fit. The only overflow signal Claude Code answers with
+// compaction instead of a blind retry is a 400 invalid_request_error whose
+// message says "prompt is too long". This guard therefore (a) predicts overflow
+// against the catalog's real window before a turn ever reaches Codex, and (b)
+// classifies Codex-reported overflow so the server maps it to that same error
+// shape rather than a retryable 502.
 
 const (
 	promptGuardBytesPerToken = 4

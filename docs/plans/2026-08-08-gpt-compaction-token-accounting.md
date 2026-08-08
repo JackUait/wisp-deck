@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Stop Claude Code from rejecting valid GPT compaction turns because Wisp Deck counted serialized JSON escaping as model tokens.
+**Goal:** Stop Claude Code from rejecting valid GPT compaction turns before Wisp Deck can apply GPT's real context window, and stop the bridge from counting serialized JSON escaping as model tokens.
 
-**Architecture:** Compute one semantic input estimate from the normalized Anthropic request, carry it through `Translation`, and use it at every boundary that reports or checks prompt size. Preserve the existing model-window guard and flat image allowance; remove the independent raw-body and re-marshaled-translation estimates.
+**Architecture:** Disable Claude Code's assumed window enforcement only inside the GPT adapter so inherited sessions reach Wisp Deck's existing model-aware guard. Compute one semantic input estimate from the normalized Anthropic request, carry it through `Translation`, and use it at every boundary that reports or checks prompt size. Preserve the flat image allowance; remove the independent raw-body and re-marshaled-translation estimates.
 
 **Tech Stack:** Go, `net/http`, Anthropic Messages-compatible SSE, Codex app-server.
 
@@ -131,3 +131,32 @@ adapter-timeout changes, then commit with:
 ```bash
 git commit -m "fix(gptbridge): count semantic compaction input"
 ```
+
+### Task 4: Let the GPT bridge own unknown-model window admission
+
+**Files:**
+- Modify: `internal/gptbridge/adapter.go`
+- Create: `internal/gptbridge/adapter_compaction_test.go`
+
+**Step 1: Reproduce the process boundary**
+
+Resume a fake 190K-token Claude Code session under an unrecognized model ID.
+Confirm Claude Code returns `Prompt is too long` without sending
+`/v1/messages`. Repeat with
+`CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1` and confirm the
+request reaches the endpoint.
+
+**Step 2: Write and run the failing adapter regression**
+
+Assert `BuildClaudeEnvironment` replaces any inherited value with exactly one
+`CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1` entry. Run the focused
+test and confirm it fails because the adapter currently preserves the inherited
+value.
+
+**Step 3: Implement and verify the minimal override**
+
+Add the variable to the adapter's existing environment override boundary. Run
+the focused test and the complete `internal/gptbridge` package, run
+`make install`, then run the installed adapter environment probe. Do not add
+the variable to global Claude settings; native Claude sessions must retain
+Claude Code's own window enforcement.

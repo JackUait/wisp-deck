@@ -10,12 +10,11 @@ import (
 	"testing"
 )
 
-// The bridge's client is Claude Code, which believes these gpt models have
-// Anthropic-sized context windows (200K/1M) and therefore never auto-compacts
-// before Codex's real window overflows. "prompt is too long" is the one error
-// shape Claude Code answers with compaction instead of a blind retry, so every
-// context-window overflow — predicted or reported by Codex — must surface as a
-// 400 invalid_request_error carrying that phrase, never a retryable 502.
+// The bridge's client is Claude Code, which does not know these GPT models'
+// real context windows. "prompt is too long" is the one error shape Claude Code
+// answers with compaction instead of a blind retry, so every context-window
+// overflow — predicted or reported by Codex — must surface as a 400
+// invalid_request_error carrying that phrase, never a retryable 502.
 
 func TestContextOverflowMessageDetection(t *testing.T) {
 	tests := []struct {

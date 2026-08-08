@@ -62,13 +62,14 @@ func ValidateChatGPTSubscription(account AccountReadResult) error {
 }
 
 // BuildClaudeEnvironment replaces any upstream Anthropic route/credential with
-// the private bridge's gateway auth token and ensures loopback bypasses ambient
-// proxies.
+// the private bridge's gateway auth token, leaves GPT window enforcement to the
+// model-aware bridge, and ensures loopback bypasses ambient proxies.
 func BuildClaudeEnvironment(base []string, bridgeURL, bridgeKey string) []string {
 	overrides := map[string]string{
 		"ANTHROPIC_BASE_URL":   bridgeURL,
 		"ANTHROPIC_API_KEY":    "",
 		"ANTHROPIC_AUTH_TOKEN": bridgeKey,
+		"CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT": "1",
 	}
 	var noProxy string
 	result := make([]string, 0, len(base)+4)
@@ -92,6 +93,7 @@ func BuildClaudeEnvironment(base []string, bridgeURL, bridgeKey string) []string
 	result = append(result,
 		"ANTHROPIC_BASE_URL="+bridgeURL,
 		"ANTHROPIC_AUTH_TOKEN="+bridgeKey,
+		"CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1",
 		"NO_PROXY="+noProxy,
 	)
 	return result
