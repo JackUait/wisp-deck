@@ -154,13 +154,17 @@ switcher_supports_worktree_rows() {
 # Silent and successful outside a repo, or without git at all: the switcher then
 # simply shows no checkout group.
 _session_worktrees() {
-  local dir="$1" line path="" branch=""
+  # NOT `path`: the ledger's fallback renderer calls this under zsh, where `path`
+  # is tied to $PATH — `local path=""` would blank the search path for the whole
+  # function, so `command -v git` below would fail and the switcher would show no
+  # checkout group at all.
+  local dir="$1" line wt_path="" branch=""
   [ -n "$dir" ] && [ -d "$dir" ] || return 0
   command -v git >/dev/null 2>&1 || return 0
   while IFS= read -r line; do
     case "$line" in
       "worktree "*)
-        path="${line#worktree }"
+        wt_path="${line#worktree }"
         branch=""
         ;;
       "branch refs/heads/"*)
@@ -170,15 +174,15 @@ _session_worktrees() {
         branch="(detached)"
         ;;
       "")
-        [ -n "$path" ] && printf '%s:%s\n' "${branch:-(detached)}" "$path"
-        path=""
+        [ -n "$wt_path" ] && printf '%s:%s\n' "${branch:-(detached)}" "$wt_path"
+        wt_path=""
         branch=""
         ;;
     esac
   done < <(git -C "$dir" worktree list --porcelain 2>/dev/null)
   # git ends every block with a blank line, so this only fires for a truncated
   # final block.
-  [ -n "$path" ] && printf '%s:%s\n' "${branch:-(detached)}" "$path"
+  [ -n "$wt_path" ] && printf '%s:%s\n' "${branch:-(detached)}" "$wt_path"
   return 0
 }
 
@@ -1814,31 +1818,76 @@ open_account_switcher() {
 --default-label $(printf '%q' "$_rc_default_label") \
 ${session_flags}"
 
-  # Center the switcher in the tmux WINDOW. It is a session-level modal — it
-  # moves the agent, the login, the backend and the checkout — so it belongs in
-  # the middle of the terminal. Centering it inside the agent pane (as this once
-  # did, to keep the ledger uncovered) puts it visibly right of center, because
-  # the ledger column occupies the window's left edge.
+  # Tie the switcher to the LEDGER pane: the account pill lives in the ledger's
+  # footer and is the only thing that opens this card, so the card is centered in
+  # the ledger's rectangle and reads as that pill's own menu. Centering it in the
+  # window (as this once did) floats it out in the agent's transcript, detached
+  # from the affordance the user just clicked.
   #
   # Size the popup to the CARD itself via the popup binary's --measure seam, so
   # the switcher floats as a small card rather than a full-window overlay.
-  # Fallback: measure unavailable or a card too big for the window → a
-  # full-window popup in dimmed-backdrop mode, so the switcher still works.
-  local win_width="" win_height="" card_mode=0
+  # Fallbacks, in order: a ledger too small for the card, or no ledger pane at
+  # all → the window's center (tmux clips a popup at the pane edge, it does not
+  # shrink it, so a clipped card would be worse than a detached one); measure
+  # unavailable or a card too big for the window → a full-window popup in
+  # dimmed-backdrop mode, so the switcher still works.
+  local win_width="" win_height="" status_val="" status_pos="" card_mode=0
   local -a popup_geom=(-w 100% -h 100%)
-  read -r win_width win_height < <(
-    "$tmux_cmd" display-message -p '#{window_width} #{window_height}' 2>/dev/null
+  read -r win_width win_height status_val status_pos < <(
+    "$tmux_cmd" display-message -p \
+      '#{window_width} #{window_height} #{status} #{status-position}' 2>/dev/null
   )
+
+  # tmux measures a popup's -x/-y in CLIENT rows, but pane and window geometry is
+  # measured from the WINDOW's top-left. A status line at the top offsets the two
+  # by its height — a popup at -y 0 paints OVER the status line — so every row
+  # coordinate below is shifted past it. Columns need no such correction: a
+  # status line steals rows, not columns.
+  local client_top=0
+  if [ "$status_pos" = "top" ]; then
+    case "$status_val" in
+      on) client_top=1 ;;
+      [1-9]) client_top="$status_val" ;;
+    esac
+  fi
+
   if [ -n "$win_width" ] && [ -n "$win_height" ]; then
     local card_size="" card_w="" card_h=""
     card_size="$(eval "wisp-deck-tui claude-account-switch --measure $switcher_flags" 2>/dev/null)" || card_size=""
     if [[ "$card_size" =~ ^[0-9]+\ [0-9]+$ ]]; then
       card_w="${card_size%% *}"
       card_h="${card_size##* }"
+      # The rectangle the card is centered in: the ledger pane when it can hold
+      # the card, else the whole window.
+      local host_left=0 host_top=0 host_width="$win_width" host_height="$win_height"
+      # Split by prefix rather than `read a b`: _session_side_panes prints
+      # "<ledger> <spare>", and a session with no ledger prints a LEADING empty
+      # field that `read` would collapse — silently handing the spare pane's id
+      # over as the ledger and centering the card on the wrong pane.
+      local side_panes="" ledger_pane="" led_left="" led_top="" led_width="" led_height=""
+      side_panes="$(_session_side_panes "$tmux_cmd")"
+      ledger_pane="${side_panes%% *}"
+      if [ -n "$ledger_pane" ]; then
+        read -r led_left led_top led_width led_height < <(
+          "$tmux_cmd" display-message -p -t "$ledger_pane" \
+            '#{pane_left} #{pane_top} #{pane_width} #{pane_height}' 2>/dev/null
+        )
+        if [ -n "$led_width" ] && [ -n "$led_height" ] \
+           && [ "$card_w" -le "$led_width" ] && [ "$card_h" -le "$led_height" ]; then
+          host_left="$led_left" host_top="$led_top"
+          host_width="$led_width" host_height="$led_height"
+        fi
+      fi
       if [ "$card_w" -gt 0 ] && [ "$card_h" -gt 0 ] \
-         && [ "$card_w" -le "$win_width" ] && [ "$card_h" -le "$win_height" ]; then
-        popup_geom=(-x "$(((win_width - card_w) / 2))" \
-                    -y "$(((win_height - card_h) / 2))" \
+         && [ "$card_w" -le "$host_width" ] && [ "$card_h" -le "$host_height" ]; then
+        # -x is the popup's LEFT edge but -y is its BOTTOM boundary (the man page
+        # gives this away by defining position P as "the bottom left of the
+        # pane"), so the wanted top row is handed over as top + height. Passing
+        # the top row raw — as this did — hoists the card a full card-height above
+        # where it belongs, and tmux then clamps it flat against the top of the
+        # terminal rather than leaving the mistake visible as a near miss.
+        popup_geom=(-x "$((host_left + (host_width - card_w) / 2))" \
+                    -y "$((client_top + host_top + (host_height - card_h) / 2 + card_h))" \
                     -w "$card_w" -h "$card_h")
         card_mode=1
       fi

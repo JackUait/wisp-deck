@@ -231,21 +231,227 @@ func TestOpenAccountSwitcher_launches_fullscreen_borderless_popup(t *testing.T) 
 	assertContains(t, logOut, "claude-account-switch")
 }
 
-// When the AI pane CAN be located (find_ai_pane returns a @gt_ai-marked pane),
-// the switcher popup is sized to the CARD itself (measured via the popup
-// binary's hidden --measure mode) and centered inside that pane's rectangle —
-// NOT stretched over the pane. The user sees a small floating card in the agent
-// view; the rest of the agent pane, the ledger, and the spare pane all stay
-// visible. No backdrop is captured: a card-sized popup has no margin to dim.
-func TestOpenAccountSwitcher_centers_the_card_in_the_window(t *testing.T) {
+// The switcher is opened from the ledger's account pill, so the card is tied to
+// the pane that owns that pill: it is sized to the CARD itself (measured via the
+// popup binary's hidden --measure mode) and centered inside the LEDGER pane's
+// rectangle. Centering it in the window instead detaches it from the affordance
+// that opened it and drops it over the agent's transcript. No backdrop is
+// captured: a card-sized popup has no margin to dim.
+func TestOpenAccountSwitcher_centers_the_card_in_the_ledger_pane(t *testing.T) {
 	dir := t.TempDir()
 	rec := filepath.Join(dir, "tmux.log")
-	// Mock tmux: a 200x50 window holding a marked AI pane (%1) offset 50,0. Every
-	// call is logged so we can assert the display-popup flags and backdrop scope.
+	// Mock tmux: a 200x50 window whose ledger pane (%0 — the one whose start
+	// command runs compact_view) is the 46x28 left column, with the @gt_ai agent
+	// pane (%1) to its right and the spare (%2) below it.
 	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`printf '%%s\n' "$*" >> %q
 case "$1" in
   list-panes)
     case "$*" in
+      *pane_start_command*) printf '%%s\n' "%%0||source compact-view.sh && compact_view /proj" "%%1|1|claude" "%%2||exec bash" ;;
+      *pane_left*) printf '%%s\n' "%%0 0 0" "%%1 47 0" "%%2 0 28" ;;
+    esac
+    ;;
+  display-message)
+    case "$*" in
+      *window_width*) printf '%%s\n' "200 50 on bottom" ;;
+      *pane_left*) printf '%%s\n' "0 0 46 28" ;;
+      *client_width*) printf '%%s\n' "200 50" ;;
+    esac
+    ;;
+  capture-pane) printf '%%s\n' "LEDGER-LINE" ;;
+esac`, rec))
+	// Mock the popup binary: --measure reports a 35x13 card (what the real
+	// switcher measures for a claude+codex session); anything else no-ops.
+	mockCommand(t, dir, "wisp-deck-tui", `case "$*" in
+  *--measure*) printf '%s\n' "35 13" ;;
+esac`)
+	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
+		"tool=claude", "tool_cmd=claude",
+		"settings=/cfg/settings.json", "filter=", "project_dir=/proj",
+		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
+		"pointer=" + filepath.Join(dir, "claude-account"),
+		"list=" + filepath.Join(dir, "claude-accounts.list"),
+		"colors=" + filepath.Join(dir, "claude-account-colors"),
+		"default_label=" + filepath.Join(dir, "claude-account-default-label"),
+		"",
+	}, "\n"))
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+
+	// The popup is the measured card, centered in the LEDGER's rectangle:
+	// x = 0 + (46-35)/2 = 5 (a left edge), and a top row of 0 + (28-13)/2 = 7
+	// expressed as tmux wants it — -y is the popup's BOTTOM boundary, so
+	// 7 + 13 = 20. Centering it in the window instead would put it at column 82,
+	// off in the agent's transcript, with no visual tie to the pill that opened
+	// it.
+	popupLine := ""
+	for _, line := range strings.Split(logOut, "\n") {
+		if strings.HasPrefix(line, "display-popup") {
+			popupLine = line
+			break
+		}
+	}
+	if popupLine == "" {
+		t.Fatalf("no display-popup invocation logged; got:\n%s", logOut)
+	}
+	assertContains(t, popupLine, "-x 5")
+	assertContains(t, popupLine, "-y 20")
+	assertContains(t, popupLine, "-w 35")
+	assertContains(t, popupLine, "-h 13")
+	assertContains(t, popupLine, "-B")
+	assertNotContains(t, popupLine, "-x 82") // NOT centered in the window
+	assertNotContains(t, popupLine, "100%")  // NOT the full-screen fallback
+	assertNotContains(t, popupLine, "-w 46") // NOT stretched over the pane
+	// A card-sized popup has no margin to dim, so no backdrop is captured.
+	assertNotContains(t, popupLine, "--backdrop-file")
+	assertNotContains(t, logOut, "capture-pane")
+}
+
+// tmux measures a popup's -x/-y in CLIENT rows, but pane geometry is measured
+// from the WINDOW's top-left. A status line at the top offsets the two by its
+// height (verified against a live tmux: a popup at -y 0 paints over the status
+// line), so the card must be pushed down by it or it sits that many rows above
+// the ledger's true centre — and, at the window's bottom edge, gets clamped.
+func TestOpenAccountSwitcher_offsets_the_card_past_a_top_status_line(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	// Same 46x28 ledger as above, but the client carries a one-line status bar
+	// at the top: window row 0 is client row 1.
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`printf '%%s\n' "$*" >> %q
+case "$1" in
+  list-panes)
+    case "$*" in
+      *pane_start_command*) printf '%%s\n' "%%0||source compact-view.sh && compact_view /proj" "%%1|1|claude" "%%2||exec bash" ;;
+      *pane_left*) printf '%%s\n' "%%0 0 0" "%%1 47 0" "%%2 0 28" ;;
+    esac
+    ;;
+  display-message)
+    case "$*" in
+      *window_width*) printf '%%s\n' "200 50 on top" ;;
+      *pane_left*) printf '%%s\n' "0 0 46 28" ;;
+      *client_width*) printf '%%s\n' "200 51" ;;
+    esac
+    ;;
+  capture-pane) printf '%%s\n' "LEDGER-LINE" ;;
+esac`, rec))
+	mockCommand(t, dir, "wisp-deck-tui", `case "$*" in
+  *--measure*) printf '%s\n' "35 13" ;;
+esac`)
+	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
+		"tool=claude", "tool_cmd=claude",
+		"settings=/cfg/settings.json", "filter=", "project_dir=/proj",
+		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
+		"pointer=" + filepath.Join(dir, "claude-account"),
+		"list=" + filepath.Join(dir, "claude-accounts.list"),
+		"colors=" + filepath.Join(dir, "claude-account-colors"),
+		"default_label=" + filepath.Join(dir, "claude-account-default-label"),
+		"",
+	}, "\n"))
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+
+	popupLine := ""
+	for _, line := range strings.Split(logOut, "\n") {
+		if strings.HasPrefix(line, "display-popup") {
+			popupLine = line
+			break
+		}
+	}
+	if popupLine == "" {
+		t.Fatalf("no display-popup invocation logged; got:\n%s", logOut)
+	}
+	// Top row = 1 status row + 0 pane top + (28-13)/2 = 8, so the bottom-anchored
+	// -y is 8 + 13 = 21. The column is unaffected: a status line steals rows,
+	// not columns.
+	assertContains(t, popupLine, "-x 5")
+	assertContains(t, popupLine, "-y 21")
+}
+
+// A ledger column narrower than the card cannot host it — tmux would clip the
+// popup at the pane edge, not shrink it. The card falls back to the window's
+// centre, which is still a card-sized popup that leaves every pane visible,
+// rather than a clipped card or the dimmed full-window overlay.
+func TestOpenAccountSwitcher_falls_back_to_the_window_when_the_card_outgrows_the_ledger(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	// Same layout as above but a 30-wide ledger — narrower than the 35-wide card.
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`printf '%%s\n' "$*" >> %q
+case "$1" in
+  list-panes)
+    case "$*" in
+      *pane_start_command*) printf '%%s\n' "%%0||source compact-view.sh && compact_view /proj" "%%1|1|claude" "%%2||exec bash" ;;
+      *pane_left*) printf '%%s\n' "%%0 0 0" "%%1 31 0" "%%2 0 28" ;;
+    esac
+    ;;
+  display-message)
+    case "$*" in
+      *window_width*) printf '%%s\n' "200 50" ;;
+      *pane_left*) printf '%%s\n' "0 0 30 28" ;;
+      *client_width*) printf '%%s\n' "200 50" ;;
+    esac
+    ;;
+  capture-pane) printf '%%s\n' "LEDGER-LINE" ;;
+esac`, rec))
+	mockCommand(t, dir, "wisp-deck-tui", `case "$*" in
+  *--measure*) printf '%s\n' "35 13" ;;
+esac`)
+	relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
+		"tool=claude", "tool_cmd=claude",
+		"settings=/cfg/settings.json", "filter=", "project_dir=/proj",
+		"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
+		"pointer=" + filepath.Join(dir, "claude-account"),
+		"list=" + filepath.Join(dir, "claude-accounts.list"),
+		"colors=" + filepath.Join(dir, "claude-account-colors"),
+		"default_label=" + filepath.Join(dir, "claude-account-default-label"),
+		"",
+	}, "\n"))
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("open_account_switcher tmux %q", relaunch)), env)
+	assertExitCode(t, code, 0)
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
+
+	popupLine := ""
+	for _, line := range strings.Split(logOut, "\n") {
+		if strings.HasPrefix(line, "display-popup") {
+			popupLine = line
+			break
+		}
+	}
+	if popupLine == "" {
+		t.Fatalf("no display-popup invocation logged; got:\n%s", logOut)
+	}
+	// Window centre: x = (200-35)/2 = 82, top row = (50-13)/2 = 18, so the
+	// bottom-anchored -y is 18 + 13 = 31.
+	assertContains(t, popupLine, "-x 82")
+	assertContains(t, popupLine, "-y 31")
+	assertContains(t, popupLine, "-w 35")
+	assertContains(t, popupLine, "-h 13")
+	assertNotContains(t, popupLine, "100%")
+	assertNotContains(t, popupLine, "--backdrop-file")
+}
+
+// With no ledger pane in the session (a healed-away or never-built ledger, as
+// this mock reports), there is nothing to tie the card to, so it falls back to
+// the window's centre — still a card-sized popup, not the dimmed overlay.
+func TestOpenAccountSwitcher_centers_the_card_in_the_window(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "tmux.log")
+	// Mock tmux: a 200x50 window holding a marked AI pane (%1) offset 50,0 and no
+	// pane whose start command runs compact_view — i.e. no ledger to tie the card
+	// to. Every call is logged so we can assert the display-popup flags and
+	// backdrop scope.
+	bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`printf '%%s\n' "$*" >> %q
+case "$1" in
+  list-panes)
+    case "$*" in
+      *pane_start_command*) printf '%%s\n' "%%1|1|claude" "%%2||exec bash" ;;
       *@gt_ai*) printf '%%s\n' "%%0 0" "%%1 1" "%%2 0" ;;
       *pane_left*) printf '%%s\n' "%%0 0 0" "%%1 50 0" "%%2 0 20" ;;
     esac
@@ -280,9 +486,10 @@ esac`)
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
 
 	// The popup is the measured card, centered in the WINDOW's rectangle:
-	// x = (200-41)/2 = 79, y = (50-8)/2 = 21. Centering it in the AI pane
-	// instead would put it at 89,16 — visibly right of the terminal's middle,
-	// because the ledger column occupies the window's left edge.
+	// x = (200-41)/2 = 79 and a top row of (50-8)/2 = 21, which reaches tmux as
+	// the bottom-anchored -y 29. Centering it in the AI pane instead would put
+	// it at column 89 — visibly right of the terminal's middle, because the
+	// ledger column occupies the window's left edge.
 	popupLine := ""
 	for _, line := range strings.Split(logOut, "\n") {
 		if strings.HasPrefix(line, "display-popup") {
@@ -294,7 +501,7 @@ esac`)
 		t.Fatalf("no display-popup invocation logged; got:\n%s", logOut)
 	}
 	assertContains(t, popupLine, "-x 79")
-	assertContains(t, popupLine, "-y 21")
+	assertContains(t, popupLine, "-y 29")
 	assertContains(t, popupLine, "-w 41")
 	assertContains(t, popupLine, "-h 8")
 	assertContains(t, popupLine, "-B")

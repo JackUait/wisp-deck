@@ -430,6 +430,43 @@ over a pty with the context published late), plus the model-level tests in
 `internal/tui/ledger_session_reload_test.go` and the atomic-publish test in
 `test/bash/relaunch_context_ready_test.go`.
 
+### The switcher card belongs to the ledger, and a popup's `-y` is its bottom edge
+
+The Switch card is the account pill's menu — the pill in the ledger's footer is
+the only thing that opens it — so `open_account_switcher` centers it in the
+**ledger pane's** rectangle. It has been centered on the agent pane and on the
+whole window before; both float it out in the transcript, detached from the
+affordance the user just clicked. Fallbacks are a ledger too narrow for the card
+or no ledger pane at all → the window's center (tmux **clips** a popup at the
+pane edge, it never shrinks one, so a clipped card is worse than a detached one),
+then measure-unavailable → the full-window dimmed-backdrop popup.
+
+Placing it means converting between three coordinate systems that all look alike:
+
+- **`-y` is the popup's BOTTOM boundary; `-x` is its LEFT edge.** The man page
+  gives it away by defining position `P` as "the bottom **left** of the pane".
+  Handing tmux the wanted top row hoists the card a full card-height too high,
+  and tmux then **clamps** it flat against the top of the terminal — so the
+  mistake reads as "the popup ignores its position", not as a near miss. Pass
+  `top + height`.
+- **A popup is positioned in CLIENT rows; panes live in WINDOW rows.** A top
+  status line offsets the two by its height (`#{status}` lines when
+  `#{status-position}` is `top`), and a popup at `-y 0` paints over that status
+  line. Columns need no correction — a status line steals rows, not columns.
+- **`_session_side_panes` prints `"<ledger> <spare>"`, so `read -r a b` is a
+  trap.** With no ledger the leading field is EMPTY and `read` collapses it,
+  handing the spare pane's id over as the ledger and centering the card on the
+  wrong pane. Split by prefix (`${side_panes%% *}`).
+
+Guarded by `TestOpenAccountSwitcher_centers_the_card_in_the_ledger_pane`,
+`_offsets_the_card_past_a_top_status_line`,
+`_falls_back_to_the_window_when_the_card_outgrows_the_ledger`,
+`_centers_the_card_in_the_window` (the no-ledger case, which is also the
+`read`-collapse regression guard) and `_window_fallback_when_measure_fails`.
+To re-check the anchoring against a real tmux, view an attached client through an
+outer tmux pane — `capture-pane` on the outer pane renders the inner client's
+screen *including* the popup, which is otherwise uncapturable.
+
 ### A parked Claude turn runs outside the session, and the session's status freezes
 
 The 🔔 on a tab is `phase=attention` in the attention state file, and for Claude

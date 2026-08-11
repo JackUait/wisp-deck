@@ -460,8 +460,8 @@ func NewExecAccountSwitcher(runner ProcessRunner, libDir string) *ExecAccountSwi
 }
 
 // ledgerAccountSwitchScript sources the switch libraries and floats the account
-// switcher popup. open_account_switcher confines itself to the agent pane so the
-// card reads as part of the agent view, presents the account, subscription, and
+// switcher popup. open_account_switcher centers the card in the ledger pane so it
+// reads as the account pill's own menu, presents the account, subscription, and
 // agent rows, and applies the chosen identity (preserving the draft) — the whole
 // select-and-apply flow lives in account-switch.sh.
 const ledgerAccountSwitchScript = `
@@ -475,7 +475,7 @@ const ledgerAccountSwitchScript = `
 open_account_switcher tmux "$2"
 `
 
-// OpenSwitcher floats the standalone switcher popup over the agent pane and lets
+// OpenSwitcher floats the standalone switcher popup over the ledger pane and lets
 // account-switch.sh apply the user's selection through the established relaunch
 // orchestration. The popup blocks until closed, so callers run it in a Tea
 // command. Only the library and relaunch paths reach the shell — both as
