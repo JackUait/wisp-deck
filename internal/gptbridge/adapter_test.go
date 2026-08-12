@@ -67,6 +67,13 @@ func TestRunAdapterMissingCodexExplainsAutomaticLoginRecovery(t *testing.T) {
 	}
 }
 
+func TestDefaultAdapterStartupTimeoutCoversColdCodexStateInitialization(t *testing.T) {
+	want := 3 * time.Minute
+	if defaultAdapterStartupTimeout != want {
+		t.Fatalf("default startup timeout = %s, want %s", defaultAdapterStartupTimeout, want)
+	}
+}
+
 func TestBuildClaudeEnvironmentOverridesOnlyBridgeRouting(t *testing.T) {
 	base := []string{
 		"PATH=/bin", "HOME=/home/test",

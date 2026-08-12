@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	defaultAdapterStartupTimeout  = 15 * time.Second
+	defaultAdapterStartupTimeout  = 3 * time.Minute
 	defaultAdapterShutdownTimeout = 2 * time.Second
 	defaultAdapterLoginTimeout    = 10 * time.Minute
 )
