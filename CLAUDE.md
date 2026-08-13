@@ -710,6 +710,70 @@ Guarded by `TestResponseReducerReportsCodexImageSavedPath`,
 `TestLiveImageEndToEnd`, which is the only check that can catch Codex changing
 its side (run it after a codex upgrade; see Commands).
 
+### A subscription pane declares its provider's context window, or gets stranded
+
+Claude Code budgets auto-compaction from **its own model catalog**, which knows
+nothing about the server `ANTHROPIC_BASE_URL` points at. Decoded from the 2.1.x
+bundle, the window is picked in this order:
+
+```js
+function sae(){ return Q.CLAUDE_CODE_DISABLE_1M_CONTEXT }        // unset → false
+function Ov(e){ if(sae()) return false; return /\[1m\]/i.test(e) }
+                                             // ^ a regex on the model STRING
+if (Ov(model))                       return 1e6;
+if (betas.includes(1m) && EW(model)) return 1e6;
+if (L2(model))                       return 1e6;
+let n = Q.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
+if (n > 0 && !Bo(ls(model)).startsWith("claude-")) return n;
+return 200000;                                                  // Xbr
+```
+
+Two consequences, both shipped:
+
+- An unrecognized subscription model lands on the flat **200000**, which is
+  *wrong in both directions*: it strands `glm-4.5-air` (real window 131072) and
+  it silently costs a Kimi user a quarter of the 262144 they pay for.
+- A session model still carrying Anthropic's `[1m]` marker gets **1000000**
+  regardless of provider — `Ov()` never looks past the string.
+
+Overshooting a provider's cap is **unrecoverable**: `/compact` must itself send
+the oversized transcript, so it fails with the same 400 as every other turn (and
+is *larger* than the turn that already failed — it appends the summarization
+prompt). A real session sat at 253,954 tokens under `claude-fable-5[1m]`, was
+switched to Kimi (`k3`, cap 262144), and the next tool result killed it for good.
+
+So every subscription profile ships `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, taken from
+the catalog that already knows each model's real window
+(`claudeconfig.ContextBudget`). Rules that fell out of building it:
+
+- **The budget is the MINIMUM across all four `ANTHROPIC_DEFAULT_*_MODEL`
+  mappings.** One env var governs the whole session — `/model` and subagents
+  move freely between the aliases — so anything larger lets the session grow
+  past whichever mapped model has the tightest cap.
+- **The override is only honored for non-`claude-*` model ids**, and only
+  *after* the three 1M branches have had their say. It therefore cannot cap a
+  `[1m]` model at all; what makes it reachable is that subscription profiles
+  map every alias to a provider-native id (`k3`, `kimi-for-coding`, `glm-4.7`).
+- **The installer copies a default profile only when the file is absent**, so a
+  profile created before the window was declared can never be repaired by
+  shipping a new default. `claude-config ensure-budget` sweeps existing ones,
+  and `bin/wisp-deck` runs it.
+- **Never invent a window for a provider the catalog cannot size** — capping a
+  session at a limit nobody enforces is its own bug.
+- **A switch re-checks that the conversation still fits.** Retargeting replays
+  the WHOLE transcript to the new provider, so `_guard_subscription_context`
+  measures the live conversation against the target's declared window and
+  refuses while the roomier backend can still run `/compact`. Unknown is not
+  too big: an absent transcript, no `jq`, or a target declaring no window all
+  allow the switch — blocking on missing data is a worse trade.
+
+Verify a change against a live pane, not the decode: launch `claude --settings
+<profile>` on an isolated tmux server and run `/context`, which prints
+`Auto-compact window: <N> tokens` outright. Guarded by
+`internal/claudeconfig/contextbudget_test.go` (including a check that every
+shipped default declares its provider's window) and
+`test/bash/subscription_context_guard_test.go`.
+
 ## Code Conventions
 
 ### Avoid Over-Engineering

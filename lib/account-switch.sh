@@ -803,6 +803,98 @@ _set_relaunch_kv() {
   mv -f "$tmp" "$file"
 }
 
+# claude_config_context_budget <settings_path> — print the context window the
+# config declares, or nothing. The value is validated as bare digits: it becomes
+# an arithmetic operand below, and a hand-edited profile must not be able to
+# smuggle anything else in.
+claude_config_context_budget() {
+  local settings_path="${1:-}" budget=""
+  [ -f "$settings_path" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  budget="$(jq -er '
+    .env.CLAUDE_CODE_MAX_CONTEXT_TOKENS
+    | select(type == "string")
+  ' "$settings_path" 2>/dev/null)" || return 0
+  case "$budget" in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+  printf '%s\n' "$budget"
+}
+
+# ai_transcript_context_tokens <transcript> — print the prompt size of the most
+# recent recorded assistant turn: input + cache-read + cache-creation, which is
+# exactly what a provider counts against its context window. Output tokens are
+# excluded — they are not part of the next request's prompt.
+#
+# Zero totals are skipped, not reported. A failed turn is written as a
+# "<synthetic>" assistant entry with all-zero usage and it lands AFTER the last
+# real turn — precisely the tail a stranded session ends on — so taking the
+# final entry blindly reports a 254k conversation as 0 and waves through the one
+# switch this measurement exists to stop.
+#
+# Streamed rather than slurped: a long conversation's transcript runs to tens of
+# megabytes.
+ai_transcript_context_tokens() {
+  local transcript="${1:-}"
+  [ -f "$transcript" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  jq -r '
+    select(.message.usage.input_tokens != null)
+    | .message.usage
+    | (.input_tokens // 0) + (.cache_read_input_tokens // 0)
+      + (.cache_creation_input_tokens // 0)
+    | select(. > 0)
+  ' "$transcript" 2>/dev/null | tail -1
+}
+
+# subscription_holds_conversation <settings_path> <transcript> — exit 0 unless
+# the live conversation is measurably larger than the target subscription's
+# context window.
+#
+# Retargeting a pane replays the WHOLE transcript to the new provider, and a
+# transcript that overflows its cap cannot be recovered from afterwards:
+# /compact must itself send the oversized transcript, so it fails with the same
+# 400 as every other turn. The check therefore has to happen while the roomier
+# backend is still live.
+#
+# Unknown is not the same as too big: an absent transcript, no jq, or a target
+# that declares no window all allow the switch. Blocking on missing data would
+# refuse routine switches, which is a worse trade than the overflow it guards.
+subscription_holds_conversation() {
+  local settings_path="${1:-}" transcript="${2:-}" budget tokens
+  budget="$(claude_config_context_budget "$settings_path")"
+  [ -n "$budget" ] || return 0
+  tokens="$(ai_transcript_context_tokens "$transcript")"
+  [ -n "$tokens" ] || return 0
+  [ "$tokens" -le "$budget" ]
+}
+
+# _guard_subscription_context <tmux_cmd> <config_file> — exit 0 unless
+# retargeting this pane at config_file would strand its conversation past that
+# subscription's window. The refusal is announced on the tmux status line: a
+# switch that silently does nothing reads as a bug, and the user needs to know
+# /compact is the way out WHILE the roomier backend can still run it.
+# Reads _rc_configs_dir/_rc_configs_list/_rc_project_dir from the caller's scope,
+# the same dynamic-scoping contract _read_relaunch_ctx uses.
+_guard_subscription_context() {
+  local tmux_cmd="$1" config_file="$2" settings sid transcript name
+  [ -n "${_rc_configs_dir:-}" ] || return 0
+  settings="$_rc_configs_dir/$config_file"
+  [ -f "$settings" ] || return 0
+  sid="$(current_ai_session "$tmux_cmd")"
+  [ -n "$sid" ] || return 0
+  # Same rule as session-restore.sh's claude_project_dir, repeated rather than
+  # sourced: that module pulls in terminals/ghostty.sh, which the switch has no
+  # use for. TestClaudeProjectDirRule_matches_session_restore pins the two.
+  transcript="$HOME/.claude/projects/${_rc_project_dir//[^A-Za-z0-9]/-}/$sid.jsonl"
+  subscription_holds_conversation "$settings" "$transcript" && return 0
+  name="$(claude_config_name "$config_file" "${_rc_configs_list:-}")"
+  "$tmux_cmd" display-message \
+    "Not switching: this conversation is bigger than $name can hold. Run /compact first." \
+    2>/dev/null || true
+  return 1
+}
+
 # _apply_subscription <tmux_cmd> <relaunch_file> <config_file|standard> — retarget
 # the pane's Claude backend before the relaunch. Sets the global active-config
 # pointer, rewrites the relaunch context's settings source to the chosen config
@@ -1650,6 +1742,7 @@ _apply_account_switch_choice_loaded() {
       fi
       _tool_choice_ready claude || return 1
       if [ "$value" != "$session_config" ]; then
+        _guard_subscription_context "$tmux_cmd" "$value" || return 1
         _apply_subscription "$tmux_cmd" "$relaunch_file" "$value"
         if [ "$_rc_tool" != "claude" ]; then
           relaunch_switch_tool "$tmux_cmd" "$relaunch_file" claude "$session_acct"

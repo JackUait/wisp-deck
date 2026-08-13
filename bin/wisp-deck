@@ -216,6 +216,14 @@ if [ -f "$SHARE_DIR/defaults/claude-configs.list" ]; then
     done < "$SHARE_DIR/defaults/claude-configs.list"
   fi
 fi
+# Profiles already on disk are never re-copied from defaults, so a profile
+# created before its provider's context window was declared can only be
+# repaired here. Without the window Claude Code budgets from ITS catalog and
+# lets a session grow past a cap only the provider enforces — unrecoverably,
+# since /compact must resend the same oversized transcript.
+if [ -d "$CONFIGS_DIR/claude-configs" ] && command -v wisp-deck-tui >/dev/null 2>&1; then
+  wisp-deck-tui claude-config ensure-budget --dir "$CONFIGS_DIR/claude-configs" >/dev/null 2>&1 || true
+fi
 
 # ---------- Projects ----------
 header "Setting up projects..."

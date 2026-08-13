@@ -74,6 +74,22 @@ var claudeConfigDeleteCmd = &cobra.Command{
 	},
 }
 
+// A profile written before the window was declared is exactly the one that can
+// strand a session, and the installer only copies a default when the file is
+// absent — so existing profiles are reachable only by an explicit sweep.
+var claudeConfigEnsureBudgetCmd = &cobra.Command{
+	Use:   "ensure-budget",
+	Short: "Backfill each config's real context window and print how many changed",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		changed, err := claudeconfig.EnsureContextBudgetAll(ccDir)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), changed)
+		return nil
+	},
+}
+
 func init() {
 	claudeConfigAddCmd.Flags().StringVar(&ccList, "list", "", "Path to configs list (name:file)")
 	claudeConfigAddCmd.Flags().StringVar(&ccDir, "dir", "", "Path to configs directory")
@@ -91,6 +107,9 @@ func init() {
 	claudeConfigDeleteCmd.Flags().StringVar(&ccPointer, "pointer", "", "Path to active config pointer file")
 	claudeConfigDeleteCmd.Flags().StringVar(&ccFile, "file", "", "Filename of the config to delete")
 
-	claudeConfigCmd.AddCommand(claudeConfigAddCmd, claudeConfigRenameCmd, claudeConfigDeleteCmd)
+	claudeConfigEnsureBudgetCmd.Flags().StringVar(&ccDir, "dir", "", "Path to configs directory")
+
+	claudeConfigCmd.AddCommand(claudeConfigAddCmd, claudeConfigRenameCmd, claudeConfigDeleteCmd,
+		claudeConfigEnsureBudgetCmd)
 	rootCmd.AddCommand(claudeConfigCmd)
 }

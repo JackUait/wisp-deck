@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -183,6 +184,9 @@ func AddForProvider(listFile, configsDir, name, providerKey string) (string, err
 	}
 	for i, key := range envKeys {
 		env[key] = provider.DefaultModels[i]
+	}
+	if budget, ok := ContextBudget(env); ok {
+		env[ContextBudgetKey] = strconv.Itoa(budget)
 	}
 	settings := map[string]any{
 		"$schema": "https://json.schemastore.org/claude-code-settings.json",
@@ -443,6 +447,7 @@ func RepairGatewayForKey(configsDir, file string) (bool, error) {
 	for i, envKey := range envKeys {
 		env[envKey] = provider.DefaultModels[i]
 	}
+	stampContextBudget(env)
 	settings["env"] = env
 	out, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -546,6 +551,7 @@ func WriteModelMappings(configsDir, file string, mappings [4]int, models []strin
 			delete(env, key)
 		}
 	}
+	stampContextBudget(env)
 	m["env"] = env
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {

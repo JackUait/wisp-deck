@@ -1,12 +1,13 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "model": "gpt-5.6-sol",
   "disableClaudeAiConnectors": true,
   "env": {
-    "WISP_DECK_SUBSCRIPTION_PROVIDER": "openai-chatgpt",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "gpt-5.6-sol",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-5.6-luna",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "gpt-5.6-terra",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5.6-terra",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-5.6-luna",
-    "ANTHROPIC_DEFAULT_FABLE_MODEL": "gpt-5.6-sol"
-  }
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "272000",
+    "WISP_DECK_SUBSCRIPTION_PROVIDER": "openai-chatgpt"
+  },
+  "model": "gpt-5.6-sol"
 }

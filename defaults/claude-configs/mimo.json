@@ -3,7 +3,8 @@
   "env": {
     "ANTHROPIC_BASE_URL": "https://token-plan-sgp.xiaomimimo.com/anthropic",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "mimo-v2.5",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "mimo-v2.5-pro",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "mimo-v2.5-pro",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "mimo-v2.5-pro"
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1048576"
   }
 }

@@ -1,11 +1,12 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "env": {
-    "WISP_DECK_SUBSCRIPTION_PROVIDER": "moonshot-coding",
     "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "k3",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "kimi-for-coding",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "k3",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-for-coding",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "kimi-for-coding",
-    "ANTHROPIC_DEFAULT_FABLE_MODEL": "k3"
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144",
+    "WISP_DECK_SUBSCRIPTION_PROVIDER": "moonshot-coding"
   }
 }
