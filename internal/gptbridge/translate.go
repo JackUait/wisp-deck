@@ -116,6 +116,39 @@ type toolPlan struct {
 	BlockedDomains []string
 }
 
+// taskOutputTool resolves a task only against Claude Code's in-memory
+// registry, which reaps a finished task 30s after it completes (a background
+// shell immediately) while the notification advertising its id is only
+// delivered once the current turn ends. A bridged turn routinely outlives that
+// window, so the id is already dead the first time the model sees it. Claude
+// Code deprecates the tool in its own description and points at the output
+// file — which survives, and which every launch result and notification hands
+// over — yet the bridged model still reached for it ~12 times a session
+// against 0.06 for a native pane, failing ~12% of the time. Offering it is
+// what makes that failure reachable.
+const taskOutputTool = "TaskOutput"
+
+// withholdUnreliableTools drops tools the bridge cannot serve dependably. It
+// yields to tool_choice rather than converting a host-forced call into a 400:
+// a named choice is honoured outright, and "any" keeps the tool when nothing
+// else could satisfy it.
+func withholdUnreliableTools(tools []Tool, choice ToolChoice, webSearch bool) []Tool {
+	if choice.Type == "tool" && choice.Name == taskOutputTool {
+		return tools
+	}
+	kept := make([]Tool, 0, len(tools))
+	for _, tool := range tools {
+		if tool.Name == taskOutputTool {
+			continue
+		}
+		kept = append(kept, tool)
+	}
+	if choice.Type == "any" && len(kept) == 0 && !webSearch {
+		return tools
+	}
+	return kept
+}
+
 // translateTools splits the request's tools into the Claude-hosted functions
 // Codex runs through the bridge and the Anthropic server tools it cannot.
 func translateTools(tools []Tool, choice ToolChoice) (toolPlan, error) {
@@ -150,6 +183,7 @@ func translateTools(tools []Tool, choice ToolChoice) (toolPlan, error) {
 		}
 		clientTools = append(clientTools, tool)
 	}
+	clientTools = withholdUnreliableTools(clientTools, choice, plan.WebSearch)
 
 	translated := make([]DynamicTool, 0, len(clientTools))
 	byName := make(map[string]DynamicTool, len(clientTools))

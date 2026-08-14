@@ -935,6 +935,27 @@ func TestBaseInstructionsKeepClaudeChecklistWorkResumable(t *testing.T) {
 	}
 }
 
+// The bridge withholds TaskOutput because its id stops resolving 30s after the
+// task ends. Dropping it silently would leave the model announcing it cannot
+// retrieve a finished task's output, so the instructions have to name the
+// replacement that does survive: the output file path the host already hands
+// over in the launch result and again in the notification.
+func TestBaseInstructionsPointAtTheTaskOutputFile(t *testing.T) {
+	for _, webSearch := range []bool{false, true} {
+		t.Run(fmt.Sprintf("web_search_%t", webSearch), func(t *testing.T) {
+			instructions := baseInstructions(Translation{WebSearch: webSearch})
+			for _, want := range []string{
+				"output file path",
+				"Read",
+			} {
+				if !strings.Contains(instructions, want) {
+					t.Fatalf("baseInstructions omit %q: %q", want, instructions)
+				}
+			}
+		})
+	}
+}
+
 // The prohibition on Codex-owned tools must not cover image generation. It has
 // no client-side off switch, so forbidding it only makes the model waver: it
 // obeys by answering an image request with SVG or an apology, or ignores the

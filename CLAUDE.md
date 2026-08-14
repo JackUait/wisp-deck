@@ -672,6 +672,95 @@ neighbours in `translate_test.go`, `TestEngineEnablesCodexWebSearchOnlyWhenReque
 `TestHandlerAcceptsClaudeCodeWebSearchRequest`, which replays Claude Code's
 exact request body end to end.
 
+### `TaskOutput` is withheld from Codex, because its id dies before the model sees it
+
+A background task's id resolves **only** against Claude Code's in-memory
+`appState.tasks`. A task that is terminal and already notified is deleted from
+that map by a 1s sweeper: a workflow 30s after it completes (`evictAfter =
+endTime + Dye`, `Dye = 30000`, a hardcoded literal with no env override — unlike
+`TASK_MAX_OUTPUT_LENGTH`), a background shell immediately. `TaskOutput` has no
+disk fallback.
+
+The trap is timing, not the tool. The `<task-notification>` carrying the id is
+queued and only delivered when the **current turn ends**, so any turn longer
+than the grace window hands the model an id that is already dead. Bridged turns
+routinely run minutes: one shipped case completed at 22:36:17Z, was delivered at
+22:39:29Z, and failed at 22:39:43Z — reaped three minutes earlier. The trailing
+"`. Running background agents: …`" is a hint appended to *every* not-found
+message; those agents are unrelated to the id asked for, which is why it reads
+as "no task found, yet an agent is clearly running".
+
+Nothing is ever lost — only the handle. The `.output` file survives and is the
+path both the launch result and the notification already hand over.
+
+- **Withholding is the lever; guidance is not.** Claude Code already ships
+  "DEPRECATED … prefer Read" *in the tool's own description*, and the bridged
+  model called it anyway — ~12 times a session against 0.06 for a native pane,
+  failing ~12% of the time (100 failures over 41 sessions). Do not downgrade
+  `withholdUnreliableTools` back into an instruction; that experiment has run.
+- **Yield to `tool_choice`.** A named choice keeps the tool, and `any` keeps it
+  when nothing else could satisfy the turn, so withholding can never convert a
+  host-forced call into a 400.
+- **History replay is unaffected.** Past `tool_use` blocks are injected under
+  `block.Name`, which already names undeclared functions every turn for renamed
+  MCP tools (`mcp__x` in history vs `wisp_mcp__x` declared).
+- **Native panes keep the tool.** wisp-deck is not in their path, and settings
+  `disallowedTools` denies at the permission layer rather than removing the tool
+  from the model, so applying it there trades one error for another.
+
+Guarded by `TestTranslateWithholdsTaskOutputFromCodex`,
+`TestTranslateKeepsTaskOutputWhenToolChoiceForcesIt`, and
+`TestTranslateToolChoiceAnySurvivesWithheldTaskOutput` in `translate_test.go`,
+plus `TestBaseInstructionsPointAtTheTaskOutputFile` in `engine_test.go`.
+
+### A conversation's transport size is unbounded, and its token count says nothing about it
+
+The bridge is stateless per turn: every request replays the whole conversation
+into a fresh ephemeral Codex thread through `thread/inject_items`. That message
+was built in one piece, and its size is **not** governed by the context guard,
+because the guard deliberately prices an image at a flat
+`promptGuardImageTokens` (~1600) and never counts its base64 bytes — right for
+the model, and blind to the wire. The two measures drift apart without limit.
+
+A real session wedged at exactly that gap: **82 images, 16,766,904 base64 bytes**
+— ~131K tokens against a 272K window, so the guard passed it — and the inject
+message crossed `defaultRPCMaxMessageBytes` (16 MiB). Three things then made one
+oversized message a *permanently dead session*:
+
+- **The refusal is deterministic**, and every later turn resends the same
+  history, which only grows.
+- **`Call` treated the local size refusal as a connection failure.** Nothing had
+  been written, yet `c.fail` tore down a healthy app-server, so each retry also
+  paid a full restart. `encodeMessage` (refusal, connection untouched) and
+  `sendPayload` (real write, may `fail`) are now separate for that reason.
+- **It surfaced as a retryable 502**, so Claude Code burned all ten retries and
+  then wedged. It is now `isRefusedOversizedMessage` → 400 prompt-too-long, the
+  one shape Claude answers by compacting — the only thing that can actually
+  shrink the payload.
+
+So `injectHistory` splits the history across as many calls as
+`rpc.MaxMessageBytes()` requires. That is safe because **repeated
+`thread/inject_items` calls append to the thread in order** — verified against a
+live app-server by `TestLiveInjectItemsAppends` (env-gated; re-run it after a
+codex upgrade, because a Codex change to replace-instead-of-append would
+silently drop every chunk but the last). Rules that fell out of it:
+
+- **Never rebuild "the whole history in one `Call`".** Chunk size comes from the
+  transport's own cap, not a constant of the engine's own, so the two cannot
+  drift.
+- **One item can't be split**, so an item over the budget is the conversation's
+  shape rather than a transport hiccup: it returns `oversizedMessageError`,
+  which reaches Claude as prompt-too-long instead of a retry loop.
+- **Raising the cap is not the fix.** Whatever the number, a long image-heavy
+  session eventually crosses it; only splitting removes the ceiling.
+
+Guarded by `TestATransportCarriesEveryConversationTheContextGuardAdmits` (the
+invariant itself, at the real 16 MiB cap through a real `RPCClient`),
+`TestEngineInjectsHistoryTooLargeForOneAppServerMessage`,
+`TestEngineRejectsASingleHistoryItemLargerThanTheCap`,
+`TestRPCRefusedWriteLeavesTheConnectionUsable`, and
+`TestOversizedAppServerMessageBecomesPromptTooLong400`.
+
 ### A generated image is delivered as a path, never as a block
 
 Codex generates images on its own servers, but the app-server **writes every one

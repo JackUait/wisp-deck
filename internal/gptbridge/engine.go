@@ -581,6 +581,10 @@ func baseInstructions(translation Translation) string {
 		"Follow the supplied developer and user instructions.",
 		"Continue working until the user's request is fully resolved; never claim completion while actionable checklist items remain.",
 		"Start host commands that may approach their timeout in background mode from the outset, so Claude Code registers their completion and automatically resumes you.",
+		// The bridge withholds TaskOutput (see taskOutputTool): a task id stops
+		// resolving shortly after the task ends, so it is dead by the time a
+		// bridged turn hands the notification over. The output file outlives it.
+		"To read a background task's output, use Read on the output file path given in its launch result and again in its completion notification; that file remains readable after the task finishes, so never report a finished task's output as unavailable.",
 	}
 	// Image generation is permitted, not merely tolerated. It has no client-side
 	// off switch, so forbidding it bought nothing and cost consistency: the model

@@ -780,6 +780,64 @@ func TestTranslateToolChoiceStillRejectsUnknownToolName(t *testing.T) {
 	}
 }
 
+// A task id stops resolving 30s after the task completes (bash: immediately),
+// while the notification that advertises the id is only delivered when the
+// current turn ends. Bridged turns routinely outlive that window, so the tool
+// is unreliable by construction here — it failed 100 times across 41 sessions.
+// Upstream already marks it deprecated in its own description and the model
+// calls it anyway, so withholding is the only thing that actually stops it.
+func TestTranslateWithholdsTaskOutputFromCodex(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-sol",
+		"max_tokens":1024,
+		"messages":[{"role":"user","content":"Check the build"}],
+		"tools":[
+			{"name":"Read","description":"Read one file","input_schema":{"type":"object"}},
+			{"name":"TaskOutput","description":"DEPRECATED: read output from a background task","input_schema":{"type":"object"}},
+			{"name":"Bash","description":"Run a command","input_schema":{"type":"object"}}
+		]
+	}`)
+	for _, tool := range got.DynamicTools {
+		if tool.Name == "TaskOutput" {
+			t.Fatalf("TaskOutput reached Codex: %+v", got.DynamicTools)
+		}
+	}
+	if len(got.DynamicTools) != 2 {
+		t.Fatalf("neighbouring tools were dropped too: %+v", got.DynamicTools)
+	}
+}
+
+// Withholding must not turn a host-forced call into a 400. Claude Code names
+// the tool it wants; if it ever forces this one, honour it rather than failing
+// the turn — same shape as the forced-server-tool escape hatch above.
+func TestTranslateKeepsTaskOutputWhenToolChoiceForcesIt(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-sol",
+		"max_tokens":1024,
+		"messages":[{"role":"user","content":"Check it"}],
+		"tools":[{"name":"TaskOutput","description":"read output","input_schema":{"type":"object"}}],
+		"tool_choice":{"type":"tool","name":"TaskOutput"}
+	}`)
+	if len(got.DynamicTools) != 1 || got.DynamicTools[0].Name != "TaskOutput" {
+		t.Fatalf("forced TaskOutput was withheld: %+v", got.DynamicTools)
+	}
+}
+
+// Withholding the only tool must not trip the "tool_choice any requires at
+// least one tool" guard into a 400 either.
+func TestTranslateToolChoiceAnySurvivesWithheldTaskOutput(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-sol",
+		"max_tokens":1024,
+		"messages":[{"role":"user","content":"Check it"}],
+		"tools":[{"name":"TaskOutput","description":"read output","input_schema":{"type":"object"}}],
+		"tool_choice":{"type":"any"}
+	}`)
+	if len(got.DynamicTools) != 1 || got.DynamicTools[0].Name != "TaskOutput" {
+		t.Fatalf("forced-any TaskOutput was withheld: %+v", got.DynamicTools)
+	}
+}
+
 // Claude Code's WebSearch exposes allowed_domains/blocked_domains to the user.
 // Codex's config.web_search only takes a mode string, so the filters cannot be
 // enforced there — but dropping them silently would answer a scoped search with
