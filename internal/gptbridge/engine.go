@@ -266,9 +266,15 @@ func (e *Engine) start(
 		),
 		"config": map[string]any{
 			"web_search": codexWebSearchMode(translation.WebSearch),
+			// Codex gates collaboration sub-agents behind four separate flags,
+			// and it acquired the last three after multi_agent shipped. The
+			// bridge surfaces none of a sub-agent's work to Claude, so every
+			// token one spends is lost; declare all four rather than inherit
+			// whatever a new Codex defaults them to.
 			"features": map[string]bool{
-				"apps": false, "goals": false, "hooks": false,
-				"memories": false, "multi_agent": false, "remote_plugin": false,
+				"apps": false, "collaboration_modes": false, "enable_fanout": false,
+				"goals": false, "hooks": false, "memories": false,
+				"multi_agent": false, "multi_agent_v2": false, "remote_plugin": false,
 				"shell_snapshot": false, "shell_tool": false, "unified_exec": false,
 			},
 			"mcp_servers": map[string]any{},
@@ -672,6 +678,34 @@ func baseInstructions(translation Translation) string {
 	return strings.Join(lines, " ")
 }
 
+// codexHostCapabilityItems are the thread items that can only appear if Codex
+// reached this machine: a shell command, a file written, an MCP server called,
+// a local image read, a hook run. The thread's configuration already forbids
+// all of them (read-only sandbox, no network, approvalPolicy "never", no MCP
+// servers, a private throwaway cwd, shell/unified_exec/hooks/apps off), so one
+// of these arriving means that enforcement failed, and the turn must not
+// continue. These names are the stable part of the enum — however Codex's
+// vocabulary grows, a shell escape still surfaces as commandExecution.
+var codexHostCapabilityItems = map[string]struct{}{
+	"commandExecution": {},
+	"fileChange":       {},
+	"mcpToolCall":      {},
+	"imageView":        {},
+	"hookPrompt":       {},
+}
+
+// rejectCodexOwnedItem aborts the turn when an item proves Codex ran something
+// here, and tolerates everything else — including item types this bridge has
+// never heard of.
+//
+// The default matters more than the list. ThreadItem is a vendor-controlled
+// open enum (18 variants in Codex 0.146.0, more with every release), so a guard
+// that allowed known-good names and aborted on the rest turned each new variant
+// into a fatal "502 forbidden Codex-owned tool item" the moment a user's Codex
+// updated — contextCompaction, then imageGeneration, then collabAgentToolCall
+// and subAgentActivity, each found in production. An unrecognized item is not
+// evidence of a capability leak; it is evidence that the enum grew. Aborting
+// costs the whole turn, and bridged turns run for hours.
 func rejectCodexOwnedItem(notification Notification, webSearch bool) error {
 	if notification.Method != "item/started" && notification.Method != "item/completed" {
 		return nil
@@ -684,35 +718,15 @@ func rejectCodexOwnedItem(notification Notification, webSearch bool) error {
 	if err := json.Unmarshal(notification.Params, &params); err != nil || params.Item.Type == "" {
 		return errors.New("malformed app-server item notification")
 	}
-	switch params.Item.Type {
-	case "userMessage", "agentMessage", "reasoning", "dynamicToolCall":
-		return nil
-	case "contextCompaction":
-		// Not a tool: the app-server emits this when it compacts its own
-		// thread mid-turn. It confers no host capability and needs no host
-		// action, and the reducer ignores it. Claude owns the transcript
-		// (every Execute opens a fresh thread and injects the full history),
-		// so Codex compacting its private copy is invisible to us. Aborting
-		// here 502'd every sufficiently long turn.
-		return nil
-	case "imageGeneration":
-		// Not a host capability: the model draws on Codex's servers, and the
-		// app-server writes the result to a file of its own under CODEX_HOME —
-		// it never runs anything here. It also cannot be switched off, since
-		// the app-server publishes no feature flag for image generation. The
-		// reducer hands the saved path to Claude Code; failing here instead
-		// aborted the entire turn as a 502 that no retry could clear.
-		return nil
-	case "webSearch":
-		// The turn asked for Anthropic's server-hosted web_search, so Codex
-		// running its own search is the requested capability, not a leak.
-		if webSearch {
-			return nil
-		}
-		return fmt.Errorf("forbidden Codex-owned tool item %q", params.Item.Type)
-	default:
+	// Codex's own search is a leak on turns that never asked for it, and the
+	// requested capability on turns that did.
+	if params.Item.Type == "webSearch" && !webSearch {
 		return fmt.Errorf("forbidden Codex-owned tool item %q", params.Item.Type)
 	}
+	if _, host := codexHostCapabilityItems[params.Item.Type]; host {
+		return fmt.Errorf("forbidden Codex-owned tool item %q", params.Item.Type)
+	}
+	return nil
 }
 
 func (e *Engine) schedulePendingExpiry(state *engineTurn) {

@@ -762,6 +762,72 @@ invariant itself, at the real 16 MiB cap through a real `RPCClient`),
 `TestRPCRefusedWriteLeavesTheConnectionUsable`, and
 `TestOversizedAppServerMessageBecomesPromptTooLong400`.
 
+### The send budget is ours; the app-server's message sizes are not
+
+All of the above is the **write** direction. The read direction had the same
+number wired into it — `readLoop` sized its scanner with `MaxMessageBytes` — and
+that conflation is a different bug with a worse blast radius. The bridge decides
+how large its own messages may be; it gets no vote on how large a notification
+Codex sends, and a generated image's base64 or a sub-agent's activity blob is
+whatever size Codex makes it.
+
+One long inbound line therefore killed the connection — and **that connection is
+shared by every concurrent turn** (one app-server, `e.turns` keyed by thread), so
+Claude Code's workflows and background agents all died together. It surfaced as
+`502 inject Claude history: app-server message exceeds 16777216 bytes`, blaming
+whichever call happened to be in flight rather than the notification that
+actually overflowed, and telling the user to retry something deterministic.
+
+- **`MaxInboundBytes` is a separate limit from `MaxMessageBytes`**, and far
+  larger (`defaultRPCMaxInboundBytes`, 256 MiB). Never re-derive one from the
+  other; that equality *is* the bug.
+- **Passing the ceiling costs the message, not the connection.** `readLoop`
+  discards the line, counts it (`overlongMessages`), and stays framed on the
+  next newline. Killing the connection turns one unreadable notification into a
+  session-wide outage; the ceiling is a memory backstop, not a kill switch.
+- The read side has no test that an oversized inbound message closes the
+  client — that was the behavior, and it was the defect.
+
+Guarded by `TestRPCAcceptsAnAppServerMessageLargerThanTheSendBudget` and
+`TestRPCSurvivesAnAppServerMessageOverTheInboundCeiling`.
+
+### `ThreadItem` is a vendor-controlled open enum, so the guard denies by name
+
+`rejectCodexOwnedItem` aborts a turn when Codex reports doing something on this
+machine. It used to work the other way round: allow six known-good item types,
+abort on everything else. That default made **every Codex release a potential
+outage** — the enum already carries 18 variants in 0.146.0 and grows freely, so
+each new one became a fatal `502 forbidden Codex-owned tool item` the moment a
+user's Codex updated. `contextCompaction` shipped that way, then
+`imageGeneration`, then `collabAgentToolCall` and `subAgentActivity` — the last
+two ending single turns of 4h20m, 4h48m and 1h17m with "try again in a moment".
+
+An unrecognized item is not evidence of a capability leak; it is evidence that
+the vocabulary grew. So the guard names what it forbids
+(`codexHostCapabilityItems`: `commandExecution`, `fileChange`, `mcpToolCall`,
+`imageView`, `hookPrompt`, plus `webSearch` on turns that never asked for it) and
+tolerates everything else, known or not.
+
+- **The real enforcement is the thread config**, not this guard: read-only
+  sandbox, no network, `approvalPolicy: "never"`, no MCP servers, a private
+  throwaway cwd, shell/unified_exec/hooks/apps off. The guard is the tripwire
+  that says the enforcement failed, and those names are the stable part of the
+  enum — a shell escape surfaces as `commandExecution` however else Codex grows.
+- **Never restore a default-deny branch.** `TestEngineToleratesCodexItemTypesIt
+  DoesNotHostItself` asserts the property with an item type that does not exist,
+  so it fails on reintroduction rather than on the next specific variant.
+- **The reducer already no-ops on item types it does not model**
+  (`applyWebSearchItem` returns early), so tolerating an item costs nothing.
+- Codex gates collaboration sub-agents behind **four** flags, and `multi_agent`
+  alone stopped covering it: `multi_agent_v2`, `enable_fanout` and
+  `collaboration_modes` arrived later. The bridge surfaces none of a sub-agent's
+  work to Claude, so every token one spends is lost — declare all four rather
+  than inherit a new Codex's defaults.
+
+Guarded by `TestEngineToleratesCodexItemTypesItDoesNotHostItself`,
+`TestEngineRejectsCodexItemsThatReachThisMachine`, and
+`TestEngineDisablesEveryCodexCollaborationFeature`.
+
 ### A generated image is delivered as a path, never as a block
 
 Codex generates images on its own servers, but the app-server **writes every one

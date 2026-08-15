@@ -28,10 +28,16 @@ type rpcHarness struct {
 
 func newRPCHarness(t *testing.T, maxBytes int) *rpcHarness {
 	t.Helper()
+	return newRPCHarnessWithInbound(t, maxBytes, 0)
+}
+
+func newRPCHarnessWithInbound(t *testing.T, maxBytes, maxInbound int) *rpcHarness {
+	t.Helper()
 	serverToClientR, serverToClientW := io.Pipe()
 	clientToServerR, clientToServerW := io.Pipe()
 	client := NewRPCClient(serverToClientR, clientToServerW, RPCOptions{
 		MaxMessageBytes: maxBytes,
+		MaxInboundBytes: maxInbound,
 	})
 	t.Cleanup(func() {
 		client.Close()
@@ -285,18 +291,11 @@ func TestRPCFailsClosedOnDuplicateResponse(t *testing.T) {
 	}
 }
 
-func TestRPCRejectsOversizedMessage(t *testing.T) {
-	h := newRPCHarness(t, 64)
-	_, _ = io.WriteString(h.toClient, `{"method":"event","params":{"value":"`+strings.Repeat("x", 128)+`"}}`+"\n")
-	select {
-	case <-h.client.Done():
-		if err := h.client.Err(); err == nil || !strings.Contains(err.Error(), "message exceeds") {
-			t.Fatalf("client error = %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("oversized message did not close client")
-	}
-}
+// The read side deliberately has no test that an inbound message over the send
+// budget closes the client: that was the behavior, and it was the bug. See
+// TestRPCAcceptsAnAppServerMessageLargerThanTheSendBudget and
+// TestRPCSurvivesAnAppServerMessageOverTheInboundCeiling in rpc_inbound_test.go
+// for the contract that replaced it.
 
 func TestRPCRejectsMalformedEnvelope(t *testing.T) {
 	h := newRPCHarness(t, 1<<20)

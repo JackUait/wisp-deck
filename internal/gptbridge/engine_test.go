@@ -104,6 +104,20 @@ func (f *fakeEngineRPC) MaxMessageBytes() int {
 	return defaultRPCMaxMessageBytes
 }
 
+// paramsFor returns the params of the last call to method.
+func (f *fakeEngineRPC) paramsFor(t *testing.T, method string) json.RawMessage {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for index := len(f.calls) - 1; index >= 0; index-- {
+		if f.calls[index] == method {
+			return f.callParams[index]
+		}
+	}
+	t.Fatalf("no %s call was made; calls = %v", method, f.calls)
+	return nil
+}
+
 func (f *fakeEngineRPC) Notifications() <-chan Notification   { return f.notifications }
 func (f *fakeEngineRPC) ServerRequests() <-chan ServerRequest { return f.requests }
 func (f *fakeEngineRPC) Done() <-chan struct{}                { return f.done }

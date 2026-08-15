@@ -22,6 +22,14 @@ import (
 
 const (
 	defaultRPCMaxMessageBytes = 16 << 20
+	// defaultRPCMaxInboundBytes bounds what the client will buffer for one
+	// app-server message. It is deliberately far above the send budget and is
+	// NOT the same limit: the bridge decides how large its own messages may be,
+	// but the app-server decides how large its notifications are, and a
+	// generated image's base64 or a sub-agent's activity blob is whatever size
+	// Codex makes it. Sizing the receive path with the send budget meant one
+	// long notification tore down a connection shared by every concurrent turn.
+	defaultRPCMaxInboundBytes = 256 << 20
 	defaultStderrTailBytes    = 64 << 10
 	defaultShutdownTimeout    = 2 * time.Second
 	loginCancelTimeout        = time.Second
@@ -49,6 +57,7 @@ func (e oversizedMessageError) Error() string {
 // RPCOptions controls protocol resource limits.
 type RPCOptions struct {
 	MaxMessageBytes int
+	MaxInboundBytes int
 }
 
 // RPCError is an error response returned by Codex app-server.
@@ -100,16 +109,18 @@ type rpcResponse struct {
 
 // RPCClient is a concurrent line-delimited app-server protocol client.
 type RPCClient struct {
-	reader io.ReadCloser
-	writer io.WriteCloser
-	max    int
+	reader     io.ReadCloser
+	writer     io.WriteCloser
+	max        int
+	maxInbound int
 
 	nextID atomic.Int64
 	write  sync.Mutex
 
-	mu      sync.Mutex
-	pending map[string]chan rpcResponse
-	err     error
+	mu       sync.Mutex
+	pending  map[string]chan rpcResponse
+	err      error
+	overlong int
 
 	notifications chan Notification
 	requests      chan ServerRequest
@@ -123,10 +134,15 @@ func NewRPCClient(reader io.ReadCloser, writer io.WriteCloser, options RPCOption
 	if maxBytes <= 0 {
 		maxBytes = defaultRPCMaxMessageBytes
 	}
+	maxInbound := options.MaxInboundBytes
+	if maxInbound <= 0 {
+		maxInbound = defaultRPCMaxInboundBytes
+	}
 	client := &RPCClient{
 		reader:        reader,
 		writer:        writer,
 		max:           maxBytes,
+		maxInbound:    maxInbound,
 		pending:       make(map[string]chan rpcResponse),
 		notifications: make(chan Notification, 256),
 		requests:      make(chan ServerRequest, 256),
@@ -149,6 +165,14 @@ func (c *RPCClient) Done() <-chan struct{} { return c.done }
 // Callers that build one message out of many independent parts must split it to
 // fit; the transport cannot do that for them.
 func (c *RPCClient) MaxMessageBytes() int { return c.max }
+
+// overlongMessages counts app-server messages dropped for exceeding the inbound
+// ceiling. Each one is a notification the turn never saw.
+func (c *RPCClient) overlongMessages() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.overlong
+}
 
 // Err returns the terminal connection error after Done closes.
 func (c *RPCClient) Err() error {
@@ -319,32 +343,73 @@ func (c *RPCClient) sendPayload(payload []byte) error {
 }
 
 func (c *RPCClient) readLoop() {
-	scanner := bufio.NewScanner(c.reader)
-	initial := 64 << 10
-	if c.max < initial {
-		initial = c.max
-	}
-	scanner.Buffer(make([]byte, initial), c.max)
-	for scanner.Scan() {
-		if err := c.dispatch(scanner.Bytes()); err != nil {
-			c.fail(err)
-			return
+	reader := bufio.NewReaderSize(c.reader, 64<<10)
+	for {
+		line, err := readProtocolLine(reader, c.maxInbound)
+		if len(line) > 0 {
+			if dispatchErr := c.dispatch(line); dispatchErr != nil {
+				c.fail(dispatchErr)
+				return
+			}
 		}
-	}
-	select {
-	case <-c.done:
-		return
-	default:
-	}
-	if err := scanner.Err(); err != nil {
-		if strings.Contains(err.Error(), "token too long") {
-			c.fail(fmt.Errorf("app-server message exceeds %d bytes", c.max))
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, errOverlongMessage) {
+			// Dropping one unreadable message costs that message. Failing the
+			// connection would cost every turn currently sharing it, so the
+			// ceiling stays a memory backstop rather than a kill switch.
+			c.mu.Lock()
+			c.overlong++
+			c.mu.Unlock()
+			continue
+		}
+		select {
+		case <-c.done:
+			return
+		default:
+		}
+		if errors.Is(err, io.EOF) {
+			c.fail(errors.New("codex app-server stdout closed unexpectedly"))
 			return
 		}
 		c.fail(fmt.Errorf("read app-server message: %w", err))
 		return
 	}
-	c.fail(errors.New("codex app-server stdout closed unexpectedly"))
+}
+
+var errOverlongMessage = errors.New("app-server message exceeds the inbound ceiling")
+
+// readProtocolLine reads one newline-delimited message, growing to whatever the
+// app-server sent. A message past limit is consumed and discarded, and reported
+// as errOverlongMessage with no data — the stream stays framed on the next
+// newline, so the connection continues.
+func readProtocolLine(reader *bufio.Reader, limit int) ([]byte, error) {
+	var message []byte
+	discarding := false
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		if len(chunk) > 0 {
+			switch {
+			case discarding:
+			case len(message)+len(chunk) > limit:
+				discarding = true
+				message = nil
+			default:
+				message = append(message, chunk...)
+			}
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		if err != nil {
+			return message, err
+		}
+		if discarding {
+			return nil, errOverlongMessage
+		}
+		return message[:len(message)-1], nil // drop the delimiter
+	}
 }
 
 func (c *RPCClient) dispatch(payload []byte) error {
