@@ -177,6 +177,60 @@ func TestCodexOverflowErrorBecomesPromptTooLong400(t *testing.T) {
 	}
 }
 
+// An app-server message the bridge refuses to send is deterministic: the same
+// request produces the same refusal forever, so reporting it as a retryable
+// api_error burns every one of Claude Code's ten retries and then wedges the
+// session. Compaction is the only thing that can shrink the transport payload,
+// and prompt-too-long is the one error shape that triggers it.
+func TestOversizedAppServerMessageBecomesPromptTooLong400(t *testing.T) {
+	executor := &fakeMessageExecutor{err: fmt.Errorf("inject Claude history: %w",
+		oversizedMessageError{Method: "thread/inject_items", Size: 18_000_000, Max: 16_777_216})}
+	handler, err := NewHandler(executor, "secret", ServerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	response := requestBridge(t, server.Client(), http.MethodPost,
+		server.URL+"/v1/messages", "secret", validMessagesBody(false))
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", response.StatusCode)
+	}
+	var body AnthropicErrorResponse
+	decodeBody(t, response, &body)
+	if body.Error.Type != "invalid_request_error" {
+		t.Errorf("error type = %q, want invalid_request_error", body.Error.Type)
+	}
+	if !strings.Contains(body.Error.Message, "prompt is too long") {
+		t.Errorf("message = %q, want a prompt-too-long prefix", body.Error.Message)
+	}
+}
+
+func TestOversizedAppServerMessageMidStreamEmitsInvalidRequestErrorEvent(t *testing.T) {
+	executor := &fakeMessageExecutor{
+		events: []StreamEvent{{Event: "message_start", Data: map[string]any{"type": "message_start"}}},
+		err: fmt.Errorf("return Claude tool result: %w",
+			oversizedMessageError{Method: "response", Size: 18_000_000, Max: 16_777_216}),
+	}
+	handler, err := NewHandler(executor, "secret", ServerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	response := requestBridge(t, server.Client(), http.MethodPost,
+		server.URL+"/v1/messages", "secret", validMessagesBody(true))
+	data, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	text := string(data)
+	if response.StatusCode != http.StatusOK || !strings.Contains(text, "event: error\n") {
+		t.Fatalf("status=%d stream=%s", response.StatusCode, text)
+	}
+	if !strings.Contains(text, "invalid_request_error") || !strings.Contains(text, "prompt is too long") {
+		t.Errorf("stream error event should carry invalid_request_error prompt-too-long, got: %s", text)
+	}
+}
+
 func TestCodexOverflowMidStreamEmitsInvalidRequestErrorEvent(t *testing.T) {
 	executor := &fakeMessageExecutor{
 		events: []StreamEvent{{Event: "message_start", Data: map[string]any{"type": "message_start"}}},

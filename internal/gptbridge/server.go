@@ -184,7 +184,7 @@ func (h *bridgeHandler) handleMessages(writer http.ResponseWriter, request *http
 	}
 	if started {
 		errorType, message := "api_error", err.Error()
-		if isContextOverflowMessage(message) {
+		if isContextOverflowMessage(message) || isRefusedOversizedMessage(err) {
 			errorType, message = "invalid_request_error", "prompt is too long: "+message
 		}
 		_ = WriteSSE(writer, []StreamEvent{AnthropicErrorEvent(errorType, message)})
@@ -229,7 +229,7 @@ func writeExecutionError(writer http.ResponseWriter, request *http.Request, err 
 	message := err.Error()
 	var invalidContinuation invalidContinuationError
 	switch {
-	case isContextOverflowMessage(message):
+	case isContextOverflowMessage(message) || isRefusedOversizedMessage(err):
 		status = http.StatusBadRequest
 		errorType = "invalid_request_error"
 		message = "prompt is too long: " + message

@@ -20,6 +20,12 @@ const (
 	// conversation permanently. The TTL only reclaims turns Claude abandoned.
 	defaultPendingTTL    = 24 * time.Hour
 	engineCleanupTimeout = time.Second
+	// What a thread/inject_items message spends on fixed framing: the RPC
+	// envelope, "params", the field names, and the array punctuation — about 130
+	// bytes. The thread id is subtracted separately because its length is
+	// app-server's to choose, not ours. Reserving a kilobyte costs at most one
+	// extra chunk and leaves room for fields a future app-server may want.
+	injectEnvelopeReserve = 1 << 10
 )
 
 // EngineRPC is the active subset of app-server RPC used by the turn engine.
@@ -31,6 +37,9 @@ type EngineRPC interface {
 	ServerRequests() <-chan ServerRequest
 	Done() <-chan struct{}
 	Err() error
+	// MaxMessageBytes is the transport's per-message cap, which the engine must
+	// respect when it builds a message out of many independent items.
+	MaxMessageBytes() int
 }
 
 // EngineOptions configures isolated ephemeral bridge turns.
@@ -299,9 +308,7 @@ func (e *Engine) start(
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if len(translation.History) > 0 {
-		if err := e.rpc.Call(ctx, "thread/inject_items", map[string]any{
-			"threadId": state.threadID, "items": translation.History,
-		}, &struct{}{}); err != nil {
+		if err := e.injectHistory(ctx, state.threadID, translation.History); err != nil {
 			e.cleanupTurn(state, true)
 			return AnthropicMessage{}, fmt.Errorf("inject Claude history: %w", err)
 		}
@@ -332,6 +339,53 @@ func (e *Engine) start(
 	}
 	state.turnID = turnStarted.Turn.ID
 	return e.runTurnBoundary(ctx, state, translation, emit)
+}
+
+// injectHistory sends the Claude history in as many thread/inject_items calls
+// as the transport's per-message cap requires. app-server appends each call's
+// items to the thread in order, so the split is invisible to the model — and it
+// is mandatory, because a conversation's transport size is unbounded with
+// respect to its token cost: base64 image data costs a flat ~1600 tokens per
+// image but hundreds of kilobytes apiece, so a history sitting comfortably
+// inside the model's context window routinely outgrows one message. A single
+// 16 MB message shipped, and the failure is permanent: every later turn resends
+// the same history, so the session can never recover on its own.
+func (e *Engine) injectHistory(ctx context.Context, threadID string, history []map[string]any) error {
+	budget := e.rpc.MaxMessageBytes() - injectEnvelopeReserve - len(threadID)
+	var batch []json.RawMessage
+	batchBytes := 0
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		items := batch
+		batch, batchBytes = nil, 0
+		return e.rpc.Call(ctx, "thread/inject_items", map[string]any{
+			"threadId": threadID, "items": items,
+		}, &struct{}{})
+	}
+	for index, item := range history {
+		encoded, err := json.Marshal(item)
+		if err != nil {
+			return fmt.Errorf("encode history item %d: %w", index, err)
+		}
+		size := len(encoded) + 1 // the comma that separates it from the previous item
+		if size > budget {
+			// Nothing can split one item, so this is the conversation's own
+			// shape, not a transport hiccup: report it as such.
+			return oversizedMessageError{
+				Method: "thread/inject_items", Size: size, Max: budget,
+			}
+		}
+		if batchBytes+size > budget {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+		batch = append(batch, encoded)
+		batchBytes += size
+	}
+	return flush()
 }
 
 func (e *Engine) resume(

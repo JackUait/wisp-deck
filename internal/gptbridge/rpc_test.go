@@ -226,6 +226,39 @@ func TestRPCSurvivesLateResponseToCancelledCall(t *testing.T) {
 	}
 }
 
+// A message the client refuses to send never reaches the pipe, so the
+// connection is untouched — tearing it down anyway made one oversized history
+// cost a full app-server restart on every one of Claude Code's retries.
+func TestRPCRefusedWriteLeavesTheConnectionUsable(t *testing.T) {
+	h := newRPCHarness(t, 4096)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err := h.client.Call(ctx, "thread/inject_items", map[string]any{
+		"blob": strings.Repeat("x", 8192),
+	}, &struct{}{})
+	var oversized oversizedMessageError
+	if !errors.As(err, &oversized) {
+		t.Fatalf("error = %T %v, want an oversized-message error", err, err)
+	}
+	select {
+	case <-h.client.Done():
+		t.Fatalf("refusing to send a message closed the client: %v", h.client.Err())
+	default:
+	}
+
+	nextErr := make(chan error, 1)
+	go func() {
+		var result any
+		nextErr <- h.client.Call(ctx, "thread/start", map[string]any{}, &result)
+	}()
+	next := h.readObject(t)
+	h.writeLine(t, fmt.Sprintf(`{"id":%s,"result":{"thread":{"id":"th1"}}}`, next["id"]))
+	if err := <-nextErr; err != nil {
+		t.Fatalf("call after a refused write failed: %v (client poisoned)", err)
+	}
+}
+
 func TestRPCFailsClosedOnDuplicateResponse(t *testing.T) {
 	h := newRPCHarness(t, 1<<20)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

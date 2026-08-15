@@ -1,6 +1,7 @@
 package gptbridge
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/jackuait/wisp-deck/internal/claudeconfig"
@@ -22,6 +23,18 @@ const (
 	promptGuardBytesPerToken = 4
 	promptGuardImageTokens   = 1600
 )
+
+// isRefusedOversizedMessage reports whether the bridge refused to send an
+// app-server message because it exceeds the protocol's per-message cap. That
+// refusal is deterministic — the same request is refused identically every
+// time — so it must reach Claude Code as prompt-too-long, the one error shape
+// Claude answers by compacting instead of retrying. Reported as a retryable
+// api_error it burns all ten retries and then wedges the session, because every
+// later turn resends the same oversized conversation.
+func isRefusedOversizedMessage(err error) bool {
+	var oversized oversizedMessageError
+	return errors.As(err, &oversized)
+}
 
 // isContextOverflowMessage reports whether an upstream error message means the
 // model's context window was exhausted.

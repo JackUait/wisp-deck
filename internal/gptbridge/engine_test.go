@@ -16,6 +16,8 @@ type fakeEngineRPC struct {
 	requests      chan ServerRequest
 	done          chan struct{}
 
+	maxMessageBytes int
+
 	mu          sync.Mutex
 	nextThread  int
 	calls       []string
@@ -94,10 +96,18 @@ func (f *fakeEngineRPC) Respond(id RequestID, result any) error {
 }
 
 func (f *fakeEngineRPC) RespondError(RequestID, int64, string, any) error { return nil }
-func (f *fakeEngineRPC) Notifications() <-chan Notification               { return f.notifications }
-func (f *fakeEngineRPC) ServerRequests() <-chan ServerRequest             { return f.requests }
-func (f *fakeEngineRPC) Done() <-chan struct{}                            { return f.done }
-func (f *fakeEngineRPC) Err() error                                       { return errors.New("fake closed") }
+
+func (f *fakeEngineRPC) MaxMessageBytes() int {
+	if f.maxMessageBytes > 0 {
+		return f.maxMessageBytes
+	}
+	return defaultRPCMaxMessageBytes
+}
+
+func (f *fakeEngineRPC) Notifications() <-chan Notification   { return f.notifications }
+func (f *fakeEngineRPC) ServerRequests() <-chan ServerRequest { return f.requests }
+func (f *fakeEngineRPC) Done() <-chan struct{}                { return f.done }
+func (f *fakeEngineRPC) Err() error                           { return errors.New("fake closed") }
 
 func remarshal(value, target any) error {
 	data, err := json.Marshal(value)

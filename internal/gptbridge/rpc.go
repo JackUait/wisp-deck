@@ -30,6 +30,22 @@ const (
 
 var ErrRPCClosed = errors.New("codex app-server RPC client closed")
 
+// oversizedMessageError reports a message the client refused to send because it
+// exceeds the protocol's per-message cap. Nothing reached app-server, so the
+// connection stays usable; but the same request would be refused identically
+// forever, so callers must surface it as a request-shaped failure rather than a
+// retryable transport fault.
+type oversizedMessageError struct {
+	Method string
+	Size   int
+	Max    int
+}
+
+func (e oversizedMessageError) Error() string {
+	return fmt.Sprintf("%s message is %d bytes, over the %d-byte app-server limit",
+		e.Method, e.Size, e.Max)
+}
+
 // RPCOptions controls protocol resource limits.
 type RPCOptions struct {
 	MaxMessageBytes int
@@ -129,6 +145,11 @@ func (c *RPCClient) ServerRequests() <-chan ServerRequest { return c.requests }
 // Done closes when the protocol connection fails or is closed.
 func (c *RPCClient) Done() <-chan struct{} { return c.done }
 
+// MaxMessageBytes is the largest single protocol message this client will send.
+// Callers that build one message out of many independent parts must split it to
+// fit; the transport cannot do that for them.
+func (c *RPCClient) MaxMessageBytes() int { return c.max }
+
 // Err returns the terminal connection error after Done closes.
 func (c *RPCClient) Err() error {
 	c.mu.Lock()
@@ -159,7 +180,15 @@ func (c *RPCClient) Call(ctx context.Context, method string, params, target any)
 	if params != nil {
 		message["params"] = params
 	}
-	if err := c.writeJSON(message); err != nil {
+	// A message refused before it is written leaves the connection untouched, so
+	// only a failed write may tear it down. Failing on a local refusal turned one
+	// oversized history into a full app-server restart on every Claude retry.
+	payload, err := c.encodeMessage(method, message)
+	if err != nil {
+		c.removePending(key)
+		return err
+	}
+	if err := c.sendPayload(payload); err != nil {
 		c.removePending(key)
 		c.fail(err)
 		return err
@@ -198,7 +227,7 @@ func (c *RPCClient) Notify(method string, params any) error {
 	if params != nil {
 		message["params"] = params
 	}
-	return c.writeJSON(message)
+	return c.writeJSON(method, message)
 }
 
 // Respond answers a server-initiated request.
@@ -206,7 +235,7 @@ func (c *RPCClient) Respond(id RequestID, result any) error {
 	if id.key == "" {
 		return errors.New("codex app-server response ID is empty")
 	}
-	return c.writeJSON(map[string]any{
+	return c.writeJSON("response", map[string]any{
 		"id":     id.raw,
 		"result": result,
 	})
@@ -221,7 +250,7 @@ func (c *RPCClient) RespondError(id RequestID, code int64, message string, data 
 	if data != nil {
 		rpcErr["data"] = data
 	}
-	return c.writeJSON(map[string]any{
+	return c.writeJSON("error response", map[string]any{
 		"id":    id.raw,
 		"error": rpcErr,
 	})
@@ -250,16 +279,29 @@ func (c *RPCClient) abandonPending(key string) {
 	c.mu.Unlock()
 }
 
-func (c *RPCClient) writeJSON(value any) error {
+func (c *RPCClient) writeJSON(method string, value any) error {
+	payload, err := c.encodeMessage(method, value)
+	if err != nil {
+		return err
+	}
+	return c.sendPayload(payload)
+}
+
+// encodeMessage serializes a protocol message and enforces the per-message cap.
+// Both failures happen before anything is written, so neither means the
+// connection is broken.
+func (c *RPCClient) encodeMessage(method string, value any) ([]byte, error) {
 	payload, err := json.Marshal(value)
 	if err != nil {
-		return fmt.Errorf("encode app-server message: %w", err)
+		return nil, fmt.Errorf("encode app-server message: %w", err)
 	}
 	if len(payload) > c.max {
-		return fmt.Errorf("app-server message exceeds %d bytes", c.max)
+		return nil, oversizedMessageError{Method: method, Size: len(payload), Max: c.max}
 	}
-	payload = append(payload, '\n')
+	return append(payload, '\n'), nil
+}
 
+func (c *RPCClient) sendPayload(payload []byte) error {
 	c.write.Lock()
 	defer c.write.Unlock()
 	select {
