@@ -1655,34 +1655,39 @@ _subscription_choice_ready() {
   jq -er '.env.ANTHROPIC_AUTH_TOKEN | select(type == "string" and length > 0)' "$config_path" >/dev/null 2>&1
 }
 
-# _apply_worktree_switch <tmux_cmd> <relaunch_file> <new_project_dir>
-# Rebuild this tab at another checkout of the same project. Reads _rc_* from the
+# _retarget_session_context <tmux_cmd> <relaunch_file> <new_project_dir>
+# Point this tab's durable identity at another checkout. Reads _rc_* from the
 # caller's scope and retargets _rc_project_dir there (the same dynamic-scoping
-# contract _read_relaunch_ctx uses). Every step after the context rewrite is
-# fail-open: a pane that cannot be found simply keeps its old cwd rather than
-# aborting a switch the agent pane has already made.
-_apply_worktree_switch() {
+# contract _read_relaunch_ctx uses). Runs FIRST in every retarget:
+# relaunch_ai_pane re-reads this file for the pane's cwd, and it is also what
+# every later switch, tab_view_new_window and gt_ensure_panes_watch read.
+_retarget_session_context() {
   local tmux_cmd="$1" relaunch_file="$2" new_dir="$3"
-  local lib_dir session share_dir ledger="" spare="" accent
-  local spare_label spare_conf spare_zdotdir project
-
-  # The context FIRST: relaunch_ai_pane re-reads this file for the pane's cwd,
-  # and it is also what every later switch, tab_view_new_window and
-  # gt_ensure_panes_watch read.
   _set_relaunch_kv "$relaunch_file" project_dir "$new_dir" || return 1
   _rc_project_dir="$new_dir"
 
   # A crash-restore rebuilds the tab from the session env; without this it would
-  # reopen the checkout the user just left.
+  # reopen the checkout the tab just left.
   "$tmux_cmd" set-environment WISP_DECK_PATH "$new_dir" 2>/dev/null || true
+  return 0
+}
 
-  # The agent, through the established draft-preserving path so attention
-  # fencing, the settings overlay and the unsent-draft replay all still apply —
-  # but launched fresh, never resuming the old tree's conversation.
-  local _gt_fresh_launch=1
-  _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" ""
+# _retarget_session_side_panes <tmux_cmd> <relaunch_file> <new_project_dir>
+# Move the ledger and the spare terminal to a checkout the context already
+# points at. Every step is fail-open: a pane that cannot be found simply keeps
+# its old cwd rather than aborting a retarget the caller has already made.
+_retarget_session_side_panes() {
+  local tmux_cmd="$1" relaunch_file="$2" new_dir="$3"
+  local lib_dir session share_dir side_panes ledger="" spare="" accent
+  local spare_label spare_conf spare_zdotdir project
 
-  read -r ledger spare < <(_session_side_panes "$tmux_cmd")
+  # Split by prefix, NOT `read -r ledger spare`: _session_side_panes leaves the
+  # ledger field EMPTY when the session has no ledger pane, and read would
+  # collapse the fields and hand the SPARE's id over as the ledger — respawning
+  # the user's terminal as a changeset ledger.
+  side_panes="$(_session_side_panes "$tmux_cmd")"
+  ledger="${side_panes%% *}"
+  spare="${side_panes#* }"
   lib_dir="$(_pool_tmux_env "$tmux_cmd" WISP_DECK_LIB_DIR)"
   [ -n "$lib_dir" ] || return 0
 
@@ -1718,6 +1723,52 @@ _apply_worktree_switch() {
     "env -u TMUX -u TMUX_PANE tmux -L $spare_label new-window -c \"$new_dir\"" \
     2>/dev/null || true
   return 0
+}
+
+# _apply_worktree_switch <tmux_cmd> <relaunch_file> <new_project_dir>
+# Rebuild this tab at another checkout of the same project — the user's own
+# choice from the switcher, so the agent is rebuilt with it.
+_apply_worktree_switch() {
+  local tmux_cmd="$1" relaunch_file="$2" new_dir="$3"
+
+  _retarget_session_context "$tmux_cmd" "$relaunch_file" "$new_dir" || return 1
+
+  # The agent, through the established draft-preserving path so attention
+  # fencing, the settings overlay and the unsent-draft replay all still apply —
+  # but launched fresh, never resuming the old tree's conversation.
+  local _gt_fresh_launch=1
+  _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" ""
+
+  _retarget_session_side_panes "$tmux_cmd" "$relaunch_file" "$new_dir"
+}
+
+# follow_agent_checkout <tmux_cmd> <relaunch_file> <new_project_dir>
+# Move this tab to the checkout its own agent moved into — the automatic
+# counterpart of the switcher's worktree row. The agent pane is deliberately
+# NOT rebuilt: the conversation running in it is the one that just created the
+# worktree, and a relaunch would throw it away as a side effect of the agent
+# doing its job. Only the panes that merely display a checkout follow.
+follow_agent_checkout() {
+  local tmux_cmd="$1" relaunch_file="$2" new_dir="$3"
+  local _rc_tool="" _rc_tool_cmd="" _rc_settings="" _rc_settings_source="" \
+    _rc_filter="" _rc_project_dir="" _rc_accounts_dir="" _rc_pointer="" \
+    _rc_list="" _rc_colors="" _rc_default_label="" \
+    _rc_tools="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_codex_cmd="" \
+    _rc_tool_pref="" _rc_attention_root="" _rc_attention_descriptor="" \
+    _rc_config_pointer="" _rc_configs_dir="" _rc_configs_list=""
+  [ -n "$new_dir" ] || return 1
+  [ -f "$relaunch_file" ] || return 1
+  _read_relaunch_ctx "$relaunch_file"
+
+  # The agent can cd anywhere; only a checkout git itself reports for THIS
+  # project may move the session.
+  _worktree_choice_ready "$_rc_project_dir" "$new_dir" || return 1
+  # Compared (and applied) in git's own terms — see _resolve_dir.
+  new_dir="$(_resolve_dir "$new_dir")"
+  [ "$new_dir" = "$(_resolve_dir "$_rc_project_dir")" ] && return 0
+
+  _retarget_session_context "$tmux_cmd" "$relaunch_file" "$new_dir" || return 1
+  _retarget_session_side_panes "$tmux_cmd" "$relaunch_file" "$new_dir"
 }
 
 # _apply_account_switch_choice_loaded <tmux_cmd> <relaunch_file>

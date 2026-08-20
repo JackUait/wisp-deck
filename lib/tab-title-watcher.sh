@@ -371,6 +371,74 @@ attention_watcher_tab_focused() {
 
 # Reset the reducer state. Public for deterministic shell tests; production
 # calls it once inside the watcher subshell.
+# The libraries follow_agent_checkout needs, sourced in a FRESH bash: the
+# wrapper may be running under `bash --posix` (Ghostty's /bin/sh -c launch),
+# where the process substitution these functions read git through is disabled.
+# shellcheck disable=SC2016  # $1..$4 are the CHILD bash's positional arguments:
+# the paths reach it as arguments, never interpolated into the program text.
+_ATTENTION_WATCH_FOLLOW_SCRIPT='
+. "$1/statusline.sh"
+. "$1/claude-accounts.sh"
+. "$1/tmux-session.sh"
+. "$1/account-switch.sh"
+follow_agent_checkout "$2" "$3" "$4"
+'
+
+# attention_watcher_follow_agent <tmux_cmd> <state-file> <relaunch-file> <lib-dir>
+# Move the tab to the checkout its agent moved into. The Claude attention
+# runtime publishes the supervised session's working directory beside its state
+# file; a session whose agent entered a git worktree is simply one whose
+# published directory stopped matching the checkout the tab is pointed at.
+#
+# This runs on the attention tick, so the steady state must not fork: the two
+# reads are builtins, and only a directory that differs from the session's own
+# reaches the shell that validates and applies it. Each distinct directory is
+# attempted ONCE — a refused one (the agent cd'd out of the project entirely)
+# would otherwise spawn a shell twice a second for as long as the agent stayed
+# there. Convergence clears the memo, so re-entering a worktree still follows.
+attention_watcher_follow_agent() {
+  local tmux_cmd="${1-}" state_file="${2-}" relaunch_file="${3-}" lib_dir="${4-}"
+  local cwd="" project_dir="" line
+
+  [ -n "$tmux_cmd" ] && [ -n "$state_file" ] || return 0
+  [ -n "$relaunch_file" ] && [ -f "$relaunch_file" ] || return 0
+  [ -n "$lib_dir" ] && [ -d "$lib_dir" ] || return 0
+
+  [ -f "${state_file%/*}/cwd" ] || return 0
+  IFS= read -r cwd < "${state_file%/*}/cwd" 2>/dev/null || cwd=""
+  # Anything but a plain absolute path is a truncated or junk read, never a
+  # directory to respawn panes into.
+  case "$cwd" in
+    /*) ;;
+    *) return 0 ;;
+  esac
+  case "$cwd" in
+    *[[:space:]]*|*';'*|*'$'*|*'`'*) return 0 ;;
+  esac
+
+  while IFS= read -r line; do
+    case "$line" in
+      project_dir=*)
+        project_dir="${line#project_dir=}"
+        break
+        ;;
+    esac
+  done < "$relaunch_file"
+  [ -n "$project_dir" ] || return 0
+
+  if [ "$cwd" = "$project_dir" ]; then
+    _ATTENTION_WATCH_FOLLOW_TRIED=""
+    return 0
+  fi
+  [ "$cwd" = "$_ATTENTION_WATCH_FOLLOW_TRIED" ] && return 0
+  _ATTENTION_WATCH_FOLLOW_TRIED="$cwd"
+
+  # fd 1 and 2 are the terminal the agent paints on — see wrapper.sh.
+  bash -c "$_ATTENTION_WATCH_FOLLOW_SCRIPT" -- \
+    "$lib_dir" "$tmux_cmd" "$relaunch_file" "$cwd" >/dev/null 2>&1 || true
+  return 0
+}
+
 attention_watcher_reset() {
   _ATTENTION_WATCH_LAST_GENERATION=""
   _ATTENTION_WATCH_LAST_SEQUENCE=""
@@ -382,20 +450,23 @@ attention_watcher_reset() {
   _ATTENTION_WATCH_LAST_TITLE_STATE=""
   _ATTENTION_WATCH_SEEN=""
   _ATTENTION_WATCH_LAST_ACCENT=""
+  _ATTENTION_WATCH_FOLLOW_TRIED=""
   _ATTENTION_WATCH_HOST="$(hostname 2>/dev/null)"
 }
 
 # Consume one snapshot. Missing, malformed, stale, or regressed state becomes
 # unknown and never advances alert dedupe.
-# Usage: attention_watcher_tick <session> <project> <fallback-title-mode> <tmux> <descriptor> <config-dir>
+# Usage: attention_watcher_tick <session> <project> <fallback-title-mode> <tmux>
+#          <descriptor> <config-dir> [<relaunch-file> <lib-dir>]
 attention_watcher_tick() {
   local session_name="${1-}" project_name="${2-}" fallback_title="${3-}"
   local tmux_cmd="${4-}" descriptor="${5-}" config_dir="${6-}"
+  local relaunch_file="${7-}" lib_dir="${8-}"
   local generation="" sequence="" phase="unknown" reason="-" tool=""
   local snapshot_valid=0 tuple_new=0 title_state="active" keep_state="active"
   local previous_tool="$_ATTENTION_WATCH_LAST_TOOL"
   local settings_file="" current_title="$fallback_title" current_pane=""
-  local saved_title="" theme="" accent=""
+  local saved_title="" theme="" accent="" tab_bar=""
 
   # A valid descriptor still supplies current tool identity when its state is
   # temporarily absent or malformed. The complete double-read snapshot below
@@ -412,6 +483,8 @@ attention_watcher_tick() {
     phase="$_ATTENTION_WATCH_SNAPSHOT_PHASE"
     reason="$_ATTENTION_WATCH_SNAPSHOT_REASON"
     tool="$_ATTENTION_WATCH_SNAPSHOT_TOOL"
+    attention_watcher_follow_agent "$tmux_cmd" "$_ATTENTION_WATCH_SNAPSHOT_STATE" \
+      "$relaunch_file" "$lib_dir"
   fi
 
   if [ "$snapshot_valid" -eq 1 ]; then
@@ -449,6 +522,7 @@ attention_watcher_tick() {
     saved_title="$(read_settings_value "$settings_file" tab_title)"
     [ -n "$saved_title" ] && current_title="$saved_title"
     theme="$(read_settings_value "$settings_file" theme)"
+    tab_bar="$(read_settings_value "$settings_file" tab_bar)"
   fi
   if [ -n "$tool" ] \
      && declare -f gt_resolve_theme >/dev/null 2>&1 \
@@ -521,6 +595,18 @@ attention_watcher_tick() {
     fi
   fi
 
+  # The tab bar's large chips render per-window options, and this is what keeps
+  # them current: a tab's title and the progress of its turn are state that
+  # becomes valid LATER (the agent has not named the turn when the window is
+  # created), so they are re-resolved every tick rather than loaded once. Absent
+  # setting means large, matching tab_view_mode; compact skips the pane capture
+  # entirely because nothing renders it.
+  if [ "$tab_bar" != "compact" ] \
+     && declare -f tab_view_stamp_windows >/dev/null 2>&1; then
+    tab_view_stamp_windows "$tmux_cmd" "$session_name" "$project_name" \
+      "$_ATTENTION_WATCH_HOST"
+  fi
+
   _ATTENTION_WATCH_LAST_PRESENT_PHASE="$phase"
   _ATTENTION_WATCH_LAST_TITLE_STATE="$title_state"
   _ATTENTION_WATCH_LAST_TITLE_MODE="$current_title"
@@ -528,16 +614,18 @@ attention_watcher_tick() {
 
 # Start the semantic consumer before tmux exists. Pane discovery is retried on
 # every tick, so the uniquely tagged stable pane ID can appear later.
-# Usage: start_tab_title_watcher <session> <project> <title-mode> <tmux> <descriptor> <config-dir>
+# Usage: start_tab_title_watcher <session> <project> <title-mode> <tmux>
+#          <descriptor> <config-dir> [<relaunch-file> <lib-dir>]
 start_tab_title_watcher() {
   local session_name="${1-}" project_name="${2-}" title_mode="${3-}"
   local tmux_cmd="${4-}" descriptor="${5-}" config_dir="${6-}"
+  local relaunch_file="${7-}" lib_dir="${8-}"
   local interval="${WISP_DECK_WATCH_INTERVAL:-0.5}"
   (
     attention_watcher_reset
     while true; do
       attention_watcher_tick "$session_name" "$project_name" "$title_mode" \
-        "$tmux_cmd" "$descriptor" "$config_dir"
+        "$tmux_cmd" "$descriptor" "$config_dir" "$relaunch_file" "$lib_dir"
       sleep "$interval"
     done
   ) >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &

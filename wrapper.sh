@@ -591,6 +591,12 @@ _pane0_pct=75
 _gt_theme_pref="$(grep '^theme=' "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
 _gt_accent="$(get_theme_accent "$(gt_resolve_theme "$_gt_theme_pref" "$SELECTED_AI_TOOL")")"
 
+# Tab bar chip mode. Both status-left writes below (the one that builds the
+# session and the realignment once the panes exist) read this ONE value: a
+# session that opened wide and realigned narrow would otherwise change shape a
+# moment after the tab appears.
+_gt_tabbar_mode="$(tab_view_mode)"
+
 # Show a "Starting <tool>…" banner in the AI pane until the tool paints. The AI
 # CLI can spend seconds — minutes when macOS's Security subsystem is contended
 # (claude 2.1.217 blocks on keychain/trust XPC at startup) — before it draws
@@ -667,7 +673,7 @@ env -u WISP_DECK_TESTING "$TMUX_CMD" new-session -d -P -F '#{pane_id}' -x "$_tmu
   set-option status on \; \
   set-option status-position top \; \
   set-option status-left-length 400 \; \
-  set-option status-left "$(tab_view_status_left "$PROJECT_NAME" "$_gt_accent")" \; \
+  set-option status-left "$(tab_view_status_left "$PROJECT_NAME" "$_gt_accent" "" "$_gt_tabbar_mode")" \; \
   set-option status-left-style "fg=colour238" \; \
   set-option status-style "bg=default" \; \
   set-option status-right "" \; \
@@ -746,8 +752,11 @@ write_relaunch_context "$WISP_DECK_RELAUNCH_FILE" "$SELECTED_AI_TOOL" \
 export WISP_DECK_RELAUNCH_FILE
 
 # Start the descriptor consumer before the attach (which blocks until the
-# session ends).
-start_tab_title_watcher "$SESSION_NAME" "$PROJECT_NAME" "$_tab_title_setting" "$TMUX_CMD" "$WISP_DECK_ATTENTION_DESCRIPTOR" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
+# session ends). The relaunch context and library path are what let it follow
+# the agent into a git worktree — the context is both the comparison ("which
+# checkout is this tab pointed at?") and what the follow rewrites, so it must
+# already be written above.
+start_tab_title_watcher "$SESSION_NAME" "$PROJECT_NAME" "$_tab_title_setting" "$TMUX_CMD" "$WISP_DECK_ATTENTION_DESCRIPTOR" "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" "$WISP_DECK_RELAUNCH_FILE" "$_WRAPPER_DIR/lib"
 
 # Session-restore snapshot heartbeat: re-derives the snapshot from all alive
 # Wisp Deck sessions. Backgrounded lib function, not an inline loop: each tick
@@ -809,7 +818,7 @@ _tab_view_new_bind="bash -c 'source \"\$1/tab-view.sh\" && tab_view_new_window \
 # Realign the bar to the AI pane's offset and hook resize/layout changes so
 # the ┬ junction keeps tracking the split. Built as an array so the hook
 # commands drop out cleanly when the refresh script could not be written.
-_gt_tabbar_chain=(set-option status-left "$(tab_view_status_left "$PROJECT_NAME" "$_gt_accent" "$_gt_ai_left")" ';')
+_gt_tabbar_chain=(set-option status-left "$(tab_view_status_left "$PROJECT_NAME" "$_gt_accent" "$_gt_ai_left" "$_gt_tabbar_mode")" ';')
 if [ -n "$_gt_tabbar_refresh" ]; then
   _gt_tabbar_chain+=(set-hook -t "$SESSION_NAME" client-resized "run-shell -b \"$_gt_tabbar_refresh\"" ';')
   _gt_tabbar_chain+=(set-hook -t "$SESSION_NAME" window-layout-changed "run-shell -b \"$_gt_tabbar_refresh\"" ';')

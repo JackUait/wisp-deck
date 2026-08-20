@@ -22,6 +22,7 @@ import (
 const (
 	maxClaudeRegistryRecordBytes = 256 * 1024
 	maxClaudeRegistryJobIDBytes  = 256
+	maxClaudeRegistryCwdBytes    = 4096
 	// A bound on the account-local registry directory, which holds one file per
 	// live Claude process. Anything past it is not a session list.
 	maxClaudeRegistrySessionFiles = 4096
@@ -76,12 +77,14 @@ func (s PSSnapshotter) Snapshot(ctx context.Context) ([]byte, error) {
 // reducer can use it to deduplicate repeated observations without importing
 // registry schema details.
 //
-// PID and SessionID always name the supervised interactive session and the
-// conversation it currently holds. While that session is parked, the status
-// fields come from the background job running its turn — see resolveParkedJob.
+// PID, SessionID and Cwd always name the supervised interactive session, the
+// conversation it currently holds, and the directory it is working in. While
+// that session is parked, the status fields come from the background job
+// running its turn — see resolveParkedJob.
 type ClaudeRegistryStatus struct {
 	PID            int
 	SessionID      string
+	Cwd            string
 	Status         string
 	StatusIdentity string
 	WaitingFor     string
@@ -470,6 +473,10 @@ func parseClaudeRegistryRecord(data []byte) (claudeRegistryRecord, error) {
 	if err != nil {
 		return claudeRegistryRecord{}, err
 	}
+	cwd, err := parseClaudeRegistryWorkingDirectory(fields)
+	if err != nil {
+		return claudeRegistryRecord{}, err
+	}
 	jobID, err := parseClaudeRegistryIdentifier(fields, "jobId")
 	if err != nil {
 		return claudeRegistryRecord{}, err
@@ -483,6 +490,7 @@ func parseClaudeRegistryRecord(data []byte) (claudeRegistryRecord, error) {
 		ClaudeRegistryStatus: ClaudeRegistryStatus{
 			PID:            pid,
 			SessionID:      sessionID,
+			Cwd:            cwd,
 			Status:         status,
 			StatusIdentity: identity,
 			WaitingFor:     waitingFor,
@@ -492,6 +500,24 @@ func parseClaudeRegistryRecord(data []byte) (claudeRegistryRecord, error) {
 		jobID:       jobID,
 		parkedJobID: parkedJobID,
 	}, nil
+}
+
+// parseClaudeRegistryWorkingDirectory reads the session's optional cwd. Absent
+// is an ordinary answer — a Claude predating the field reports none — but a
+// present one is handed to a shell that respawns panes into it, so it fails
+// closed on anything but a plain absolute path rather than being sanitized.
+func parseClaudeRegistryWorkingDirectory(fields map[string]json.RawMessage) (string, error) {
+	raw, ok := fields["cwd"]
+	if !ok {
+		return "", nil
+	}
+	value, err := parseJSONString(raw)
+	if err != nil || value == "" || !strings.HasPrefix(value, "/") ||
+		len(value) > maxClaudeRegistryCwdBytes ||
+		strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return "", errors.New("invalid Claude registry cwd")
+	}
+	return value, nil
 }
 
 // parseClaudeRegistryIdentifier reads one optional record identifier. Absent is

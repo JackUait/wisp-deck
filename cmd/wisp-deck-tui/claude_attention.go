@@ -95,6 +95,7 @@ func runClaudeAttention(
 	}
 	writer, writerErr := attention.NewAtomicWriter(options.StateFile, options.Generation)
 	monitoring := writerErr == nil
+	workdir := attention.NewWorkingDirectoryWriter(options.StateFile)
 
 	publish := func(state attention.State) {
 		if !monitoring {
@@ -105,6 +106,11 @@ func runClaudeAttention(
 			// state file must never prevent the user's Claude process from running.
 			monitoring = false
 		}
+	}
+	// The sidecar is an observer too, and a separate one: a session whose
+	// working directory cannot be published still needs its attention state.
+	publishWorkdir := func(dir string) {
+		_ = workdir.Publish(dir)
 	}
 
 	supervisor := attention.ClaudeSupervisor{
@@ -119,7 +125,9 @@ func runClaudeAttention(
 			if pollErr != nil {
 				found = false
 			}
-			publish(reducer.Reduce(claudeRegistryObservation(status, found)))
+			claudeAttentionPublish(status, found, func(observation attention.ClaudeReducerObservation) {
+				publish(reducer.Reduce(observation))
+			}, publishWorkdir)
 			return nil
 		},
 		OnExit: func(result attention.ClaudeExitResult) error {
@@ -131,6 +139,23 @@ func runClaudeAttention(
 		},
 	}
 	return supervisor.Run(ctx, command)
+}
+
+// claudeAttentionPublish routes one registry poll to both of the generation's
+// outputs. Attention has an answer for "the registry could not be read" —
+// unknown — but the working directory does not: a session that stops being
+// observable has not moved, so an unfound poll publishes no directory at all
+// and the wisp session keeps following the last one it saw.
+func claudeAttentionPublish(
+	status attention.ClaudeRegistryStatus,
+	found bool,
+	publishObservation func(attention.ClaudeReducerObservation),
+	publishWorkdir func(string),
+) {
+	publishObservation(claudeRegistryObservation(status, found))
+	if found {
+		publishWorkdir(status.Cwd)
+	}
 }
 
 func claudeRegistryObservation(

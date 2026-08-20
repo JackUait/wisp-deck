@@ -97,6 +97,7 @@ func TestClaudeRegistryMapperAcceptsCurrentRegistrySchema(t *testing.T) {
 	want := ClaudeRegistryStatus{
 		PID:            101,
 		SessionID:      "session-current",
+		Cwd:            "/tmp/project",
 		Status:         "idle",
 		StatusIdentity: "1783926000123",
 	}
