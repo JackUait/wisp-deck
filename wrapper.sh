@@ -217,6 +217,10 @@ else
   if restore_surplus_launch "$SHARE_DIR" "$_restore_participant" "${WISP_DECK_RESTORE_BUILDER:-0}" "$_wd_launch_epoch"; then
     restore_log "$SHARE_DIR" "surplus restore launch closed (participant=$_restore_participant)"
     type stop_loading_screen &>/dev/null && stop_loading_screen
+    # Ghostty renders ANY exit inside abnormal-command-exit-runtime (250ms
+    # default) as "Ghostty failed to launch the requested command" — exit code
+    # is not consulted. Outliving that window is what makes this close quiet.
+    sleep 0.4
     exit 0
   fi
 

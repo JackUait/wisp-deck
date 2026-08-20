@@ -1296,14 +1296,18 @@ func TestRestoreQueuePop_discards_stale_queue(t *testing.T) {
 }
 
 // Helper: run restore_advance with stubbed restore_trigger_tab and
-// terminal_launch_window hooks recording to trigFile/winFile.
+// terminal_launch_window hooks recording to trigFile/winFile. The trigger stub
+// stands in for a tab that really started: it copies the chain ticket to
+// ticket-at-spawn and then claims it, which is what stops restore_advance from
+// falling back to a window.
 func runRestoreAdvance(t *testing.T, configDir, trigFile, winFile string, trigExit int) (string, int) {
 	t.Helper()
 	root := projectRoot(t)
 	mod := filepath.Join(root, "lib", "session-restore.sh")
+	ticket := quote(filepath.Join(configDir, "restore-chain-ticket"))
 	script := `
 source ` + quote(mod) + `
-restore_trigger_tab() { echo triggered >> ` + quote(trigFile) + `; return ` + strconv.Itoa(trigExit) + `; }
+restore_trigger_tab() { echo triggered >> ` + quote(trigFile) + `; cat ` + ticket + ` > ` + quote(filepath.Join(configDir, "ticket-at-spawn")) + ` 2>/dev/null; rm -f ` + ticket + `; return ` + strconv.Itoa(trigExit) + `; }
 terminal_launch_window() { echo window >> ` + quote(winFile) + `; }
 restore_advance ` + quote(configDir) + `
 `

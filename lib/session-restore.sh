@@ -617,6 +617,39 @@ restore_queue_active() {
   boot_id_is_current "${b%%|*}" "$cur_boot"
 }
 
+# True iff a restore drain is actually progressing right now. A leftover queue
+# proves only that a drain STARTED — when its chain breaks (a Cmd+T that never
+# produced a tab), the entries sit there and every later launch looked like a
+# storm participant and closed itself, locking the user out of the terminal
+# until the queue aged out. Liveness is any of: a pop within the window (the
+# queue's mtime), an outstanding ticket still inside its 60s claim window, or a
+# drain that finished moments ago. The 120s window must stay well above the
+# gap between pops of a healthy drain — a first tab whose update check stalls
+# has been observed 57s behind the queue build.
+# Usage: restore_chain_alive <config_dir>
+restore_chain_alive() {
+  local config_dir="$1" now stamp mtime
+  now="$(date +%s)"
+  local queue="$config_dir/restore-queue"
+  if [ -f "$queue" ]; then
+    mtime="$(stat -f %m "$queue" 2>/dev/null || echo 0)"
+    [ $((now - mtime)) -le 120 ] && return 0
+  fi
+  local ticket="$config_dir/restore-chain-ticket"
+  if [ -f "$ticket" ]; then
+    { stamp="$(tr -d '[:space:]' < "$ticket")"; } 2>/dev/null || stamp=""
+    case "$stamp" in '' | *[!0-9]*) stamp=0 ;; esac
+    [ $((now - stamp)) -le 60 ] && return 0
+  fi
+  local marker="$config_dir/restore-drained-at"
+  if [ -f "$marker" ]; then
+    { stamp="$(tr -d '[:space:]' < "$marker")"; } 2>/dev/null || stamp=""
+    case "$stamp" in '' | *[!0-9]*) stamp=0 ;; esac
+    [ $((now - stamp)) -le 120 ] && return 0
+  fi
+  return 1
+}
+
 # Decide whether an interactive launch that popped NOTHING from the queue is
 # a surplus member of a restore storm and should close its tab instead of
 # opening the project picker. After a macOS crash, resume relaunches Ghostty
@@ -636,7 +669,9 @@ restore_queue_active() {
 restore_surplus_launch() {
   local config_dir="$1" participant="${2:-0}" builder="${3:-0}" launch_epoch="${4:-}"
   [ "$builder" = "1" ] && return 1
-  [ "$participant" = "1" ] && return 0
+  # Gated on liveness: participant only records that a queue existed at start.
+  # Closing on a dead chain is what denied the user a terminal entirely.
+  [ "$participant" = "1" ] && restore_chain_alive "$config_dir" && return 0
   # Storm launches are also recognized by the queue-build stamp: one that
   # STARTED at (or before, or within the grace of) the build is a restore
   # participant even when it raced the builder so hard that its pop ran
@@ -880,10 +915,57 @@ restore_advance() {
   # launches; it is what authorizes that tab's queue pop (see
   # restore_claim_chain_ticket).
   restore_issue_chain_ticket "$config_dir"
-  if restore_trigger_tab; then
+  if ! restore_trigger_tab; then
+    terminal_launch_window
     return 0
   fi
+  # A zero exit from osascript is NOT proof of a tab: System Events reports
+  # success for a keystroke delivered to whatever app happened to be frontmost,
+  # which is how a boot-time restore loses its Cmd+T and strands the queue. The
+  # ticket being claimed is the proof. Backgrounded because this tab must keep
+  # setting itself up meanwhile — the chain's speed is the whole point of
+  # advancing before our own session is built.
+  restore_chain_watchdog "$config_dir" >/dev/null 2>&1 &
+  return 0
+}
+
+# Revive a chain whose spawned tab never appeared. Runs detached from the tab
+# that called restore_advance.
+# Usage: restore_chain_watchdog <config_dir>
+restore_chain_watchdog() {
+  local config_dir="$1"
+  restore_chain_tab_started "$config_dir" && return 0
+  restore_log "$config_dir" "chain tab never started; reviving with a window"
+  # Re-issued because the window earns its pop by claiming a ticket, and the
+  # original is close to the 60s claim window restore_claim_chain_ticket
+  # enforces. A tab that turns up late simply claims whichever ticket is
+  # outstanding; whoever loses the race pops nothing and closes as surplus.
+  restore_issue_chain_ticket "$config_dir"
   terminal_launch_window
+}
+
+# Wait for the tab restore_advance just spawned to claim its chain ticket.
+# Returns 0 as soon as the ticket disappears, 1 if it is still unclaimed when
+# the wait runs out. The default must clear a COLD chain tab, which pays an
+# update check before it pops — one has been observed 57s behind the tab that
+# spawned it — while staying inside the ticket's 60s claim window.
+# Usage: restore_chain_tab_started <config_dir>
+restore_chain_tab_started() {
+  local config_dir="$1"
+  local ticket="$config_dir/restore-chain-ticket"
+  local default_wait=45
+  # Tests drive the unclaimed path on every advance; the real wait would add
+  # 45s per spawn to the suite.
+  [[ "${WISP_DECK_TESTING:-}" == "1" ]] && default_wait=1
+  local limit="${WISP_DECK_CHAIN_TAB_WAIT:-$default_wait}"
+  case "$limit" in '' | *[!0-9]*) limit="$default_wait" ;; esac
+  local ticks=$((limit * 4)) i=0
+  while [ "$i" -lt "$ticks" ]; do
+    [ -f "$ticket" ] || return 0
+    sleep 0.25
+    i=$((i + 1))
+  done
+  [ -f "$ticket" ] && return 1
   return 0
 }
 

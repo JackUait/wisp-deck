@@ -116,7 +116,12 @@ func writeDrainMarker(t *testing.T, dir string, age time.Duration) {
 }
 
 func TestRestoreSurplusLaunch_participant_with_empty_pop_is_surplus(t *testing.T) {
+	// The queue is still being drained (fresh mtime), so a participant that
+	// popped nothing really is a surplus tab of the storm. A participant whose
+	// chain has DIED is a different case and must keep the picker — see
+	// TestRestoreSurplusLaunch_participant_of_a_dead_chain_is_not_surplus.
 	dir := t.TempDir()
+	writeTempFile(t, dir, "restore-queue", "boot-1|/p/app|claude\n")
 	_, code := runBashFunc(t, "lib/session-restore.sh", "restore_surplus_launch",
 		[]string{dir, "1", "0"}, nil)
 	assertExitCode(t, code, 0)
@@ -226,6 +231,12 @@ func wrapperHomeWithMocks(t *testing.T) (home, confDir, tuiRec string) {
 		"wisp-deck-tui": "#!/bin/bash\nprintf '%s\\n' \"$*\" >> \"$GT_TUI_REC\"\n" +
 			"case \"$*\" in *main-menu*) echo '{\"action\":\"quit\"}';; esac\nexit 0\n",
 		"sysctl":        "#!/bin/bash\necho \"{ sec = 12345, usec = 1 } Thu Jul  2 01:01:01 2026\"\n",
+		// Both spawn paths of restore_advance are stubbed inert: unmocked, they
+		// drive the REAL Ghostty — osascript sends Cmd+T to the developer's
+		// window, and `open -na Ghostty` starts a window that runs the real
+		// wrapper against the real HOME and drains the real restore queue.
+		"osascript": "#!/bin/bash\nexit 1\n",
+		"open":      "#!/bin/bash\nexit 0\n",
 	}
 	for name, body := range mocks {
 		if err := os.WriteFile(filepath.Join(binDir, name), []byte(body), 0755); err != nil {

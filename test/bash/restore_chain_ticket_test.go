@@ -82,7 +82,9 @@ func TestRestoreAdvance_issues_chain_ticket_before_spawning_tab(t *testing.T) {
 	win := filepath.Join(dir, "win")
 	_, code := runRestoreAdvance(t, dir, trig, win, 0)
 	assertExitCode(t, code, 0)
-	data, err := os.ReadFile(filepath.Join(dir, "restore-chain-ticket"))
+	// Captured by the trigger stub at spawn time, so a ticket issued only
+	// afterwards would read empty here.
+	data, err := os.ReadFile(filepath.Join(dir, "ticket-at-spawn"))
 	if err != nil {
 		t.Fatalf("restore_advance did not issue a chain ticket: %v", err)
 	}
