@@ -284,14 +284,16 @@ type MainMenuModel struct {
 	// GitHub-URL add-project state: a clone is in flight. Keys are ignored
 	// (except Ctrl+C) until githubCloneDoneMsg arrives.
 	cloning bool
-	// cloneSlug/cloneDest label the in-flight clone in the status slot;
-	// cloneFrame drives its spinner (advanced by cloneTickMsg).
-	cloneSlug  string
-	cloneDest  string
-	cloneFrame int
+	// cloneSlug labels the in-flight clone in the status slot.
+	cloneSlug string
+	// clonePct is what the bar draws. The clone goroutine reports into
+	// cloneProg, and cloneTickMsg copies the reading across, so View stays a
+	// pure read of model state.
+	clonePct  float64
+	cloneProg *cloneProgress
 	// gitClone runs the actual clone; nil means real `git clone`. Injectable
 	// so tests never touch the network.
-	gitClone func(url, dest string) error
+	gitClone func(url, dest string, onProgress func(float64)) error
 
 	// Delete mode
 	deleteMode           bool
@@ -1910,7 +1912,9 @@ func (m *MainMenuModel) NameErr() error { return m.nameErr }
 func (m *MainMenuModel) Cloning() bool { return m.cloning }
 
 // SetGitCloneForTest injects the clone function so tests never hit the network.
-func (m *MainMenuModel) SetGitCloneForTest(fn func(url, dest string) error) { m.gitClone = fn }
+func (m *MainMenuModel) SetGitCloneForTest(fn func(url, dest string, onProgress func(float64)) error) {
+	m.gitClone = fn
+}
 
 // NameWarnShown returns true when the duplicate-name soft-warn is active.
 func (m *MainMenuModel) NameWarnShown() bool { return m.nameWarnShown }
@@ -2316,7 +2320,9 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case cloneTickMsg:
 		if m.cloning {
-			m.cloneFrame++
+			if m.cloneProg != nil {
+				m.clonePct = m.cloneProg.fraction()
+			}
 			return m, cloneTickCmd()
 		}
 		return m, nil
@@ -3193,22 +3199,20 @@ func (m *MainMenuModel) startGitHubClone(cloneURL, name string) (tea.Model, tea.
 	m.nameErr = nil
 	m.cloning = true
 	m.cloneSlug = repoSlug(cloneURL)
-	m.cloneDest = dest
-	m.cloneFrame = 0
+	m.clonePct = 0
+	progress := &cloneProgress{}
+	m.cloneProg = progress
 	return m, tea.Batch(func() tea.Msg {
-		return githubCloneDoneMsg{name: name, dest: dest, err: clone(cloneURL, dest)}
+		return githubCloneDoneMsg{name: name, dest: dest, err: clone(cloneURL, dest, progress.set)}
 	}, cloneTickCmd())
 }
 
-// cloneTickMsg animates the clone spinner. It needs its own ticker: bobTickCmd
-// runs only when the mascot is animated, so a spinner hung off it would sit
-// frozen for anyone running Mascot [None].
+// cloneTickMsg refreshes the clone progress bar. It needs its own ticker:
+// bobTickCmd runs only when the mascot is animated, so a bar hung off it would
+// sit frozen for anyone running Mascot [None].
 type cloneTickMsg struct{}
 
-// cloneSpinnerFrames are the braille spinner frames, indexed by cloneFrame.
-var cloneSpinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-
-// cloneTickCmd schedules the next spinner frame.
+// cloneTickCmd schedules the next progress-bar frame.
 func cloneTickCmd() tea.Cmd {
 	return tea.Tick(80*time.Millisecond, func(time.Time) tea.Msg { return cloneTickMsg{} })
 }
@@ -3247,19 +3251,6 @@ func repoSlug(cloneURL string) string {
 	return strings.TrimSuffix(s, "/")
 }
 
-// defaultGitClone runs a real `git clone url dest`.
-func defaultGitClone(url, dest string) error {
-	out, err := exec.Command("git", "clone", "--", url, dest).CombinedOutput()
-	if err != nil {
-		msg := strings.TrimSpace(string(out))
-		if msg == "" {
-			return err
-		}
-		return fmt.Errorf("%s", msg)
-	}
-	return nil
-}
-
 // setAddProjectErr shows an add-project error where the user is looking: the
 // browser's status slot when it is open, otherwise the form's name row.
 func (m *MainMenuModel) setAddProjectErr(err error) {
@@ -3274,7 +3265,8 @@ func (m *MainMenuModel) setAddProjectErr(err error) {
 func (m *MainMenuModel) applyGitHubCloneDone(msg githubCloneDoneMsg) (tea.Model, tea.Cmd) {
 	m.cloning = false
 	m.cloneSlug = ""
-	m.cloneDest = ""
+	m.clonePct = 0
+	m.cloneProg = nil
 	if msg.err != nil {
 		m.setAddProjectErr(fmt.Errorf("clone failed: %v", msg.err))
 		return m, nil
@@ -3818,9 +3810,8 @@ func (m *MainMenuModel) cursorBodyRow() int {
 // collision check), the discoverability tip, or nothing.
 func (m *MainMenuModel) addProjectStatusLine(dimStyle, errorStyle lipgloss.Style) string {
 	if m.cloning {
-		frame := cloneSpinnerFrames[m.cloneFrame%len(cloneSpinnerFrames)]
 		accentStyle := lipgloss.NewStyle().Foreground(m.theme.Accent)
-		return accentStyle.Render(TruncateMiddle(frame+" Cloning "+m.cloneSlug+" → "+abbreviateHome(m.cloneDest), menuContentWidth-2))
+		return renderCloneStatus(accentStyle, m.cloneSlug, m.clonePct, menuContentWidth-2)
 	}
 	if m.inputErr != nil {
 		return errorStyle.Render(TruncateMiddle("✗ "+m.inputErr.Error(), menuContentWidth-2))

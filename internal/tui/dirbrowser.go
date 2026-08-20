@@ -225,12 +225,10 @@ func (m *MainMenuModel) browserInnerLines() []string {
 		lines = append(lines, m.browserListLines()...)
 	}
 
-	// Status slot: clone spinner, navigation error, or blank — always one line.
+	// Status slot: clone progress, navigation error, or blank — always one line.
 	switch {
 	case m.cloning:
-		frame := cloneSpinnerFrames[m.cloneFrame%len(cloneSpinnerFrames)]
-		status := frame + " Cloning " + m.cloneSlug + " → " + abbreviateHome(m.cloneDest)
-		lines = append(lines, accentStyle.Render(TruncateMiddle(status, browserCardInnerWidth)))
+		lines = append(lines, renderCloneStatus(accentStyle, m.cloneSlug, m.clonePct, browserCardInnerWidth))
 	case b.Err() != "":
 		lines = append(lines, errorStyle.Render(TruncateMiddle("✗ "+b.Err(), browserCardInnerWidth)))
 	default:

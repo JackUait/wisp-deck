@@ -210,7 +210,7 @@ func TestBrowser_DuplicateNameWarnsThenAddsOnSecondChoose(t *testing.T) {
 
 func TestBrowser_GitHubURLEnterStartsCloneInBrowser(t *testing.T) {
 	m, _ := newBrowserAddMenu(t)
-	m.gitClone = func(url, dest string) error { return os.MkdirAll(dest, 0o755) }
+	m.gitClone = func(url, dest string, onProgress func(float64)) error { return os.MkdirAll(dest, 0o755) }
 	m = send(t, m, runes("https://github.com/owner/my-repo")...)
 	res, cmd := m.Update(bkey(tea.KeyEnter))
 	m = res.(*MainMenuModel)
@@ -227,7 +227,7 @@ func TestBrowser_GitHubURLEnterStartsCloneInBrowser(t *testing.T) {
 
 func TestBrowser_CloneDoneAddsProjectAndCloses(t *testing.T) {
 	m, dir := newBrowserAddMenu(t)
-	m.gitClone = func(url, dest string) error { return os.MkdirAll(dest, 0o755) }
+	m.gitClone = func(url, dest string, onProgress func(float64)) error { return os.MkdirAll(dest, 0o755) }
 	m = send(t, m, runes("https://github.com/owner/my-repo")...)
 	res, _ := m.Update(bkey(tea.KeyEnter))
 	m = res.(*MainMenuModel)
@@ -248,7 +248,7 @@ func TestBrowser_CloneDoneAddsProjectAndCloses(t *testing.T) {
 
 func TestBrowser_CloneFailureShowsErrorInBrowser(t *testing.T) {
 	m, _ := newBrowserAddMenu(t)
-	m.gitClone = func(url, dest string) error { return nil }
+	m.gitClone = func(url, dest string, onProgress func(float64)) error { return nil }
 	m = send(t, m, runes("https://github.com/owner/my-repo")...)
 	res, _ := m.Update(bkey(tea.KeyEnter))
 	m = res.(*MainMenuModel)
@@ -264,7 +264,7 @@ func TestBrowser_CloneFailureShowsErrorInBrowser(t *testing.T) {
 
 func TestBrowser_KeysFrozenWhileCloning(t *testing.T) {
 	m, _ := newBrowserAddMenu(t)
-	m.gitClone = func(url, dest string) error { return os.MkdirAll(dest, 0o755) }
+	m.gitClone = func(url, dest string, onProgress func(float64)) error { return os.MkdirAll(dest, 0o755) }
 	m = send(t, m, runes("https://github.com/owner/my-repo")...)
 	res, _ := m.Update(bkey(tea.KeyEnter))
 	m = res.(*MainMenuModel)
@@ -274,16 +274,22 @@ func TestBrowser_KeysFrozenWhileCloning(t *testing.T) {
 	}
 }
 
-func TestBrowser_CardShowsCloneSpinner(t *testing.T) {
+func TestBrowser_CardShowsCloneProgressBar(t *testing.T) {
 	m, _ := newBrowserAddMenu(t)
-	m.gitClone = func(url, dest string) error { return os.MkdirAll(dest, 0o755) }
+	m.gitClone = func(url, dest string, onProgress func(float64)) error { return os.MkdirAll(dest, 0o755) }
 	m = send(t, m, runes("https://github.com/owner/my-repo")...)
 	res, _ := m.Update(bkey(tea.KeyEnter))
 	m = res.(*MainMenuModel)
-	// Long destinations middle-truncate the status line, so assert the prefix.
+	m.cloneProg.set(0.45)
+	res, _ = m.Update(cloneTickMsg{})
+	m = res.(*MainMenuModel)
+
 	raw := stripAnsi(strings.Join(m.browserInnerLines(), "\n"))
-	if !strings.Contains(raw, "⠋ Cloning owner/my-re") {
-		t.Errorf("browser card should show the clone spinner, got:\n%s", raw)
+	if !strings.Contains(raw, "Cloning owner/my-repo") {
+		t.Errorf("browser card should name the cloning repo, got:\n%s", raw)
+	}
+	if !strings.Contains(raw, "█") || !strings.Contains(raw, "45%") {
+		t.Errorf("browser card should show the clone progress bar, got:\n%s", raw)
 	}
 	if !strings.Contains(raw, "Ctrl+C quit") {
 		t.Errorf("footer while cloning should advertise only Ctrl+C, got:\n%s", raw)

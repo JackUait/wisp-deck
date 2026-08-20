@@ -125,7 +125,7 @@ func startCloneMenu(t *testing.T) *MainMenuModel {
 	m.pathInput.SetValue("https://github.com/owner/my-repo")
 	m.maybeAutoDeriveName()
 	m.advanceToNameField()
-	m.gitClone = func(url, dest string) error { return os.MkdirAll(dest, 0o755) }
+	m.gitClone = func(url, dest string, onProgress func(float64)) error { return os.MkdirAll(dest, 0o755) }
 	_, cmd := m.submitInputMode()
 	if cmd == nil {
 		t.Fatal("submit with a GitHub URL should dispatch a clone cmd")
@@ -136,36 +136,53 @@ func startCloneMenu(t *testing.T) *MainMenuModel {
 	return m
 }
 
-func TestAddProjectBox_CloningShowsSpinnerWithDestination(t *testing.T) {
+func TestAddProjectBox_CloningShowsAProgressBar(t *testing.T) {
 	m := startCloneMenu(t)
 	raw := stripAnsi(m.renderInputBox())
 
-	if !strings.Contains(raw, "⠋ Cloning owner/my-repo → ") {
-		t.Errorf("cloning state should show a spinner with repo and destination, got:\n%s", raw)
+	if !strings.Contains(raw, "Cloning owner/my-repo") {
+		t.Errorf("cloning state should name the repo, got:\n%s", raw)
 	}
-	if strings.Contains(raw, "Cloning repository…") {
-		t.Errorf("the old static cloning row should be gone, got:\n%s", raw)
+	if !strings.Contains(raw, "░") || !strings.Contains(raw, "0%") {
+		t.Errorf("cloning state should show a progress bar at 0%%, got:\n%s", raw)
+	}
+	for _, frame := range []string{"⠋", "⠙", "⠹"} {
+		if strings.Contains(raw, frame) {
+			t.Errorf("the spinner should be gone, got:\n%s", raw)
+		}
 	}
 	if !strings.Contains(raw, "Ctrl+C quit") {
 		t.Errorf("footer while cloning should advertise only Ctrl+C, got:\n%s", raw)
 	}
 }
 
-func TestCloneTick_AdvancesSpinnerAndStopsWhenDone(t *testing.T) {
+func TestCloneTick_PublishesGitsProgressAndStopsWhenDone(t *testing.T) {
 	m := startCloneMenu(t)
+	m.cloneProg.set(0.5)
 
 	_, cmd := m.Update(cloneTickMsg{})
 	if cmd == nil {
 		t.Error("tick while cloning should re-arm the ticker")
 	}
 	raw := stripAnsi(m.renderInputBox())
-	if !strings.Contains(raw, "⠙ Cloning") {
-		t.Errorf("tick should advance the spinner frame, got:\n%s", raw)
+	if !strings.Contains(raw, "█") || !strings.Contains(raw, "50%") {
+		t.Errorf("tick should publish what the clone reported, got:\n%s", raw)
 	}
 
 	m.cloning = false
 	if _, cmd := m.Update(cloneTickMsg{}); cmd != nil {
 		t.Error("ticker must stop once the clone is finished")
+	}
+}
+
+func TestCloneDone_ClearsTheBar(t *testing.T) {
+	m := startCloneMenu(t)
+	m.cloneProg.set(0.5)
+	m.Update(cloneTickMsg{})
+	m.Update(githubCloneDoneMsg{name: "my-repo", dest: "/tmp/my-repo", err: fmt.Errorf("boom")})
+
+	if m.clonePct != 0 || m.cloneProg != nil {
+		t.Errorf("a finished clone must leave no progress behind: pct=%v prog=%v", m.clonePct, m.cloneProg)
 	}
 }
 

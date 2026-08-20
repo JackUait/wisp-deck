@@ -70,7 +70,7 @@ func TestMainMenu_AddProject_GitHubURL_ClonesIntoHomeAndAddsProject(t *testing.T
 	m, projFile, dir := newGitHubAddMenu(t, "https://github.com/owner/my-repo")
 
 	var gotURL, gotDest string
-	m.SetGitCloneForTest(func(url, dest string) error {
+	m.SetGitCloneForTest(func(url, dest string, onProgress func(float64)) error {
 		gotURL, gotDest = url, dest
 		return os.MkdirAll(dest, 0755)
 	})
@@ -116,7 +116,7 @@ func TestMainMenu_AddProject_GitHubURL_ClonesIntoHomeAndAddsProject(t *testing.T
 
 func TestMainMenu_AddProject_GitHubURL_CloneFailureShowsError(t *testing.T) {
 	m, projFile, _ := newGitHubAddMenu(t, "https://github.com/owner/my-repo")
-	m.SetGitCloneForTest(func(url, dest string) error {
+	m.SetGitCloneForTest(func(url, dest string, onProgress func(float64)) error {
 		return fmt.Errorf("repository not found")
 	})
 
@@ -150,7 +150,7 @@ func TestMainMenu_AddProject_GitHubURL_ExistingDestBlocksClone(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "my-repo"), 0755)
 
 	cloneCalled := false
-	m.SetGitCloneForTest(func(url, dest string) error {
+	m.SetGitCloneForTest(func(url, dest string, onProgress func(float64)) error {
 		cloneCalled = true
 		return nil
 	})
@@ -174,7 +174,7 @@ func TestMainMenu_AddProject_GitHubURL_ExistingDestBlocksClone(t *testing.T) {
 
 func TestMainMenu_AddProject_GitHubURL_EnterWhileCloningIsNoop(t *testing.T) {
 	m, _, _ := newGitHubAddMenu(t, "https://github.com/owner/my-repo")
-	m.SetGitCloneForTest(func(url, dest string) error { return os.MkdirAll(dest, 0755) })
+	m.SetGitCloneForTest(func(url, dest string, onProgress func(float64)) error { return os.MkdirAll(dest, 0755) })
 
 	result1, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	mm1 := result1.(*tui.MainMenuModel)
@@ -209,7 +209,7 @@ func TestMainMenu_AddProject_GitHubURL_SSHClonesIntoHome(t *testing.T) {
 	m.SetPathInputValue("git@github.com:owner/ssh-repo.git")
 
 	var gotURL, gotDest string
-	m.SetGitCloneForTest(func(url, dest string) error {
+	m.SetGitCloneForTest(func(url, dest string, onProgress func(float64)) error {
 		gotURL, gotDest = url, dest
 		return os.MkdirAll(dest, 0755)
 	})
@@ -233,7 +233,7 @@ func TestMainMenu_AddProject_GitHubURL_SSHClonesIntoHome(t *testing.T) {
 
 func TestMainMenu_AddProject_GitHubURL_ViewShowsCloningState(t *testing.T) {
 	m, _, _ := newGitHubAddMenu(t, "https://github.com/owner/my-repo")
-	m.SetGitCloneForTest(func(url, dest string) error { return os.MkdirAll(dest, 0755) })
+	m.SetGitCloneForTest(func(url, dest string, onProgress func(float64)) error { return os.MkdirAll(dest, 0755) })
 
 	result1, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	mm1 := result1.(*tui.MainMenuModel)

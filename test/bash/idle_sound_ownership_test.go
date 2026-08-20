@@ -10953,10 +10953,10 @@ func auditedProductionProcessCalls() map[string]int {
 		`internal/tui/ai_tools_panel.go:bashLibCmd:exec.Command("bash", "-c", script)`:                                                                      1,
 		`internal/tui/imagedecode.go:sipsConvert:exec.CommandContext(ctx, "sips", args...)`:                                                                 1,
 		`internal/tui/imagedecode.go:sipsExceedsPreviewCeiling:exec.CommandContext(ctx, "sips", "-g", "pixelWidth", "-g", "pixelHeight", path)`:             1,
+		`internal/tui/cloneprogress.go:defaultGitClone:exec.Command("git", "clone", "--progress", "--", url, dest)`:                                         1,
 		`internal/tui/imageview.go:openInPreview:exec.Command("open", "-a", "Preview", path)`:                                                               1,
 		`internal/tui/mainmenu.go:MainMenuModel.Update:exec.Command("git", "-C", projectPath, "worktree", "add", worktreePath, branch)`:                     1,
 		`internal/tui/mainmenu.go:MainMenuModel.selectCurrent:exec.Command("git", "-C", m.projects[projectIdx].Path, "worktree", "list", "--porcelain")`:    1,
-		`internal/tui/mainmenu.go:defaultGitClone:exec.Command("git", "clone", "--", url, dest)`:                                                            1,
 	}
 }
 
