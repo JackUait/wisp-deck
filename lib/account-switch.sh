@@ -199,6 +199,21 @@ _resolve_dir() {
   printf '%s\n' "${resolved:-$dir}"
 }
 
+# _nearest_existing_ancestor <path> — print the closest directory at or above
+# <path> that still exists, or nothing when none does. Used to re-root a check
+# whose anchor was deleted out from under it.
+_nearest_existing_ancestor() {
+  local dir="$1"
+  while [ -n "$dir" ] && [ "$dir" != "/" ]; do
+    if [ -d "$dir" ]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+    dir="${dir%/*}"
+  done
+  return 0
+}
+
 # _worktree_choice_ready <project_dir> <path> — revalidate a chosen checkout
 # immediately before mutation. The popup can sit open while worktrees are
 # removed elsewhere, and an unvalidated path would respawn all three panes into
@@ -1756,13 +1771,25 @@ follow_agent_checkout() {
     _rc_tools="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_codex_cmd="" \
     _rc_tool_pref="" _rc_attention_root="" _rc_attention_descriptor="" \
     _rc_config_pointer="" _rc_configs_dir="" _rc_configs_list=""
+  local anchor
   [ -n "$new_dir" ] || return 1
   [ -f "$relaunch_file" ] || return 1
   _read_relaunch_ctx "$relaunch_file"
 
+  # ExitWorktree's documented clean exit REMOVES the worktree as it leaves, so
+  # the tab is asked to follow home from a checkout that no longer exists.
+  # Validating against a deleted anchor reports no checkouts at all, which would
+  # refuse the snap-back and strand the tab on a dead directory forever. Re-root
+  # the question at the closest directory that survived: a worktree Claude
+  # created lives at <main>/.claude/worktrees/<name>, so walking up reaches the
+  # repository that owned it — and any other repository still fails the check.
+  anchor="$_rc_project_dir"
+  [ -d "$anchor" ] || anchor="$(_nearest_existing_ancestor "$anchor")"
+  [ -n "$anchor" ] || return 1
+
   # The agent can cd anywhere; only a checkout git itself reports for THIS
   # project may move the session.
-  _worktree_choice_ready "$_rc_project_dir" "$new_dir" || return 1
+  _worktree_choice_ready "$anchor" "$new_dir" || return 1
   # Compared (and applied) in git's own terms — see _resolve_dir.
   new_dir="$(_resolve_dir "$new_dir")"
   [ "$new_dir" = "$(_resolve_dir "$_rc_project_dir")" ] && return 0

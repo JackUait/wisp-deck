@@ -3,6 +3,7 @@ package bash_test
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -156,4 +157,76 @@ func TestFollowAgentCheckout_never_respawns_the_spare_as_a_ledger(t *testing.T) 
 			t.Fatalf("a session with no ledger respawned one anyway: %q", line)
 		}
 	}
+}
+
+// worktreeFollowNestedRepo builds the layout EnterWorktree actually produces:
+// the worktree lives at <main>/.claude/worktrees/<name>. Returns (main, worktree).
+func worktreeFollowNestedRepo(t *testing.T, dir string) (string, string) {
+	t.Helper()
+	repo := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	git("commit", "-q", "--allow-empty", "-m", "init")
+	wt := filepath.Join(repo, ".claude", "worktrees", "feature")
+	git("worktree", "add", "-q", "-b", "feature", wt)
+	return resolved(t, repo), resolved(t, wt)
+}
+
+// ExitWorktree's documented clean exit removes the worktree as it leaves, so the
+// tab is asked to follow home FROM a checkout that no longer exists. Validating
+// against a deleted anchor reports no checkouts at all, which would refuse the
+// snap-back and strand the tab on a dead directory forever: a ledger diffing
+// nothing, and a crash-restore that reopens a path that is gone.
+func TestFollowAgentCheckout_follows_home_after_the_worktree_is_removed(t *testing.T) {
+	dir := t.TempDir()
+	repo, wt := worktreeFollowNestedRepo(t, dir)
+	relaunch := worktreeSwitchCtx(t, dir, wt)
+
+	out, err := exec.Command("git", "-C", repo, "worktree", "remove", "--force", wt).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git worktree remove: %v\n%s", err, out)
+	}
+
+	ctx, logOut, code := followTmuxLog(t, dir, relaunch, repo, "")
+	assertExitCode(t, code, 0)
+	if !strings.Contains(ctx, "project_dir="+repo+"\n") {
+		t.Fatalf("relaunch context still points at the removed worktree:\n%s", ctx)
+	}
+	assertContains(t, logOut, "set-environment WISP_DECK_PATH "+repo)
+	assertContains(t, logOut, "respawn-pane -k -t %2")
+}
+
+// The dead anchor must not become a way in. Walking up from a removed checkout
+// only ever re-roots the question at the repository that owned it; a directory
+// belonging to some other repository is still refused.
+func TestFollowAgentCheckout_removed_worktree_does_not_admit_a_foreign_repo(t *testing.T) {
+	dir := t.TempDir()
+	repo, wt := worktreeFollowNestedRepo(t, dir)
+	other, _ := worktreeSwitchRepo(t, t.TempDir())
+	relaunch := worktreeSwitchCtx(t, dir, wt)
+
+	out, err := exec.Command("git", "-C", repo, "worktree", "remove", "--force", wt).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git worktree remove: %v\n%s", err, out)
+	}
+
+	_, logOut, code := followTmuxLog(t, dir, relaunch, other, "")
+	if code == 0 {
+		t.Fatal("follow_agent_checkout accepted a checkout of a different repository")
+	}
+	assertNotContains(t, logOut, "respawn-pane")
+	assertNotContains(t, logOut, "set-environment WISP_DECK_PATH")
 }

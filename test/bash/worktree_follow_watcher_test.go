@@ -189,3 +189,54 @@ func TestAttentionWatcherFollowAgent_is_disabled_without_its_inputs(t *testing.T
 		}
 	}
 }
+
+// The chain end to end, through the real tick: an attention observation whose
+// published working directory is a worktree moves the tab there. Every other
+// test in this file calls attention_watcher_follow_agent directly, so without
+// this one the tick could stop calling it and nothing would notice.
+func TestAttentionWatcherTick_follows_the_agent_into_a_worktree(t *testing.T) {
+	dir := t.TempDir()
+	repo, wt := worktreeSwitchRepo(t, dir)
+	relaunch := worktreeSwitchCtx(t, dir, repo)
+
+	root := filepath.Join(dir, "attention")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	generation := "generation.follow1"
+	state := writeAttentionState(t, root, generation, "1", "working", "-")
+	descriptor := writeAttentionDescriptor(t, root, generation, "claude", state)
+	if err := os.WriteFile(filepath.Join(root, generation, "cwd"), []byte(wt+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := filepath.Join(dir, "tmux.log")
+	bin := worktreeSwitchMockTmux(t, dir, "", rec)
+	env := buildEnv(t, []string{bin}, "HOME="+dir)
+	lib := filepath.Join(projectRoot(t), "lib")
+
+	_, code := runBashSnippet(t, fmt.Sprintf(`
+source %q
+source %q
+apply_tab_title() { :; }
+keep_awake_tick() { :; }
+attention_watcher_reset
+attention_watcher_tick session project full tmux %q %q %q %q
+wait
+`,
+		filepath.Join(lib, "tui.sh"), filepath.Join(lib, "tab-title-watcher.sh"),
+		descriptor, filepath.Join(dir, "config"), relaunch, lib), env)
+	assertExitCode(t, code, 0)
+
+	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q 2>/dev/null", rec), nil)
+	assertContains(t, logOut, "set-environment WISP_DECK_PATH "+wt)
+	assertNotContains(t, logOut, "respawn-pane -k -t %1")
+
+	ctx, err := os.ReadFile(relaunch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(ctx), "project_dir="+wt+"\n") {
+		t.Fatalf("the tick never retargeted the session:\n%s", ctx)
+	}
+}
