@@ -21,7 +21,14 @@ import (
 )
 
 const (
-	defaultCodexSetupTimeout  = 3 * time.Second
+	// Only a hung app-server may hit this; a dead one is reported by its Done
+	// channel and never waits. So it is sized for the slowest healthy start,
+	// not for a typical one: a cold `codex app-server` exec pays page-in and
+	// signature validation over a few hundred MB of signed Mach-O before it
+	// binds anything (measured 7.4s idle, and macOS serializes those
+	// assessments, so concurrent cold launches stack). Missing it is fatal
+	// once IdentityFile is set, which is every wisp Codex session.
+	defaultCodexSetupTimeout  = 60 * time.Second
 	defaultCodexReconnectWait = 100 * time.Millisecond
 	defaultCodexServerGrace   = 300 * time.Millisecond
 	defaultCodexSocketPoll    = 10 * time.Millisecond
