@@ -542,6 +542,62 @@ Guarded by `TestClaudeReducerClearedConversationRetiresAttention`,
 `TestClaudeRegistryMapperReportsTheSessionsCurrentConversation`, and
 `TestClaudeRegistryObservation_carries_the_conversation`.
 
+### A tab follows its agent's working directory, not the worktrees it creates
+
+An agent that enters a git worktree used to leave the rest of the tab behind:
+the ledger kept diffing the checkout nobody was working in, the spare terminal
+sat in it, and a crash-restore reopened it. The tab now follows.
+
+**The signal is the agent's cwd, never `git worktree list`.** A bare
+`git worktree add` does not move the agent — following it would detach the
+ledger from where the agent actually works — and subagent worktrees and this
+repo's own test suite create worktrees constantly, so a list-poll would yank the
+ledger into a temp checkout mid-test-run. Claude's account-local registry record
+carries `cwd`, and it moves in BOTH directions (`EnterWorktree` and
+`ExitWorktree`), so one field drives the follow and the snap back out. This is
+Claude-only by construction, not by omission: no other agent moves its own
+working directory.
+
+- **No second discovery path.** `ClaudeRegistryMapper` already finds and
+  validates that record every poll (live PID, `procStart`, launch-tree scope),
+  so it reports the cwd and `claude-attention` publishes it to
+  `<generation>/cwd`. It is a **sidecar, not a sixth field** of the attention
+  state: that record is a fixed five-field versioned protocol every consumer
+  pins, and a location is not a semantic phase. Like `SessionID`, the cwd always
+  comes from the interactive record — a parked session's job record speaks for
+  the status only.
+- **The agent pane is never respawned.** `_apply_worktree_switch` relaunches it
+  fresh, which is right for the switcher's own row (the user chose it) and
+  destructive here: the conversation running in that pane is the one that just
+  created the worktree. Its non-agent half is `_retarget_session_context` +
+  `_retarget_session_side_panes`, and the follow calls only those.
+- **`ExitWorktree` removes the worktree as it leaves,** so the tab is asked to
+  follow home FROM a checkout that no longer exists — and `git worktree list`
+  from a deleted directory reports nothing, refusing the snap-back and stranding
+  the tab on a dead path forever. A dead anchor re-roots at the closest surviving
+  ancestor; a Claude worktree lives at `<main>/.claude/worktrees/<name>`, so that
+  reaches the repository that owned it while any other repository still fails.
+- **The steady state does not fork.** Both watcher reads are builtins, and only a
+  directory differing from the session's own reaches the shell that validates it.
+  Each distinct directory is attempted **once** — a refused one (the agent cd'd
+  out of the project) would otherwise spawn a shell twice a second — and
+  convergence clears the memo, so re-entering a worktree still follows.
+- **That shell is a fresh `bash`.** The wrapper may run under `bash --posix`
+  (Ghostty's `/bin/sh -c` launch), where the process substitution
+  `_session_worktrees` reads git through is disabled.
+- **A session that exits while still inside a worktree cannot snap back** — the
+  agent is gone — so the restore snapshot records the worktree path, and a
+  removed one restores nothing.
+
+Guarded by `test/bash/worktree_follow_test.go` (including
+`_never_respawns_the_agent_pane`, `_follows_home_after_the_worktree_is_removed`
+and `_never_respawns_the_spare_as_a_ledger` — the last a `read -r ledger spare`
+field-collapse this extraction fixed), `test/bash/worktree_follow_watcher_test.go`
+(`TestAttentionWatcherTick_follows_the_agent_into_a_worktree` is what pins the
+tick to the follow at all), `test/bash/worktree_follow_wiring_test.go`, and
+`TestClaudeRegistryMapperReportsTheSessionsWorkingDirectory` plus
+`TestWorkingDirectoryWriterPublishesBesideTheAttentionState`.
+
 ### Restore-queue pops are authorized, never ambient
 
 An interactive launch may consume a restore-queue entry only through
