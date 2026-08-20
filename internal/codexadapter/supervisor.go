@@ -21,14 +21,21 @@ import (
 )
 
 const (
-	// Only a hung app-server may hit this; a dead one is reported by its Done
-	// channel and never waits. So it is sized for the slowest healthy start,
-	// not for a typical one: a cold `codex app-server` exec pays page-in and
-	// signature validation over a few hundred MB of signed Mach-O before it
-	// binds anything (measured 7.4s idle, and macOS serializes those
-	// assessments, so concurrent cold launches stack). Missing it is fatal
-	// once IdentityFile is set, which is every wisp Codex session.
-	defaultCodexSetupTimeout  = 60 * time.Second
+	// Covers one exec of the Codex binary, so it is sized for the slowest
+	// healthy start rather than a typical one: a cold `codex app-server` pays
+	// page-in and signature validation over a few hundred MB of signed Mach-O
+	// before it binds anything (measured 4.8s on a cold inode, 7.4s through
+	// the npm wrapper, against 0.1-0.7s warm). Only a hung app-server can
+	// reach it — a dead one is reported by its Done channel and never waits —
+	// and missing it is fatal once IdentityFile is set, which is every wisp
+	// Codex session.
+	defaultCodexStartupTimeout = 60 * time.Second
+	// Every later wait talks to an app-server that is already running, so it
+	// must NOT be sized for a cold start. runObserverManager's reconnect loop
+	// cannot see that server die and retries until this window closes, so this
+	// is also how long a user keeps typing into a session that has already
+	// lost the identity it needs to be restorable.
+	defaultCodexSetupTimeout  = 3 * time.Second
 	defaultCodexReconnectWait = 100 * time.Millisecond
 	defaultCodexServerGrace   = 300 * time.Millisecond
 	defaultCodexSocketPoll    = 10 * time.Millisecond
@@ -317,10 +324,16 @@ func (s *CodexSupervisor) Run(ctx context.Context, options CodexSupervisorOption
 	if setupTimeout <= 0 {
 		setupTimeout = defaultCodexSetupTimeout
 	}
+	// An injected SetupTimeout governs both, so a test still bounds the whole
+	// run with one knob; only the production defaults differ.
+	startupTimeout := s.SetupTimeout
+	if startupTimeout <= 0 {
+		startupTimeout = defaultCodexStartupTimeout
+	}
 	observerConfig := ObserverConfig{SocketPath: socketPath, ClientVersion: options.ClientVersion}
 	var initial ObserverConnection
 	if remote {
-		setupContext, cancel := context.WithTimeout(ctx, setupTimeout)
+		setupContext, cancel := context.WithTimeout(ctx, startupTimeout)
 		if usingDefaultServer {
 			serverErr = waitForCodexSocketOrServer(setupContext, socketPath, defaultCodexSocketPoll, server.Done())
 		}

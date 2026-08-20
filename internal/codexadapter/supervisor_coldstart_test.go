@@ -3,9 +3,11 @@ package codexadapter
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -124,4 +126,45 @@ func bindCodexSocketLate(listenFile string, delay time.Duration, stop <-chan str
 		listener.Close()
 	}()
 	return nil
+}
+
+// The cold-start budget covers one exec of the Codex binary. The waits that
+// follow talk to an app-server that is already running, and their reconnect
+// loop cannot see that server die, so it spins until this window closes.
+// Sizing them for a cold start would leave a user typing into a session that
+// has already lost the identity it needs to be restorable.
+func TestCodexSupervisorVerdictOnAnObserverLostBeforeIdentityStaysPrompt(t *testing.T) {
+	options := supervisorOptions(t, "", "")
+	options.IdentityFile = filepath.Join(t.TempDir(), "session-identities", "lost.codex")
+	observer := newFakeObserverSession()
+	observer.next <- observerNext{err: errors.New("app-server died before any thread was observed")}
+	var opens atomic.Int32
+
+	supervisor := CodexSupervisor{
+		TempBase: shortCodexTempBase(t),
+		StartServer: func(context.Context, []string, io.Writer) (AppServerProcess, error) {
+			return &fakeServerProcess{}, nil
+		},
+		OpenObserver: func(_ context.Context, _ ObserverConfig) (ObserverConnection, error) {
+			if opens.Add(1) > 1 {
+				return nil, errors.New("observer remains unavailable")
+			}
+			return observer, nil
+		},
+		ReconnectDelay: time.Millisecond,
+		EnterRaw:       func() (func(), error) { return func() {}, nil },
+		RunPTY: func(ctx context.Context, _ []string, _ func(OSC9Event)) (CodexExitResult, error) {
+			<-ctx.Done()
+			return CodexExitResult{ExitCode: 1, Elapsed: options.FallbackWindow}, ctx.Err()
+		},
+	}
+
+	started := time.Now()
+	_, err := supervisor.Run(context.Background(), options)
+	if err == nil || !errors.Is(err, errCodexIdentityObserver) {
+		t.Fatalf("Run() error = %v, want the pre-identity observer verdict", err)
+	}
+	if elapsed := time.Since(started); elapsed > 15*time.Second {
+		t.Fatalf("pre-identity observer verdict took %s, want a prompt one", elapsed)
+	}
 }
