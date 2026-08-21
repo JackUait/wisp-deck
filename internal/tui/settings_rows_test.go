@@ -27,6 +27,7 @@ func TestSettingsRowConstants_are_distinct_and_contiguous(t *testing.T) {
 		"autoSwitch":   rowAutoSwitch,
 		"aiTools":      rowAITools,
 		"keepAwake":    rowKeepAwake,
+		"tabBar":       rowTabBar,
 	}
 	seen := map[int]string{}
 	max := -1

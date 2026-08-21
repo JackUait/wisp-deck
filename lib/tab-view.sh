@@ -15,7 +15,24 @@
 # server, the session env, or the relaunch context is missing.
 # See docs/superpowers/specs/2026-07-22-tab-view-design.md.
 
-# tab_view_status_left <project_name> [accent_colour] [ai_pane_left]
+# tab_view_mode [settings_file]
+# Print the tab bar's chip mode: `large` (numbered chip + the tab's own title
+# and the progress of the turn running in it) or `compact` (the bare numbered
+# chip). Absent file, absent key and unknown values all mean large — the mode
+# a session comes up in must never depend on a setting nobody has written yet.
+tab_view_mode() {
+  local file="${1:-${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings}" value=""
+  if [ -f "$file" ]; then
+    value="$(grep '^tab_bar=' "$file" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]')"
+  fi
+  case "$value" in
+    compact) printf 'compact\n' ;;
+    *) printf 'large\n' ;;
+  esac
+  return 0
+}
+
+# tab_view_status_left <project_name> [accent_colour] [ai_pane_left] [mode]
 # Print the outer status-left format. The bar is drawn as the AGENT pane's top
 # border rather than a full-width block: a plain border rule spans the ledger
 # column, a ┬ junction lands on the ledger/agent split (ai_pane_left - 1), and
@@ -27,14 +44,27 @@
 # indexes) and ride in named click ranges so the status mouse binds can
 # identify their target via #{mouse_status_range}. Inside #{W:...} every style
 # comma is escaped (#,) or tmux would read it as the iterator's format
-# separator. The bar's base style (the border rule: fg=colour238,
-# status-left-style set at launch) is restored after each coloured segment.
+# separator — a comma inside a nested #{...} belongs to that format and is left
+# alone. The bar's base style (the border rule: fg=colour238, status-left-style
+# set at launch) is restored after each coloured segment.
+#
+# A large chip renders two window options, @wd_tab_title and @wd_tab_progress,
+# which tab_view_stamp_windows keeps current. The progress segment is wrapped
+# in a #{?...} so an idle tab shows no dangling separator, and its dot carries
+# the accent so a working tab is findable at a glance from any other tab.
 tab_view_status_left() {
-  local project="$1" accent="${2:-209}" ai_left="${3:-}"
+  local project="$1" accent="${2:-209}" ai_left="${3:-}" mode="${4:-large}"
   local restore='#[default]'
   local num='#{e|+:#{window_index},1}'
   local active="#[fg=colour235#,bg=colour${accent}#,bold] ${num} ${restore}"
   local inactive="#[fg=colour245] ${num} ${restore}"
+  if [ "$mode" != "compact" ]; then
+    local title='#{@wd_tab_title}'
+    local prog_active="#{?#{@wd_tab_progress},#[fg=colour${accent}] ● #{@wd_tab_progress},}"
+    local prog_inactive="#{?#{@wd_tab_progress},#[fg=colour${accent}] ● #[fg=colour241]#{@wd_tab_progress},}"
+    active="#[fg=colour235#,bg=colour${accent}#,bold] ${num} ${restore} #[fg=colour252]${title}${prog_active}${restore}"
+    inactive="#[fg=colour240] ${num} #[fg=colour248]${title}${prog_inactive}${restore}"
+  fi
   local lead="" tail="" i
   if [ -n "$ai_left" ] && [ "$ai_left" -gt 1 ] 2>/dev/null; then
     for ((i = 0; i < ai_left - 1; i++)); do lead+='─'; done
@@ -45,19 +75,168 @@ tab_view_status_left() {
     "$lead" "$project" "$active" "$inactive" "$accent" "$tail"
 }
 
+# tab_view_title_budget <cols> <window_count>
+# Print how many characters of title one chip may spend. Every chip is rendered
+# from the SAME format, so they share one budget: it has to shrink as tabs are
+# opened or the bar runs past the window edge and tmux clips the right-hand
+# tabs out of existence. The reserve covers the ⬡ label and the [+] button
+# (20) plus each chip's own number badge, progress and gap (16).
+tab_view_title_budget() {
+  local cols="${1:-0}" windows="${2:-1}" avail budget
+  case "$cols" in ''|*[!0-9]*) cols=0 ;; esac
+  case "$windows" in ''|*[!0-9]*) windows=1 ;; esac
+  [ "$windows" -lt 1 ] && windows=1
+  avail=$((cols - 20))
+  budget=$((avail / windows - 16))
+  [ "$budget" -gt 32 ] && budget=32
+  [ "$budget" -lt 8 ] && budget=8
+  printf '%s\n' "$budget"
+  return 0
+}
+
+# tab_view_chip_title <pane_title> <host> <project> <max_chars>
+# Print the title a chip shows: the agent pane's own title, which is where the
+# tool stamps a summary of the turn it is running.
+#
+# Three things happen to it on the way to the bar. tmux defaults a pane's title
+# to the hostname, which means the agent has not named anything yet — the tab
+# is named after its project instead. The tool's leading glyph (Claude's ✳) is
+# dropped, since the chip already carries the accent. And every `#` is deleted:
+# tmux draws the status line by parsing #[...] out of the EXPANDED format, so a
+# model that titles a turn "fix #[fg=red]" would otherwise repaint the rest of
+# the bar in a colour of its choosing.
+tab_view_chip_title() {
+  local title="${1-}" host="${2-}" project="${3-}" max="${4:-24}" first rest
+  case "$max" in ''|*[!0-9]*) max=24 ;; esac
+  if [ -z "$title" ] || [ "$title" = "$host" ]; then
+    title="$project"
+  else
+    first="${title%% *}"
+    rest="${title#* }"
+    if [ "$first" != "$title" ]; then
+      case "$first" in
+        *[A-Za-z0-9]*) ;;
+        *) title="$rest" ;;
+      esac
+    fi
+  fi
+  title="${title//#/}"
+  title="${title//$'\t'/ }"
+  if [ ${#title} -gt "$max" ] && [ "$max" -gt 1 ]; then
+    title="${title:0:max-1}…"
+  fi
+  printf '%s\n' "$title"
+  return 0
+}
+
+# tab_view_progress_from_pane  (captured pane text on stdin)
+# Print the elapsed time of the turn the agent is running right now, or nothing
+# when it is idle.
+#
+# The agent's own live status line is the source: Claude prints
+# `✽ Hyperspacing… (8m 25s · ↓ 16.9k tokens)` while a turn runs and replaces it
+# in place with a past-tense `✻ Cooked for 1h 38m 25s` when the turn ends. The
+# ellipsis before the parenthesis is what separates the two — a summary is
+# history, not progress, and a tab reporting it would claim to be working
+# forever. The LAST match wins so a line further up the transcript can never
+# outrank the running one.
+tab_view_progress_from_pane() {
+  local line rest elapsed=""
+  while IFS= read -r line; do
+    case "$line" in
+      *'… ('*) ;;
+      *) continue ;;
+    esac
+    rest="${line#*'… ('}"
+    rest="${rest%%)*}"
+    rest="${rest%% · *}"
+    case "$rest" in
+      [0-9]*) elapsed="$rest" ;;
+    esac
+  done
+  [ -n "$elapsed" ] && printf '%s\n' "$elapsed"
+  return 0
+}
+
+# tab_view_stamp_windows <tmux_cmd> <session> <project> [host]
+# Refresh every window's @wd_tab_title / @wd_tab_progress from its agent pane,
+# so the large bar has something current to render.
+#
+# One list-panes call inventories the whole session — window, geometry, the
+# @gt_ai flag, the values already stamped and the pane's title — because this
+# runs twice a second in every open session on the machine. Only the agent pane
+# is captured, and a value that has not moved is not written again: a
+# set-option repaints the client, so stamping unconditionally would redraw
+# every bar on every tick.
+#
+# A window whose agent pane is missing (a layout still building, or one the
+# user broke apart) is skipped rather than stamped with a blank identity.
+tab_view_stamp_windows() {
+  local tmux_cmd="${1-}" session="${2-}" project="${3-}" host="${4-}"
+  local fmt inventory wid wwidth ai pid otitle oprog ptitle
+  local cols=0 windows=0 seen=$'\n' budget title prog
+  local sep=$'\037'
+
+  [ -n "$tmux_cmd" ] && [ -n "$session" ] || return 0
+  if [ -z "$host" ]; then
+    [ -n "${_TAB_VIEW_HOST:-}" ] || _TAB_VIEW_HOST="$(hostname 2>/dev/null)"
+    host="$_TAB_VIEW_HOST"
+  fi
+
+  # A tab is an IFS whitespace character, so bash collapses runs of them and a
+  # window with two empty fields in a row would shift every later field left.
+  # The unit separator is not whitespace, so empty fields survive it.
+  fmt="#{window_id}${sep}#{window_width}${sep}#{@gt_ai}${sep}#{pane_id}${sep}#{@wd_tab_title}${sep}#{@wd_tab_progress}${sep}#{pane_title}"
+  inventory="$("$tmux_cmd" list-panes -s -t "$session" -F "$fmt" 2>/dev/null)" || return 0
+  [ -n "$inventory" ] || return 0
+
+  while IFS="$sep" read -r wid wwidth ai pid otitle oprog ptitle; do
+    [ -n "$wid" ] || continue
+    case "$seen" in
+      *$'\n'"$wid"$'\n'*) ;;
+      *) seen="${seen}${wid}"$'\n'; windows=$((windows + 1)) ;;
+    esac
+    case "$wwidth" in
+      ''|*[!0-9]*) ;;
+      *) [ "$wwidth" -gt "$cols" ] && cols="$wwidth" ;;
+    esac
+  done <<< "$inventory"
+
+  budget="$(tab_view_title_budget "$cols" "$windows")"
+
+  while IFS="$sep" read -r wid wwidth ai pid otitle oprog ptitle; do
+    [ -n "$wid" ] && [ "$ai" = "1" ] && [ -n "$pid" ] || continue
+    title="$(tab_view_chip_title "$ptitle" "$host" "$project" "$budget")"
+    prog="$("$tmux_cmd" capture-pane -p -t "$pid" 2>/dev/null \
+      | tab_view_progress_from_pane)"
+    if [ "$title" != "$otitle" ]; then
+      "$tmux_cmd" set-option -w -t "$wid" @wd_tab_title "$title" 2>/dev/null || true
+    fi
+    if [ "$prog" != "$oprog" ]; then
+      "$tmux_cmd" set-option -w -t "$wid" @wd_tab_progress "$prog" 2>/dev/null || true
+    fi
+  done <<< "$inventory"
+  return 0
+}
+
 # tab_view_refresh_bar <tmux_cmd> <lib_dir> <session>
 # Recompute the bar from live session state — project name, the active tool's
-# accent, and the AI pane's current left offset — and re-set status-left so the
-# ┬ junction tracks the real pane split. Bound to the resize/layout hooks and
-# safe to call any time; fail-open like everything here.
+# accent, the AI pane's current left offset and the saved chip mode — and
+# re-set status-left so the ┬ junction tracks the real pane split and a
+# mid-session mode change reaches an open window. Bound to the resize/layout
+# hooks and safe to call any time; fail-open like everything here.
 tab_view_refresh_bar() {
   local tmux_cmd="$1" lib_dir="$2" session="$3"
-  local project tool accent ai_pane="" ai_left="" id flag
+  local project tool accent mode ai_pane="" ai_left="" id flag
   project="$(_tab_view_session_env "$tmux_cmd" "$session" WISP_DECK_PROJECT)"
   [ -n "$project" ] || return 0
   tool="$(_tab_view_session_env "$tmux_cmd" "$session" WISP_DECK_TOOL)"
+  # The watcher calls this with no lib dir (it already has the module stack
+  # loaded); only a caller that supplies one may source into itself.
   # shellcheck source=/dev/null
-  declare -f get_tool_accent >/dev/null 2>&1 || source "$lib_dir/tmux-session.sh"
+  if ! declare -f get_tool_accent >/dev/null 2>&1 && [ -n "$lib_dir" ]; then
+    source "$lib_dir/tmux-session.sh"
+  fi
   accent="$(get_tool_accent "${tool:-claude}" 2>/dev/null)" || accent=""
   : "${accent:=209}"
   while read -r id flag; do
@@ -66,8 +245,9 @@ tab_view_refresh_bar() {
   if [ -n "$ai_pane" ]; then
     ai_left="$("$tmux_cmd" display-message -p -t "$ai_pane" '#{pane_left}' 2>/dev/null)"
   fi
+  mode="$(tab_view_mode)"
   "$tmux_cmd" set-option -t "$session" status-left \
-    "$(tab_view_status_left "$project" "$accent" "$ai_left")" 2>/dev/null || true
+    "$(tab_view_status_left "$project" "$accent" "$ai_left" "$mode")" 2>/dev/null || true
   return 0
 }
 

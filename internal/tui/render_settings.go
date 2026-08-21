@@ -122,6 +122,18 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	tabState := "[" + tabTitleLabel(m.tabTitle) + "]"
 	itemLines[1] = []string{m.renderSettingsItem(1, tabLabel, tabState, tabTitleStyle, primaryBoldStyle, leftBorder, rightBorder)}
 
+	// Tab bar item — how the in-session tab strip draws its chips. Large names
+	// each tab and reports the turn running in it; compact is the bare number.
+	var tabBarColor lipgloss.Color
+	if m.tabBar == "compact" {
+		tabBarColor = lipgloss.Color("220") // yellow
+	} else {
+		tabBarColor = lipgloss.Color("114") // green
+	}
+	tabBarStyle := lipgloss.NewStyle().Foreground(tabBarColor)
+	tabBarState := "[" + tabBarLabel(m.tabBar) + "]"
+	itemLines[rowTabBar] = []string{m.renderSettingsItem(rowTabBar, "Tab bar", tabBarState, tabBarStyle, primaryBoldStyle, leftBorder, rightBorder)}
+
 	// Sound Notifications item
 	var soundColor lipgloss.Color
 	if m.soundName != "" {

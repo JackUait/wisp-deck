@@ -32,6 +32,7 @@ var (
 	mainMenuGhostDisplay           string
 	mainMenuUsageBars              string
 	mainMenuTabTitle               string
+	mainMenuTabBar                 string
 	mainMenuUpdateVer              string
 	mainMenuSoundName              string
 	mainMenuSettingsFile           string
@@ -61,6 +62,7 @@ func init() {
 	mainMenuCmd.Flags().StringVar(&mainMenuGhostDisplay, "ghost-display", "animated", "Ghost display mode (animated, static, none)")
 	mainMenuCmd.Flags().StringVar(&mainMenuUsageBars, "usage-bars", "7d", "Statusline usage bars (7d, 5h, both, none)")
 	mainMenuCmd.Flags().StringVar(&mainMenuTabTitle, "tab-title", "full", "Tab title mode (full, project)")
+	mainMenuCmd.Flags().StringVar(&mainMenuTabBar, "tab-bar", "large", "Tab bar chip mode (large, compact)")
 	mainMenuCmd.Flags().StringVar(&mainMenuKeepAwake, "keep-awake", "off", "Hold the machine awake while an agent works (on, off)")
 	mainMenuCmd.Flags().StringVar(&mainMenuUpdateVer, "update-version", "", "Optional update notification version")
 	mainMenuCmd.Flags().StringVar(&mainMenuSoundName, "sound-name", "", "Sound name for notifications (empty = off)")
@@ -188,6 +190,7 @@ func buildMainMenuModel() (*tui.MainMenuModel, error) {
 	model.SetUsageBars(mainMenuUsageBars)
 	model.SetStatsMode(readStatsModePref())
 	model.SetTabTitle(mainMenuTabTitle)
+	model.SetTabBar(mainMenuTabBar)
 	model.SetKeepAwake(mainMenuKeepAwake)
 	model.SetSoundName(resolveMainMenuSoundName(mainMenuSoundName, mainMenuSoundFile))
 	model.SetProjectsFile(mainMenuProjectsFile)

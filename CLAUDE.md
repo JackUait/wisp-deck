@@ -432,6 +432,47 @@ over a pty with the context published late), plus the model-level tests in
 `internal/tui/ledger_session_reload_test.go` and the atomic-publish test in
 `test/bash/relaunch_context_ready_test.go`.
 
+### A large tab chip renders state the agent owns, so the bar sanitizes it
+
+The tab bar has two chip modes (`tab_bar` in the settings file). `compact` is
+the original numbered chip; `large` — the **default** — adds the tab's own title
+and the elapsed time of the turn running in it. Absent key, absent file and
+unknown value all resolve to large, in `tab_view_mode` AND in the Go menu's
+`SetTabBar`: disagree and a session opens on a bar the Settings row denies is
+selected.
+
+A chip's title is the agent pane's `pane_title`, which is where Claude stamps
+its summary of the current turn — so the bar renders a string the model wrote.
+
+- **tmux parses `#[...]` out of the EXPANDED format**, so a turn titled
+  `#[fg=red]` repaints the rest of the bar in a colour of the model's choosing.
+  Verified live on 3.6a. `#{q:...}` does **not** escape it (only
+  `#{s/#/…/:...}` does), so `tab_view_chip_title` deletes every `#` in bash,
+  where it is testable. A comma is harmless — a value substituted into
+  `#{W:...}` is not re-parsed for the iterator's separator — but a style comma
+  written literally in the format still needs `#,`.
+- **The ellipsis is what separates a running turn from a finished one.** Claude
+  prints `✽ Hyperspacing… (8m 25s · ↓ 16.9k tokens)` while working and replaces
+  it in place with `✻ Cooked for 1h 38m 25s` when the turn ends. Matching the
+  summary makes a tab claim to be working forever.
+- **The inventory is unit-separated (`\037`), never tab-separated.** A tab is an
+  IFS *whitespace* character, so bash collapses runs of them: a window with two
+  empty fields in a row shifts every later field left, and the pane title lands
+  in the wrong variable. This shipped in the first draft of the stamping pass.
+- **Only write a value that moved.** `set-option` repaints the client, and this
+  pass runs twice a second in every open session on the machine.
+- **Both status-left writes take the same mode.** The launch chain writes the
+  bar once when it builds the session and again when it realigns to the agent
+  pane; disagreeing makes the bar change shape a moment after the tab opens.
+
+Per-window title and progress are state that becomes valid *later* — a window is
+created before its agent has named anything — so, exactly like the ledger's
+account pill above, they are re-resolved on every watcher tick rather than
+loaded once. Guarded by `test/bash/tab_view_large_test.go` (the pure
+title/progress/budget functions against verbatim captures from live panes, the
+stamping pass against a spy tmux, the watcher wiring and both launch modes) and
+`internal/tui/tab_bar_setting_test.go`.
+
 ### The switcher card belongs to the ledger, and a popup's `-y` is its bottom edge
 
 The Switch card is the account pill's menu — the pill in the ledger's footer is

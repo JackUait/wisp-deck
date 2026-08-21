@@ -65,7 +65,7 @@ func TestRenderSettingsBox_hidesCreditByDefault(t *testing.T) {
 		t.Errorf("settings footer missing 'a about' hint:\n%s", out)
 	}
 	// Adding a shortcut must not add a selectable row.
-	if got := m.settingsItemCount(); got != rowKeepAwake+1 {
+	if got := m.settingsItemCount(); got != rowTabBar+1 {
 		t.Errorf("settingsItemCount changed to %d; About is a shortcut, not a row", got)
 	}
 }
@@ -107,7 +107,8 @@ func TestSettingsItemOrder_groupsAppearanceThenSections(t *testing.T) {
 	m := NewMainMenu(nil, []string{"claude"}, "claude", "none")
 	got := m.settingsItemOrder()
 	// Appearance, Tools, Notifications, Power, Account.
-	want := []int{0, 1, 3, 4, 7, 2, 8, 5, 6}
+	want := []int{rowMascot, rowTabTitle, rowTabBar, rowTheme, rowUsageBars,
+		rowAITools, rowIdleSound, rowKeepAwake, rowSubscription, rowAutoSwitch}
 	if len(got) != len(want) {
 		t.Fatalf("settingsItemOrder len=%d want %d: %v", len(got), len(want), got)
 	}

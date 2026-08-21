@@ -455,6 +455,9 @@ attention_watcher_reset() {
   _ATTENTION_WATCH_LAST_TITLE_STATE=""
   _ATTENTION_WATCH_SEEN=""
   _ATTENTION_WATCH_LAST_ACCENT=""
+  # "-" is "not observed yet", which no tab bar mode can be — the first tick
+  # adopts what it finds instead of treating it as a change.
+  _ATTENTION_WATCH_LAST_TAB_BAR="-"
   _ATTENTION_WATCH_FOLLOW_TRIED=""
   _ATTENTION_WATCH_HOST="$(hostname 2>/dev/null)"
 }
@@ -606,11 +609,23 @@ attention_watcher_tick() {
   # created), so they are re-resolved every tick rather than loaded once. Absent
   # setting means large, matching tab_view_mode; compact skips the pane capture
   # entirely because nothing renders it.
+  [ "$tab_bar" = "compact" ] || tab_bar="large"
   if [ "$tab_bar" != "compact" ] \
      && declare -f tab_view_stamp_windows >/dev/null 2>&1; then
     tab_view_stamp_windows "$tmux_cmd" "$session_name" "$project_name" \
       "$_ATTENTION_WATCH_HOST"
   fi
+
+  # The bar's FORMAT is written once, by the launch chain, so a mode changed in
+  # Settings would otherwise not reach a window that is already open. The first
+  # tick only records what it found: the launch chain already drew that bar, and
+  # refreshing on every session's first tick is churn nobody sees.
+  if [ "$_ATTENTION_WATCH_LAST_TAB_BAR" != "-" ] \
+     && [ "$_ATTENTION_WATCH_LAST_TAB_BAR" != "$tab_bar" ] \
+     && declare -f tab_view_refresh_bar >/dev/null 2>&1; then
+    tab_view_refresh_bar "$tmux_cmd" "${WISP_DECK_LIB_DIR:-}" "$session_name"
+  fi
+  _ATTENTION_WATCH_LAST_TAB_BAR="$tab_bar"
 
   _ATTENTION_WATCH_LAST_PRESENT_PHASE="$phase"
   _ATTENTION_WATCH_LAST_TITLE_STATE="$title_state"

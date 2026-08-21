@@ -111,3 +111,27 @@ existing recordingTmuxMock pattern):
 4. Wrapper chain: first batch turns the status bar on at top with the
    tab-view status-left; second batch binds `c` and the three status mouse
    keys before the hover install.
+
+---
+
+## Update 2026-08-21: chip modes
+
+The bar has two chip modes, selected by `tab_bar` in the wisp-deck settings
+file and cycled from Settings → Appearance → Tab bar.
+
+- `compact` — the numbered chip this document describes.
+- `large` (**default**) — the number plus the tab's own title and the elapsed
+  time of the turn running in it.
+
+A large chip renders two window options, `@wd_tab_title` and
+`@wd_tab_progress`. The per-session watcher (`attention_watcher_tick`) refreshes
+both every tick from the window's `@gt_ai` pane: the title is its `pane_title`
+(where the agent stamps a summary of the current turn), the progress is the
+elapsed time parsed off its live status line. That keeps the "no repaint
+machinery" property of the chip LIST — windows still appear and disappear as a
+pure `#{W:...}` expansion — while the state inside a chip, which only becomes
+valid after the agent boots, is re-resolved rather than loaded once.
+
+See the CLAUDE.md section "A large tab chip renders state the agent owns, so
+the bar sanitizes it" for the invariants, and `test/bash/tab_view_large_test.go`
+plus `internal/tui/tab_bar_setting_test.go` for the guards.

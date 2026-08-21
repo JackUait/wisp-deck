@@ -18,6 +18,7 @@ select_project_interactive() {
   local ghost_display="animated"
   local usage_bars="7d"
   local tab_title="full"
+  local tab_bar="large"
   local keep_awake="off"
   local settings_file="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/settings"
   if [ -f "$settings_file" ]; then
@@ -35,6 +36,11 @@ select_project_interactive() {
     saved_tab_title=$(grep '^tab_title=' "$settings_file" 2>/dev/null | cut -d= -f2)
     if [ -n "$saved_tab_title" ]; then
       tab_title="$saved_tab_title"
+    fi
+    local saved_tab_bar
+    saved_tab_bar=$(grep '^tab_bar=' "$settings_file" 2>/dev/null | cut -d= -f2)
+    if [ -n "$saved_tab_bar" ]; then
+      tab_bar="$saved_tab_bar"
     fi
     local saved_keep_awake
     saved_keep_awake=$(grep '^keep_awake=' "$settings_file" 2>/dev/null | cut -d= -f2)
@@ -58,6 +64,7 @@ select_project_interactive() {
   cmd_args+=("--ghost-display" "$ghost_display")
   cmd_args+=("--usage-bars" "$usage_bars")
   cmd_args+=("--tab-title" "$tab_title")
+  cmd_args+=("--tab-bar" "$tab_bar")
   cmd_args+=("--keep-awake" "$keep_awake")
   cmd_args+=("--settings-file" "$settings_file")
   # The Settings → AI tools panel installs a tool by sourcing lib/install.sh, so

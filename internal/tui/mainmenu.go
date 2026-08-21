@@ -236,6 +236,8 @@ type MainMenuModel struct {
 	initialSoundName    string
 	soundNameChanged    bool
 	soundPreview        func(string) tea.Cmd
+	tabBar              string // "large" or "compact" — the in-session tab bar's chip mode
+	initialTabBar       string
 	usageBars           string // "7d", "5h", "both", or "none" — which statusline usage pills show
 	initialUsageBars    string
 	usageBarsChanged    bool
@@ -360,17 +362,17 @@ type MainMenuModel struct {
 	// AI-tools panel (Settings → Tools → AI tools): install a missing tool and
 	// choose the default. detectAITools is an injectable seam so tests never
 	// depend on the machine's PATH; nil means models.DetectAITools.
-	aiToolsPanelOpen     bool
-	aiToolsCursor        int
-	aiToolRows           []models.AITool
-	aiToolInstalling     string
-	aiToolInstallPct     float64
-	aiToolsErr           error
-	libDir               string
-	disabledToolsFile    string
-	aiToolRemovePending  string
-	aiToolRemoving       string
-	detectAITools func() []models.AITool
+	aiToolsPanelOpen    bool
+	aiToolsCursor       int
+	aiToolRows          []models.AITool
+	aiToolInstalling    string
+	aiToolInstallPct    float64
+	aiToolsErr          error
+	libDir              string
+	disabledToolsFile   string
+	aiToolRemovePending string
+	aiToolRemoving      string
+	detectAITools       func() []models.AITool
 
 	// Subscription management overlay. It replaces Settings-row cycling and the
 	// appended model-map panel with one profile inventory and detail surface.
@@ -420,6 +422,8 @@ func NewMainMenu(projects []models.Project, aiTools []string, currentAI string, 
 		selectedItem:              0,
 		ghostDisplay:              ghostDisplay,
 		initialGhostDisplay:       ghostDisplay,
+		tabBar:                    "large",
+		initialTabBar:             "large",
 		usageBars:                 "7d",
 		initialUsageBars:          "7d",
 		themePref:                 "auto",
@@ -865,6 +869,56 @@ func (m *MainMenuModel) SetTabTitle(mode string) {
 	m.tabTitle = mode
 	m.initialTabTitle = mode
 }
+
+// tabBarOrder is the forward cycle order for the Tab bar setting. Large leads:
+// it is the default, and lib/tab-view.sh resolves anything it does not
+// recognise (including an absent key) to large for the same reason.
+var tabBarOrder = []string{"large", "compact"}
+
+// TabBar returns the tab bar's chip mode ("large" or "compact").
+func (m *MainMenuModel) TabBar() string { return m.tabBar }
+
+// SetTabBar sets the tab bar's chip mode and records it as the initial value.
+func (m *MainMenuModel) SetTabBar(mode string) {
+	if !isValidTabBar(mode) {
+		mode = "large"
+	}
+	m.tabBar = mode
+	m.initialTabBar = mode
+}
+
+func isValidTabBar(mode string) bool {
+	for _, v := range tabBarOrder {
+		if v == mode {
+			return true
+		}
+	}
+	return false
+}
+
+// stepTabBar advances the tab bar mode by delta through tabBarOrder (wrapping)
+// and persists it. The bar itself is re-read from the settings file by the
+// per-session watcher every tick, so an open window picks the change up
+// without a relaunch.
+func (m *MainMenuModel) stepTabBar(delta int) {
+	n := len(tabBarOrder)
+	idx := 0
+	for i, v := range tabBarOrder {
+		if v == m.tabBar {
+			idx = i
+			break
+		}
+	}
+	idx = (idx + delta%n + n) % n
+	m.tabBar = tabBarOrder[idx]
+	m.persistSetting("tab_bar", m.tabBar)
+}
+
+// CycleTabBar advances the tab bar mode: large -> compact -> large.
+func (m *MainMenuModel) CycleTabBar() { m.stepTabBar(1) }
+
+// CycleTabBarReverse steps the tab bar mode backwards.
+func (m *MainMenuModel) CycleTabBarReverse() { m.stepTabBar(-1) }
 
 // usageBarsOrder is the forward cycle order for the Usage bars setting; the
 // statusline reads the persisted value (usage_bars=) to decide which usage pills
@@ -1449,10 +1503,11 @@ const (
 	rowAutoSwitch   = 6
 	rowAITools      = 7
 	rowKeepAwake    = 8
+	rowTabBar       = 9
 )
 
 // settingsItemCount returns the number of settings rows.
-func (m *MainMenuModel) settingsItemCount() int { return rowKeepAwake + 1 }
+func (m *MainMenuModel) settingsItemCount() int { return rowTabBar + 1 }
 
 // autoSwitchRowIndex is the index of the Auto-switch toggle.
 func (m *MainMenuModel) autoSwitchRowIndex() int { return rowAutoSwitch }
@@ -1469,7 +1524,7 @@ type settingsSection struct {
 // which do NOT match visual order: Idle sound (2) moves out of the Appearance
 // block into its own section.
 func (m *MainMenuModel) settingsSections() []settingsSection {
-	appearance := []int{rowMascot, rowTabTitle, rowTheme, rowUsageBars}
+	appearance := []int{rowMascot, rowTabTitle, rowTabBar, rowTheme, rowUsageBars}
 	account := []int{}
 	if m.ClaudeConfigVisible() {
 		account = append(account, rowSubscription)
@@ -2811,6 +2866,8 @@ func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 		m.CycleGhostDisplay()
 	case rowTabTitle:
 		m.CycleTabTitle()
+	case rowTabBar:
+		m.CycleTabBar()
 	case rowIdleSound:
 		if m.CycleSoundName() {
 			return m, m.soundPreviewCmd()
@@ -2839,6 +2896,8 @@ func (m *MainMenuModel) settingsValueRight() tea.Cmd {
 		m.CycleGhostDisplay()
 	case rowTabTitle:
 		m.CycleTabTitle()
+	case rowTabBar:
+		m.CycleTabBar()
 	case rowIdleSound:
 		if m.CycleSoundName() {
 			return m.soundPreviewCmd()
@@ -2862,6 +2921,8 @@ func (m *MainMenuModel) settingsValueLeft() tea.Cmd {
 		m.CycleGhostDisplayReverse()
 	case rowTabTitle:
 		m.CycleTabTitleReverse()
+	case rowTabBar:
+		m.CycleTabBarReverse()
 	case rowIdleSound:
 		if m.CycleSoundNameReverse() {
 			return m.soundPreviewCmd()
@@ -3602,6 +3663,14 @@ func tabTitleLabel(mode string) string {
 	default:
 		return mode
 	}
+}
+
+// tabBarLabel returns the display label for a tab bar mode.
+func tabBarLabel(mode string) string {
+	if mode == "compact" {
+		return "Compact"
+	}
+	return "Large"
 }
 
 // usageBarsLabel returns the display label for a usage-bars mode: "7d", "5h" stay
