@@ -404,8 +404,11 @@ attention_watcher_follow_agent() {
   [ -n "$relaunch_file" ] && [ -f "$relaunch_file" ] || return 0
   [ -n "$lib_dir" ] && [ -d "$lib_dir" ] || return 0
 
-  [ -f "${state_file%/*}/cwd" ] || return 0
-  IFS= read -r cwd < "${state_file%/*}/cwd" 2>/dev/null || cwd=""
+  # Grouped so stderr is closed BEFORE the open is attempted: bash applies
+  # redirections left to right, and this shell's stderr is the pane the agent
+  # paints on. The generation directory is removed out from under this read
+  # whenever a launch rotates.
+  { IFS= read -r cwd < "${state_file%/*}/cwd"; } 2>/dev/null || cwd=""
   # Anything but a plain absolute path is a truncated or junk read, never a
   # directory to respawn panes into.
   case "$cwd" in
@@ -416,14 +419,16 @@ attention_watcher_follow_agent() {
     *[[:space:]]*|*';'*|*'$'*|*'`'*) return 0 ;;
   esac
 
-  while IFS= read -r line; do
-    case "$line" in
-      project_dir=*)
-        project_dir="${line#project_dir=}"
-        break
-        ;;
-    esac
-  done < "$relaunch_file"
+  {
+    while IFS= read -r line; do
+      case "$line" in
+        project_dir=*)
+          project_dir="${line#project_dir=}"
+          break
+          ;;
+      esac
+    done < "$relaunch_file"
+  } 2>/dev/null
   [ -n "$project_dir" ] || return 0
 
   if [ "$cwd" = "$project_dir" ]; then
