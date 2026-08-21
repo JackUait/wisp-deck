@@ -120,8 +120,13 @@ The bar has two chip modes, selected by `tab_bar` in the wisp-deck settings
 file and cycled from Settings → Appearance → Tab bar.
 
 - `compact` — the numbered chip this document describes.
-- `large` (**default**) — the number plus the tab's own title and the elapsed
-  time of the turn running in it.
+- `large` (**default**) — a filled card: a rounded cap at each end enclosing
+  the number, the tab's own title and the elapsed time of the turn running in
+  it. The active card is filled with the tool's accent, an idle one with the
+  bar's grey, and the `[+]` button is an idle-filled card too, so the bar reads
+  as one row of cards. The caps are powerline codepoints Ghostty draws itself
+  (U+E0B6/U+E0B4, one cell each in tmux); the fill is carried by an explicit
+  `bg=` on every segment between them.
 
 A large chip renders two window options, `@wd_tab_title` and
 `@wd_tab_progress`. The per-session watcher (`attention_watcher_tick`) refreshes

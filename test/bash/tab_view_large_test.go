@@ -232,7 +232,7 @@ func TestTabViewTitleBudget_shrinks_as_tabs_open(t *testing.T) {
 		want int
 	}{
 		{cols: "200", n: "1", want: 32},
-		{cols: "200", n: "4", want: 29},
+		{cols: "200", n: "4", want: 26},
 		{cols: "200", n: "8", want: 8},
 		{cols: "80", n: "4", want: 8},
 		{cols: "0", n: "0", want: 8},
@@ -565,4 +565,105 @@ attention_watcher_tick sess-a myproj full %q %q %q
 	if n := strings.Count(string(data), "refresh"); n != 1 {
 		t.Fatalf("bar refreshed %d times across four ticks and one change, want 1", n)
 	}
+}
+
+// The card caps. Ghostty draws these powerline glyphs itself — no Nerd Font
+// is involved — and tmux accounts each as one cell, verified against a live
+// client before the format was built.
+const (
+	cardCapLeft  = "\ue0b6"
+	cardCapRight = "\ue0b4"
+)
+
+// chipFormat returns the part of the bar tmux expands once per window: the
+// click range opens it and #[norange] closes it, so everything a card is made
+// of has to live inside.
+func chipFormat(t *testing.T, out string) string {
+	t.Helper()
+	start := strings.Index(out, "#{W:")
+	end := strings.Index(out, "#[norange] }#[range=user|wdnew]")
+	if start < 0 || end < 0 || end <= start {
+		t.Fatalf("no per-window chip format in:\n%s", out)
+	}
+	return out[start:end]
+}
+
+// A large chip is a filled card, not a run of styled text: a rounded cap at
+// each end and one background colour carried from the number through the
+// title to the progress.
+func TestTabViewStatusLeft_large_chips_are_filled_cards(t *testing.T) {
+	out, code := runBashFunc(t, "lib/tab-view.sh", "tab_view_status_left",
+		[]string{"myproj", "141", "47", "large"}, nil)
+	assertExitCode(t, code, 0)
+	chip := chipFormat(t, out)
+	assertContains(t, chip, cardCapLeft)
+	assertContains(t, chip, cardCapRight)
+	// The active card is filled with the tool's accent; an idle one with the
+	// bar's own grey.
+	assertContains(t, chip, "bg=colour141")
+	assertContains(t, chip, "bg=colour237")
+}
+
+// The fill has to survive every segment of the card. #[default] restores the
+// bar's base style, so a card that reaches for it between the number and the
+// title — or inside the progress branch — punches a hole in its own
+// background. It may appear only where the card ends: right after the cap.
+func TestTabViewStatusLeft_a_cards_fill_is_unbroken(t *testing.T) {
+	out, code := runBashFunc(t, "lib/tab-view.sh", "tab_view_status_left",
+		[]string{"myproj", "141", "47", "large"}, nil)
+	assertExitCode(t, code, 0)
+	chip := chipFormat(t, out)
+	total := strings.Count(chip, "#[default]")
+	atEdge := strings.Count(chip, cardCapRight+"#[default]")
+	if total == 0 || total != atEdge {
+		t.Fatalf("%d of %d #[default] restores sit outside a card edge; the fill breaks mid-card:\n%s",
+			total-atEdge, total, chip)
+	}
+}
+
+// Every style comma inside #{W:...} must be escaped, or tmux reads it as the
+// iterator's own format separator and the chip is cut in half.
+func TestTabViewStatusLeft_escapes_style_commas_inside_the_iterator(t *testing.T) {
+	out, code := runBashFunc(t, "lib/tab-view.sh", "tab_view_status_left",
+		[]string{"myproj", "141", "47", "large"}, nil)
+	assertExitCode(t, code, 0)
+	chip := chipFormat(t, out)
+	for _, seg := range strings.Split(chip, "#[")[1:] {
+		style := seg
+		if i := strings.Index(style, "]"); i >= 0 {
+			style = style[:i]
+		}
+		if strings.Contains(strings.ReplaceAll(style, "#,", ""), ",") {
+			t.Fatalf("unescaped style comma in #[%s] — tmux will split the chip there:\n%s", style, chip)
+		}
+	}
+}
+
+// The + button is a card too, so the bar reads as one row of cards rather
+// than cards plus a loose glyph.
+func TestTabViewStatusLeft_the_new_tab_button_is_a_card(t *testing.T) {
+	out, code := runBashFunc(t, "lib/tab-view.sh", "tab_view_status_left",
+		[]string{"myproj", "141", "47", "large"}, nil)
+	assertExitCode(t, code, 0)
+	i := strings.Index(out, "#[range=user|wdnew]")
+	if i < 0 {
+		t.Fatalf("no new-tab range in:\n%s", out)
+	}
+	button := out[i:]
+	if j := strings.Index(button, "#[norange]"); j >= 0 {
+		button = button[:j]
+	}
+	assertContains(t, button, cardCapLeft)
+	assertContains(t, button, cardCapRight)
+	assertContains(t, button, "bg=colour237")
+}
+
+// Compact is the pre-card bar and stays that way: no caps, no fill.
+func TestTabViewStatusLeft_compact_draws_no_cards(t *testing.T) {
+	out, code := runBashFunc(t, "lib/tab-view.sh", "tab_view_status_left",
+		[]string{"myproj", "141", "47", "compact"}, nil)
+	assertExitCode(t, code, 0)
+	assertNotContains(t, out, cardCapLeft)
+	assertNotContains(t, out, cardCapRight)
+	assertNotContains(t, out, "bg=colour237")
 }

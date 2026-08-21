@@ -46,24 +46,43 @@ tab_view_mode() {
 # comma is escaped (#,) or tmux would read it as the iterator's format
 # separator — a comma inside a nested #{...} belongs to that format and is left
 # alone. The bar's base style (the border rule: fg=colour238, status-left-style
-# set at launch) is restored after each coloured segment.
+# set at launch) is restored once each chip ends, never inside one.
+#
+# A large chip is a CARD: a rounded cap at each end and one background colour
+# carried unbroken from the number through the title to the progress. The caps
+# are powerline glyphs (U+E0B6/U+E0B4) written as octal escapes — /bin/bash is
+# 3.2 here, which has no $'\u', and a literal PUA byte does not survive routine
+# editing. Ghostty draws them itself, so no Nerd Font is involved, and tmux
+# accounts each as one cell (verified against a live client).
+#
+# The fill is the fragile part: #[default] restores the bar's base style, so
+# reaching for it anywhere inside a card punches a hole in that card's own
+# background. It may appear only after the closing cap. Everything between the
+# caps — including both branches of the progress conditional — has to carry
+# bg= explicitly.
 #
 # A large chip renders two window options, @wd_tab_title and @wd_tab_progress,
 # which tab_view_stamp_windows keeps current. The progress segment is wrapped
 # in a #{?...} so an idle tab shows no dangling separator, and its dot carries
-# the accent so a working tab is findable at a glance from any other tab.
+# the accent so a working tab is findable at a glance from any other tab. The
+# [+] button is a card too, so the bar reads as one row of cards rather than
+# cards plus a loose glyph.
 tab_view_status_left() {
   local project="$1" accent="${2:-209}" ai_left="${3:-}" mode="${4:-large}"
   local restore='#[default]'
   local num='#{e|+:#{window_index},1}'
+  local cap_l=$'\356\202\266' cap_r=$'\356\202\264'
+  local idle=237
   local active="#[fg=colour235#,bg=colour${accent}#,bold] ${num} ${restore}"
   local inactive="#[fg=colour245] ${num} ${restore}"
+  local newtab="#[range=user|wdnew]#[fg=colour${accent},bold] + #[nobold]#[norange]"
   if [ "$mode" != "compact" ]; then
     local title='#{@wd_tab_title}'
-    local prog_active="#{?#{@wd_tab_progress},#[fg=colour${accent}] ● #{@wd_tab_progress},}"
-    local prog_inactive="#{?#{@wd_tab_progress},#[fg=colour${accent}] ● #[fg=colour241]#{@wd_tab_progress},}"
-    active="#[fg=colour235#,bg=colour${accent}#,bold] ${num} ${restore} #[fg=colour252]${title}${prog_active}${restore}"
-    inactive="#[fg=colour240] ${num} #[fg=colour248]${title}${prog_inactive}${restore}"
+    local prog_active="#{?#{@wd_tab_progress}, ● #{@wd_tab_progress},}"
+    local prog_inactive="#{?#{@wd_tab_progress}, #[fg=colour${accent}#,bg=colour${idle}]● #[fg=colour250#,bg=colour${idle}]#{@wd_tab_progress},}"
+    active="#[fg=colour${accent}]${cap_l}#[fg=colour235#,bg=colour${accent}#,bold] ${num} #[fg=colour235#,bg=colour${accent}#,nobold]${title}${prog_active} #[fg=colour${accent}#,bg=default]${cap_r}${restore}"
+    inactive="#[fg=colour${idle}]${cap_l}#[fg=colour246#,bg=colour${idle}] ${num} #[fg=colour250#,bg=colour${idle}]${title}${prog_inactive} #[fg=colour${idle}#,bg=default]${cap_r}${restore}"
+    newtab="#[range=user|wdnew]#[fg=colour${idle}]${cap_l}#[fg=colour${accent},bg=colour${idle},bold] + #[nobold]#[fg=colour${idle},bg=default]${cap_r}#[norange]${restore}"
   fi
   local lead="" tail="" i
   if [ -n "$ai_left" ] && [ "$ai_left" -gt 1 ] 2>/dev/null; then
@@ -71,23 +90,25 @@ tab_view_status_left() {
     lead+='┬'
   fi
   for ((i = 0; i < 400; i++)); do tail+='─'; done
-  printf '%s─ #[fg=white,bold]⬡ %s#[default] #{W:#[range=user|wdtab:#{window_id}]#{?window_active,%s,%s}#[norange] }#[range=user|wdnew]#[fg=colour%s,bold] + #[nobold]#[norange] %s' \
-    "$lead" "$project" "$active" "$inactive" "$accent" "$tail"
+  printf '%s─ #[fg=white,bold]⬡ %s#[default] #{W:#[range=user|wdtab:#{window_id}]#{?window_active,%s,%s}#[norange] }%s %s' \
+    "$lead" "$project" "$active" "$inactive" "$newtab" "$tail"
 }
 
 # tab_view_title_budget <cols> <window_count>
 # Print how many characters of title one chip may spend. Every chip is rendered
 # from the SAME format, so they share one budget: it has to shrink as tabs are
 # opened or the bar runs past the window edge and tmux clips the right-hand
-# tabs out of existence. The reserve covers the ⬡ label and the [+] button
-# (20) plus each chip's own number badge, progress and gap (16).
+# tabs out of existence. The reserve covers the ⬡ label and the [+] card
+# (22) plus each card's own caps, number badge, progress and gap (18) — the
+# card chrome is part of what a chip spends, so widening it without widening
+# the reserve clips the right-hand tabs.
 tab_view_title_budget() {
   local cols="${1:-0}" windows="${2:-1}" avail budget
   case "$cols" in ''|*[!0-9]*) cols=0 ;; esac
   case "$windows" in ''|*[!0-9]*) windows=1 ;; esac
   [ "$windows" -lt 1 ] && windows=1
-  avail=$((cols - 20))
-  budget=$((avail / windows - 16))
+  avail=$((cols - 22))
+  budget=$((avail / windows - 18))
   [ "$budget" -gt 32 ] && budget=32
   [ "$budget" -lt 8 ] && budget=8
   printf '%s\n' "$budget"

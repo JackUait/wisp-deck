@@ -464,6 +464,26 @@ its summary of the current turn — so the bar renders a string the model wrote.
 - **Both status-left writes take the same mode.** The launch chain writes the
   bar once when it builds the session and again when it realigns to the agent
   pane; disagreeing makes the bar change shape a moment after the tab opens.
+- **A card's fill breaks wherever `#[default]` appears.** A large chip is a
+  filled card — a rounded cap at each end and one background carried from the
+  number through the title to the progress — and `#[default]` restores the
+  bar's base style, so reaching for it anywhere between the caps punches a hole
+  in that card's own background. The first draft did exactly that after the
+  number badge. Every segment between the caps, *including both branches of the
+  progress conditional*, carries `bg=` explicitly, and the only `#[default]` in
+  a chip sits immediately after the closing cap — which is what
+  `TestTabViewStatusLeft_a_cards_fill_is_unbroken` asserts by counting.
+- **The caps are octal escapes, not literal glyphs.** They are powerline
+  codepoints (U+E0B6/U+E0B4) in the Private Use Area: Ghostty draws them itself
+  so no Nerd Font is involved, and tmux accounts each as one cell (probed
+  against a live client with `#{pN:}` padding before the format was built). They
+  are written `$'\356\202\266'` because `/bin/bash` here is 3.2 — no
+  `$'\u'` — and because a literal PUA byte does not reliably survive editing.
+- **Card chrome is part of what a chip spends.** `tab_view_title_budget`
+  reserves the caps and padding (18 per card, 22 fixed for the label and the
+  [+] card). Widening the chrome without widening the reserve does not shrink
+  titles — it pushes the right-hand tabs past the window edge, where tmux
+  clips them out of existence.
 
 Per-window title and progress are state that becomes valid *later* — a window is
 created before its agent has named anything — so, exactly like the ledger's
