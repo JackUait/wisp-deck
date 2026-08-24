@@ -45,15 +45,19 @@ var modelRates = map[string]modelRate{
 	// not-yet-listed newer variant falls back to its base prefix (a close estimate).
 
 	// OpenAI
-	"gpt-5":       {1.25, 10},
-	"gpt-5-mini":  {0.25, 2},
-	"gpt-5-nano":  {0.05, 0.4},
-	"gpt-5.1":     {1.25, 10},
-	"gpt-5.2":     {1.75, 14},
-	"gpt-5.3":     {1.75, 14}, // covers gpt-5.3-codex / -spark / -chat
-	"gpt-5.4":     {2.5, 15},
-	"gpt-5.5":     {5, 30},
-	"gpt-5.6-sol": {5, 30}, // Codex sol tier; without this it would fall to gpt-5
+	"gpt-5":      {1.25, 10},
+	"gpt-5-mini": {0.25, 2},
+	"gpt-5-nano": {0.05, 0.4},
+	"gpt-5.1":    {1.25, 10},
+	"gpt-5.2":    {1.75, 14},
+	"gpt-5.3":    {1.75, 14}, // covers gpt-5.3-codex / -spark / -chat
+	"gpt-5.4":    {2.5, 15},
+	"gpt-5.5":    {5, 30},
+	// The whole 5.6 tier, so the ChatGPT profile's own defaults (terra = Opus and
+	// Sonnet, luna = Haiku) resolve here instead of falling back to bare "gpt-5"
+	// at a quarter of their sibling's rate.
+	"gpt-5.6":     {5, 30},
+	"gpt-5.6-sol": {5, 30},
 	// Codex "-codex" variants share their base gpt-5.x rate via prefix match, EXCEPT
 	// the mini tier, which is 5x cheaper and needs its own longer-prefix entry so it
 	// is not priced at the full gpt-5.1 rate.

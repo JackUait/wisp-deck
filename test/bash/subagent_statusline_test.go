@@ -469,3 +469,31 @@ func TestSyncSharedSettings_symlinks_subagent_statusline_scripts(t *testing.T) {
 		}
 	}
 }
+
+// A provider model id reaches Claude's own status bar verbatim — the bar prints
+// the `display_name`, and only Anthropic ids carry a friendly one. Rebuilding a
+// title-cased name from a non-Anthropic id ("Gpt 5.6 Sol") breaks this file's
+// contract that a glance between bar and panel needs no translation, and the
+// dotted version is what defeats the digit test in the first place.
+func TestSubagentStatusline_provider_model_ids_match_the_status_bar(t *testing.T) {
+	for _, tc := range []struct{ id, want string }{
+		{"gpt-5.6-sol", "gpt-5.6-sol"},
+		{"gpt-5.6-terra", "gpt-5.6-terra"},
+		{"glm-4.7", "glm-4.7"},
+		{"k3", "k3"},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			in := fmt.Sprintf(`{"columns":120,"tasks":[{"id":"t","name":"a","model":%q,"tokenCount":10}]}`, tc.id)
+			out, code := renderRows(t, in)
+			assertExitCode(t, code, 0)
+			rows := parseSubagentRows(t, out)
+			if len(rows) != 1 {
+				t.Fatalf("expected 1 row, got %d", len(rows))
+			}
+			got := stripANSI(rows[0].Content)
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("model %q should display verbatim as %q: %q", tc.id, tc.want, got)
+			}
+		})
+	}
+}

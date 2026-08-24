@@ -334,3 +334,18 @@ func TestMonthlyCostUSD_sumAndFlag(t *testing.T) {
 		t.Errorf("allPriced should be false when a model is unpriced")
 	}
 }
+
+// terra is the ChatGPT profile's Opus AND Sonnet default and luna its Haiku
+// default, so these two are what a bridged session actually routes through.
+// Both sit in the same 272k catalog tier as sol; letting them fall back to the
+// bare "gpt-5" prefix prices them at a quarter of their sibling.
+func TestRateFor_everyChatGPTSubscriptionDefaultIsPricedInIts5_6Tier(t *testing.T) {
+	for _, model := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6"} {
+		for i := 0; i < 30; i++ { // map order is randomized; hammer it
+			in, out, ok := RateFor(model)
+			if !ok || !approx(in, 5) || !approx(out, 30) {
+				t.Fatalf("RateFor(%s) = %v/%v ok=%v, want 5/30", model, in, out, ok)
+			}
+		}
+	}
+}

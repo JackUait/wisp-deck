@@ -28,7 +28,8 @@ type MessageExecutor interface {
 
 // ServerOptions controls loopback HTTP resource limits.
 type ServerOptions struct {
-	MaxBodyBytes int64
+	MaxBodyBytes      int64
+	KeepAliveInterval time.Duration
 }
 
 // AnthropicErrorResponse is Anthropic's JSON error envelope.
@@ -44,9 +45,10 @@ type AnthropicError struct {
 }
 
 type bridgeHandler struct {
-	executor MessageExecutor
-	keyHash  [sha256.Size]byte
-	maxBody  int64
+	executor  MessageExecutor
+	keyHash   [sha256.Size]byte
+	maxBody   int64
+	keepAlive time.Duration
 }
 
 // NewHandler creates the authenticated Anthropic-compatible HTTP handler.
@@ -63,6 +65,7 @@ func NewHandler(executor MessageExecutor, key string, options ServerOptions) (ht
 	}
 	return &bridgeHandler{
 		executor: executor, keyHash: sha256.Sum256([]byte(key)), maxBody: maxBody,
+		keepAlive: options.KeepAliveInterval,
 	}, nil
 }
 
@@ -164,30 +167,21 @@ func (h *bridgeHandler) handleMessages(writer http.ResponseWriter, request *http
 		return
 	}
 
-	started := false
-	emit := func(events []StreamEvent) error {
-		if len(events) == 0 {
-			return nil
-		}
-		if !started {
-			writer.Header().Set("content-type", "text/event-stream")
-			writer.Header().Set("cache-control", "no-cache")
-			writer.Header().Set("x-accel-buffering", "no")
-			writer.WriteHeader(http.StatusOK)
-			started = true
-		}
-		return WriteSSE(writer, events)
-	}
-	_, err = h.executor.Execute(request.Context(), translation, emit)
+	stream := newStreamWriter(writer, h.keepAlive)
+	defer stream.Close()
+	_, err = h.executor.Execute(request.Context(), translation, stream.Emit)
 	if err == nil {
 		return
 	}
-	if started {
+	if stream.Started() {
 		errorType, message := "api_error", err.Error()
-		if isContextOverflowMessage(message) || isRefusedOversizedMessage(err) {
+		switch {
+		case isContextOverflowMessage(message) || isRefusedOversizedMessage(err):
 			errorType, message = "invalid_request_error", "prompt is too long: "+message
+		case isDeterministicCodexFailure(message):
+			errorType = "invalid_request_error"
 		}
-		_ = WriteSSE(writer, []StreamEvent{AnthropicErrorEvent(errorType, message)})
+		_ = stream.Emit([]StreamEvent{AnthropicErrorEvent(errorType, message)})
 		return
 	}
 	writeExecutionError(writer, request, err)
@@ -235,6 +229,9 @@ func writeExecutionError(writer http.ResponseWriter, request *http.Request, err 
 		message = "prompt is too long: " + message
 	case errors.As(err, &invalidContinuation) ||
 		(strings.Contains(message, "model ") && strings.Contains(message, "not available")):
+		status = http.StatusBadRequest
+		errorType = "invalid_request_error"
+	case isDeterministicCodexFailure(message):
 		status = http.StatusBadRequest
 		errorType = "invalid_request_error"
 	}

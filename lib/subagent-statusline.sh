@@ -59,9 +59,17 @@ render_subagent_rows() {
     # `sub` there would throw and blank out EVERY row, not just this one.
     def display_model($m; $effort):
       if $m == null or $m == "" then ""
+      # Only Anthropic ids carry a friendly display_name; every other provider
+      # id reaches the bar verbatim. Rebuilding a title-cased name here renders
+      # "Gpt 5.6 Sol" beside a bar reading "gpt-5.6-sol" — a translation the
+      # reader should never have to make. A dotted version defeats is_digits
+      # regardless, so such an id cannot be split correctly anyway.
+      # NOTE: no apostrophes in this jq program; it is single-quoted in bash.
+      elif ($m | startswith("claude-") | not) then
+        (if $effort != null and $effort != ""
+         then $m + " [" + $effort + "]" else $m end)
       else
-        ((if ($m | startswith("claude-")) then $m[7:] else $m end)
-          | split("-")) as $parts
+        ($m[7:] | split("-")) as $parts
         | ($parts | map(select(is_digits(.) | not)) | map(cap(.)) | join(" ")) as $words
         # An 8-digit run is the release date — a build stamp, not a version.
         | ($parts | map(select(is_digits(.) and (length != 8))) | join(".")) as $vers
