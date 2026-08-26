@@ -3,6 +3,9 @@ package statusline
 import (
 	"encoding/json"
 	"math"
+	"os"
+	"strconv"
+	"strings"
 
 	"github.com/jackuait/wisp-deck/internal/claudeconfig"
 )
@@ -25,7 +28,16 @@ func RewriteContextWindow(raw []byte) (out []byte, changed bool) {
 	modelID, _ := model["id"].(string)
 	realWindow, _, ok := claudeconfig.ModelLimit(modelID)
 	if !ok || realWindow <= 0 {
-		return raw, false
+		// A self-hosted model is in no catalog. The profile that launched the
+		// pane declares its window in the env var Claude Code budgets from, so
+		// that figure is the only authority for it. The catalog still wins for
+		// models it knows: this env var is the MINIMUM across a profile's four
+		// aliases, and sizing a gauge by it would under-report whenever the
+		// roomier alias is the one running.
+		realWindow = declaredContextWindow()
+		if realWindow <= 0 {
+			return raw, false
+		}
 	}
 	window, _ := data["context_window"].(map[string]any)
 	if window == nil {
@@ -65,4 +77,14 @@ func RewriteContextWindow(raw []byte) (out []byte, changed bool) {
 		return raw, false
 	}
 	return encoded, true
+}
+
+// declaredContextWindow reads the window the active subscription profile
+// declares, or 0 when it declares none usable.
+func declaredContextWindow() int {
+	tokens, err := strconv.Atoi(strings.TrimSpace(os.Getenv(claudeconfig.ContextBudgetKey)))
+	if err != nil || tokens <= 0 {
+		return 0
+	}
+	return tokens
 }

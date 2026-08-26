@@ -100,6 +100,18 @@ func TestAddForProvider_stamps_the_providers_real_context_window(t *testing.T) {
 			}
 			env := readEnvMap(t, filepath.Join(dir, file))
 			want, ok := ContextBudget(env)
+			if provider.UserConfigured {
+				// Nobody but the user knows this endpoint's window, and capping
+				// a session at an invented limit is its own bug — so the profile
+				// declares none until they enter one.
+				if ok {
+					t.Fatalf("user-configured provider %q sized itself from the catalog", provider.Key)
+				}
+				if got, declared := env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"]; declared {
+					t.Errorf("user-configured provider %q shipped a window %q", provider.Key, got)
+				}
+				return
+			}
 			if !ok {
 				t.Fatalf("provider %q maps no catalog model, so no window can be declared", provider.Key)
 			}

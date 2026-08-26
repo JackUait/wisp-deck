@@ -37,6 +37,10 @@ type Provider struct {
 	DefaultModels  [4]string
 	Auth           AuthKind
 	MirrorOpenCode bool
+	// UserConfigured marks a provider that ships no endpoint and no model
+	// catalog: the user supplies both. The modal offers text fields for them
+	// instead of the model cycler, which is inert with an empty model list.
+	UserConfigured bool
 }
 
 // Providers is the single source of truth for subscription providers and their
@@ -148,6 +152,20 @@ var Providers = []Provider{
 			{"kimi-k2.7-code-highspeed", 1.9, 8, 262144, 32768},
 			{"kimi-k2.6", 0.95, 4, 262144, 32768},
 		},
+	},
+	{
+		// Any endpoint speaking the Anthropic Messages API: a self-hosted
+		// vLLM/LiteLLM stack, a company gateway, an SSH tunnel. It ships no
+		// BaseURL and no Models because both are the user's to supply, and it
+		// is LAST so it can never become the unknown-name fallback that
+		// Providers[0] serves. MirrorOpenCode stays off: OpenCode's catalog
+		// cannot size a model nobody has published.
+		Key:            "custom",
+		Name:           "Custom / self-hosted",
+		Aliases:        []string{"custom", "self-hosted", "selfhosted"},
+		Auth:           AuthAPIKey,
+		MirrorOpenCode: false,
+		UserConfigured: true,
 	},
 }
 

@@ -659,6 +659,46 @@ tick to the follow at all), `test/bash/worktree_follow_wiring_test.go`, and
 `TestClaudeRegistryMapperReportsTheSessionsWorkingDirectory` plus
 `TestWorkingDirectoryWriterPublishesBesideTheAttentionState`.
 
+### A self-hosted subscription supplies what the catalog cannot
+
+The `custom` provider is a subscription whose endpoint and model belong to the
+user, not to a vendor. Everything the catalog answers for a gateway — base URL,
+model ids, context window, price — has no answer here, so the Subscription modal
+offers three text fields (Endpoint, Model, Context) where a gateway gets the
+alias cycler. The cycler is not merely unhelpful there: `cycleSubscriptionMapping`
+returns early on an empty model list, so those rows are inert.
+
+- **It is LAST in `Providers`, and must stay there.** `Providers[0]` is the
+  fallback for every profile name matching no alias, so a user-configured
+  provider in that slot would claim every stray config on the machine.
+- **The save path must skip `WriteModelMappings`.** That function writes the four
+  aliases from the draft's model list, which is empty for this provider — so
+  running it deletes the model the user just typed, on every save. The regression
+  guard is `TestSubscriptionModal_savingACustomProfileKeepsItsModelMapping`.
+- **The window is entered, never inferred.** `ContextBudget` cannot size a model
+  the catalog has never heard of, and `stampContextBudget` deliberately keeps
+  whatever the profile already had in that case — which is exactly what lets a
+  hand-typed figure survive `WriteModelMappings` and the `ensure-budget` sweep
+  `bin/wisp-deck` runs on every install. It must equal the endpoint's real limit;
+  overshooting it is the unrecoverable wedge described above.
+- **Every alias names the one model.** `/model` and subagents move freely across
+  all four, so a partially mapped profile launches some tiers with no model at
+  all. An absent default is written as no key rather than an empty string: a
+  blank `ANTHROPIC_DEFAULT_OPUS_MODEL` reaches Claude Code as a real, broken id.
+- **A key is still required.** `ConfigReady` gates on it, and these endpoints
+  routinely sit on public URLs (a `proxy.runpod.net` host is reachable by anyone
+  who guesses it).
+- **`MirrorOpenCode` stays off.** OpenCode's catalog cannot size a model nobody
+  has published, and `Sync` skips non-mirrored providers outright.
+
+The endpoint has to speak the **Anthropic Messages API** — `/v1/messages`,
+streaming, `tool_use`. An OpenAI-compatible server (vLLM, SGLang, Ollama) needs a
+translating proxy in front of it; without tool calls Claude Code cannot work at
+all.
+
+Guarded by `internal/claudeconfig/custom_provider_test.go` and
+`internal/tui/subscription_modal_custom_test.go`.
+
 ### Restore-queue pops are authorized, never ambient
 
 An interactive launch may consume a restore-queue entry only through

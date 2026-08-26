@@ -183,6 +183,9 @@ func AddForProvider(listFile, configsDir, name, providerKey string) (string, err
 		env["ANTHROPIC_BASE_URL"] = provider.BaseURL
 	}
 	for i, key := range envKeys {
+		if provider.DefaultModels[i] == "" {
+			continue
+		}
 		env[key] = provider.DefaultModels[i]
 	}
 	if budget, ok := ContextBudget(env); ok {
@@ -393,6 +396,132 @@ func WriteAPIKey(configsDir, file, key string) error {
 	env["ANTHROPIC_AUTH_TOKEN"] = key
 	m["env"] = env
 	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeSecure(path, append(out, '\n'))
+}
+
+// ReadContextWindow reads the declared context window from a config JSON.
+func ReadContextWindow(configsDir, file string) string {
+	return readEnvValue(configsDir, file, ContextBudgetKey)
+}
+
+// ReadCustomModel reports the model id a user-configured profile runs. All four
+// aliases name the same model, so the first one set answers for the profile.
+func ReadCustomModel(configsDir, file string) string {
+	for _, key := range envKeys {
+		if value := readEnvValue(configsDir, file, key); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// WriteCustomEndpoint sets the base URL of a user-configured profile. An empty
+// value removes the key: a blank ANTHROPIC_BASE_URL is not "unset" to Claude
+// Code, it is an endpoint that cannot resolve.
+func WriteCustomEndpoint(configsDir, file, endpoint string) error {
+	if err := ValidateCustomEndpoint(endpoint); err != nil {
+		return err
+	}
+	return writeEnvValues(configsDir, file,
+		map[string]string{"ANTHROPIC_BASE_URL": normalizeCustomEndpoint(endpoint)})
+}
+
+// ValidateCustomEndpoint reports why an endpoint cannot be stored, if it cannot.
+func ValidateCustomEndpoint(endpoint string) error {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return nil
+	}
+	if strings.ContainsAny(endpoint, " \t\r\n") {
+		return fmt.Errorf("endpoint cannot contain whitespace")
+	}
+	if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
+		return fmt.Errorf("endpoint must start with http:// or https://")
+	}
+	return nil
+}
+
+func normalizeCustomEndpoint(endpoint string) string {
+	return strings.TrimRight(strings.TrimSpace(endpoint), "/")
+}
+
+// WriteCustomModel points every alias at one model id. One endpoint serves one
+// model, and /model and subagents move freely across all four aliases, so a
+// partially mapped profile launches some tiers with no model at all.
+func WriteCustomModel(configsDir, file, model string) error {
+	if err := ValidateCustomModel(model); err != nil {
+		return err
+	}
+	model = strings.TrimSpace(model)
+	values := make(map[string]string, len(envKeys))
+	for _, key := range envKeys {
+		values[key] = model
+	}
+	return writeEnvValues(configsDir, file, values)
+}
+
+// WriteCustomContextWindow declares the window the endpoint actually enforces.
+// The catalog cannot size a model it has never heard of, so for these profiles
+// this is the only source of the figure — and overshooting it is unrecoverable,
+// which is why a value that is not a positive integer is refused rather than
+// coerced.
+func WriteCustomContextWindow(configsDir, file, window string) error {
+	if err := ValidateCustomContextWindow(window); err != nil {
+		return err
+	}
+	return writeEnvValues(configsDir, file,
+		map[string]string{ContextBudgetKey: strings.TrimSpace(window)})
+}
+
+// ValidateCustomModel reports why a model id cannot be stored, if it cannot.
+func ValidateCustomModel(model string) error {
+	if strings.ContainsAny(strings.TrimSpace(model), " \t\r\n") {
+		return fmt.Errorf("model id cannot contain whitespace")
+	}
+	return nil
+}
+
+// ValidateCustomContextWindow reports why a window cannot be stored, if it cannot.
+func ValidateCustomContextWindow(window string) error {
+	window = strings.TrimSpace(window)
+	if window == "" {
+		return nil
+	}
+	tokens, err := strconv.Atoi(window)
+	if err != nil || tokens <= 0 {
+		return fmt.Errorf("context window must be a positive number of tokens")
+	}
+	return nil
+}
+
+// writeEnvValues sets each key in a config JSON's env section, preserving every
+// other field. An empty value deletes its key.
+func writeEnvValues(configsDir, file string, values map[string]string) error {
+	path := filepath.Join(configsDir, file)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return err
+	}
+	env, _ := settings["env"].(map[string]any)
+	if env == nil {
+		env = make(map[string]any)
+	}
+	for key, value := range values {
+		if value == "" {
+			delete(env, key)
+			continue
+		}
+		env[key] = value
+	}
+	settings["env"] = env
+	out, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return err
 	}

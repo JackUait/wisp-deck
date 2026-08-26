@@ -733,6 +733,17 @@ func TestProviders_haveDisplayNamesAndValidDefaults(t *testing.T) {
 		if provider.Name == "" {
 			t.Errorf("provider %q has no display name", provider.Key)
 		}
+		if provider.UserConfigured {
+			// The user names the model, so a shipped default would be a guess
+			// at an id only their own endpoint can answer for.
+			for i, id := range provider.DefaultModels {
+				if id != "" {
+					t.Errorf("user-configured provider %q ships default %s = %q, want none",
+						provider.Key, AnthropicAliases[i], id)
+				}
+			}
+			continue
+		}
 		models := make(map[string]bool, len(provider.Models))
 		for _, model := range provider.Models {
 			models[model.ID] = true
@@ -768,13 +779,21 @@ func TestMoonshotProvider_catalogEntry(t *testing.T) {
 		t.Error("moonshot is Anthropic-compatible and must mirror into OpenCode")
 	}
 
-	// Appended last, so precedence among competing alias matches and the zhipu
-	// fallback at Providers[0] are both unchanged. Note this does not mean no
-	// existing config is affected: a pre-existing profile named "…kimi…" matched
-	// no alias before and fell through to zhipu, and now resolves to Moonshot.
-	// That re-resolution is intended — such a config is a Kimi config.
-	if Providers[len(Providers)-1].Key != "moonshot" {
-		t.Error("moonshot must be appended last in the catalog")
+	// Appended after every other gateway, so precedence among competing alias
+	// matches and the zhipu fallback at Providers[0] are both unchanged. Note
+	// this does not mean no existing config is affected: a pre-existing profile
+	// named "…kimi…" matched no alias before and fell through to zhipu, and now
+	// resolves to Moonshot. That re-resolution is intended — such a config is a
+	// Kimi config. User-configured providers sit past the gateways and are
+	// skipped here; they claim no vendor alias of their own.
+	lastGateway := ""
+	for _, provider := range Providers {
+		if !provider.UserConfigured {
+			lastGateway = provider.Key
+		}
+	}
+	if lastGateway != "moonshot" {
+		t.Errorf("moonshot must be appended last among gateways, got %q", lastGateway)
 	}
 
 	for _, name := range []string{"Work kimi", "my Moonshot plan", "Moonshot Kimi"} {

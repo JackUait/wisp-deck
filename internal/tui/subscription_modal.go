@@ -35,6 +35,9 @@ const (
 	subscriptionDetailSonnet
 	subscriptionDetailHaiku
 	subscriptionDetailFable
+	subscriptionDetailEndpoint
+	subscriptionDetailModel
+	subscriptionDetailContext
 	subscriptionDetailAuth
 	subscriptionDetailRename
 	subscriptionDetailDelete
@@ -54,6 +57,7 @@ type subscriptionModalMode int
 const (
 	subscriptionBrowse subscriptionModalMode = iota
 	subscriptionEditKey
+	subscriptionEditField
 	subscriptionAddProvider
 	subscriptionAddName
 	subscriptionRename
@@ -74,6 +78,7 @@ const (
 	subscriptionHitProfile
 	subscriptionHitAdd
 	subscriptionHitMapping
+	subscriptionHitField
 	subscriptionHitAuth
 	subscriptionHitSave
 	subscriptionHitRename
@@ -148,6 +153,13 @@ type subscriptionDraft struct {
 	apiKey    string
 	keyEdited bool
 	dirty     bool
+	// The three values a user-configured provider supplies itself. They are
+	// held as typed rather than validated on entry, so a half-typed endpoint
+	// is never rejected mid-keystroke; saving is where they are checked.
+	endpoint     string
+	model        string
+	window       string
+	customEdited bool
 }
 
 type subscriptionModalState struct {
@@ -161,6 +173,7 @@ type subscriptionModalState struct {
 	draft           subscriptionDraft
 	input           textinput.Model
 	providerKey     string
+	fieldRow        int
 	providerCursor  int
 	lifecycleCursor int
 	pendingProfile  int
@@ -512,6 +525,9 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 	if m.subscriptionModal.mode == subscriptionEditKey {
 		return m.updateSubscriptionKeyInput(msg)
 	}
+	if m.subscriptionModal.mode == subscriptionEditField {
+		return m.updateSubscriptionFieldInput(msg)
+	}
 	if m.subscriptionModal.mode == subscriptionAddProvider {
 		return m.updateSubscriptionProviderPicker(msg)
 	}
@@ -806,6 +822,13 @@ func (m *MainMenuModel) subscriptionDetailRows() []int {
 		subscriptionDetailHaiku,
 		subscriptionDetailFable,
 	}
+	if profile.Provider.UserConfigured {
+		rows = []int{
+			subscriptionDetailEndpoint,
+			subscriptionDetailModel,
+			subscriptionDetailContext,
+		}
+	}
 	if profile.Provider.Auth == claudeconfig.AuthAPIKey ||
 		profile.Provider.Auth == claudeconfig.AuthCodexChatGPT {
 		rows = append(rows, subscriptionDetailAuth)
@@ -900,6 +923,11 @@ func (m *MainMenuModel) loadSubscriptionDraft(profile subscriptionProfile) {
 	if !profile.Standard {
 		draft.models = append([]string(nil), claudeconfig.ProviderModels[profile.Provider.Key]...)
 		draft.mappings = claudeconfig.ReadModelMappings(m.claudeConfigsDir, profile.File, draft.models)
+		if profile.Provider.UserConfigured {
+			draft.endpoint = claudeconfig.ReadBaseURL(m.claudeConfigsDir, profile.File)
+			draft.model = claudeconfig.ReadCustomModel(m.claudeConfigsDir, profile.File)
+			draft.window = claudeconfig.ReadContextWindow(m.claudeConfigsDir, profile.File)
+		}
 		if profile.Provider.Auth == claudeconfig.AuthAPIKey {
 			draft.apiKey = claudeconfig.ReadAPIKey(m.claudeConfigsDir, profile.File)
 		}
@@ -907,6 +935,8 @@ func (m *MainMenuModel) loadSubscriptionDraft(profile subscriptionProfile) {
 	m.subscriptionModal.draft = draft
 	if profile.Standard {
 		m.subscriptionModal.detailCursor = subscriptionDetailNone
+	} else if rows := m.subscriptionDetailRows(); len(rows) > 0 {
+		m.subscriptionModal.detailCursor = rows[0]
 	} else {
 		m.subscriptionModal.detailCursor = subscriptionDetailOpus
 	}
@@ -978,7 +1008,13 @@ func (m *MainMenuModel) saveSubscriptionDraft() {
 	if profile.Standard || draft.file == "" || !draft.dirty {
 		return
 	}
-	if err := claudeconfig.WriteModelMappings(m.claudeConfigsDir, draft.file, draft.mappings, draft.models); err != nil {
+	if profile.Provider.UserConfigured {
+		if err := m.writeSubscriptionCustomFields(draft); err != nil {
+			m.subscriptionModal.err = err
+			return
+		}
+	} else if err := claudeconfig.WriteModelMappings(
+		m.claudeConfigsDir, draft.file, draft.mappings, draft.models); err != nil {
 		m.subscriptionModal.err = err
 		return
 	}
@@ -1009,6 +1045,120 @@ func (m *MainMenuModel) saveSubscriptionDraft() {
 	draft.dirty = false
 	m.subscriptionModal.err = nil
 	m.syncOpenCode()
+}
+
+// writeSubscriptionCustomFields persists the endpoint, model, and window a
+// user-configured profile supplies. It writes nothing until every value passes,
+// so a rejected window cannot leave the endpoint half-applied.
+func (m *MainMenuModel) writeSubscriptionCustomFields(draft *subscriptionDraft) error {
+	if !draft.customEdited {
+		return nil
+	}
+	if err := claudeconfig.ValidateCustomEndpoint(draft.endpoint); err != nil {
+		return err
+	}
+	if err := claudeconfig.ValidateCustomModel(draft.model); err != nil {
+		return err
+	}
+	if err := claudeconfig.ValidateCustomContextWindow(draft.window); err != nil {
+		return err
+	}
+	if err := claudeconfig.WriteCustomEndpoint(m.claudeConfigsDir, draft.file, draft.endpoint); err != nil {
+		return err
+	}
+	if err := claudeconfig.WriteCustomModel(m.claudeConfigsDir, draft.file, draft.model); err != nil {
+		return err
+	}
+	if err := claudeconfig.WriteCustomContextWindow(m.claudeConfigsDir, draft.file, draft.window); err != nil {
+		return err
+	}
+	draft.customEdited = false
+	return nil
+}
+
+// subscriptionFieldSpec describes one user-supplied text field.
+func (m *MainMenuModel) subscriptionFieldSpec(row int) (label, placeholder, value string, ok bool) {
+	draft := m.subscriptionModal.draft
+	switch row {
+	case subscriptionDetailEndpoint:
+		return "Endpoint", "https://host:8000", draft.endpoint, true
+	case subscriptionDetailModel:
+		return "Model", "model id served by the endpoint", draft.model, true
+	case subscriptionDetailContext:
+		return "Context", "context window in tokens", draft.window, true
+	}
+	return "", "", "", false
+}
+
+func (m *MainMenuModel) beginSubscriptionFieldEdit(row int) tea.Cmd {
+	if m.subscriptionModal.profileCursor >= len(m.subscriptionProfiles()) {
+		return nil
+	}
+	profile := m.subscriptionModalProfile()
+	if profile.Standard || !profile.Provider.UserConfigured {
+		return nil
+	}
+	_, placeholder, value, ok := m.subscriptionFieldSpec(row)
+	if !ok {
+		return nil
+	}
+	input := textinput.New()
+	input.Width = 32
+	input.Placeholder = placeholder
+	input.SetValue(value)
+	input.Focus()
+	m.subscriptionModal.input = input
+	m.subscriptionModal.fieldRow = row
+	m.enterSubscriptionLifecycle(subscriptionEditField)
+	m.subscriptionModal.err = nil
+	return textinput.Blink
+}
+
+func (m *MainMenuModel) updateSubscriptionFieldInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyLeft:
+		m.moveSubscriptionLifecycleAction(-1)
+		return m, nil
+	case tea.KeyRight:
+		m.moveSubscriptionLifecycleAction(1)
+		return m, nil
+	case tea.KeyEsc, tea.KeyCtrlC:
+		m.subscriptionModal.mode = subscriptionBrowse
+		m.subscriptionModal.input.Blur()
+		return m, nil
+	case tea.KeyEnter:
+		if m.subscriptionModal.lifecycleCursor == subscriptionLifecycleCancel {
+			m.subscriptionModal.mode = subscriptionBrowse
+			m.subscriptionModal.input.Blur()
+			return m, nil
+		}
+		m.commitSubscriptionField(strings.TrimSpace(m.subscriptionModal.input.Value()))
+		m.subscriptionModal.mode = subscriptionBrowse
+		m.subscriptionModal.input.Blur()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.subscriptionModal.input, cmd = m.subscriptionModal.input.Update(msg)
+	return m, cmd
+}
+
+func (m *MainMenuModel) commitSubscriptionField(value string) {
+	draft := &m.subscriptionModal.draft
+	current := ""
+	switch m.subscriptionModal.fieldRow {
+	case subscriptionDetailEndpoint:
+		current, draft.endpoint = draft.endpoint, value
+	case subscriptionDetailModel:
+		current, draft.model = draft.model, value
+	case subscriptionDetailContext:
+		current, draft.window = draft.window, value
+	default:
+		return
+	}
+	if value != current {
+		draft.customEdited = true
+		draft.dirty = true
+	}
 }
 
 func (m *MainMenuModel) beginSubscriptionKeyEdit() tea.Cmd {
@@ -1069,6 +1219,8 @@ func (m *MainMenuModel) activateSubscriptionDetail() (tea.Model, tea.Cmd) {
 	switch m.subscriptionModal.detailCursor {
 	case subscriptionDetailOpus, subscriptionDetailSonnet, subscriptionDetailHaiku, subscriptionDetailFable:
 		m.cycleSubscriptionMapping("next")
+	case subscriptionDetailEndpoint, subscriptionDetailModel, subscriptionDetailContext:
+		return m, m.beginSubscriptionFieldEdit(m.subscriptionModal.detailCursor)
 	case subscriptionDetailAuth:
 		if m.subscriptionModalProfile().Provider.Auth == claudeconfig.AuthCodexChatGPT {
 			return m, m.startSubscriptionChatGPTLogin()
@@ -1364,6 +1516,19 @@ func (m *MainMenuModel) subscriptionLifecycleLines(width, height int) []string {
 	}
 	var lines []string
 	switch m.subscriptionModal.mode {
+	case subscriptionEditField:
+		name, _, _, ok := m.subscriptionFieldSpec(m.subscriptionModal.fieldRow)
+		if !ok {
+			name = "value"
+		}
+		lines = append(lines,
+			dim.Bold(true).Render("EDIT "+strings.ToUpper(name)),
+			"",
+			name,
+			m.subscriptionModal.input.View(),
+			"",
+			buttons("[ Keep changes ]", accent, "[ Cancel ]"),
+		)
 	case subscriptionEditKey:
 		lines = append(lines,
 			dim.Bold(true).Render("EDIT API KEY"),
@@ -1902,9 +2067,9 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 	amber := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
 
 	switch m.subscriptionModal.mode {
-	case subscriptionEditKey, subscriptionAddProvider, subscriptionAddName,
-		subscriptionRename, subscriptionDeleteConfirm, subscriptionDiscardConfirm,
-		subscriptionLoginName:
+	case subscriptionEditKey, subscriptionEditField, subscriptionAddProvider,
+		subscriptionAddName, subscriptionRename, subscriptionDeleteConfirm,
+		subscriptionDiscardConfirm, subscriptionLoginName:
 		return m.subscriptionLifecycleLines(width, height)
 	}
 
@@ -1975,6 +2140,17 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 	if configured := claudeconfig.ReadBaseURL(m.claudeConfigsDir, profile.File); configured != "" {
 		endpoint = configured
 	}
+	endpointRow := subscriptionDetailNone
+	endpointStyle := dim
+	if profile.Provider.UserConfigured {
+		endpointRow = subscriptionDetailEndpoint
+		endpoint = m.subscriptionModal.draft.endpoint
+		endpointStyle = green
+		if endpoint == "" {
+			endpoint = "(not set)"
+			endpointStyle = amber
+		}
+	}
 	if profile.Provider.Auth == claudeconfig.AuthCodexChatGPT {
 		auth = m.subscriptionChatGPTAuthStatus()
 		authStyle = m.subscriptionChatGPTAuthStatusStyle(green, amber, dim)
@@ -1986,7 +2162,7 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 		"",
 		subscriptionSectionLine("CONNECTION", width, dim.Bold(true), dim),
 		valueRow(-1, "Authentication", auth, authStyle),
-		valueRow(-1, "Endpoint", endpoint, dim),
+		valueRow(endpointRow, "Endpoint", endpoint, endpointStyle),
 	)
 	lines = append(lines,
 		"",
@@ -1994,20 +2170,35 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 		"",
 	)
 
-	models := claudeconfig.ProviderModels[profile.Provider.Key]
-	mappings := claudeconfig.ReadModelMappings(m.claudeConfigsDir, profile.File, models)
-	if m.subscriptionModal.draft.file == profile.File {
-		models = m.subscriptionModal.draft.models
-		mappings = m.subscriptionModal.draft.mappings
-	}
-	for i, alias := range claudeconfig.AnthropicAliases {
-		value := "(none)"
-		style := dim
-		if mappings[i] >= 0 && mappings[i] < len(models) {
-			value = models[mappings[i]]
-			style = green
+	if profile.Provider.UserConfigured {
+		for _, row := range []int{subscriptionDetailModel, subscriptionDetailContext} {
+			name, _, value, ok := m.subscriptionFieldSpec(row)
+			if !ok {
+				continue
+			}
+			style := green
+			if value == "" {
+				value, style = "(not set)", amber
+			}
+			lines = append(lines, valueRow(row, name, value, style))
 		}
-		lines = append(lines, valueRow(i, strings.ToUpper(alias[:1])+alias[1:], "→ "+value, style))
+		lines = append(lines, dim.Render("Every model alias runs this one model."))
+	} else {
+		models := claudeconfig.ProviderModels[profile.Provider.Key]
+		mappings := claudeconfig.ReadModelMappings(m.claudeConfigsDir, profile.File, models)
+		if m.subscriptionModal.draft.file == profile.File {
+			models = m.subscriptionModal.draft.models
+			mappings = m.subscriptionModal.draft.mappings
+		}
+		for i, alias := range claudeconfig.AnthropicAliases {
+			value := "(none)"
+			style := dim
+			if mappings[i] >= 0 && mappings[i] < len(models) {
+				value = models[mappings[i]]
+				style = green
+			}
+			lines = append(lines, valueRow(i, strings.ToUpper(alias[:1])+alias[1:], "→ "+value, style))
+		}
 	}
 	if profile.Provider.Auth == claudeconfig.AuthAPIKey {
 		keyStatus := "(not set)"
@@ -2107,7 +2298,7 @@ func (m *MainMenuModel) subscriptionActionLines(width int, rename, deleteAction,
 
 func (m *MainMenuModel) subscriptionLifecycleLabels() (confirm, cancel string) {
 	switch m.subscriptionModal.mode {
-	case subscriptionEditKey:
+	case subscriptionEditKey, subscriptionEditField:
 		return "[ Keep changes ]", "[ Cancel ]"
 	case subscriptionAddProvider:
 		return "", "[ Cancel ]"
@@ -2227,6 +2418,15 @@ func (m *MainMenuModel) subscriptionModalTarget(cardX, cardY int) subscriptionHi
 		return subscriptionHitTarget{}
 	}
 
+	if m.subscriptionModalProfile().Provider.UserConfigured {
+		for _, row := range []int{
+			subscriptionDetailEndpoint, subscriptionDetailModel, subscriptionDetailContext,
+		} {
+			if name, _, _, ok := m.subscriptionFieldSpec(row); ok && hitText(name) {
+				return subscriptionHitTarget{kind: subscriptionHitField, index: row}
+			}
+		}
+	}
 	for i, alias := range claudeconfig.AnthropicAliases {
 		display := strings.ToUpper(alias[:1]) + alias[1:]
 		if hitText(display) {
@@ -2370,6 +2570,10 @@ func (m *MainMenuModel) handleSubscriptionModalMouse(msg tea.MouseMsg) (tea.Mode
 			m.subscriptionModal.pane = subscriptionDetailsPane
 			m.subscriptionModal.detailCursor = target.index
 			m.cycleSubscriptionMapping("next")
+		case subscriptionHitField:
+			m.subscriptionModal.pane = subscriptionDetailsPane
+			m.subscriptionModal.detailCursor = target.index
+			return m, m.beginSubscriptionFieldEdit(target.index)
 		case subscriptionHitAuth:
 			m.subscriptionModal.detailCursor = subscriptionDetailAuth
 			if m.subscriptionModalProfile().Provider.Auth == claudeconfig.AuthCodexChatGPT {
