@@ -67,6 +67,31 @@ func PopulateWorktrees(projects []Project) {
 	wg.Wait()
 }
 
+// DetectWorktreesFor detects the worktrees of every path concurrently and
+// returns them keyed by path. Every path gets an entry, so a caller can tell
+// "no worktrees any more" from "not measured this round".
+//
+// Unlike PopulateWorktrees it writes nothing back into a Project: the menu
+// refreshes on a background tick while the UI goroutine reads the project
+// list, and mutating that slice from the detection goroutine is a data race.
+func DetectWorktreesFor(paths []string) map[string][]Worktree {
+	results := make(map[string][]Worktree, len(paths))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, path := range paths {
+		wg.Add(1)
+		go func(path string) {
+			defer wg.Done()
+			found := DetectWorktrees(path)
+			mu.Lock()
+			results[path] = found
+			mu.Unlock()
+		}(path)
+	}
+	wg.Wait()
+	return results
+}
+
 // DetectWorktrees runs `git worktree list --porcelain` for the given path
 // and returns non-main worktrees. Returns nil on any error.
 func DetectWorktrees(projectPath string) []Worktree {

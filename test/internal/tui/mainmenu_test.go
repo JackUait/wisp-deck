@@ -637,10 +637,10 @@ func TestMainMenu_SetSize(t *testing.T) {
 }
 
 func TestMainMenu_Init(t *testing.T) {
-	// Static mode: Init carries only the startup stats ingest, no ticks.
+	// Static mode: the stats ingest and the worktree poll, no animation ticks.
 	m := tui.NewMainMenu(testProjects(), testAITools(), "claude", "static")
-	if got := m.InitCmdCountForTest(); got != 1 {
-		t.Errorf("static Init should batch exactly the stats ingest, got %d cmds", got)
+	if got := m.InitCmdCountForTest(); got != 2 {
+		t.Errorf("static Init should batch the stats ingest and the worktree refresh, got %d cmds", got)
 	}
 }
 

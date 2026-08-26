@@ -108,6 +108,17 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case worktreesRefreshedMsg:
+		// The worktree poll reschedules itself from the menu's own Update, so
+		// delivering it to the topmost screen would end the chain for the rest
+		// of the session the first time any screen is pushed.
+		updated, cmd := a.stack[0].Update(msg)
+		newStack := make([]tea.Model, len(a.stack))
+		copy(newStack, a.stack)
+		newStack[0] = updated
+		a.stack = newStack
+		return a, cmd
+
 	case escHintExpiredMsg:
 		// Only clear hint if no second Esc arrived.
 		a.showEscHint = false

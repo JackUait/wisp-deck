@@ -659,6 +659,53 @@ tick to the follow at all), `test/bash/worktree_follow_wiring_test.go`, and
 `TestClaudeRegistryMapperReportsTheSessionsWorkingDirectory` plus
 `TestWorkingDirectoryWriterPublishesBesideTheAttentionState`.
 
+### The project menu polls for worktrees, because nothing tells it
+
+`git worktree list` used to run exactly once, when the menu was built, plus on
+the four changes the menu made itself (created a worktree, removed one, added a
+project, deleted one). Nothing watched the filesystem and there was no refresh
+key, so a worktree created in a terminal while the menu sat open simply never
+appeared — the only cure was quitting and relaunching.
+
+So `worktreeRefreshCmd` re-detects every project's worktrees on a ~2s loop and
+`initCmds` arms it **unconditionally** — the ghost tickers beside it are gated
+on `ghostDisplay == "animated"`, and copying that gate would leave a static-ghost
+session with the original bug. Rules that fell out of building it:
+
+- **`AppModel` delegates to `a.top()`, so the loop needs its own route.** The
+  poll reschedules itself from the menu's own `Update`; delivered to the topmost
+  screen it would be swallowed by the branch picker and the chain would be dead
+  for the rest of the session. `worktreesRefreshedMsg` is routed to `stack[0]`.
+- **Detection never touches `m.projects`.** `PopulateWorktrees` writes through
+  the slice `View` is reading — a data race the moment it runs off the Update
+  loop. `models.DetectWorktreesFor` returns fresh data keyed by path instead,
+  and it spawns one git process per project, so it must stay in a `tea.Cmd`.
+- **Results are applied by path, never by index.** A project can be added or
+  deleted between the spawn and the delivery, and an index would write one
+  project's worktrees onto another. A path the round did not report keeps what
+  it had: absent means "not measured", not "none".
+- **The cursor is anchored to the worktree's path, not its row.** Enter launches
+  whatever the cursor is on; a worktree appearing above it shifts every row
+  below, and re-anchoring by index would silently move the cursor onto a
+  different worktree.
+- **A refresh is held back mid-flow** (`inputMode`, `deleteMode`, `cloning`, a
+  pending branch pick). `deleteSelected` is a flat index, so a row moving under
+  an open delete confirm is how someone removes the wrong worktree.
+- **An emptied project stays expanded.** `ToggleWorktrees` deliberately expands
+  a worktree-less project to its lone add-worktree row, so collapsing on the
+  poll would close a row the user opened on purpose —
+  `reloadAfterWorktreeRemoval` prunes because it ends a removal flow, not
+  because expansion implies worktrees.
+
+The poll surfaces ephemeral worktrees too (subagent `.claude/worktrees/*`,
+this suite's own temp checkouts) for as long as they exist; that is the list
+being true, not a defect.
+
+Guarded by `internal/tui/mainmenu_worktree_refresh_test.go` — including
+`_picksUpAWorktreeGitCreatedAfterTheMenuOpened`, which drives the real loop
+against a real repo, and `TestAppModel_deliversAWorktreeRefreshToTheMenuUnderAPushedScreen` —
+plus `TestDetectWorktreesFor_*` in `test/internal/models/worktree_refresh_test.go`.
+
 ### A self-hosted subscription supplies what the catalog cannot
 
 The `custom` provider is a subscription whose endpoint and model belong to the

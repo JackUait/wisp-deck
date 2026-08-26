@@ -385,6 +385,10 @@ type MainMenuModel struct {
 	// branch picker result. -1 means no pending worktree.
 	worktreePendingProjectIdx int
 
+	// worktreeRefreshEvery overrides the background re-detection interval.
+	// Zero means worktreeRefreshInterval; only tests set it.
+	worktreeRefreshEvery time.Duration
+
 	// staleConfirmIdx holds the index of the stale project awaiting launch
 	// confirmation. -1 means no confirmation is active.
 	staleConfirmIdx int
@@ -2239,6 +2243,75 @@ func (m *MainMenuModel) ensureStatsLoad() tea.Cmd {
 	}
 }
 
+// worktreeRefreshInterval is how often the menu re-detects worktrees. Nothing
+// watches the filesystem, so a worktree created in another terminal while the
+// menu sits open only ever appears because of this poll.
+const worktreeRefreshInterval = 2 * time.Second
+
+// worktreesRefreshedMsg carries a completed background detection, keyed by
+// project path — the projects can be added, removed or reordered between the
+// spawn and the delivery, so an index would name the wrong project.
+type worktreesRefreshedMsg struct {
+	byPath map[string][]models.Worktree
+}
+
+// worktreeRefreshCmd waits out the interval and then re-detects worktrees for
+// every project. The wait lives inside the command so one message type carries
+// the whole loop; detection itself must stay off the Update loop because it
+// spawns one git process per project.
+func (m *MainMenuModel) worktreeRefreshCmd() tea.Cmd {
+	paths := make([]string, len(m.projects))
+	for i, proj := range m.projects {
+		paths[i] = proj.Path
+	}
+	delay := m.worktreeRefreshEvery
+	if delay <= 0 {
+		delay = worktreeRefreshInterval
+	}
+	return func() tea.Msg {
+		time.Sleep(delay)
+		return worktreesRefreshedMsg{byPath: models.DetectWorktreesFor(paths)}
+	}
+}
+
+// applyWorktreesRefreshed folds a completed detection into the project list,
+// keeping the cursor on the same logical item across the row shift. It is a
+// no-op while the user is mid-flow: a row moving under an open confirm or
+// input is how someone acts on the wrong thing.
+func (m *MainMenuModel) applyWorktreesRefreshed(msg worktreesRefreshedMsg) {
+	if m.inputMode != "" || m.deleteMode || m.cloning || m.worktreePendingProjectIdx >= 0 {
+		return
+	}
+
+	anchorType, anchorProjectIdx, anchorWorktreeIdx := m.ResolveItem(m.selectedItem)
+	anchorWorktreePath := ""
+	if anchorType == "worktree" && anchorWorktreeIdx < len(m.projects[anchorProjectIdx].Worktrees) {
+		anchorWorktreePath = m.projects[anchorProjectIdx].Worktrees[anchorWorktreeIdx].Path
+	}
+
+	for i := range m.projects {
+		found, measured := msg.byPath[m.projects[i].Path]
+		if !measured {
+			continue
+		}
+		m.projects[i].Worktrees = found
+	}
+
+	// The anchored worktree can have moved within its project's list, or have
+	// been removed from another terminal — resolveToFlatIndex falls back to the
+	// project row once the index no longer exists.
+	if anchorWorktreePath != "" {
+		anchorWorktreeIdx = len(m.projects[anchorProjectIdx].Worktrees)
+		for j, wt := range m.projects[anchorProjectIdx].Worktrees {
+			if wt.Path == anchorWorktreePath {
+				anchorWorktreeIdx = j
+				break
+			}
+		}
+	}
+	m.selectedItem = m.resolveToFlatIndex(anchorType, anchorProjectIdx, anchorWorktreeIdx)
+}
+
 // bobTickCmd returns a command that sends a bobTickMsg at ~60fps.
 func (m *MainMenuModel) bobTickCmd() tea.Cmd {
 	return tea.Tick(bobTickInterval, func(t time.Time) tea.Msg {
@@ -2265,6 +2338,9 @@ func (m *MainMenuModel) initCmds() []tea.Cmd {
 	if cmd := m.ensureStatsLoad(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
+	// Unconditional: the ghost tickers below are a display preference, the
+	// worktree poll is the only thing that keeps the list true.
+	cmds = append(cmds, m.worktreeRefreshCmd())
 	if m.ghostDisplay == "animated" {
 		cmds = append(cmds, m.bobTickCmd())
 		cmds = append(cmds, m.sleepTickCmd())
@@ -2308,6 +2384,10 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.bobTickCmd()
 		}
 		return m, nil
+
+	case worktreesRefreshedMsg:
+		m.applyWorktreesRefreshed(msg)
+		return m, m.worktreeRefreshCmd()
 
 	case sleepTickMsg:
 		if m.ghostDisplay == "animated" && !m.ghostSleeping {
