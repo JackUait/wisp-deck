@@ -1246,3 +1246,26 @@ func decodeEventData(t *testing.T, data any, destination any) {
 		t.Fatal(err)
 	}
 }
+
+// Belt and braces for TestEngineSuppressesCodexSandboxPromptText: the config
+// switches that drop Codex's sandbox prose are vendor-controlled, so a Codex
+// release could stop honoring them without an error. The instructions must
+// state positively what the sandbox text got wrong — that the host's tools
+// reach the user's real project — so a model that sees the prose anyway has
+// something to weigh it against.
+func TestBaseInstructionsSayTheHostToolsWriteForReal(t *testing.T) {
+	for _, webSearch := range []bool{false, true} {
+		t.Run(fmt.Sprintf("web_search_%t", webSearch), func(t *testing.T) {
+			instructions := baseInstructions(Translation{WebSearch: webSearch})
+			for _, want := range []string{
+				"read-only",
+				"Codex's own sandbox",
+				"never refuse",
+			} {
+				if !strings.Contains(instructions, want) {
+					t.Fatalf("baseInstructions omit %q: %q", want, instructions)
+				}
+			}
+		})
+	}
+}

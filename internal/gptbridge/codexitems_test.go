@@ -131,3 +131,62 @@ func TestEngineDisablesEveryCodexCollaborationFeature(t *testing.T) {
 		}
 	}
 }
+
+// The bridge's read-only sandbox and `approvalPolicy: "never"` keep Codex off
+// this machine, but the app-server also RENDERS them into the model's prompt —
+// "`sandbox_mode` is `read-only`: The sandbox only permits reading files." and
+// "Approval policy is currently never." A model that reads those as properties
+// of the whole session refuses the host's own Edit/Write/Bash tools and tells
+// the user to start a "write-enabled session", while Claude Code sits in
+// bypassPermissions. That shipped: a GPT session abandoned four confirmed fixes
+// over it. Codex's environment context also advertises the private throwaway
+// cwd, which is the same misdirection about a different fact.
+//
+// Both blocks are gated by config keys, so the sandbox stays and only the prose
+// goes: these switch prompt assembly, never enforcement.
+func TestEngineSuppressesCodexSandboxPromptText(t *testing.T) {
+	rpc := newFakeEngineRPC()
+	rpc.onTurnStart = func(threadID, turnID string) {
+		completeTextTurn(rpc, threadID, turnID, "ok")
+	}
+	engine := newTestEngine(t, rpc)
+	if _, err := engine.Execute(context.Background(), testTranslation("hi"), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var params struct {
+		Sandbox        string `json:"sandbox"`
+		ApprovalPolicy string `json:"approvalPolicy"`
+		Config         struct {
+			IncludePermissions *bool `json:"include_permissions_instructions"`
+			IncludeEnvironment *bool `json:"include_environment_context"`
+		} `json:"config"`
+	}
+	raw := rpc.paramsFor(t, "thread/start")
+	if err := json.Unmarshal(raw, &params); err != nil {
+		t.Fatalf("decode thread/start params: %v", err)
+	}
+	for _, key := range []struct {
+		name  string
+		value *bool
+	}{
+		{"include_permissions_instructions", params.Config.IncludePermissions},
+		{"include_environment_context", params.Config.IncludeEnvironment},
+	} {
+		if key.value == nil {
+			t.Errorf("config.%s is not declared, so Codex keeps describing a "+
+				"sandbox that does not govern the host tools", key.name)
+			continue
+		}
+		if *key.value {
+			t.Errorf("config.%s = true, want false", key.name)
+		}
+	}
+	// The enforcement these switches must never relax.
+	if params.Sandbox != "read-only" {
+		t.Errorf("sandbox = %q, want read-only", params.Sandbox)
+	}
+	if params.ApprovalPolicy != "never" {
+		t.Errorf("approvalPolicy = %q, want never", params.ApprovalPolicy)
+	}
+}

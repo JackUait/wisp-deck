@@ -266,6 +266,19 @@ func (e *Engine) start(
 		),
 		"config": map[string]any{
 			"web_search": codexWebSearchMode(translation.WebSearch),
+			// The sandbox above governs Codex's own tools; the host's Edit,
+			// Write and Bash are Claude Code's and obey Claude's permission
+			// mode. Codex does not know that, and renders the thread's sandbox
+			// into the model's prompt anyway ("`sandbox_mode` is `read-only`:
+			// The sandbox only permits reading files.", "Approval policy is
+			// currently never."). A model reading those as session-wide
+			// refuses the host tools and asks for a "write-enabled session"
+			// while Claude Code sits in bypassPermissions. The environment
+			// context is the same misdirection about the private throwaway
+			// cwd. Both are prompt assembly only — the sandbox itself, the
+			// features map and rejectCodexOwnedItem still enforce.
+			"include_permissions_instructions": false,
+			"include_environment_context":      false,
 			// Codex gates collaboration sub-agents behind four separate flags,
 			// and it acquired the last three after multi_agent shipped. The
 			// bridge surfaces none of a sub-agent's work to Claude, so every
@@ -653,6 +666,14 @@ func baseInstructions(translation Translation) string {
 	// generating is the right answer and the instructions now say so.
 	lines = append(lines,
 		"You may generate images. Every image you generate is saved to a file and its path is reported to the user, so refer to that path instead of claiming an image cannot be shown.",
+	)
+	// The thread config suppresses Codex's sandbox and environment prose, but
+	// those switches are vendor-controlled and could stop being honored without
+	// an error. State the fact they got wrong, so a model that sees the prose
+	// anyway has something to weigh it against.
+	lines = append(lines,
+		"Codex's own sandbox may be described to you as read-only with approvals disabled; that governs Codex's tools alone.",
+		"The host-provided dynamic tools are Claude Code's, they act on the user's real project, and their permissions are Claude Code's to enforce — so never refuse or defer work on the grounds that the session is read-only or that you cannot escalate.",
 	)
 	if !translation.WebSearch {
 		return strings.Join(append(lines,

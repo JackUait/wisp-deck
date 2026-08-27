@@ -136,6 +136,7 @@ WISP_DECK_LIVE_CLAUDE_E2E=1 go test ./test/bash/ -run TestLiveClaude -v  # After
 WISP_DECK_TMUX_WIDTH_E2E=1 go test ./internal/tui/ -run TestCellWidth_matches_a_live_tmux  # After a tmux/go-runewidth/uniseg bump: re-check the diff pager's width model against a real tmux
 WISP_DECK_LIVE_IMAGE_E2E=1 go test ./internal/gptbridge/ -run TestLiveImageEndToEnd -v  # After a codex upgrade: verify a generated image still reports a savedPath that exists, and still round-trips back into Codex (costs one real image generation)
 WISP_DECK_LIVE_INJECT_E2E=1 go test ./internal/gptbridge/ -run TestLiveInjectItemsAppends -v  # After a codex upgrade: verify repeated thread/inject_items still APPEND in order, which chunked history injection depends on (costs one short turn)
+WISP_DECK_LIVE_SANDBOX_PROSE_E2E=1 go test ./internal/gptbridge/ -run TestLiveCodexSandboxProseIsSuppressed -v  # After a codex upgrade: verify the include_* config keys still stop Codex describing its read-only sandbox to the model, which is what makes a bridged pane refuse to edit (costs one short turn)
 WISP_DECK_LIVE_CODEX_COLD_E2E=1 go test ./internal/codexadapter/ -run TestLiveColdAppServerIsObserved -v  # After a codex upgrade: verify a real app-server still binds its socket and completes the observer handshake inside defaultCodexStartupTimeout (copies the vendored binary to a fresh inode so the exec goes cold, and logs the measured start)
 ```
 
@@ -1088,6 +1089,51 @@ tolerates everything else, known or not.
 Guarded by `TestEngineToleratesCodexItemTypesItDoesNotHostItself`,
 `TestEngineRejectsCodexItemsThatReachThisMachine`, and
 `TestEngineDisablesEveryCodexCollaborationFeature`.
+
+### The sandbox governs Codex's tools; saying so to the model breaks Claude's
+
+That read-only sandbox is enforcement the bridge needs, but Codex also **renders
+it into the model's prompt**, and the model has no way to know it does not
+describe the session it is actually working in:
+
+```
+`sandbox_mode` is `read-only`: The sandbox only permits reading files.
+Approval policy is currently never. Do not provide the `sandbox_permissions`
+for any reason, commands will be rejected.
+```
+
+The host's Edit/Write/Bash are Claude Code's tools, not Codex's, and obey
+Claude's permission mode. A model reading those two sentences as session-wide
+refuses them outright. This shipped: a GPT pane reported *"the repository is
+mounted read-only, escalation is disabled … a write-enabled session is
+required"* and abandoned four confirmed fixes — while its Claude session sat in
+`bypassPermissions` for all 94 recorded `permission-mode` events, with no
+transitions. It reads as wisp-deck overriding the user's permission mode, and
+it is not: nothing in the launch chain passes `--permission-mode`, and the
+launch overlay writes no `permissions` key.
+
+- **Suppress the prose, never the sandbox.**
+  `include_permissions_instructions: false` and
+  `include_environment_context: false` on the thread config are **prompt
+  assembly only** — `sandbox`, `sandboxPolicy`, the `features` map and
+  `rejectCodexOwnedItem` are what actually keep Codex off this machine, and
+  none of them move. Relaxing the sandbox to make the model feel write-enabled
+  would hand it the machine.
+- **The environment context is the same misdirection about the cwd.** It
+  advertises the private throwaway directory, so a model told to work in the
+  user's project is also told it is somewhere else entirely.
+- **Codex ignores unrecognized config keys silently**, so a rename would bring
+  the prose back with no error and a green unit test. That is why the guard is
+  a live one, and why `baseInstructions` also states the fact positively
+  ("Codex's own sandbox … governs Codex's tools alone … never refuse or defer
+  work on the grounds that the session is read-only"). Belt and braces: the
+  instruction is what survives Codex dropping the keys.
+
+Guarded by `TestEngineSuppressesCodexSandboxPromptText` (which also pins the
+sandbox and approval policy that must NOT change),
+`TestBaseInstructionsSayTheHostToolsWriteForReal`, and
+`TestLiveCodexSandboxProseIsSuppressed` — the only check that can see Codex's
+side (run it after a codex upgrade; see Commands).
 
 ### A generated image is delivered as a path, never as a block
 
