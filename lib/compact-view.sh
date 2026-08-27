@@ -307,6 +307,14 @@ untracked_numstat() {
         perl -0 -ne '
           chomp;
           my $f = $_;
+          # git never follows a symlink -- it stores the target PATH as a
+          # one-line blob -- so numstat scores every symlink 1 whatever it
+          # points at. Reading through the link would count the target instead,
+          # and a link to a directory cannot be read at all.
+          if (-l $f) { print("1\t0\t", $f, "\n"); next; }
+          # A nested repository arrives as "<dir>/": git does not descend into
+          # it, and its line count is unknowable rather than zero.
+          if (! -f $f) { print("0\t0\t", $f, "\n"); next; }
           my ($n, $bin, $last, $first) = (0, 0, "", 1);
           if (open my $fh, "<", $f) {
             binmode $fh;

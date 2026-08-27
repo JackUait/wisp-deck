@@ -354,14 +354,37 @@ func (s *Source) inspectPaths(ctx context.Context, root string, paths []string) 
 	return changes, nil
 }
 
+// inspectWorktreeFile counts one untracked entry. `git ls-files --others` does
+// not list regular files only: it never follows a symlink (so a link to a
+// directory arrives as its own entry) and it does not descend into a nested
+// repository (which arrives as "<dir>/"). os.Open FOLLOWS symlinks, so opening
+// either one yields a directory handle whose Read fails with EISDIR and takes
+// the whole snapshot down with it. Only a regular file is ever opened — a FIFO
+// would block the read until a writer showed up.
 func inspectWorktreeFile(ctx context.Context, root, path string) (Change, error) {
-	file, err := os.Open(filepath.Join(root, filepath.FromSlash(path)))
+	full := filepath.Join(root, filepath.FromSlash(path))
+	info, err := os.Lstat(full)
+	if err != nil {
+		return Change{}, err
+	}
+	change := Change{Group: GroupNew, Path: path}
+	if info.Mode()&os.ModeSymlink != 0 {
+		// git stores a symlink as a blob holding its target path with no
+		// trailing newline, so numstat scores every symlink as one added line
+		// whether or not the target exists.
+		change.Added = 1
+		return change, nil
+	}
+	if !info.Mode().IsRegular() {
+		return change, nil
+	}
+
+	file, err := os.Open(full)
 	if err != nil {
 		return Change{}, err
 	}
 	defer file.Close()
 
-	change := Change{Group: GroupNew, Path: path}
 	buffer := make([]byte, 64*1024)
 	var size int64
 	lines := 0
