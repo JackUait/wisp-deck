@@ -191,6 +191,9 @@ func AddForProvider(listFile, configsDir, name, providerKey string) (string, err
 	if budget, ok := ContextBudget(env); ok {
 		env[ContextBudgetKey] = strconv.Itoa(budget)
 	}
+	if provider.UserConfigured {
+		env[ByteWatchdogKey] = byteWatchdogDisarmed
+	}
 	settings := map[string]any{
 		"$schema": "https://json.schemastore.org/claude-code-settings.json",
 		"env":     env,
@@ -346,6 +349,7 @@ func WriteProviderMarker(configsDir, file, providerKey string) error {
 		env = make(map[string]any)
 	}
 	env["WISP_DECK_SUBSCRIPTION_PROVIDER"] = providerKey
+	stampByteWatchdog(env)
 	settings["env"] = env
 	out, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {

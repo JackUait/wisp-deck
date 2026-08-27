@@ -746,6 +746,62 @@ all.
 Guarded by `internal/claudeconfig/custom_provider_test.go` and
 `internal/tui/subscription_modal_custom_test.go`.
 
+### A self-hosted pane disarms the byte stall watchdog, because nothing pings it
+
+Claude Code arms a raw-byte stall watchdog on every `text/event-stream` body it
+receives. It measures bytes on the wire, not events: 20s of silence paints
+`Waiting for API response · will retry in <N> · check your network`, and at the
+end of the budget it aborts the stream and replays the whole turn.
+
+Its premise is that a healthy stream is never silent, which holds for Anthropic
+and for the vendor gateways, because they forward Anthropic's own `event: ping`.
+An endpoint the user supplies promises nothing of the sort — a self-hosted model
+prefilling a large prompt sends no bytes at all until its first output token. So
+on a `custom` profile the watchdog reports a working model as a broken network,
+then kills the turn it was working on.
+
+Decoded from 2.1.247 and then measured against a live pane, because the decode
+alone hides the second half:
+
+- **The 20s trigger is a hardcoded interval**, not a budget. No env var moves it,
+  and `CLAUDE_ENABLE_STREAM_WATCHDOG` does not cover it — that flag gates the
+  abort timers only, while the banner timer is armed either way. The single
+  lever is `CLAUDE_ENABLE_BYTE_WATCHDOG`: falsy means the instrumented body is
+  never installed, so the banner has nothing to read and cannot fire.
+- **A custom base URL is still `firstParty`.** `getAPIProvider()` answers from
+  the `CLAUDE_CODE_USE_*` flags alone and never looks at `ANTHROPIC_BASE_URL`,
+  so a self-hosted pane draws the **180s** first-party abort budget rather than
+  the 300s one — measured, not inferred: the live banner counted down from
+  `2m 37s` at the 20s tick.
+- **It is not a cosmetic banner.** A mock endpoint byte-silent for 200s was
+  aborted at 180s and re-dispatched; the replay is the same prompt, so it takes
+  the same time and is killed again — a self-hosted endpoint slower than 180s to
+  first token can never complete a turn. The same profile carrying the key ran
+  that turn to completion in one attempt, with no banner.
+- **Only a user-configured profile is disarmed.** A gateway heartbeats, so
+  disarming it there trades a real dead-connection signal for nothing.
+- **The provider comes from the `WISP_DECK_SUBSCRIPTION_PROVIDER` marker**, never
+  from the filename: an unmatched name resolves to `Providers[0]`, so
+  "qwen.json" would read as Zhipu.
+- **A declared value is never overwritten,** exactly like `stampContextBudget` —
+  the user may have armed it on an endpoint that does keep its stream warm, and
+  every launch path may run the sweep.
+- **The installer copies a default profile only when the file is absent**, so a
+  profile written before this was declared is reachable only by a sweep:
+  `claude-config ensure-watchdog`, which `bin/wisp-deck` runs beside
+  `ensure-budget`. The modal's own custom-field save runs it too, so a profile
+  self-heals the moment the user edits it.
+
+This is the same failure the GPT bridge answers with `event: ping` every 10s —
+there wisp-deck owns the server and can keep the socket warm, here it owns only
+the profile. What still stands for a self-hosted pane is the separate *event*
+watchdog, which aborts a turn after `CLAUDE_STREAM_IDLE_TIMEOUT_MS` (minimum and
+default 300s) with no SSE events.
+
+Guarded by `internal/claudeconfig/bytewatchdog_test.go`,
+`TestSubscriptionModal_savingACustomProfileDisarmsTheByteWatchdog`, and
+`test/bash/byte_watchdog_sweep_test.go`.
+
 ### Restore-queue pops are authorized, never ambient
 
 An interactive launch may consume a restore-queue entry only through

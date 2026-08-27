@@ -1072,6 +1072,11 @@ func (m *MainMenuModel) writeSubscriptionCustomFields(draft *subscriptionDraft) 
 	if err := claudeconfig.WriteCustomContextWindow(m.claudeConfigsDir, draft.file, draft.window); err != nil {
 		return err
 	}
+	// Self-heals a profile created before the watchdog was disarmed, without
+	// waiting for the next installer sweep. A no-op once the key is declared.
+	if _, err := claudeconfig.EnsureByteWatchdog(m.claudeConfigsDir, draft.file); err != nil {
+		return err
+	}
 	draft.customEdited = false
 	return nil
 }

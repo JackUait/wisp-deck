@@ -223,6 +223,10 @@ fi
 # since /compact must resend the same oversized transcript.
 if [ -d "$CONFIGS_DIR/claude-configs" ] && command -v wisp-deck-tui >/dev/null 2>&1; then
   wisp-deck-tui claude-config ensure-budget --dir "$CONFIGS_DIR/claude-configs" >/dev/null 2>&1 || true
+  # Same reason, other invariant: a self-hosted profile written before the byte
+  # stall watchdog was disarmed reports a thinking endpoint as a dead network,
+  # then aborts and replays the turn it was working on.
+  wisp-deck-tui claude-config ensure-watchdog --dir "$CONFIGS_DIR/claude-configs" >/dev/null 2>&1 || true
 fi
 
 # ---------- Projects ----------

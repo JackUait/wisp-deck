@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -322,5 +325,62 @@ func TestSubscriptionModal_addFlowCreatesACustomProfile(t *testing.T) {
 	rows := m.subscriptionDetailRows()
 	if len(rows) == 0 || rows[0] != subscriptionDetailEndpoint {
 		t.Errorf("new custom profile opens on rows %v, want the endpoint field first", rows)
+	}
+}
+
+// A profile created before the byte watchdog was disarmed must not wait for the
+// next installer run to stop reporting a working endpoint as a dead network.
+// Saving its fields is the moment the user is looking straight at it.
+func TestSubscriptionModal_savingACustomProfileDisarmsTheByteWatchdog(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	file := addCustomProfile(t, m, "Qwen")
+	path := filepath.Join(m.claudeConfigsDir, file)
+	env := readSettingsEnv(t, path)
+	delete(env, claudeconfig.ByteWatchdogKey)
+	writeSettingsEnv(t, path, env)
+
+	editSubscriptionField(t, m, subscriptionDetailModel, "qwen3-coder")
+	m.saveSubscriptionDraft()
+
+	if got := readSettingsEnv(t, path)[claudeconfig.ByteWatchdogKey]; got != "0" {
+		t.Errorf("%s after a save = %v, want %q",
+			claudeconfig.ByteWatchdogKey, got, "0")
+	}
+}
+
+func readSettingsEnv(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	env, _ := settings["env"].(map[string]any)
+	if env == nil {
+		t.Fatalf("%s has no env section", path)
+	}
+	return env
+}
+
+func writeSettingsEnv(t *testing.T, path string, env map[string]any) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	settings["env"] = env
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(out, '\n'), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -90,6 +90,22 @@ var claudeConfigEnsureBudgetCmd = &cobra.Command{
 	},
 }
 
+// A user-configured endpoint makes no promise to keep its stream warm, and a
+// profile already on disk is never re-copied from defaults, so the watchdog it
+// was written with can only be disarmed here.
+var claudeConfigEnsureWatchdogCmd = &cobra.Command{
+	Use:   "ensure-watchdog",
+	Short: "Disarm the byte stall watchdog on self-hosted configs and print how many changed",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		changed, err := claudeconfig.EnsureByteWatchdogAll(ccDir)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), changed)
+		return nil
+	},
+}
+
 func init() {
 	claudeConfigAddCmd.Flags().StringVar(&ccList, "list", "", "Path to configs list (name:file)")
 	claudeConfigAddCmd.Flags().StringVar(&ccDir, "dir", "", "Path to configs directory")
@@ -108,8 +124,9 @@ func init() {
 	claudeConfigDeleteCmd.Flags().StringVar(&ccFile, "file", "", "Filename of the config to delete")
 
 	claudeConfigEnsureBudgetCmd.Flags().StringVar(&ccDir, "dir", "", "Path to configs directory")
+	claudeConfigEnsureWatchdogCmd.Flags().StringVar(&ccDir, "dir", "", "Path to configs directory")
 
 	claudeConfigCmd.AddCommand(claudeConfigAddCmd, claudeConfigRenameCmd, claudeConfigDeleteCmd,
-		claudeConfigEnsureBudgetCmd)
+		claudeConfigEnsureBudgetCmd, claudeConfigEnsureWatchdogCmd)
 	rootCmd.AddCommand(claudeConfigCmd)
 }

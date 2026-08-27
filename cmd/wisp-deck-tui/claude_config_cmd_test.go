@@ -15,6 +15,7 @@ func TestClaudeConfigCmd_Registered(t *testing.T) {
 		{"claude-config", "rename"},
 		{"claude-config", "delete"},
 		{"claude-config", "ensure-budget"},
+		{"claude-config", "ensure-watchdog"},
 	} {
 		cmd, _, err := rootCmd.Find(path)
 		if err != nil {
