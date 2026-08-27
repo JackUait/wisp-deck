@@ -1023,6 +1023,10 @@ func TestCompactView_mouse_marks_and_discards(t *testing.T) {
 	// (cols 1-3), so a click at col 2 toggles the row's mark.
 	click(2, 2) // mark a.txt
 	click(2, 3) // mark b.txt
+	deadline = time.Now().Add(3 * time.Second)
+	for !strings.Contains(frame(), "discard 2") && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
 
 	// The "[ discard 2 ]" button now rides the group-header row NEXT TO the title,
 	// not the bottom bar. Assert it renders on the SAME line as "modified".
@@ -1724,7 +1728,7 @@ func TestCompactView_idle_frames_are_stable_no_blink(t *testing.T) {
 	// Idle: no keystrokes. Wait for enough refresh ticks to evaluate the
 	// between-frame output. Native-binary startup varies under parallel load, so
 	// do not spend the observation budget before the first paint exists.
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(6 * time.Second)
 	for {
 		mu.Lock()
 		homes := bytes.Count(out.Bytes(), []byte("\x1b[H"))

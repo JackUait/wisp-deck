@@ -163,8 +163,8 @@ func TestBuildMainMenuModel_SoundCyclingHasNoPreviewCapability(t *testing.T) {
 		t.Fatalf("buildMainMenuModel: %v", err)
 	}
 	model.EnterSettings()
-	// Idle Sound is the sixth visual row (after Appearance and Tools).
-	for range 5 {
+	// Idle Sound follows five Appearance rows and one Tools row.
+	for range 6 {
 		if _, cmd := model.Update(tea.KeyMsg{Type: tea.KeyDown}); cmd != nil {
 			t.Fatal("settings navigation unexpectedly returned a command")
 		}
