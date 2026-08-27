@@ -53,6 +53,7 @@ func TestSubscriptionModal_customProfileOffersTextFieldsInsteadOfMappings(t *tes
 		subscriptionDetailEndpoint,
 		subscriptionDetailModel,
 		subscriptionDetailContext,
+		subscriptionDetailImages,
 		subscriptionDetailAuth,
 		subscriptionDetailRename,
 	}

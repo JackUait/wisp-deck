@@ -43,6 +43,10 @@ const (
 	subscriptionDetailDelete
 	subscriptionDetailSave
 	subscriptionDetailUse
+	// Appended last on purpose: moveSubscriptionDetail treats the span from
+	// Rename to Save as the action row, so a value inserted above Rename would
+	// drag the action buttons into the field list.
+	subscriptionDetailImages
 )
 
 type subscriptionPane int
@@ -160,6 +164,9 @@ type subscriptionDraft struct {
 	model        string
 	window       string
 	customEdited bool
+	// Whether the endpoint's model is text-only. Held beside the three fields
+	// because it is saved by the same path.
+	imagesBlocked bool
 }
 
 type subscriptionModalState struct {
@@ -827,6 +834,7 @@ func (m *MainMenuModel) subscriptionDetailRows() []int {
 			subscriptionDetailEndpoint,
 			subscriptionDetailModel,
 			subscriptionDetailContext,
+			subscriptionDetailImages,
 		}
 	}
 	if profile.Provider.Auth == claudeconfig.AuthAPIKey ||
@@ -927,6 +935,7 @@ func (m *MainMenuModel) loadSubscriptionDraft(profile subscriptionProfile) {
 			draft.endpoint = claudeconfig.ReadBaseURL(m.claudeConfigsDir, profile.File)
 			draft.model = claudeconfig.ReadCustomModel(m.claudeConfigsDir, profile.File)
 			draft.window = claudeconfig.ReadContextWindow(m.claudeConfigsDir, profile.File)
+			draft.imagesBlocked = claudeconfig.ReadImagesBlocked(m.claudeConfigsDir, profile.File)
 		}
 		if profile.Provider.Auth == claudeconfig.AuthAPIKey {
 			draft.apiKey = claudeconfig.ReadAPIKey(m.claudeConfigsDir, profile.File)
@@ -1072,6 +1081,10 @@ func (m *MainMenuModel) writeSubscriptionCustomFields(draft *subscriptionDraft) 
 	if err := claudeconfig.WriteCustomContextWindow(m.claudeConfigsDir, draft.file, draft.window); err != nil {
 		return err
 	}
+	if err := claudeconfig.WriteImagesBlocked(
+		m.claudeConfigsDir, draft.file, draft.imagesBlocked); err != nil {
+		return err
+	}
 	// Self-heals a profile created before the watchdog was disarmed, without
 	// waiting for the next installer sweep. A no-op once the key is declared.
 	if _, err := claudeconfig.EnsureByteWatchdog(m.claudeConfigsDir, draft.file); err != nil {
@@ -1079,6 +1092,30 @@ func (m *MainMenuModel) writeSubscriptionCustomFields(draft *subscriptionDraft) 
 	}
 	draft.customEdited = false
 	return nil
+}
+
+// toggleSubscriptionImages flips whether the endpoint's model is treated as
+// text-only. Claude Code has no capability flag for that — it will send an
+// image to whatever the base URL points at — so the profile denies the reads
+// that produce one.
+func (m *MainMenuModel) toggleSubscriptionImages() {
+	profile := m.subscriptionModalProfile()
+	if profile.Standard || !profile.Provider.UserConfigured {
+		return
+	}
+	draft := &m.subscriptionModal.draft
+	draft.imagesBlocked = !draft.imagesBlocked
+	draft.customEdited = true
+	draft.dirty = true
+	m.subscriptionModal.err = nil
+}
+
+// subscriptionImagesLabel names the images row and the state it is in.
+func subscriptionImagesLabel(blocked bool) (name, value string) {
+	if blocked {
+		return "Images", "Never sent (text-only model)"
+	}
+	return "Images", "Sent to the model"
 }
 
 // subscriptionFieldSpec describes one user-supplied text field.
@@ -1226,6 +1263,8 @@ func (m *MainMenuModel) activateSubscriptionDetail() (tea.Model, tea.Cmd) {
 		m.cycleSubscriptionMapping("next")
 	case subscriptionDetailEndpoint, subscriptionDetailModel, subscriptionDetailContext:
 		return m, m.beginSubscriptionFieldEdit(m.subscriptionModal.detailCursor)
+	case subscriptionDetailImages:
+		m.toggleSubscriptionImages()
 	case subscriptionDetailAuth:
 		if m.subscriptionModalProfile().Provider.Auth == claudeconfig.AuthCodexChatGPT {
 			return m, m.startSubscriptionChatGPTLogin()
@@ -2188,6 +2227,14 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 			lines = append(lines, valueRow(row, name, value, style))
 		}
 		lines = append(lines, dim.Render("Every model alias runs this one model."))
+		imagesName, imagesValue := subscriptionImagesLabel(m.subscriptionModal.draft.imagesBlocked)
+		imagesStyle := green
+		if m.subscriptionModal.draft.imagesBlocked {
+			imagesStyle = amber
+		}
+		lines = append(lines,
+			"",
+			valueRow(subscriptionDetailImages, imagesName, imagesValue, imagesStyle))
 	} else {
 		models := claudeconfig.ProviderModels[profile.Provider.Key]
 		mappings := claudeconfig.ReadModelMappings(m.claudeConfigsDir, profile.File, models)
@@ -2431,6 +2478,9 @@ func (m *MainMenuModel) subscriptionModalTarget(cardX, cardY int) subscriptionHi
 				return subscriptionHitTarget{kind: subscriptionHitField, index: row}
 			}
 		}
+		if name, _ := subscriptionImagesLabel(m.subscriptionModal.draft.imagesBlocked); hitText(name) {
+			return subscriptionHitTarget{kind: subscriptionHitField, index: subscriptionDetailImages}
+		}
 	}
 	for i, alias := range claudeconfig.AnthropicAliases {
 		display := strings.ToUpper(alias[:1]) + alias[1:]
@@ -2578,6 +2628,10 @@ func (m *MainMenuModel) handleSubscriptionModalMouse(msg tea.MouseMsg) (tea.Mode
 		case subscriptionHitField:
 			m.subscriptionModal.pane = subscriptionDetailsPane
 			m.subscriptionModal.detailCursor = target.index
+			if target.index == subscriptionDetailImages {
+				m.toggleSubscriptionImages()
+				return m, nil
+			}
 			return m, m.beginSubscriptionFieldEdit(target.index)
 		case subscriptionHitAuth:
 			m.subscriptionModal.detailCursor = subscriptionDetailAuth

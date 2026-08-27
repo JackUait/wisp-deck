@@ -803,6 +803,59 @@ Guarded by `internal/claudeconfig/bytewatchdog_test.go`,
 `TestSubscriptionModal_savingACustomProfileDisarmsTheByteWatchdog`, and
 `test/bash/byte_watchdog_sweep_test.go`.
 
+### A text-only model is declared by the profile, because Claude Code has no flag for it
+
+Claude Code sends images to whatever `ANTHROPIC_BASE_URL` points at. Decoding
+2.1.247 turns up **no** lever to stop it: there is no `supportsVision` on a
+model, no vision capability consulted before a block is built, and no env var —
+`imageLimits` (from the catalog's `image_limits`) only resizes, and
+`CLAUDE_CODE_DISABLE_ATTACHMENTS` governs system-prompt sections, not content.
+`appendSystemPrompt` is a managed-settings/SDK key that a user settings file
+ignores (verified live: a codeword placed there never reached the model).
+
+A text-only endpoint answers an image with a hard failure — vLLM's
+`At most 0 image(s) may be provided in one prompt (parameter=image)`, surfaced
+as a 500 that kills the turn, and a subagent with it. So the Subscription
+modal's **Images** row (user-configured providers only) writes the one thing a
+settings profile can enforce: `permissions.deny` rules on the Reads that produce
+a non-text block.
+
+- **`Read(//**/*.png)` — the `//` is load-bearing.** A Read rule's path is
+  gitignore-style and relative to the project without it, and the images that
+  reach a model live outside the project: a screenshot directory, the Desktop, a
+  temp path. Verified against a live pane, not the decode — a rooted rule denies
+  `/tmp`, an absolute scratch path and an uppercase `.PNG` alike, **in
+  `bypassPermissions` mode**, and a Task subagent inherits the denial.
+- **A PDF belongs in the list.** Read returns it as a `document` block (and, on
+  the per-page fallback, as image blocks) — just as unsendable. An SVG does
+  not: git tracks it as text and Claude Code reads it as text, so denying it
+  removes a working capability instead of preventing a failure.
+- **This is never stamped for the user**, unlike `stampByteWatchdog` and
+  `stampContextBudget`. A self-hosted endpoint may serve a model that sees
+  images perfectly well, so there is no sweep and no `EnsureAll` — only the
+  toggle, default off.
+- **The state is the rules themselves,** with no `WISP_DECK_*` marker to drift.
+  *Any* owned rule reads as on, so a profile stamped by an older, shorter list
+  still shows the toggle set and is filled in on the next write; turning it off
+  removes only the owned strings, never a deny rule the user wrote by hand.
+- **The launch overlay is what delivers it.** `write_claude_launch_settings`
+  copies the whole settings object, so `permissions` travels untouched — and
+  `_apply_subscription_switch` regenerates the overlay, so a mid-session switch
+  picks the toggle up too.
+
+Known limits, by construction: this stops the model reading an image. It cannot
+stop an image the *user* puts in the prompt — a paste, a drag, or an `@`-mentioned
+path Claude Code inlines — nor an MCP tool that returns one. `.ipynb` is
+deliberately absent from the list for the same reason as SVG in reverse: only a
+cell whose *output* is an image would break the turn, and denying every notebook
+read costs far more than that. Wisp's own screenshot-inject binding could
+consult the toggle; it does not yet.
+
+Guarded by `internal/claudeconfig/imagereads_test.go`,
+`internal/tui/subscription_modal_images_test.go`, and
+`test/bash/images_blocked_launch_test.go` (the overlay end of the chain, which
+goes red if the overlay is ever narrowed to an allowlist of keys).
+
 ### Restore-queue pops are authorized, never ambient
 
 An interactive launch may consume a restore-queue entry only through
