@@ -5,19 +5,34 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
-// ContextBudgetKey is Claude Code's override for its own auto-compact budget.
-// Claude Code otherwise sizes that budget from ITS model catalog, which knows
-// nothing about the server ANTHROPIC_BASE_URL points at: a subscription model
-// it does not recognize gets a flat 200000, and a session model still carrying
-// Anthropic's `[1m]` marker gets 1000000. Either figure can sit above the cap
-// the provider actually enforces, and overshooting it is unrecoverable —
-// /compact must itself send the oversized transcript, so it fails too.
-//
-// Claude Code honors this key only for models outside its own `claude-*`
-// namespace, which is exactly the subscription case.
-const ContextBudgetKey = "CLAUDE_CODE_MAX_CONTEXT_TOKENS"
+// ContextBudgetKey declares the model window Claude Code's catalog cannot know.
+// A sub-1M window also needs a direct auto-compact cap: a global `[1m]` model
+// marker is resolved before this key and otherwise lets the session grow past
+// the endpoint's limit. /compact cannot recover after that because it sends the
+// same oversized transcript.
+const (
+	ContextBudgetKey      = "CLAUDE_CODE_MAX_CONTEXT_TOKENS"
+	autoCompactWindowKey  = "CLAUDE_CODE_AUTO_COMPACT_WINDOW"
+	disable1MContextKey   = "CLAUDE_CODE_DISABLE_1M_CONTEXT"
+	oneMillionContextSize = 1000000
+)
+
+func contextWindowEnv(window string) map[string]string {
+	values := map[string]string{
+		ContextBudgetKey:     window,
+		autoCompactWindowKey: "",
+		disable1MContextKey:  "",
+	}
+	tokens, _ := strconv.Atoi(window)
+	if tokens > 0 && tokens < oneMillionContextSize {
+		values[autoCompactWindowKey] = window
+		values[disable1MContextKey] = "1"
+	}
+	return values
+}
 
 // ContextBudget returns the window every model a config can run fits inside:
 // the smallest catalog context across its four ANTHROPIC_DEFAULT_*_MODEL
@@ -40,17 +55,60 @@ func ContextBudget(env map[string]string) (int, bool) {
 }
 
 // stampContextBudget rewrites the declared window on a decoded settings env.
-// A config the catalog cannot size keeps whatever it had: inventing a number
-// for an unknown provider would cap a session at a limit nobody enforces.
-func stampContextBudget(env map[string]any) {
+// A custom profile owns its declared window even when its model is cataloged.
+// Other profiles use the catalog first and never invent an unknown limit.
+func stampContextBudget(env map[string]any, configName string) {
 	models := make(map[string]string, len(envKeys))
 	for _, key := range envKeys {
 		if value, ok := env[key].(string); ok {
 			models[key] = value
 		}
 	}
-	if budget, ok := ContextBudget(models); ok {
-		env[ContextBudgetKey] = strconv.Itoa(budget)
+	declaredWindow := ""
+	if declared, ok := env[ContextBudgetKey].(string); ok {
+		tokens, err := strconv.Atoi(strings.TrimSpace(declared))
+		if err == nil && tokens > 0 {
+			declaredWindow = strconv.Itoa(tokens)
+		}
+	}
+	marker, _ := env["WISP_DECK_SUBSCRIPTION_PROVIDER"].(string)
+	provider, marked := providerByKey(marker)
+	userConfigured := marked && provider.UserConfigured
+	if !marked {
+		provider = providerFor(configName)
+		userConfigured = provider.UserConfigured
+		endpoint, _ := env["ANTHROPIC_BASE_URL"].(string)
+		endpoint = normalizeCustomEndpoint(endpoint)
+		if endpoint != "" {
+			catalogEndpoint := false
+			for _, candidate := range Providers {
+				if candidate.BaseURL != "" && normalizeCustomEndpoint(candidate.BaseURL) == endpoint {
+					catalogEndpoint = true
+					break
+				}
+			}
+			// Profiles predating provider markers are self-hosted when their endpoint
+			// belongs to no catalog provider, regardless of their filename.
+			userConfigured = userConfigured || !catalogEndpoint
+		}
+	}
+	window := ""
+	if userConfigured {
+		window = declaredWindow
+	} else if budget, ok := ContextBudget(models); ok {
+		window = strconv.Itoa(budget)
+	} else {
+		window = declaredWindow
+	}
+	if window == "" {
+		return
+	}
+	for key, value := range contextWindowEnv(window) {
+		if value == "" {
+			delete(env, key)
+		} else {
+			env[key] = value
+		}
 	}
 }
 
@@ -73,10 +131,16 @@ func EnsureContextBudget(configsDir, file string) (bool, error) {
 	if env == nil {
 		return false, nil
 	}
-	before, had := env[ContextBudgetKey].(string)
-	stampContextBudget(env)
-	after, has := env[ContextBudgetKey].(string)
-	if had == has && before == after {
+	beforeBudget, hadBudget := env[ContextBudgetKey].(string)
+	beforeAuto, hadAuto := env[autoCompactWindowKey].(string)
+	beforeDisable, hadDisable := env[disable1MContextKey].(string)
+	stampContextBudget(env, file)
+	afterBudget, hasBudget := env[ContextBudgetKey].(string)
+	afterAuto, hasAuto := env[autoCompactWindowKey].(string)
+	afterDisable, hasDisable := env[disable1MContextKey].(string)
+	if hadBudget == hasBudget && beforeBudget == afterBudget &&
+		hadAuto == hasAuto && beforeAuto == afterAuto &&
+		hadDisable == hasDisable && beforeDisable == afterDisable {
 		return false, nil
 	}
 	settings["env"] = env

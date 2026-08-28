@@ -189,7 +189,11 @@ func AddForProvider(listFile, configsDir, name, providerKey string) (string, err
 		env[key] = provider.DefaultModels[i]
 	}
 	if budget, ok := ContextBudget(env); ok {
-		env[ContextBudgetKey] = strconv.Itoa(budget)
+		for key, value := range contextWindowEnv(strconv.Itoa(budget)) {
+			if value != "" {
+				env[key] = value
+			}
+		}
 	}
 	if provider.UserConfigured {
 		env[ByteWatchdogKey] = byteWatchdogDisarmed
@@ -371,11 +375,31 @@ func ProviderForConfig(configsDir string, config Config) Provider {
 // metadata to be selectable. ChatGPT authentication is verified at launch by
 // Codex, while API providers require a stored key.
 func ConfigReady(configsDir string, config Config) bool {
-	switch ProviderForConfig(configsDir, config).Auth {
+	provider := ProviderForConfig(configsDir, config)
+	switch provider.Auth {
 	case AuthCodexChatGPT:
 		return true
 	case AuthAPIKey:
-		return ReadAPIKey(configsDir, config.File) != ""
+		if strings.TrimSpace(ReadAPIKey(configsDir, config.File)) == "" {
+			return false
+		}
+		if !provider.UserConfigured {
+			return true
+		}
+		endpoint := strings.TrimSpace(ReadBaseURL(configsDir, config.File))
+		model := strings.TrimSpace(ReadCustomModel(configsDir, config.File))
+		window := strings.TrimSpace(ReadContextWindow(configsDir, config.File))
+		if endpoint == "" || model == "" || window == "" {
+			return false
+		}
+		for _, key := range envKeys {
+			if strings.TrimSpace(readEnvValue(configsDir, config.File, key)) != model {
+				return false
+			}
+		}
+		return ValidateCustomEndpoint(endpoint) == nil &&
+			ValidateCustomModel(model) == nil &&
+			ValidateCustomContextWindow(window) == nil
 	default:
 		return false
 	}
@@ -476,8 +500,7 @@ func WriteCustomContextWindow(configsDir, file, window string) error {
 	if err := ValidateCustomContextWindow(window); err != nil {
 		return err
 	}
-	return writeEnvValues(configsDir, file,
-		map[string]string{ContextBudgetKey: strings.TrimSpace(window)})
+	return writeEnvValues(configsDir, file, contextWindowEnv(strings.TrimSpace(window)))
 }
 
 // ValidateCustomModel reports why a model id cannot be stored, if it cannot.
@@ -580,7 +603,7 @@ func RepairGatewayForKey(configsDir, file string) (bool, error) {
 	for i, envKey := range envKeys {
 		env[envKey] = provider.DefaultModels[i]
 	}
-	stampContextBudget(env)
+	stampContextBudget(env, file)
 	settings["env"] = env
 	out, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -684,7 +707,7 @@ func WriteModelMappings(configsDir, file string, mappings [4]int, models []strin
 			delete(env, key)
 		}
 	}
-	stampContextBudget(env)
+	stampContextBudget(env, file)
 	m["env"] = env
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {

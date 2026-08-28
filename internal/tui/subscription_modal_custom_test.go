@@ -161,6 +161,35 @@ func TestSubscriptionModal_savingACustomProfileKeepsItsModelMapping(t *testing.T
 	}
 }
 
+func TestSubscriptionModal_refusesCustomProfileWithoutContextWindow(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	file := addCustomProfile(t, m, "Qwen")
+	if err := claudeconfig.WriteCustomEndpoint(m.claudeConfigsDir, file, "http://127.0.0.1:8000"); err != nil {
+		t.Fatal(err)
+	}
+	if err := claudeconfig.WriteCustomModel(m.claudeConfigsDir, file, "qwen3-coder"); err != nil {
+		t.Fatal(err)
+	}
+	if err := claudeconfig.WriteAPIKey(m.claudeConfigsDir, file, "pod-secret"); err != nil {
+		t.Fatal(err)
+	}
+	m.SetClaudeConfigs(LoadClaudeConfigsList(m.claudeConfigsList))
+	m.openSubscriptionModal()
+	for m.subscriptionModalProfile().File != file {
+		m.moveSubscriptionProfile(1)
+	}
+
+	m.useSubscriptionProfile()
+
+	if got := m.CurrentClaudeConfigFile(); got != "" {
+		t.Errorf("profile without a context window became active: %q", got)
+	}
+	if m.subscriptionModal.err == nil ||
+		!strings.Contains(strings.ToLower(m.subscriptionModal.err.Error()), "context") {
+		t.Errorf("activation error = %v, want guidance about the context window", m.subscriptionModal.err)
+	}
+}
+
 func TestSubscriptionModal_customFieldEditorPrefillsTheStoredValue(t *testing.T) {
 	m := newSubscriptionModalMenu(t)
 	addCustomProfile(t, m, "Qwen")

@@ -249,20 +249,100 @@ func TestReadContextWindow_reports_the_configured_window(t *testing.T) {
 }
 
 // A public pod URL with no credential is the shape this must not silently allow.
-func TestCustomProfileIsNotReadyWithoutAKey(t *testing.T) {
+func TestCustomProfileIsReadyOnlyAfterItsRequiredFieldsAreStored(t *testing.T) {
 	dir, list, file := customConfig(t)
 	configs := Load(list)
 	if len(configs) != 1 {
 		t.Fatalf("expected one config, got %d", len(configs))
 	}
 	if ConfigReady(dir, configs[0]) {
-		t.Error("custom profile is ready with no API key stored")
+		t.Error("empty custom profile is ready")
 	}
 	if err := WriteAPIKey(dir, file, "pod-secret"); err != nil {
 		t.Fatalf("WriteAPIKey: %v", err)
 	}
+	if err := WriteCustomEndpoint(dir, file, "http://127.0.0.1:8000"); err != nil {
+		t.Fatalf("WriteCustomEndpoint: %v", err)
+	}
+	if err := WriteCustomModel(dir, file, "qwen3-coder"); err != nil {
+		t.Fatalf("WriteCustomModel: %v", err)
+	}
+	if ConfigReady(dir, configs[0]) {
+		t.Error("custom profile with no context window is ready")
+	}
+	if err := WriteCustomContextWindow(dir, file, "262144"); err != nil {
+		t.Fatalf("WriteCustomContextWindow: %v", err)
+	}
+	if err := WriteAPIKey(dir, file, "   "); err != nil {
+		t.Fatalf("WriteAPIKey whitespace: %v", err)
+	}
+	if ConfigReady(dir, configs[0]) {
+		t.Error("custom profile with a whitespace-only API key is ready")
+	}
+	if err := WriteAPIKey(dir, file, "pod-secret"); err != nil {
+		t.Fatalf("WriteAPIKey final: %v", err)
+	}
 	if !ConfigReady(dir, configs[0]) {
-		t.Error("custom profile with a key is still not ready")
+		t.Error("complete custom profile is not ready")
+	}
+}
+
+func TestCustomProfileReadinessRejectsIncompleteStoredFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		values map[string]string
+	}{
+		{
+			name:   "blank endpoint",
+			values: map[string]string{"ANTHROPIC_BASE_URL": "   "},
+		},
+		{
+			name: "blank model",
+			values: map[string]string{
+				"ANTHROPIC_DEFAULT_OPUS_MODEL":   "   ",
+				"ANTHROPIC_DEFAULT_SONNET_MODEL": "   ",
+				"ANTHROPIC_DEFAULT_HAIKU_MODEL":  "   ",
+				"ANTHROPIC_DEFAULT_FABLE_MODEL":  "   ",
+			},
+		},
+		{
+			name:   "blank context window",
+			values: map[string]string{ContextBudgetKey: "   "},
+		},
+		{
+			name: "missing alias",
+			values: map[string]string{
+				"ANTHROPIC_DEFAULT_SONNET_MODEL": "",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, list, file := customConfig(t)
+			if err := WriteAPIKey(dir, file, "pod-secret"); err != nil {
+				t.Fatal(err)
+			}
+			if err := WriteCustomEndpoint(dir, file, "http://127.0.0.1:8000"); err != nil {
+				t.Fatal(err)
+			}
+			if err := WriteCustomModel(dir, file, "qwen3-coder"); err != nil {
+				t.Fatal(err)
+			}
+			if err := WriteCustomContextWindow(dir, file, "262144"); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeEnvValues(dir, file, tt.values); err != nil {
+				t.Fatal(err)
+			}
+
+			configs := Load(list)
+			if len(configs) != 1 {
+				t.Fatalf("expected one config, got %d", len(configs))
+			}
+			if ConfigReady(dir, configs[0]) {
+				t.Error("incomplete custom profile is ready")
+			}
+		})
 	}
 }
 

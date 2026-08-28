@@ -959,7 +959,14 @@ func (m *MainMenuModel) useSubscriptionProfile() tea.Cmd {
 	}
 	profile := m.subscriptionModalProfile()
 	if !profile.Ready {
-		m.subscriptionModal.err = fmt.Errorf("%s needs an API key before it can be used", profile.Name)
+		if profile.Provider.UserConfigured {
+			m.subscriptionModal.err = fmt.Errorf(
+				"%s needs an endpoint, model, context window, and API key before it can be used",
+				profile.Name,
+			)
+		} else {
+			m.subscriptionModal.err = fmt.Errorf("%s needs an API key before it can be used", profile.Name)
+		}
 		return nil
 	}
 	if err := claudeconfig.SetActive(m.claudeConfigFile, profile.File); err != nil {

@@ -107,22 +107,72 @@ func TestAddForProvider_stamps_the_providers_real_context_window(t *testing.T) {
 				if ok {
 					t.Fatalf("user-configured provider %q sized itself from the catalog", provider.Key)
 				}
-				if got, declared := env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"]; declared {
-					t.Errorf("user-configured provider %q shipped a window %q", provider.Key, got)
+				for _, key := range []string{
+					"CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+					"CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+					"CLAUDE_CODE_DISABLE_1M_CONTEXT",
+				} {
+					if got, declared := env[key]; declared {
+						t.Errorf("user-configured provider %q shipped %s=%q", provider.Key, key, got)
+					}
 				}
 				return
 			}
 			if !ok {
 				t.Fatalf("provider %q maps no catalog model, so no window can be declared", provider.Key)
 			}
-			got := env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"]
-			if got != strconv.Itoa(want) {
-				t.Errorf("CLAUDE_CODE_MAX_CONTEXT_TOKENS = %q, want %q", got, strconv.Itoa(want))
+			window := strconv.Itoa(want)
+			if got := env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"]; got != window {
+				t.Errorf("CLAUDE_CODE_MAX_CONTEXT_TOKENS = %q, want %q", got, window)
+			}
+			autoCompact, capped := env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]
+			wantCap := want < 1000000
+			if capped != wantCap {
+				t.Errorf("auto-compaction capped = %v, want %v", capped, wantCap)
+			} else if capped && autoCompact != window {
+				t.Errorf("auto-compact window = %q, want %q", autoCompact, window)
+			}
+			_, disabled := env["CLAUDE_CODE_DISABLE_1M_CONTEXT"]
+			if disabled != wantCap {
+				t.Errorf("1M marker disabled = %v, want %v", disabled, wantCap)
 			}
 			for _, id := range provider.DefaultModels {
 				if window, _, known := ModelLimit(id); known && want > window {
 					t.Errorf("declared budget %d exceeds %s's real window %d", want, id, window)
 				}
+			}
+		})
+	}
+}
+
+func TestWriteCustomContextWindow_caps_an_inherited_1m_session(t *testing.T) {
+	tests := []struct {
+		name    string
+		window  string
+		wantCap bool
+	}{
+		{name: "smaller window", window: "262144", wantCap: true},
+		{name: "one million window", window: "1000000", wantCap: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, _, file := customConfig(t)
+			if err := WriteCustomContextWindow(dir, file, tt.window); err != nil {
+				t.Fatalf("WriteCustomContextWindow: %v", err)
+			}
+			env := readEnvMap(t, filepath.Join(dir, file))
+			if got := env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"]; got != tt.window {
+				t.Errorf("model window = %q, want %q", got, tt.window)
+			}
+			autoCompact, capped := env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]
+			if capped != tt.wantCap {
+				t.Errorf("auto-compaction capped = %v, want %v", capped, tt.wantCap)
+			} else if capped && autoCompact != tt.window {
+				t.Errorf("auto-compact window = %q, want %q", autoCompact, tt.window)
+			}
+			_, disabled := env["CLAUDE_CODE_DISABLE_1M_CONTEXT"]
+			if disabled != tt.wantCap {
+				t.Errorf("1M marker disabled = %v, want %v", disabled, tt.wantCap)
 			}
 		})
 	}
@@ -192,6 +242,178 @@ func TestEnsureContextBudget_backfills_a_config_written_before_the_window_was_de
 	}
 }
 
+func TestEnsureContextBudget_keeps_a_custom_profiles_declared_window(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "custom.json")
+	custom := `{
+  "env": {
+    "WISP_DECK_SUBSCRIPTION_PROVIDER": "custom",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.2",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.2",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-5.2",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "glm-5.2",
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144"
+  }
+}`
+	if err := os.WriteFile(path, []byte(custom), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := EnsureContextBudget(dir, "custom.json")
+	if err != nil {
+		t.Fatalf("EnsureContextBudget: %v", err)
+	}
+	if !changed {
+		t.Fatal("custom profile was not given its compaction safeguards")
+	}
+	env := readEnvMap(t, path)
+	if got := env[ContextBudgetKey]; got != "262144" {
+		t.Errorf("declared custom window = %q, want 262144", got)
+	}
+	if got := env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]; got != "262144" {
+		t.Errorf("auto-compact window = %q, want 262144", got)
+	}
+	if got := env["CLAUDE_CODE_DISABLE_1M_CONTEXT"]; got != "1" {
+		t.Errorf("disable 1M marker = %q, want 1", got)
+	}
+}
+
+func TestEnsureContextBudget_keeps_a_markerless_self_hosted_profiles_window(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "qwen.json")
+	custom := `{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://self-hosted.example/v1",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.2",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.2",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-5.2",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "glm-5.2",
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144"
+  }
+}`
+	if err := os.WriteFile(path, []byte(custom), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := EnsureContextBudget(dir, "qwen.json")
+	if err != nil {
+		t.Fatalf("EnsureContextBudget: %v", err)
+	}
+	if !changed {
+		t.Fatal("legacy custom profile was not given its compaction safeguards")
+	}
+	env := readEnvMap(t, path)
+	if got := env[ContextBudgetKey]; got != "262144" {
+		t.Errorf("declared custom window = %q, want 262144", got)
+	}
+	if got := env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]; got != "262144" {
+		t.Errorf("auto-compact window = %q, want 262144", got)
+	}
+}
+
+func TestEnsureContextBudget_normalizes_a_padded_custom_window(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "custom.json")
+	custom := `{
+  "env": {
+    "WISP_DECK_SUBSCRIPTION_PROVIDER": "custom",
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": " 262144 "
+  }
+}`
+	if err := os.WriteFile(path, []byte(custom), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := EnsureContextBudget(dir, "custom.json")
+	if err != nil {
+		t.Fatalf("EnsureContextBudget: %v", err)
+	}
+	if !changed {
+		t.Fatal("padded custom window was not normalized and safeguarded")
+	}
+	env := readEnvMap(t, path)
+	for _, key := range []string{
+		ContextBudgetKey,
+		"CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+	} {
+		if got := env[key]; got != "262144" {
+			t.Errorf("%s = %q, want 262144", key, got)
+		}
+	}
+	if got := env["CLAUDE_CODE_DISABLE_1M_CONTEXT"]; got != "1" {
+		t.Errorf("disable 1M marker = %q, want 1", got)
+	}
+}
+
+func TestEnsureContextBudget_does_not_infer_a_custom_profiles_window(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "custom.json")
+	custom := `{
+  "env": {
+    "WISP_DECK_SUBSCRIPTION_PROVIDER": "custom",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.2",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.2",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-5.2",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "glm-5.2"
+  }
+}`
+	if err := os.WriteFile(path, []byte(custom), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := EnsureContextBudget(dir, "custom.json")
+	if err != nil {
+		t.Fatalf("EnsureContextBudget: %v", err)
+	}
+	if changed {
+		t.Error("custom profile without a declared window was rewritten")
+	}
+	if _, declared := readEnvMap(t, path)[ContextBudgetKey]; declared {
+		t.Error("catalog window was inferred for a user-configured endpoint")
+	}
+}
+
+func TestEnsureContextBudget_backfills_compaction_for_an_existing_budget(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "existing.json")
+	existing := `{
+  "env": {
+    "WISP_DECK_SUBSCRIPTION_PROVIDER": "custom",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "Qwen-3.8-Uncensored",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "Qwen-3.8-Uncensored",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "Qwen-3.8-Uncensored",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "Qwen-3.8-Uncensored",
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144"
+  }
+}`
+	if err := os.WriteFile(path, []byte(existing), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := EnsureContextBudget(dir, "existing.json")
+	if err != nil {
+		t.Fatalf("EnsureContextBudget: %v", err)
+	}
+	if !changed {
+		t.Fatal("an existing budget without a compaction cap was not rewritten")
+	}
+	env := readEnvMap(t, path)
+	if got := env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]; got != "262144" {
+		t.Errorf("auto-compact window = %q, want 262144", got)
+	}
+	if got := env["CLAUDE_CODE_DISABLE_1M_CONTEXT"]; got != "1" {
+		t.Errorf("disable 1M marker = %q, want 1", got)
+	}
+
+	changed, err = EnsureContextBudget(dir, "existing.json")
+	if err != nil {
+		t.Fatalf("EnsureContextBudget (second pass): %v", err)
+	}
+	if changed {
+		t.Error("a fully capped config was rewritten again")
+	}
+}
+
 func TestEnsureContextBudget_leaves_a_config_it_cannot_size_alone(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "native.json")
@@ -231,8 +453,20 @@ func TestShippedDefaultConfigs_declare_their_providers_window(t *testing.T) {
 				t.Skip("maps no catalog model")
 			}
 			seen++
-			if got := env[ContextBudgetKey]; got != strconv.Itoa(want) {
-				t.Errorf("%s = %q, want %q", ContextBudgetKey, got, strconv.Itoa(want))
+			window := strconv.Itoa(want)
+			if got := env[ContextBudgetKey]; got != window {
+				t.Errorf("%s = %q, want %q", ContextBudgetKey, got, window)
+			}
+			autoCompact, capped := env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]
+			wantCap := want < 1000000
+			if capped != wantCap {
+				t.Errorf("auto-compaction capped = %v, want %v", capped, wantCap)
+			} else if capped && autoCompact != window {
+				t.Errorf("auto-compact window = %q, want %q", autoCompact, window)
+			}
+			_, disabled := env["CLAUDE_CODE_DISABLE_1M_CONTEXT"]
+			if disabled != wantCap {
+				t.Errorf("1M marker disabled = %v, want %v", disabled, wantCap)
 			}
 		})
 	}

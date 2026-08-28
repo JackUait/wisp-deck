@@ -1258,24 +1258,34 @@ is *larger* than the turn that already failed — it appends the summarization
 prompt). A real session sat at 253,954 tokens under `claude-fable-5[1m]`, was
 switched to Kimi (`k3`, cap 262144), and the next tool result killed it for good.
 
-So every subscription profile ships `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, taken from
-the catalog that already knows each model's real window
-(`claudeconfig.ContextBudget`). Rules that fell out of building it:
+Every subscription profile therefore declares its real window with
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, taken from the catalog that already knows
+each model's limit (`claudeconfig.ContextBudget`) or entered by the user for a
+custom endpoint. A window below 1M also coordinates two safeguards:
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW` directly caps current Claude versions, and
+`CLAUDE_CODE_DISABLE_1M_CONTEXT=1` keeps the inherited marker from winning in
+older ones. Rules that fell out of building it:
 
 - **The budget is the MINIMUM across all four `ANTHROPIC_DEFAULT_*_MODEL`
   mappings.** One env var governs the whole session — `/model` and subagents
   move freely between the aliases — so anything larger lets the session grow
   past whichever mapped model has the tightest cap.
-- **The override is only honored for non-`claude-*` model ids**, and only
-  *after* the three 1M branches have had their say. It therefore cannot cap a
-  `[1m]` model at all; what makes it reachable is that subscription profiles
-  map every alias to a provider-native id (`k3`, `kimi-for-coding`, `glm-4.7`).
+- **A provider-native mapping does not remove a global `[1m]` selection.**
+  With global `model: "opus[1m]"`, a custom Qwen mapping rendered as
+  `Qwen-3.8-Uncensored[1m]`; Claude ignored the max-context key, never
+  compacted, then sent 230145 input plus 32000 output tokens to a 262144-token
+  endpoint. The auto-compact override is the direct guard, while disabling the
+  marker preserves the same result on older Claude versions.
 - **The installer copies a default profile only when the file is absent**, so a
-  profile created before the window was declared can never be repaired by
+  profile created before these keys were declared can never be repaired by
   shipping a new default. `claude-config ensure-budget` sweeps existing ones,
-  and `bin/wisp-deck` runs it.
-- **Never invent a window for a provider the catalog cannot size** — capping a
-  session at a limit nobody enforces is its own bug.
+  including a custom profile whose user-entered max window is the only size
+  available, and `bin/wisp-deck` runs it.
+- **A custom window is always user-owned.** Never infer one for a custom
+  profile or replace its declared value just because its model id also appears
+  in the catalog; the self-hosted endpoint may enforce a different limit. The
+  profile stays unavailable until its endpoint, model, positive context window,
+  and API key are all present.
 - **A switch re-checks that the conversation still fits.** Retargeting replays
   the WHOLE transcript to the new provider, so `_guard_subscription_context`
   measures the live conversation against the target's declared window and
