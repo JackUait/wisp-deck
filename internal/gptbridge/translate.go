@@ -89,7 +89,28 @@ func TranslateRequest(request MessagesRequest) (Translation, error) {
 	if err := translateMessages(request.Messages, &translation); err != nil {
 		return Translation{}, err
 	}
+	if isClaudeCompactionInput(translation.Input) {
+		translation.Effort = "low"
+	}
 	return translation, nil
+}
+
+// Claude Code reuses the session's thinking budget for this generated prompt.
+// Keep the summarizer fast so a full conversation can recover.
+func isClaudeCompactionInput(input []UserInput) bool {
+	for _, item := range input {
+		if item.Type != "text" ||
+			!strings.Contains(item.Text, "Before providing your final summary, wrap your analysis in <analysis> tags") {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(item.Text, "Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions."),
+			strings.HasPrefix(item.Text, "Your task is to create a detailed summary of the RECENT portion of the conversation — the messages that follow earlier retained context."),
+			strings.HasPrefix(item.Text, "Your task is to create a detailed summary of this conversation. This summary will be placed at the start of a continuing session; newer messages that build on this context will follow after your summary (you do not see them here)."):
+			return true
+		}
+	}
+	return false
 }
 
 func validateSampling(request MessagesRequest) error {

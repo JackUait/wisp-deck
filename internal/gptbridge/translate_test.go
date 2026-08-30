@@ -548,6 +548,64 @@ func TestTranslateThinkingBudgetToReasoningEffort(t *testing.T) {
 	}
 }
 
+func TestTranslateRunsClaudeCompactionAtLowEffort(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-sol",
+		"max_tokens":32000,
+		"system":"You are Claude Code.",
+		"thinking":{"type":"enabled","budget_tokens":32768},
+		"messages":[
+			{"role":"user","content":"Read the file"},
+			{"role":"assistant","content":[{
+				"type":"tool_use","id":"read_1","name":"Read","input":{"file_path":"large.txt"}
+			}]},
+			{"role":"user","content":[
+				{"type":"tool_result","tool_use_id":"read_1","content":"file contents"},
+				{"type":"text","text":"Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions. Before providing your final summary, wrap your analysis in <analysis> tags to organize your thoughts and ensure you've covered all necessary points."}
+			]}
+		]
+	}`)
+	if got.Effort != "low" {
+		t.Fatalf("effort = %q, want low", got.Effort)
+	}
+}
+
+func TestTranslateRunsEveryClaudeCompactionPromptAtLowEffort(t *testing.T) {
+	prompts := []string{
+		"Your task is to create a detailed summary of the RECENT portion of the conversation — the messages that follow earlier retained context.",
+		"Your task is to create a detailed summary of this conversation. This summary will be placed at the start of a continuing session; newer messages that build on this context will follow after your summary (you do not see them here).",
+	}
+	for _, prompt := range prompts {
+		t.Run(prompt, func(t *testing.T) {
+			body := fmt.Sprintf(`{
+				"model":"gpt-5.6-sol",
+				"max_tokens":32000,
+				"thinking":{"type":"enabled","budget_tokens":32768},
+				"messages":[{"role":"user","content":%q}]
+			}`, prompt+" Before providing your final summary, wrap your analysis in <analysis> tags.")
+			got := parseAndTranslate(t, body)
+			if got.Effort != "low" {
+				t.Fatalf("effort = %q, want low", got.Effort)
+			}
+		})
+	}
+}
+
+func TestTranslateKeepsHighEffortForOrdinarySummaryRequest(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-sol",
+		"max_tokens":32000,
+		"thinking":{"type":"enabled","budget_tokens":32768},
+		"messages":[{
+			"role":"user",
+			"content":"Your task is to create a detailed summary of a file. Before providing your final summary, wrap your analysis in <analysis> tags."
+		}]
+	}`)
+	if got.Effort != "xhigh" {
+		t.Fatalf("effort = %q, want xhigh", got.Effort)
+	}
+}
+
 func TestTranslateRejectsUnsupportedSamplingControls(t *testing.T) {
 	tests := []string{
 		`"temperature":0.2`,
