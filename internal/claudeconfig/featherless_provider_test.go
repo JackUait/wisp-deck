@@ -1,6 +1,9 @@
 package claudeconfig
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 // Featherless ships an endpoint and an auth kind but no model list: its catalog
 // is ~15,571 models fetched at runtime, so the modal must offer a picker rather
@@ -73,5 +76,84 @@ func TestCustomProviderStillSuppliesItsOwnModel(t *testing.T) {
 	}
 	if zhipu, _ := ProviderByKey("zhipu"); zhipu.SuppliesOwnModel() {
 		t.Error("a static-catalog gateway must not report SuppliesOwnModel")
+	}
+}
+
+func featherlessConfig(t *testing.T) (dir, list, file string) {
+	t.Helper()
+	dir = t.TempDir()
+	list = filepath.Join(dir, "claude-configs.list")
+	file, err := AddForProvider(list, dir, "Featherless Kimi-K3", "featherless")
+	if err != nil {
+		t.Fatalf("AddForProvider: %v", err)
+	}
+	return dir, list, file
+}
+
+// A profile with no picked model would launch a pane with no model at all, so it
+// must not be selectable until the pick and the key are both stored.
+func TestFeatherlessConfigReady_requires_a_picked_model_and_a_key(t *testing.T) {
+	dir, _, file := featherlessConfig(t)
+	config := Config{Name: "Featherless Kimi-K3", File: file}
+
+	if ConfigReady(dir, config) {
+		t.Fatal("a fresh featherless profile has no model or key and must not be ready")
+	}
+	if err := WriteAPIKey(dir, file, "rc_test"); err != nil {
+		t.Fatal(err)
+	}
+	if ConfigReady(dir, config) {
+		t.Error("a key alone is not enough: the model is still unpicked")
+	}
+	if err := WriteCustomModel(dir, file, "moonshotai/Kimi-K3"); err != nil {
+		t.Fatal(err)
+	}
+	if ConfigReady(dir, config) {
+		t.Error("a model with no declared window strands the session on the flat 200000 default")
+	}
+	if err := WriteCustomContextWindow(dir, file, "262144"); err != nil {
+		t.Fatal(err)
+	}
+	if !ConfigReady(dir, config) {
+		t.Error("key + model + window must be ready")
+	}
+}
+
+// Featherless keeps the socket warm with ": keep-alive" SSE comments through a
+// cold model load (measured: comments every ~1.2s across a 12s load, worst byte
+// silence 4.8s against the watchdog's 20s trigger). Disarming the watchdog here
+// would trade a real dead-connection signal for nothing.
+func TestFeatherlessKeepsTheByteWatchdogArmed(t *testing.T) {
+	dir, _, file := featherlessConfig(t)
+	if _, ok := readEnv(t, dir, file)[ByteWatchdogKey]; ok {
+		t.Fatal("featherless must not disarm the byte watchdog at creation")
+	}
+	changed, err := EnsureByteWatchdog(dir, file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Error("the watchdog sweep must leave a featherless profile untouched")
+	}
+	if _, ok := readEnv(t, dir, file)[ByteWatchdogKey]; ok {
+		t.Error("featherless must not disarm the byte watchdog on sweep")
+	}
+}
+
+// The static catalog cannot size a Featherless-only model, so the window written
+// at pick time is the only figure available and every sweep must preserve it.
+func TestFeatherlessDeclaredWindowSurvivesTheBudgetSweep(t *testing.T) {
+	dir, _, file := featherlessConfig(t)
+	if err := WriteCustomModel(dir, file, "moonshotai/Kimi-K3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteCustomContextWindow(dir, file, "262144"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureContextBudget(dir, file); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := readEnv(t, dir, file)[ContextBudgetKey].(string); got != "262144" {
+		t.Errorf("declared window = %q, want 262144 preserved", got)
 	}
 }

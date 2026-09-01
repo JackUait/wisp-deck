@@ -73,10 +73,10 @@ func stampContextBudget(env map[string]any, configName string) {
 	}
 	marker, _ := env["WISP_DECK_SUBSCRIPTION_PROVIDER"].(string)
 	provider, marked := providerByKey(marker)
-	userConfigured := marked && provider.UserConfigured
+	userConfigured := marked && provider.SuppliesOwnModel()
 	if !marked {
 		provider = providerFor(configName)
-		userConfigured = provider.UserConfigured
+		userConfigured = provider.SuppliesOwnModel()
 		endpoint, _ := env["ANTHROPIC_BASE_URL"].(string)
 		endpoint = normalizeCustomEndpoint(endpoint)
 		if endpoint != "" {

@@ -383,7 +383,7 @@ func ConfigReady(configsDir string, config Config) bool {
 		if strings.TrimSpace(ReadAPIKey(configsDir, config.File)) == "" {
 			return false
 		}
-		if !provider.UserConfigured {
+		if !provider.SuppliesOwnModel() {
 			return true
 		}
 		endpoint := strings.TrimSpace(ReadBaseURL(configsDir, config.File))
