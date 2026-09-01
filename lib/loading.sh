@@ -4,21 +4,17 @@
 # Print the loading screen ASCII art to stdout.
 get_loading_art() {
   cat << 'ART'
-+--------------------------------------------------------------------------------------+
-|                                                                                      |
-|    888       888 d8b                       8888888b.                    888          |
-|    888   o   888 Y8P                       888  "Y88b                   888          |
-|    888  d8b  888                           888    888                   888          |
-|    888 d888b 888 888 .d8888b  88888b.      888    888  .d88b.   .d8888b 888  888     |
-|    888d88888b888 888 88K      888 "88b     888    888 d8P  Y8b d88P"    888 .88P     |
-|    88888P Y88888 888 "Y8888b. 888  888     888    888 88888888 888      888888K      |
-|    8888P   Y8888 888      X88 888 d88P     888  .d88P Y8b.     Y88b.    888 "88b     |
-|    888P     Y888 888  88888P' 88888P"      8888888P"   "Y8888   "Y8888P 888  888     |
-|                                888                                                   |
-|                                888                                                   |
-|                                888                                                   |
-|                                                                                      |
-+--------------------------------------------------------------------------------------+
+888       888 d8b                       8888888b.                    888
+888   o   888 Y8P                       888  "Y88b                   888
+888  d8b  888                           888    888                   888
+888 d888b 888 888 .d8888b  88888b.      888    888  .d88b.   .d8888b 888  888
+888d88888b888 888 88K      888 "88b     888    888 d8P  Y8b d88P"    888 .88P
+88888P Y88888 888 "Y8888b. 888  888     888    888 88888888 888      888888K
+8888P   Y8888 888      X88 888 d88P     888  .d88P Y8b.     Y88b.    888 "88b
+888P     Y888 888  88888P' 88888P"      8888888P"   "Y8888   "Y8888P 888  888
+                            888
+                            888
+                            888
 ART
 }
 
@@ -188,9 +184,6 @@ show_loading_screen() {
     render_loading_frame "$tool" 0 "$_recheck_cols" "$_recheck_rows" "$_pal_override"
   fi
 
-  # Symbols for floating particles
-  local symbols=('·' '•' '°' '∘' '⋅' '∙')
-
   # Start animation in background
   (
     # Restore the cursor only when the loader is *aborted* (Ctrl-C / window
@@ -203,9 +196,13 @@ show_loading_screen() {
     # Brief delay so terminal reports its final size after window opens
     sleep 0.1
 
+    # The gradient cycles over the palette, so its length is the frame period.
+    local -a palette
+    read -ra palette <<< "${_pal_override:-$(get_tool_palette "$tool")}"
+    local pal_len=${#palette[@]}
+
     local frame=1
     local rows cols
-    local -a prev_sym_positions=()
     local prev_rows=0 prev_cols=0
 
     while true; do
@@ -214,35 +211,10 @@ show_loading_screen() {
       if (( rows != prev_rows || cols != prev_cols )); then
         printf '\033[2J'  # Clear screen on resize to avoid ghost artifacts
         prev_rows="$rows" prev_cols="$cols"
-        prev_sym_positions=()
       fi
 
       # Redraw art with shifted colors
       render_loading_frame "$tool" "$frame" "$cols" "$rows" "$_pal_override"
-
-      # Clear previous floating symbols
-      for pos in "${prev_sym_positions[@]}"; do
-        local sr sc
-        IFS=';' read -r sr sc <<< "$pos"
-        printf '\033[%d;%dH ' "$sr" "$sc"
-      done
-      prev_sym_positions=()
-
-      # Draw new floating symbols
-      local -a palette
-      read -ra palette <<< "${_pal_override:-$(get_tool_palette "$tool")}"
-      local pal_len=${#palette[@]}
-      local _s
-      for _s in 0 1 2; do
-        local sym_row=$(( RANDOM % rows + 1 ))
-        local sym_col=$(( RANDOM % cols + 1 ))
-        local sym_color="${palette[$(( RANDOM % pal_len ))]}"
-        local sym="${symbols[$(( RANDOM % ${#symbols[@]} ))]}"
-        printf '\033[%d;%dH\033[2m\033[38;5;%dm%s\033[0m' \
-          "$sym_row" "$sym_col" "$sym_color" "$sym"
-        prev_sym_positions+=("${sym_row};${sym_col}")
-      done
-
       frame=$(( (frame + 1) % pal_len ))
       sleep 0.15
     done

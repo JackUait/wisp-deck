@@ -19,11 +19,14 @@ func TestLoading_get_loading_art_returns_nonempty(t *testing.T) {
 	}
 }
 
-func TestLoading_get_loading_art_contains_wisp_deck_box(t *testing.T) {
+// The splash is the bare wordmark: no frame drawn around it, so nothing
+// competes with the art for attention while the menu loads.
+func TestLoading_get_loading_art_has_no_frame(t *testing.T) {
 	out, code := runBashFunc(t, "lib/loading.sh", "get_loading_art", nil, nil)
 	assertExitCode(t, code, 0)
-	assertContains(t, out, "+---")
 	assertContains(t, out, "d8888b")
+	assertNotContains(t, out, "+-")
+	assertNotContains(t, out, "|")
 }
 
 func TestLoading_get_loading_art_renders_wisp_deck_wordmark(t *testing.T) {
@@ -51,12 +54,15 @@ func TestLoading_get_loading_art_meets_minimum_size(t *testing.T) {
 			maxWidth = len(line)
 		}
 	}
-	if maxWidth < 85 {
-		t.Errorf("art max width is %d, want >= 85", maxWidth)
+	if maxWidth < 70 {
+		t.Errorf("art max width is %d, want >= 70", maxWidth)
 	}
 }
 
-func TestLoading_get_loading_art_has_equal_line_widths(t *testing.T) {
+// Every line is drawn at the same column and nothing fills a background, so
+// padding lines out to a common width buys nothing and only leaves invisible
+// trailing spaces an editor can silently eat.
+func TestLoading_get_loading_art_carries_no_trailing_padding(t *testing.T) {
 	out, code := runBashFunc(t, "lib/loading.sh", "get_loading_art", nil, nil)
 	assertExitCode(t, code, 0)
 
@@ -64,10 +70,9 @@ func TestLoading_get_loading_art_has_equal_line_widths(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatal("no lines")
 	}
-	expected := len(lines[0])
 	for i, line := range lines {
-		if len(line) != expected {
-			t.Errorf("line %d has %d chars, want %d (same as line 0)", i, len(line), expected)
+		if line != strings.TrimRight(line, " ") {
+			t.Errorf("line %d has trailing spaces: %q", i, line)
 		}
 	}
 }
@@ -153,11 +158,30 @@ func TestLoading_render_loading_frame_centers_art_on_large_terminal(t *testing.T
 		root)
 	out, code := runBashSnippet(t, script, nil)
 	assertExitCode(t, code, 0)
-	// Art is 12 lines tall, 88 chars wide.
-	// Terminal coordinates are 1-based, so centering needs +1:
-	//   row = (50-12)/2 + 1 = 20   (19 rows above, 19 below)
-	//   col = (200-88)/2 + 1 = 57  (56 cols left, 56 right)
-	assertContains(t, out, "\033[20;57H")
+
+	// The first art row lands where the geometry helper says it does — read
+	// from the helper rather than hardcoded, so editing the art keeps this
+	// test about centring instead of about the art's dimensions.
+	geom, gcode := runBashFunc(t, "lib/loading.sh", "loading_art_geometry",
+		[]string{"50", "200"}, nil)
+	assertExitCode(t, gcode, 0)
+	fields := strings.Fields(strings.TrimSpace(geom))
+	if len(fields) != 4 {
+		t.Fatalf("loading_art_geometry returned %q, want 4 fields", geom)
+	}
+	startRow, _ := strconv.Atoi(fields[0])
+	startCol, _ := strconv.Atoi(fields[1])
+	height, _ := strconv.Atoi(fields[2])
+	width, _ := strconv.Atoi(fields[3])
+	assertContains(t, out, fmt.Sprintf("\033[%d;%dH", startRow, startCol))
+
+	// And that position really is the centre of a 50×200 terminal.
+	if got, want := startRow, (50-height)/2+1; got != want {
+		t.Errorf("art starts at row %d, want %d (centred)", got, want)
+	}
+	if got, want := startCol, (200-width)/2+1; got != want {
+		t.Errorf("art starts at col %d, want %d (centred)", got, want)
+	}
 }
 
 // --- get_tool_palette ---
@@ -250,16 +274,21 @@ func TestLoading_render_loading_frame_shifts_colors_between_frames(t *testing.T)
 //  2. Clear the screen (\033[2J)
 //  3. Re-render frame 0 with the corrected (larger) dimensions
 //
-// The art is 10 lines × 88 chars wide.
-// For the corrected terminal (40 rows × 160 cols):
-//
-//	row = (40-10)/2 + 1 = 16
-//	col = (160-88)/2 + 1 = 37
-//
-// So we expect \033[16;37H in the output (the corrected first-line cursor position).
+// The expected first-line cursor position is taken from loading_art_geometry for
+// the corrected 40×160 terminal rather than hardcoded, so editing the art does
+// not turn this race regression test red.
 func TestLoading_show_loading_screen_rerenders_on_size_change(t *testing.T) {
 	root := projectRoot(t)
 	dir := t.TempDir()
+
+	geom, gcode := runBashFunc(t, "lib/loading.sh", "loading_art_geometry",
+		[]string{"40", "160"}, nil)
+	assertExitCode(t, gcode, 0)
+	fields := strings.Fields(strings.TrimSpace(geom))
+	if len(fields) != 4 {
+		t.Fatalf("loading_art_geometry returned %q, want 4 fields", geom)
+	}
+	corrected := fmt.Sprintf("\033[%s;%sH", fields[0], fields[1])
 
 	// Counter file: stty reads it to know which call number this is.
 	counterFile := writeTempFile(t, dir, "stty_count", "0")
@@ -296,23 +325,23 @@ fi
 		t.Errorf("expected at least 2 occurrences of \\033[2J (screen clear), got %d\noutput: %q", count, out)
 	}
 
-	// The corrected render must position the art at row=16, col=37 (40×160 terminal).
-	assertContains(t, out, "\033[16;37H")
+	// The corrected render must position the art where the geometry says it goes.
+	assertContains(t, out, corrected)
 
 	// Tighter ordering assertion: the second \033[2J (the re-clear) must appear
-	// before \033[16;37H (the corrected cursor position), proving the re-render
+	// before the corrected cursor position, proving the re-render
 	// happens after the re-clear and not from an earlier accidental clear.
 	posFirstClear := strings.Index(out, clearSeq)
 	posSecondClear := strings.Index(out[posFirstClear+len(clearSeq):], clearSeq)
-	posCorrectedPos := strings.Index(out, "\033[16;37H")
+	posCorrectedPos := strings.Index(out, corrected)
 	if posSecondClear < 0 {
 		t.Fatalf("could not find second %q in output", clearSeq)
 	}
 	// posSecondClear is relative to after the first clear; make it absolute.
 	absSecondClear := posFirstClear + len(clearSeq) + posSecondClear
 	if absSecondClear >= posCorrectedPos {
-		t.Errorf("expected second \\033[2J (at %d) to come before \\033[16;37H (at %d)",
-			absSecondClear, posCorrectedPos)
+		t.Errorf("expected second \\033[2J (at %d) to come before %q (at %d)",
+			absSecondClear, corrected, posCorrectedPos)
 	}
 }
 
@@ -375,4 +404,27 @@ func TestLoading_show_loading_screen_renders_first_frame_before_background_loop(
 	assertExitCode(t, code, 0)
 	// Should contain rendered art content even with immediate stop
 	assertContains(t, out, "d8888b")
+}
+
+// Nothing but the wordmark animates. The splash used to scatter faint symbols
+// at random cells around it every frame; they read as terminal noise or
+// leftover render artefacts, so the loop draws the art alone.
+func TestLoading_animation_draws_nothing_but_the_wordmark(t *testing.T) {
+	root := projectRoot(t)
+	script := fmt.Sprintf(`
+		source %q/lib/loading.sh
+		show_loading_screen claude
+		sleep 1
+		stop_loading_screen
+	`, root)
+	out, code := runBashSnippet(t, script, nil)
+	assertExitCode(t, code, 0)
+
+	// The loop must have run past its 0.1s startup delay, or this proves nothing.
+	if strings.Count(out, "d8888b") < 2 {
+		t.Fatalf("animation loop never rendered a second frame: %q", out)
+	}
+	for _, particle := range []string{"·", "•", "°", "∘", "⋅", "∙"} {
+		assertNotContains(t, out, particle)
+	}
 }
