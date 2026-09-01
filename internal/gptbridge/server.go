@@ -179,7 +179,7 @@ func (h *bridgeHandler) handleMessages(writer http.ResponseWriter, request *http
 		case isContextOverflowMessage(message) || isRefusedOversizedMessage(err):
 			errorType, message = "invalid_request_error", "prompt is too long: "+message
 		case isDeterministicCodexFailure(message):
-			errorType = "invalid_request_error"
+			errorType, message = "invalid_request_error", annotateCodexFailure(message)
 		}
 		_ = stream.Emit([]StreamEvent{AnthropicErrorEvent(errorType, message)})
 		return
@@ -234,6 +234,7 @@ func writeExecutionError(writer http.ResponseWriter, request *http.Request, err 
 	case isDeterministicCodexFailure(message):
 		status = http.StatusBadRequest
 		errorType = "invalid_request_error"
+		message = annotateCodexFailure(message)
 	}
 	writeAnthropicError(writer, status, errorType, message)
 }

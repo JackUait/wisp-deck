@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -143,5 +144,81 @@ func TestCodexAuthFailureIsNotRetryable(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", response.StatusCode)
+	}
+}
+
+// A local model provider that is not listening is as deterministic as quota or
+// sign-out: no retry can start a process that is not running. This is the
+// codex-chatgpt-web setup, where ~/.codex/config.toml points openai_base_url at
+// a loopback port served by a separate app; when that app exits, every turn
+// fails identically until a human starts it again.
+func TestCodexLocalModelProviderDownIsNotRetryable(t *testing.T) {
+	executor := &fakeMessageExecutor{
+		err: errors.New("stream disconnected before completion: error sending " +
+			"request for url (http://127.0.0.1:17841/v1/responses)"),
+	}
+	handler, err := NewHandler(executor, "secret", ServerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	response := requestBridge(t, server.Client(), http.MethodPost,
+		server.URL+"/v1/messages", "secret", validMessagesBody(false))
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 so Claude Code surfaces it instead of "+
+			"retrying ~11 times against a dead loopback port", response.StatusCode)
+	}
+	data, _ := io.ReadAll(response.Body)
+	if !strings.Contains(string(data), "openai_base_url") {
+		t.Fatalf("body = %s, want the remedy naming the setting that points "+
+			"Codex at the local provider", data)
+	}
+}
+
+// The counterweight: the same reqwest wording against the real upstream is a
+// transient blip (the ChatGPT backend resets streams routinely), and a retry is
+// exactly what should happen.
+func TestCodexUpstreamSendFailureStaysRetryable(t *testing.T) {
+	executor := &fakeMessageExecutor{
+		err: errors.New("stream disconnected before completion: error sending " +
+			"request for url (https://chatgpt.com/backend-api/codex/responses)"),
+	}
+	handler, err := NewHandler(executor, "secret", ServerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	response := requestBridge(t, server.Client(), http.MethodPost,
+		server.URL+"/v1/messages", "secret", validMessagesBody(false))
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 so a transient upstream failure is retried",
+			response.StatusCode)
+	}
+}
+
+func TestLocalModelProviderIsUnreachable(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+		want    bool
+	}{
+		{"loopback ipv4", "error sending request for url (http://127.0.0.1:17841/v1/responses)", true},
+		{"localhost", "error sending request for url (http://localhost:17841/v1/responses)", true},
+		{"loopback ipv6", "error sending request for url (http://[::1]:17841/v1/responses)", true},
+		{"remote upstream", "error sending request for url (https://chatgpt.com/backend-api/codex/responses)", false},
+		{"loopback named but no send failure", "http://127.0.0.1:17841 returned 500", false},
+		{"unrelated failure", "You've hit your usage limit.", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isLocalModelProviderUnreachable(strings.ToLower(tt.message)); got != tt.want {
+				t.Errorf("isLocalModelProviderUnreachable(%q) = %v, want %v",
+					tt.message, got, tt.want)
+			}
+		})
 	}
 }

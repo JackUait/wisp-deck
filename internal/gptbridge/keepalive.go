@@ -137,5 +137,42 @@ func isDeterministicCodexFailure(message string) bool {
 			return true
 		}
 	}
+	return isLocalModelProviderUnreachable(lowered)
+}
+
+// Codex reaches its model through openai_base_url in ~/.codex/config.toml. A
+// loopback address there names a separate program on this machine (a
+// ChatGPT-web bridge, an OpenAI-compatible proxy), and when that program is not
+// running reqwest reports a send failure that every retry reproduces
+// identically — nothing Claude Code can do starts a process that has exited.
+// The same wording against the real upstream is the opposite: a transient reset
+// a retry fixes. So the loopback host, not the send failure, is the
+// discriminator.
+var loopbackProviderHosts = []string{"//127.0.0.1", "//localhost", "//[::1]"}
+
+func isLocalModelProviderUnreachable(lowered string) bool {
+	if !strings.Contains(lowered, "error sending request for url") {
+		return false
+	}
+	for _, host := range loopbackProviderHosts {
+		if strings.Contains(lowered, host) {
+			return true
+		}
+	}
 	return false
+}
+
+// The reqwest wording names the port but not the fix, and Claude Code shows the
+// message alone.
+const localModelProviderRemedy = " — that address is Codex's own model provider" +
+	" (openai_base_url in ~/.codex/config.toml): a program on this machine that" +
+	" is not accepting connections. Start it, then retry."
+
+// annotateCodexFailure adds the remedy a deterministic failure's raw wording
+// omits, so the one surfaced attempt is actionable.
+func annotateCodexFailure(message string) string {
+	if isLocalModelProviderUnreachable(strings.ToLower(message)) {
+		return message + localModelProviderRemedy
+	}
+	return message
 }
