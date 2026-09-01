@@ -87,3 +87,33 @@ func TestGetClaudeConfigProviderReportsFeatherless(t *testing.T) {
 		t.Errorf("provider = %q, want featherless", strings.TrimSpace(out))
 	}
 }
+
+// A mid-session switch INTO Featherless rebuilds the pane's launch command, so
+// the repair proxy has to be part of that rebuild too. Without it the switched
+// pane talks to Featherless directly and 400s on its first turn, which looks
+// like the switch itself broke.
+func TestSwitchIntoFeatherlessKeepsTheRepairProxy(t *testing.T) {
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		`build_switch_launch_cmd claude /opt/claude "/cfg/overlay.json" "" "/proj" ""`),
+		featherlessLaunchEnv(t))
+	assertExitCode(t, code, 0)
+	if !strings.Contains(out, "claude-rolefix") {
+		t.Errorf("a switch into featherless dropped the repair proxy: %s", out)
+	}
+	assertContains(t, out, "--settings /cfg/overlay.json")
+}
+
+// The same switch into any other provider must stay a plain relaunch.
+func TestSwitchIntoAnotherProviderAddsNoProxy(t *testing.T) {
+	out, code := runBashSnippet(t, accountSwitchSnippet(t,
+		`build_switch_launch_cmd claude /opt/claude "/cfg/overlay.json" "" "/proj" ""`),
+		buildEnv(t, nil,
+			"HOME=/home/tester",
+			"WISP_DECK_CLAUDE_PROVIDER=zhipu",
+			"WISP_DECK_RESUME=0",
+			"WISP_DECK_RESUME_SESSION="))
+	assertExitCode(t, code, 0)
+	if strings.Contains(out, "claude-rolefix") {
+		t.Errorf("a zhipu switch was wrapped in the repair proxy: %s", out)
+	}
+}
