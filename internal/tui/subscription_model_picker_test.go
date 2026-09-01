@@ -319,3 +319,80 @@ func TestApplyPendingSubscriptionModel_refuses_a_provider_that_did_not_pick(t *t
 		t.Errorf("a featherless pick reached a zhipu profile: %q", got)
 	}
 }
+
+// A 32k model runs Claude Code only with MCP servers off: their schemas cost
+// ~18k tokens on top of a ~23k base prompt. The row says so rather than hiding
+// the model, because a small window is a real choice for short tasks.
+func TestModelPickerLines_mark_windows_that_cannot_hold_MCP(t *testing.T) {
+	m := openPickerOn(t, "Featherless")
+	lines := m.subscriptionModelPickerLines(80, 12)
+
+	rowFor := func(id string) string {
+		t.Helper()
+		for _, line := range lines {
+			if strings.Contains(line, id) {
+				return stripAnsi(line)
+			}
+		}
+		t.Fatalf("no row for %q:\n%s", id, strings.Join(lines, "\n"))
+		return ""
+	}
+
+	small := rowFor("unsloth/Llama-3.3-70B-Instruct")
+	if !strings.Contains(small, "needs MCP off") {
+		t.Errorf("32K row = %q, want it to flag that MCP cannot fit", small)
+	}
+	large := rowFor("moonshotai/Kimi-K3")
+	if strings.Contains(large, "needs MCP off") {
+		t.Errorf("256K row = %q, want no MCP warning", large)
+	}
+}
+
+// The modal's two-pane renderer indexes left[i] and right[i] for the full body
+// height, so a pane that returns fewer lines than it was asked for panics the
+// whole menu. The picker's loading, error and no-match states are the short
+// ones — this crashed a real session at "Project menu failed (exit 1)".
+func TestModelPickerLines_always_fills_the_height_it_was_given(t *testing.T) {
+	m := openPickerOn(t, "Featherless")
+	picker := &m.subscriptionModal.picker
+
+	states := map[string]func(){
+		"ready":    func() { picker.loading, picker.err = false, nil },
+		"loading":  func() { picker.loading, picker.err = true, nil },
+		"error":    func() { picker.loading, picker.err = false, errFetchFailed },
+		"no match": func() { picker.loading, picker.err = false, nil; picker.filtered = nil },
+	}
+	for name, set := range states {
+		for _, height := range []int{2, 4, 5, 12, 30} {
+			set()
+			if got := len(m.subscriptionModelPickerLines(60, height)); got != height {
+				t.Errorf("%s at height %d returned %d lines, want exactly %d",
+					name, height, got, height)
+			}
+		}
+	}
+}
+
+// The same invariant through the modal's own dispatcher, which is what the
+// two-pane renderer actually calls.
+func TestSubscriptionDetailLines_fills_the_height_while_the_picker_is_open(t *testing.T) {
+	m := openPickerOn(t, "Featherless")
+	m.subscriptionModal.picker.loading = true
+	if got := len(m.subscriptionDetailLines(60, 18)); got != 18 {
+		t.Errorf("detail pane returned %d lines, want 18", got)
+	}
+}
+
+// End to end: rendering the whole menu with the picker open must not panic.
+func TestMainMenuView_survives_an_open_model_picker(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.featherlessCachePath = filepath.Join(t.TempDir(), "f.json")
+	m.SetSize(120, 40)
+	addFeatherlessProfile(t, m, "Featherless")
+	m.openSubscriptionModelPicker()
+	_ = m.View() // loading
+	m.Update(featherlessCatalogMsg{err: errFetchFailed})
+	_ = m.View() // error
+	m.Update(featherlessCatalogMsg{models: pickerCorpus()})
+	_ = m.View() // ready
+}

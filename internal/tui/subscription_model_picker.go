@@ -180,16 +180,20 @@ func (m *MainMenuModel) subscriptionModelPickerLines(width, height int) []string
 		modalTruncate(picker.query.View(), width),
 		"",
 	}
+	// Every branch below must return exactly `height` lines: the modal's
+	// two-pane renderer indexes left[i] and right[i] across the full body
+	// height, so a short pane panics the whole menu rather than drawing badly.
 	switch {
 	case picker.loading:
-		return append(lines, dim.Render("Loading catalog…"))
+		return modalWindow(append(lines, dim.Render("Loading catalog…")), 0, height, width)
 	case picker.err != nil:
-		return append(lines,
+		return modalWindow(append(lines,
 			amber.Render(modalTruncate(picker.err.Error(), width)),
 			"",
-			dim.Render("Esc to go back"))
+			dim.Render("Esc to go back")), 0, height, width)
 	case len(picker.filtered) == 0:
-		return append(lines, dim.Render("No tool-calling model matches that."))
+		return modalWindow(
+			append(lines, dim.Render("No tool-calling model matches that.")), 0, height, width)
 	}
 
 	rows := make([]string, 0, len(picker.filtered))
@@ -227,7 +231,10 @@ func (m *MainMenuModel) subscriptionModelPickerLines(width, height int) []string
 	if picker.cursor >= picker.offset+visible {
 		picker.offset = picker.cursor - visible + 1
 	}
-	return append(lines, modalWindow(rows, picker.offset, visible, width)...)
+	// modalWindow clamps a short list up to `visible`, but the header above it is
+	// fixed, so a pane shorter than the header still has to be trimmed to fit.
+	return modalWindow(append(lines, modalWindow(rows, picker.offset, visible, width)...),
+		0, height, width)
 }
 
 // featherlessProfileName derives a profile name from a model id. Ids are
