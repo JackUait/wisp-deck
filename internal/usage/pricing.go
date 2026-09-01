@@ -148,9 +148,41 @@ const (
 	cacheWriteMult = 1.25
 	// cacheWrite1hMult prices 1-hour-TTL cache creation relative to the input rate.
 	cacheWrite1hMult = 2.0
-	// cacheReadMult prices cache reads relative to the input rate.
+	// cacheReadMult prices cache reads relative to the input rate, for every model
+	// that does not publish its own rate in cacheReadPerMTok below.
 	cacheReadMult = 0.10
 )
+
+// cacheReadPerMTok holds the published cache-read price per 1,000,000 tokens for
+// models that are not priced at cacheReadMult of their input rate, matched by
+// prefix like modelRates. Fable 5.1 reads a cached prefix at $0.25/MTok - 0.025x
+// its $10 input rate - and a coding session is almost entirely cache reads, so
+// the shared multiplier overstates such a month fourfold. Mythos 5.1 is left out
+// on purpose: same tier and same $10/$50, but Anthropic has not said whether it
+// shares the cheaper read rate, and guessing it would under-report.
+var cacheReadPerMTok = map[string]float64{
+	"claude-fable-5-1": 0.25,
+}
+
+// cacheReadRateFor returns the per-token cache-read price for a model: its own
+// published rate when it declares one, otherwise cacheReadMult of its input rate.
+// Longest-prefix wins, as in rateFor, so "claude-fable-5-1" is not shadowed by a
+// shorter key and never leaks its rate back onto "claude-fable-5".
+func cacheReadRateFor(model string, inPerMTok float64) float64 {
+	var (
+		best  float64
+		bestN = -1
+	)
+	for prefix, r := range cacheReadPerMTok {
+		if len(prefix) > bestN && strings.HasPrefix(model, prefix) {
+			best, bestN = r, len(prefix)
+		}
+	}
+	if bestN < 0 {
+		return cacheReadMult * inPerMTok / 1_000_000
+	}
+	return best / 1_000_000
+}
 
 // anthropicFamilyRates prices Anthropic model families by their current-generation
 // tier rate. It is the automatic fallback for newly released claude-<family>-...
@@ -219,6 +251,7 @@ func ModelCostUSD(m ModelUsage) (float64, bool) {
 	}
 	inRate := r.inPerMTok / 1_000_000
 	outRate := r.outPerMTok / 1_000_000
+	cacheReadRate := cacheReadRateFor(m.Model, r.inPerMTok)
 	// CacheWrite is the total; CacheWrite1h is its 1-hour-TTL subset (2x), the rest
 	// is 5-minute-TTL (1.25x). Guard against a malformed subset exceeding the total.
 	cw1h := m.CacheWrite1h
@@ -230,7 +263,7 @@ func ModelCostUSD(m ModelUsage) (float64, bool) {
 		float64(m.Output)*outRate +
 		float64(cw5m)*cacheWriteMult*inRate +
 		float64(cw1h)*cacheWrite1hMult*inRate +
-		float64(m.CacheRead)*cacheReadMult*inRate
+		float64(m.CacheRead)*cacheReadRate
 	return usd, true
 }
 

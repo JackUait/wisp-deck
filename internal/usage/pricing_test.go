@@ -90,6 +90,35 @@ func TestModelCostUSD_cacheTTLSplit(t *testing.T) {
 	}
 }
 
+func TestModelCostUSD_fable51PricesCacheReadsAtItsOwnRate(t *testing.T) {
+	// Fable 5.1 reads a cached prefix at $0.25/MTok - 0.025x its $10 input rate,
+	// a quarter of what every other model's 0.1x charges. A Claude Code session is
+	// almost entirely cache reads, so the shared multiplier overstates it 4x.
+	usd, priced := ModelCostUSD(ModelUsage{Model: "claude-fable-5-1", CacheRead: 1_000_000})
+	if !priced || !approx(usd, 0.25) {
+		t.Errorf("fable-5-1 cacheRead = %v priced=%v, want 0.25/true", usd, priced)
+	}
+	// A date-suffixed id resolves through the same prefix match.
+	usd, _ = ModelCostUSD(ModelUsage{Model: "claude-fable-5-1-20260901", CacheRead: 1_000_000})
+	if !approx(usd, 0.25) {
+		t.Errorf("suffixed fable-5-1 cacheRead = %v, want 0.25", usd)
+	}
+	// The cheaper rate must not leak back onto Fable 5, whose id is its prefix.
+	usd, _ = ModelCostUSD(ModelUsage{Model: "claude-fable-5", CacheRead: 1_000_000})
+	if !approx(usd, 1) {
+		t.Errorf("fable-5 cacheRead = %v, want 1", usd)
+	}
+	// Nothing else about Fable 5.1 moved: $10 in + $50 out + $12.50 5m cache
+	// write + $0.25 cache read.
+	usd, _ = ModelCostUSD(ModelUsage{
+		Model: "claude-fable-5-1", Input: 1_000_000, Output: 1_000_000,
+		CacheWrite: 1_000_000, CacheRead: 1_000_000,
+	})
+	if !approx(usd, 72.75) {
+		t.Errorf("fable-5-1 full mix = %v, want 72.75", usd)
+	}
+}
+
 func TestModelCostUSD_prefixMatchAndUnknown(t *testing.T) {
 	usd, priced := ModelCostUSD(ModelUsage{Model: "claude-haiku-4-5-20251001", Input: 1_000_000})
 	if !priced || !approx(usd, 1) {
