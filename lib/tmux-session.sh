@@ -130,6 +130,22 @@ build_ai_launch_cmd() {
     printf -v raw_q '%q' "$raw"
     raw="wisp-deck-tui claude-gpt-adapter --codex ${codex_q} -- bash -c ${raw_q}"
   fi
+
+  # Featherless validates the published Messages schema, where a message role is
+  # only "user" or "assistant". Claude Code puts its capability listings (agent
+  # types, skills) in messages[] with role "system", which Anthropic's own API
+  # accepts and Featherless rejects with a 400 that kills the turn before the
+  # model sees it. The proxy repairs those roles and points this session's
+  # settings overlay at itself; with no overlay there is nothing to redirect, so
+  # the launch is left alone.
+  if [ "$tool" = "claude" ] \
+     && [ "${WISP_DECK_CLAUDE_PROVIDER:-}" = "featherless" ] \
+     && [ -n "${WISP_DECK_CLAUDE_SETTINGS:-}" ]; then
+    local settings_q
+    printf -v settings_q '%q' "$WISP_DECK_CLAUDE_SETTINGS"
+    printf -v raw_q '%q' "$raw"
+    raw="wisp-deck-tui claude-rolefix --settings ${settings_q} -- bash -c ${raw_q}"
+  fi
   if [ "$tool" = "claude" ] \
      && [ -n "${WISP_DECK_ATTENTION_FILE:-}" ] \
      && [ -n "${WISP_DECK_ATTENTION_GENERATION:-}" ]; then
@@ -181,6 +197,23 @@ build_ai_launch_cmd_raw() {
   local claude_settings=""
   if [ -n "${WISP_DECK_CLAUDE_SETTINGS:-}" ]; then
     claude_settings=" --settings \"${WISP_DECK_CLAUDE_SETTINGS}\""
+  fi
+
+  # Claude-only: a small window cannot carry MCP tool schemas. They cost ~18k
+  # tokens on top of a ~23k base prompt, so a profile under the floor overflows
+  # before its first turn finishes and every request 400s. Loading no servers is
+  # what makes such a profile usable at all. The flag rides on claude_settings so
+  # the plain and resume-chain launches below both pick it up from one place.
+  # Keep the floor in step with claudeconfig.MCPWindowFloor.
+  local claude_window=""
+  if [ -n "${WISP_DECK_CLAUDE_SETTINGS:-}" ] && [ -f "${WISP_DECK_CLAUDE_SETTINGS}" ]; then
+    claude_window="$(sed -n 's/.*"CLAUDE_CODE_MAX_CONTEXT_TOKENS"[[:space:]]*:[[:space:]]*"\([0-9][0-9]*\)".*/\1/p' \
+      "${WISP_DECK_CLAUDE_SETTINGS}" 2>/dev/null | head -1)"
+  fi
+  # An undeclared window says nothing about whether MCP fits; only a declared
+  # one under the floor does.
+  if [ -n "$claude_window" ] && [ "$claude_window" -lt 65536 ]; then
+    claude_settings="${claude_settings} --strict-mcp-config"
   fi
 
   # Claude-only: when a non-Default native account is active, wrapper.sh exports

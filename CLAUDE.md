@@ -606,6 +606,53 @@ Guarded by `TestClaudeReducerClearedConversationRetiresAttention`,
 `TestClaudeRegistryMapperReportsTheSessionsCurrentConversation`, and
 `TestClaudeRegistryObservation_carries_the_conversation`.
 
+### A tab in trouble says so, and says how bad it is
+
+The tab title is the session's status at a glance, and it used to have only one
+thing to say about a turn that ended: 🔔. A turn that **died** rendered exactly
+the same bell as one that finished, so the tab strip could not distinguish work
+completed from work lost. `reason` already travelled the protocol — the tick
+simply rendered the phase alone.
+
+Two cues, split by how certain the trouble is:
+
+- **❌ — a confirmed failure**: `phase=attention, reason=error`. All three
+  adapters already produce it (Claude's error status, Codex's system-error,
+  OpenCode's error).
+- **⚠️ — a possible one**: the session reported fine and then stopped reporting.
+
+**Certainty picks the cue, not severity alone.** Sustained silence has a
+documented benign cause — Claude serializing on macOS Security XPC publishes
+nothing for *minutes* under concurrency while working perfectly — so the
+uncertain signal gets the softer glyph. Putting ❌ on it would cry wolf on
+healthy sessions and teach the user to ignore the one cue that means something
+died.
+
+- **The error cue is checked BEFORE the seen swap, and survives it.** A bell
+  decays to 👀 once the user looks, because looking is what a bell asks for.
+  Looking at a failure does not fix it, so ❌ is not swapped out — otherwise a
+  glance at the tab strip erases the only record that the turn died.
+- **A warning needs a valid read first, and a sustained silence after it.**
+  `_ATTENTION_WATCH_EVER_VALID` gates it: a session that has NEVER reported is a
+  launch in progress, not a fault, and warning through every cold start would
+  make the cue meaningless. `_ATTENTION_WATCH_QUIET_LIMIT` (default 60 ticks,
+  ~30s at the 0.5s interval) is the sustain — one missed read is routine.
+- **The warning never covers a cue the phase earned.** A tab waiting on the user
+  has something specific to say; the silence is only a guess.
+- **It is a live reading, not a latch.** Any valid snapshot resets the counter,
+  so a session that starts reporting again clears the cue without a relaunch.
+- **There are TWO rendering sites.** `apply_tab_title` returns early in `model`
+  mode — the agent named the tab itself — so the per-tick model re-emit renders
+  the cue separately. Both `case` statements default to the plain title, so
+  missing one fails *soft*: model-title users would simply never see a cue, and
+  a manual check of the other mode looks green.
+
+Guarded by `test/bash/tab_title_trouble_test.go` — including
+`_a_failed_turn_shows_a_cross_focused_or_not` (the seen-swap precedence),
+`_model_title_mode_carries_the_trouble_cue` (the second site),
+`_never_warns_before_the_session_has_ever_reported` and
+`_a_session_that_reports_again_clears_the_warning`.
+
 ### A tab follows its agent's working directory, not the worktrees it creates
 
 An agent that enters a git worktree used to leave the rest of the tab behind:
@@ -848,13 +895,12 @@ from the Subscription modal's picker.
   writes the four aliases from an empty model list and so deletes the picked
   model on every save. What it does **not** share is the watchdog disarm, which
   stays keyed to `UserConfigured` alone.
-- **The bash side never learns the marker, and must not need to.**
-  `get_claude_config_provider` allowlists only the gateways whose key changes a
-  launch decision, and every consumer compares the result against
-  `openai-chatgpt` alone — so an unlisted `featherless` marker resolving to the
-  empty string is the right answer, exactly as `custom` already does. Pinned by
-  `TestGetClaudeConfigProvider_never_reports_featherless_as_the_gpt_bridge`;
-  adding a second provider-specific branch there is what would break it.
+- **The launch wraps a Featherless pane in a repair proxy** — see the section
+  below. That makes `featherless` the second key `get_claude_config_provider`
+  must report (it allowlists only the gateways whose marker changes a launch
+  decision; `custom` still resolves to the empty string because nothing branches
+  on it). Pinned by `TestGetClaudeConfigProviderReportsFeatherless` and
+  `TestGetClaudeConfigProvider_never_reports_featherless_as_the_gpt_bridge`.
 - **Alias resolution takes the LONGEST matching alias, not the first in slice
   order.** Profiles are named after the picked model, so "Featherless GLM-5.2"
   contains zhipu's `glm` and "Featherless Kimi-K3" contains moonshot's `kimi` —
@@ -864,6 +910,50 @@ from the Subscription modal's picker.
 Guarded by `internal/claudeconfig/featherless_provider_test.go`,
 `internal/featherless/*_test.go`, `internal/tui/subscription_model_picker_test.go`,
 and `internal/tui/subscription_modal_featherless_test.go`.
+
+### A Featherless pane runs behind a message-role repair proxy
+
+Featherless serves the Anthropic Messages API, but it validates the **published
+schema**, where a message role is only `user` or `assistant`. Claude Code puts
+its capability listings — the agent-type roster and the skills roster — into
+`messages[]` as entries with `role: "system"`. Anthropic's own API accepts them;
+Featherless answers the whole request with
+`400 messages.1.role: Invalid enum value ... received 'system'`, which kills the
+turn before the model ever sees it.
+
+Measured, not decoded: a request captured from a live pane was replayed as sent
+(**400**) and with that one role rewritten to `"user"` (**200**, normal
+completion). Nothing else about the request had to change, which is why
+`internal/rolefix` touches nothing else.
+
+- **There is no settings-level escape.** `--disallowedTools Task` removes the
+  agent roster and the skills roster takes its place; both are Claude Code's own
+  emissions. Disabling enough tools to silence them costs more than the proxy.
+- **The settings file beats the process environment.** Verified live: launching
+  with `ANTHROPIC_BASE_URL` exported and a profile declaring its own, the profile
+  won. So the proxy cannot be delivered by env override the way the GPT bridge
+  does it — the session's **settings overlay** is what gets pointed at the proxy.
+- **The overlay is the session's own copy.** `write_claude_launch_settings` never
+  modifies the stored profile, so `PointSettingsAt` rewrites the overlay in place
+  and every other key in it — the API key the proxy forwards but never holds, the
+  picked model, the declared window, the image deny rules — travels untouched.
+  The stored profile keeps naming the real endpoint, so `ConfigReady`, the
+  budget sweep and the modal all keep working on the truth.
+- **`FlushInterval: -1` is load-bearing.** Buffering the response would swallow
+  the `: keep-alive` comments Featherless sends while awaiting its first token,
+  which is the whole reason the byte watchdog stays armed for this provider.
+- **Nothing here may cost a session.** An overlay that cannot be read, declares
+  no endpoint, or already points at loopback runs the child exactly as it would
+  have run anyway.
+- **A model that refuses to call tools is the model, not the proxy.** Verified
+  end to end: `zai-org/GLM-5.3-Flash` through this proxy called Read and quoted
+  the file back, while `moonshotai/Kimi-K3` on the same setup insisted "tool use
+  has been temporarily disabled for this turn" with all 29 tools present in the
+  request.
+
+Guarded by `internal/rolefix/*_test.go`,
+`cmd/wisp-deck-tui/claude_rolefix_test.go`, and
+`test/bash/claude_rolefix_launch_test.go`.
 
 ### A text-only model is declared by the profile, because Claude Code has no flag for it
 
