@@ -74,6 +74,20 @@ set_tab_title_seen() {
   set_tab_title "👀 $1" "${2:-}"
 }
 
+# Set terminal/tab title for the error state: something in the session failed.
+# Unlike the bell, this does NOT decay once the user looks — a seen failure is
+# not a fixed one, so the cue stays until the session reports otherwise.
+set_tab_title_error() {
+  set_tab_title "❌ $1" "${2:-}"
+}
+
+# Set terminal/tab title for the warning state: the session may be in trouble,
+# but nothing has been confirmed. Deliberately softer than the error cue, since
+# this is what a merely slow agent also looks like from the outside.
+set_tab_title_warning() {
+  set_tab_title "⚠️ $1" "${2:-}"
+}
+
 # Extended TUI variables for interactive full-screen UIs.
 # Call this before using any of the extended variables.
 tui_init_interactive() {

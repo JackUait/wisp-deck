@@ -294,10 +294,12 @@ model_tab_title() {
 # Usage: apply_tab_title <state> <mode> <project> <tool>
 #   state: "waiting" (needs attention — bell emoji prefixed), "seen" (still
 #          needs attention, but the user has looked at the tab without
-#          answering — eyes emoji prefixed) or "active" (plain)
+#          answering — eyes emoji prefixed), "error" (the turn failed — cross),
+#          "warning" (the session may be in trouble — warning sign) or
+#          "active" (plain)
 #   mode:  "full" (project · tool), "project" (project only), or
 #          "model" (leave the AI tool's own title alone — it set the title
-#          itself; the per-tick model re-emit carries the bell instead)
+#          itself; the per-tick model re-emit carries the cue instead)
 apply_tab_title() {
   local state="$1" mode="$2" project="$3" tool="$4"
   case "$mode" in
@@ -309,6 +311,8 @@ apply_tab_title() {
       case "$state" in
         waiting) set_tab_title_waiting "$project" "$tool" ;;
         seen) set_tab_title_seen "$project" "$tool" ;;
+        error) set_tab_title_error "$project" "$tool" ;;
+        warning) set_tab_title_warning "$project" "$tool" ;;
         *) set_tab_title "$project" "$tool" ;;
       esac
       ;;
@@ -316,6 +320,8 @@ apply_tab_title() {
       case "$state" in
         waiting) set_tab_title_waiting "$project" ;;
         seen) set_tab_title_seen "$project" ;;
+        error) set_tab_title_error "$project" ;;
+        warning) set_tab_title_warning "$project" ;;
         *) set_tab_title "$project" ;;
       esac
       ;;
@@ -459,6 +465,14 @@ attention_watcher_reset() {
   # adopts what it finds instead of treating it as a change.
   _ATTENTION_WATCH_LAST_TAB_BAR="-"
   _ATTENTION_WATCH_FOLLOW_TRIED=""
+  _ATTENTION_WATCH_QUIET_TICKS=0
+  _ATTENTION_WATCH_EVER_VALID=""
+  # Ticks of unreadable state before the tab warns. At the 0.5s interval the
+  # default is ~30s, long enough that a routine missed read never shows.
+  _ATTENTION_WATCH_QUIET_LIMIT="${WISP_DECK_WATCH_QUIET_TICKS:-60}"
+  case "$_ATTENTION_WATCH_QUIET_LIMIT" in
+    '' | *[!0-9]* | 0) _ATTENTION_WATCH_QUIET_LIMIT=60 ;;
+  esac
   _ATTENTION_WATCH_HOST="$(hostname 2>/dev/null)"
 }
 
@@ -523,6 +537,17 @@ attention_watcher_tick() {
     _ATTENTION_WATCH_LAST_VALID_REASON="$reason"
   fi
 
+  # A session that reported fine and then went quiet is how a stalled adapter
+  # looks from here, so it earns the warning cue — but only when SUSTAINED, and
+  # never before the first valid read: one missed read is routine, and a session
+  # that has never reported is a launch in progress, not a fault.
+  if [ "$snapshot_valid" -eq 1 ]; then
+    _ATTENTION_WATCH_EVER_VALID=1
+    _ATTENTION_WATCH_QUIET_TICKS=0
+  else
+    _ATTENTION_WATCH_QUIET_TICKS=$((_ATTENTION_WATCH_QUIET_TICKS + 1))
+  fi
+
   [ -n "$tool" ] && _ATTENTION_WATCH_LAST_TOOL="$tool"
 
   [ -n "$config_dir" ] && settings_file="$config_dir/settings"
@@ -550,7 +575,11 @@ attention_watcher_tick() {
       # off again does not un-see it. Cleared below when the turn ends — an
       # `unknown` (a state read that was missing, malformed or stale) is not a
       # turn ending, so a transient miss must never re-ring a seen bell.
-      if [ "$_ATTENTION_WATCH_SEEN" = "1" ] \
+      if [ "$reason" = "error" ]; then
+        # Checked before the seen swap and left set afterwards: the swap says
+        # "you know about this", which is not the same as fixed.
+        title_state="error"
+      elif [ "$_ATTENTION_WATCH_SEEN" = "1" ] \
          || attention_watcher_tab_focused "$session_name" "$tmux_cmd"; then
         _ATTENTION_WATCH_SEEN=1
         title_state="seen"
@@ -572,6 +601,14 @@ attention_watcher_tick() {
       ;;
   esac
 
+  # Never over a cue the phase already earned: a tab waiting on the user has
+  # something specific to say, and the silence is only a guess.
+  if [ "$title_state" = "active" ] \
+     && [ "$_ATTENTION_WATCH_EVER_VALID" = "1" ] \
+     && [ "$_ATTENTION_WATCH_QUIET_TICKS" -ge "$_ATTENTION_WATCH_QUIET_LIMIT" ]; then
+    title_state="warning"
+  fi
+
   if [ -n "$config_dir" ] && declare -f keep_awake_tick >/dev/null 2>&1; then
     keep_awake_tick "$config_dir" "$session_name" "$$" "$keep_state" || true
   fi
@@ -583,6 +620,8 @@ attention_watcher_tick() {
     case "$title_state" in
       waiting) set_tab_title_waiting "$model_title" ;;
       seen) set_tab_title_seen "$model_title" ;;
+      error) set_tab_title_error "$model_title" ;;
+      warning) set_tab_title_warning "$model_title" ;;
       *) set_tab_title "$model_title" ;;
     esac
   fi

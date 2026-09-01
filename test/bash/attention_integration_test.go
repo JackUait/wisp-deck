@@ -555,7 +555,9 @@ attention_cleanup "$attention_root" || exit 16
 		"awake:opencode:active",
 		"title:opencode:active:full",
 		"awake:opencode:waiting",
-		"title:opencode:waiting:full",
+		// An error reason renders the failure cue, not the bell; the rotation
+		// this test is about is unaffected.
+		"title:opencode:error:full",
 		"sound:opencode",
 	}, "\n") + "\n"
 	if got := string(data); got != want {
