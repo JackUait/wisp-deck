@@ -208,6 +208,9 @@ func AIToolDisplayName(tool string) string {
 
 // MainMenuModel is the Bubbletea model for the unified main menu.
 type MainMenuModel struct {
+	// Overridden in tests; empty means featherless.DefaultCachePath().
+	featherlessCachePath string
+
 	projects            []models.Project
 	aiTools             []string
 	selectedAI          int
@@ -2355,6 +2358,9 @@ func (m *MainMenuModel) InitCmdCountForTest() int { return len(m.initCmds()) }
 // Update implements tea.Model. Handles key bindings, window resize, and animation ticks.
 func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case featherlessCatalogMsg:
+		m.applyFeatherlessCatalog(msg)
+		return m, nil
 	case bobTickMsg:
 		if m.ghostDisplay == "animated" {
 			m.bobPhase += bobPhaseStep

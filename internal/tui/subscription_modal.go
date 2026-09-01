@@ -68,6 +68,7 @@ const (
 	subscriptionDeleteConfirm
 	subscriptionDiscardConfirm
 	subscriptionLoginName
+	subscriptionPickModel
 )
 
 const (
@@ -186,6 +187,7 @@ type subscriptionModalState struct {
 	pendingProfile  int
 	pendingMode     subscriptionModalMode
 	pendingClose    bool
+	picker          subscriptionModelPickerState
 	hover           subscriptionHitTarget
 	err             error
 	auth            subscriptionAuthState
@@ -534,6 +536,9 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 	}
 	if m.subscriptionModal.mode == subscriptionEditField {
 		return m.updateSubscriptionFieldInput(msg)
+	}
+	if m.subscriptionModal.mode == subscriptionPickModel {
+		return m.updateSubscriptionModelPicker(msg)
 	}
 	if m.subscriptionModal.mode == subscriptionAddProvider {
 		return m.updateSubscriptionProviderPicker(msg)
@@ -1283,7 +1288,12 @@ func (m *MainMenuModel) activateSubscriptionDetail() (tea.Model, tea.Cmd) {
 	switch m.subscriptionModal.detailCursor {
 	case subscriptionDetailOpus, subscriptionDetailSonnet, subscriptionDetailHaiku, subscriptionDetailFable:
 		m.cycleSubscriptionMapping("next")
-	case subscriptionDetailEndpoint, subscriptionDetailModel, subscriptionDetailContext:
+	case subscriptionDetailModel:
+		if m.subscriptionModalProfile().Provider.RemoteCatalog {
+			return m, m.openSubscriptionModelPicker()
+		}
+		return m, m.beginSubscriptionFieldEdit(m.subscriptionModal.detailCursor)
+	case subscriptionDetailEndpoint, subscriptionDetailContext:
 		return m, m.beginSubscriptionFieldEdit(m.subscriptionModal.detailCursor)
 	case subscriptionDetailImages:
 		m.toggleSubscriptionImages()
@@ -2139,6 +2149,9 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 		return m.subscriptionLifecycleLines(width, height)
 	}
 
+	if m.subscriptionModal.mode == subscriptionPickModel {
+		return m.subscriptionModelPickerLines(width, height)
+	}
 	if m.subscriptionModalOnAddLoginRow() {
 		return m.subscriptionAddLoginDetailLines(width, height)
 	}
@@ -2441,6 +2454,9 @@ func (m *MainMenuModel) subscriptionModalTarget(cardX, cardY int) subscriptionHi
 		}
 	}
 
+	if m.subscriptionModal.mode == subscriptionPickModel {
+		return subscriptionHitTarget{}
+	}
 	if m.subscriptionModal.mode == subscriptionAddProvider {
 		for i, provider := range claudeconfig.Providers {
 			if hitText(provider.Name) {
@@ -2576,6 +2592,11 @@ func (m *MainMenuModel) handleSubscriptionModalMouse(msg tea.MouseMsg) (tea.Mode
 		return m, nil
 	}
 
+	// The picker is keyboard-driven: its rows are a search result, not fixed
+	// targets the hit-test can name.
+	if m.subscriptionModal.mode == subscriptionPickModel {
+		return m, nil
+	}
 	if m.subscriptionModal.mode == subscriptionAddProvider {
 		target := m.subscriptionModalTarget(cardX, cardY)
 		if msg.Action == tea.MouseActionMotion {
@@ -2735,6 +2756,9 @@ func (m *MainMenuModel) renderSubscriptionModalCard() string {
 		xLabel = "x enable"
 	}
 	help := "↑↓ profile · → details · " + xLabel + " · Tab pane · Enter action · Esc close"
+	if m.subscriptionModal.mode == subscriptionPickModel {
+		return "type to search · ↑↓ model · Enter pick · Esc cancel"
+	}
 	if m.subscriptionModal.mode == subscriptionAddProvider {
 		help = "↑↓ provider · Enter choose · Esc cancel"
 	} else if m.subscriptionModal.mode != subscriptionBrowse {
