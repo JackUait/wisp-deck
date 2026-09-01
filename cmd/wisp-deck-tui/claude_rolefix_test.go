@@ -130,3 +130,41 @@ func TestClaudeRolefix_passes_the_child_argv_through(t *testing.T) {
 		}
 	}
 }
+
+// Claude's own exit code is the session's exit code. Returning the error to
+// cobra instead would print a spurious "Error: exit status N" into the pane the
+// user is watching and lose the code.
+func TestClaudeRolefix_propagates_the_childs_exit_code(t *testing.T) {
+	settings := rolefixSettings(t, "https://api.featherless.ai")
+
+	var exited int
+	command := newClaudeRolefixCommandWithExit(
+		func(argv []string) error { return exitCodeError(7) },
+		func(code int) { exited = code },
+	)
+	command.SetArgs([]string{"--settings", settings, "--", "claude"})
+	if err := command.Execute(); err != nil {
+		t.Fatalf("a child exit code must not surface as a command error: %v", err)
+	}
+	if exited != 7 {
+		t.Errorf("exit code = %d, want the child's 7", exited)
+	}
+}
+
+// A clean exit must not call exit(0) with an error banner either.
+func TestClaudeRolefix_stays_quiet_on_a_clean_child_exit(t *testing.T) {
+	settings := rolefixSettings(t, "https://api.featherless.ai")
+
+	called := false
+	command := newClaudeRolefixCommandWithExit(
+		func(argv []string) error { return nil },
+		func(code int) { called = true },
+	)
+	command.SetArgs([]string{"--settings", settings, "--", "claude"})
+	if err := command.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if called {
+		t.Error("a clean exit must not force an exit code")
+	}
+}
