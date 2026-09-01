@@ -911,7 +911,7 @@ Guarded by `internal/claudeconfig/featherless_provider_test.go`,
 `internal/featherless/*_test.go`, `internal/tui/subscription_model_picker_test.go`,
 and `internal/tui/subscription_modal_featherless_test.go`.
 
-### A Featherless pane runs behind a message-role repair proxy
+### A Featherless pane runs behind a request repair proxy
 
 Featherless serves the Anthropic Messages API, but it validates the **published
 schema**, where a message role is only `user` or `assistant`. Claude Code puts
@@ -923,9 +923,40 @@ turn before the model ever sees it.
 
 Measured, not decoded: a request captured from a live pane was replayed as sent
 (**400**) and with that one role rewritten to `"user"` (**200**, normal
-completion). Nothing else about the request had to change, which is why
-`internal/rolefix` touches nothing else.
+completion).
 
+The proxy repairs a second thing, and it is the reason a Featherless pane could
+look alive and still do nothing. **A request that declares `thinking` turns
+Featherless's tool-call parser off.** Extended thinking is on by default, so
+Claude Code puts `thinking: {"type":"adaptive","display":"omitted"}` on every
+request; the model still emits a tool call, but the endpoint stops converting
+it, so the raw Qwen `<tool_call><function=…><parameter=…>` XML arrives as
+assistant **text**. The pane renders the markup, no tool runs, and the turn ends
+`end_turn` — so nothing errors and the session simply spins.
+
+Measured 2026-09-02, same prompt and model, both arms, on
+`TurboVadim/Qwen3.8-27B-OBLITERATED` and
+`huihui-ai/Huihui-Qwen3.8-27B-abliterated`: without the field `stop_reason` is
+`tool_use` and a `tool_use` block arrives; with it `stop_reason` is `end_turn`
+and the XML sits in a text block. Confirmed end to end through the launch chain
+— the pre-fix binary printed the bare XML and called nothing, the fixed one ran
+`Read` and answered.
+
+- **Dropping `thinking` costs no reasoning.** Featherless returns a `thinking`
+  block whether or not the request asks for one, so the field buys the turn
+  nothing and breaks its tool calling. It is the *presence* of the key that does
+  it — `{"type":"enabled","budget_tokens":N}` fails the same way, and
+  `output_config.effort` is innocent. So is the header: both arms sent the same
+  `Anthropic-Beta: …,interleaved-thinking-2025-05-14,…`, and the repaired one
+  called tools with it still there. The body field is the whole lever.
+- **The strip is safe for a model the bug never touched.** Not every class
+  mis-parses: `zai-org/GLM-5.3-Flash` and `GLM-4.7-Flash` answer `tool_use` with
+  a `thinking` block in BOTH arms, identically. So stripping unconditionally for
+  every Featherless pane repairs the broken classes and takes nothing from the
+  working ones — which is why this needs no per-model probe.
+- **The repair is one pass, and `changed` gates the rewrite.** `Rewrite` returns
+  the body untouched when nothing moved, so a deletion recorded after that guard
+  would be silently thrown away.
 - **There is no settings-level escape.** `--disallowedTools Task` removes the
   agent roster and the skills roster takes its place; both are Claude Code's own
   emissions. Disabling enough tools to silence them costs more than the proxy.

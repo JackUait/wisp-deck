@@ -1,15 +1,27 @@
-// Package rolefix is a loopback Anthropic pass-through that repairs one thing:
-// Claude Code puts its capability listings (agent types, skills) into
-// messages[] as entries with role "system". Anthropic's own API accepts that;
-// an endpoint validating the published Messages schema — where a message role
-// is only "user" or "assistant" — rejects the request with a 400 that kills the
-// turn before the model sees it.
+// Package rolefix is a loopback Anthropic pass-through that repairs the two
+// things a strict endpoint mishandles about a Claude Code request. Both were
+// measured against Featherless by replaying a request captured from a live
+// pane, and this proxy touches nothing else.
 //
-// Measured against Featherless on 2026-09-01 by replaying a request captured
-// from a live pane: as Claude Code sends it, 400
-// `messages.1.role: Invalid enum value`; with that one role rewritten to
-// "user", 200 and a normal completion. Nothing else about the request needs to
-// change, which is why this proxy touches nothing else.
+// First, roles. Claude Code puts its capability listings (agent types, skills)
+// into messages[] as entries with role "system". Anthropic's own API accepts
+// that; an endpoint validating the published Messages schema — where a message
+// role is only "user" or "assistant" — rejects the request with a 400 that
+// kills the turn before the model sees it. Measured 2026-09-01: as Claude Code
+// sends it, 400 `messages.1.role: Invalid enum value`; with that one role
+// rewritten to "user", 200 and a normal completion.
+//
+// Second, thinking. Extended thinking is on by default, so every request
+// carries a top-level "thinking" — and its presence switches Featherless's
+// tool-call parser off. The model still emits a tool call, but the endpoint no
+// longer converts it, so the raw `<tool_call>` XML arrives as assistant TEXT
+// and the pane renders the markup instead of running anything. Measured
+// 2026-09-02 on TurboVadim/Qwen3.8-27B-OBLITERATED and
+// huihui-ai/Huihui-Qwen3.8-27B-abliterated, same prompt, both arms: without the
+// field stop_reason is "tool_use" and a tool_use block arrives; with it
+// stop_reason is "end_turn" and the XML sits in a text block. The endpoint
+// returns a thinking block either way, so dropping the field costs no
+// reasoning — only the request's ability to break its own tool calling.
 package rolefix
 
 import (
@@ -45,6 +57,15 @@ func Rewrite(body []byte) ([]byte, bool, error) {
 		return body, false, nil
 	}
 	changed := false
+	// Featherless turns its tool-call parser off for a request that declares
+	// thinking, and hands the model's own `<tool_call>` XML back as assistant
+	// text — so the pane renders the markup and never runs a tool. The model
+	// keeps reasoning without the field, and the endpoint still returns a
+	// thinking block for it, so dropping it costs the turn nothing.
+	if _, ok := envelope["thinking"]; ok {
+		delete(envelope, "thinking")
+		changed = true
+	}
 	for _, message := range messages {
 		var role string
 		if err := json.Unmarshal(message["role"], &role); err != nil {

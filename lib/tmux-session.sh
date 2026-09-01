@@ -131,13 +131,14 @@ build_ai_launch_cmd() {
     raw="wisp-deck-tui claude-gpt-adapter --codex ${codex_q} -- bash -c ${raw_q}"
   fi
 
-  # Featherless validates the published Messages schema, where a message role is
-  # only "user" or "assistant". Claude Code puts its capability listings (agent
-  # types, skills) in messages[] with role "system", which Anthropic's own API
-  # accepts and Featherless rejects with a 400 that kills the turn before the
-  # model sees it. The proxy repairs those roles and points this session's
-  # settings overlay at itself; with no overlay there is nothing to redirect, so
-  # the launch is left alone.
+  # Featherless mishandles two things Claude Code sends. It validates the
+  # published Messages schema, where a message role is only "user" or
+  # "assistant", so the capability listings Claude Code puts in messages[] with
+  # role "system" draw a 400 that kills the turn. And a request declaring
+  # "thinking" turns its tool-call parser off, so the model's own tool call
+  # comes back as raw XML text and the pane never runs anything. The proxy
+  # repairs both and points this session's settings overlay at itself; with no
+  # overlay there is nothing to redirect, so the launch is left alone.
   if [ "$tool" = "claude" ] \
      && [ "${WISP_DECK_CLAUDE_PROVIDER:-}" = "featherless" ] \
      && [ -n "${WISP_DECK_CLAUDE_SETTINGS:-}" ]; then
