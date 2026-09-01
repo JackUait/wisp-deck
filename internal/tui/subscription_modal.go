@@ -829,13 +829,16 @@ func (m *MainMenuModel) subscriptionDetailRows() []int {
 		subscriptionDetailHaiku,
 		subscriptionDetailFable,
 	}
-	if profile.Provider.UserConfigured {
-		rows = []int{
-			subscriptionDetailEndpoint,
+	if profile.Provider.SuppliesOwnModel() {
+		rows = nil
+		if profile.Provider.UserConfigured {
+			rows = append(rows, subscriptionDetailEndpoint)
+		}
+		rows = append(rows,
 			subscriptionDetailModel,
 			subscriptionDetailContext,
 			subscriptionDetailImages,
-		}
+		)
 	}
 	if profile.Provider.Auth == claudeconfig.AuthAPIKey ||
 		profile.Provider.Auth == claudeconfig.AuthCodexChatGPT {
@@ -931,7 +934,7 @@ func (m *MainMenuModel) loadSubscriptionDraft(profile subscriptionProfile) {
 	if !profile.Standard {
 		draft.models = append([]string(nil), claudeconfig.ProviderModels[profile.Provider.Key]...)
 		draft.mappings = claudeconfig.ReadModelMappings(m.claudeConfigsDir, profile.File, draft.models)
-		if profile.Provider.UserConfigured {
+		if profile.Provider.SuppliesOwnModel() {
 			draft.endpoint = claudeconfig.ReadBaseURL(m.claudeConfigsDir, profile.File)
 			draft.model = claudeconfig.ReadCustomModel(m.claudeConfigsDir, profile.File)
 			draft.window = claudeconfig.ReadContextWindow(m.claudeConfigsDir, profile.File)
@@ -959,12 +962,16 @@ func (m *MainMenuModel) useSubscriptionProfile() tea.Cmd {
 	}
 	profile := m.subscriptionModalProfile()
 	if !profile.Ready {
-		if profile.Provider.UserConfigured {
+		switch {
+		case profile.Provider.RemoteCatalog:
+			m.subscriptionModal.err = fmt.Errorf(
+				"%s needs a model and an API key before it can be used", profile.Name)
+		case profile.Provider.UserConfigured:
 			m.subscriptionModal.err = fmt.Errorf(
 				"%s needs an endpoint, model, context window, and API key before it can be used",
 				profile.Name,
 			)
-		} else {
+		default:
 			m.subscriptionModal.err = fmt.Errorf("%s needs an API key before it can be used", profile.Name)
 		}
 		return nil
@@ -1024,8 +1031,8 @@ func (m *MainMenuModel) saveSubscriptionDraft() {
 	if profile.Standard || draft.file == "" || !draft.dirty {
 		return
 	}
-	if profile.Provider.UserConfigured {
-		if err := m.writeSubscriptionCustomFields(draft); err != nil {
+	if profile.Provider.SuppliesOwnModel() {
+		if err := m.writeSubscriptionCustomFields(draft, profile.Provider); err != nil {
 			m.subscriptionModal.err = err
 			return
 		}
@@ -1066,12 +1073,18 @@ func (m *MainMenuModel) saveSubscriptionDraft() {
 // writeSubscriptionCustomFields persists the endpoint, model, and window a
 // user-configured profile supplies. It writes nothing until every value passes,
 // so a rejected window cannot leave the endpoint half-applied.
-func (m *MainMenuModel) writeSubscriptionCustomFields(draft *subscriptionDraft) error {
+func (m *MainMenuModel) writeSubscriptionCustomFields(
+	draft *subscriptionDraft, provider claudeconfig.Provider,
+) error {
 	if !draft.customEdited {
 		return nil
 	}
-	if err := claudeconfig.ValidateCustomEndpoint(draft.endpoint); err != nil {
-		return err
+	// A remote-catalog provider ships its own endpoint, so there is no field to
+	// validate and nothing of the user's to write over it.
+	if provider.UserConfigured {
+		if err := claudeconfig.ValidateCustomEndpoint(draft.endpoint); err != nil {
+			return err
+		}
 	}
 	if err := claudeconfig.ValidateCustomModel(draft.model); err != nil {
 		return err
@@ -1079,8 +1092,10 @@ func (m *MainMenuModel) writeSubscriptionCustomFields(draft *subscriptionDraft) 
 	if err := claudeconfig.ValidateCustomContextWindow(draft.window); err != nil {
 		return err
 	}
-	if err := claudeconfig.WriteCustomEndpoint(m.claudeConfigsDir, draft.file, draft.endpoint); err != nil {
-		return err
+	if provider.UserConfigured {
+		if err := claudeconfig.WriteCustomEndpoint(m.claudeConfigsDir, draft.file, draft.endpoint); err != nil {
+			return err
+		}
 	}
 	if err := claudeconfig.WriteCustomModel(m.claudeConfigsDir, draft.file, draft.model); err != nil {
 		return err
@@ -1107,7 +1122,7 @@ func (m *MainMenuModel) writeSubscriptionCustomFields(draft *subscriptionDraft) 
 // that produce one.
 func (m *MainMenuModel) toggleSubscriptionImages() {
 	profile := m.subscriptionModalProfile()
-	if profile.Standard || !profile.Provider.UserConfigured {
+	if profile.Standard || !profile.Provider.SuppliesOwnModel() {
 		return
 	}
 	draft := &m.subscriptionModal.draft
@@ -2221,7 +2236,7 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 		"",
 	)
 
-	if profile.Provider.UserConfigured {
+	if profile.Provider.SuppliesOwnModel() {
 		for _, row := range []int{subscriptionDetailModel, subscriptionDetailContext} {
 			name, _, value, ok := m.subscriptionFieldSpec(row)
 			if !ok {
@@ -2477,7 +2492,7 @@ func (m *MainMenuModel) subscriptionModalTarget(cardX, cardY int) subscriptionHi
 		return subscriptionHitTarget{}
 	}
 
-	if m.subscriptionModalProfile().Provider.UserConfigured {
+	if m.subscriptionModalProfile().Provider.SuppliesOwnModel() {
 		for _, row := range []int{
 			subscriptionDetailEndpoint, subscriptionDetailModel, subscriptionDetailContext,
 		} {
