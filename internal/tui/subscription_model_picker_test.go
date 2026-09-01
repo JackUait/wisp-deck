@@ -419,3 +419,30 @@ func TestModalCard_with_the_picker_open_is_a_card_not_a_help_line(t *testing.T) 
 		t.Errorf("the picker's help line is missing from the card:\n%s", card)
 	}
 }
+
+// The picked model's whole context is what Claude Code has to fit both the
+// conversation and its reply into. It sizes max_tokens from its own catalog,
+// which has never heard of a Featherless model, and asks for 32000 — so a
+// 32768-token pick left ~768 tokens for everything else and Featherless
+// rejected every turn with "The request was rejected as invalid". The profile
+// the pick writes has to reserve the reply's room out of the window.
+func TestApplyPendingSubscriptionModel_reserves_output_room_for_a_small_window(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	file := addFeatherlessProfile(t, m, "Featherless Small")
+	// The add flow stamps this when the provider is chosen; only that provider
+	// may receive a Featherless pick.
+	m.subscriptionModal.providerKey = "featherless"
+	m.subscriptionModal.pendingModel = &featherless.Model{
+		ID: "unsloth/Llama-3.3-70B-Instruct", Context: 32768, OnPlan: true,
+	}
+	if err := m.applyPendingSubscriptionModel(file); err != nil {
+		t.Fatalf("applyPendingSubscriptionModel: %v", err)
+	}
+	env := readConfigEnv(t, m.claudeConfigsDir, file)
+	if got, _ := env[claudeconfig.OutputReserveKey].(string); got != "8192" {
+		t.Errorf("%s = %q, want a quarter of the 32768 window", claudeconfig.OutputReserveKey, got)
+	}
+	if got, _ := env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"].(string); got != "32768" {
+		t.Errorf("declared window = %q, want the endpoint's real 32768", got)
+	}
+}

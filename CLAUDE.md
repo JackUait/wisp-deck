@@ -1452,6 +1452,71 @@ Verify a change against a live pane, not the decode: launch `claude --settings
 shipped default declares its provider's window) and
 `test/bash/subscription_context_guard_test.go`.
 
+### The window holds the reply too, so the reply's room comes out of it
+
+Declaring the window is only half of fitting inside it. Claude Code also picks
+`max_tokens` from its own catalog, which has never heard of a subscription
+model, and settles on **32000** — and an inference server enforces
+`input + max_tokens <= context`, not `input <= context`. On a 32768-token model
+that leaves ~768 tokens for the system prompt, the tool schemas and the
+conversation, so *every* real turn is rejected before the model reads a word:
+`API Error: 400 The request was rejected as invalid. Please check your request
+parameters.`
+
+Measured against api.featherless.ai on 2026-09-02 by replaying a request
+captured from a live pane through a logging proxy: `max_tokens` 32000 and 30000
+both answered 400, 28000 and below answered 200, and adding ~4000 tokens of
+input moved that boundary down by the same amount. The identical profile
+carrying an 8192 reserve ran the turn to completion.
+
+Claude Code's own accounting says the same thing outright. `/context` on a live
+pane carrying the pre-fix profile reported `Autocompact buffer: 33k tokens
+(100.7%)` and **no free space at all** — the room it holds back for the reply is
+larger than the entire window. The same pane with the reserve declared reported
+`Autocompact buffer: 21.2k (64.7%)` and `Free space: 9.3k (28.3%)`.
+
+So a declared window also declares `CLAUDE_CODE_MAX_OUTPUT_TOKENS`. That key is
+the whole of the fix.
+
+- **Do not also take the reserve out of `CLAUDE_CODE_AUTO_COMPACT_WINDOW`.**
+  Claude Code sizes its own auto-compact buffer from the reserve, so once the
+  reserve is right the reply's room is already carved out — the buffer figures
+  above are that happening. Shrinking the compact key on top of it was measured
+  and changes nothing: 32768, 24576, 20000 and 10000 in a launch overlay all
+  produced byte-identical `/context` accounting. It is also actively risky,
+  because Claude Code's own parser documents the accepted range as
+  `'auto' or 100k-1M tokens`, so a window minus its reserve can land below 100k
+  and be rejected — `131072 - 32000 = 99072` does.
+- **Both window keys keep naming the endpoint's real limit.**
+  `_guard_subscription_context`, the statusline and the modal all read
+  `CLAUDE_CODE_MAX_CONTEXT_TOKENS` as the truth about the endpoint.
+- **The reserve never rises above 32000.** That is what Claude Code would have
+  asked for unprompted; this exists to fit a small window, not to ask a provider
+  for more than it was already going to be asked for. A quarter of the window,
+  capped there — no cataloged model's real max output falls below that, so
+  consulting `Model.Output` would never lower it.
+- **A declared reserve is the user's own figure and is kept**, exactly like
+  `stampByteWatchdog`'s key: they may know their endpoint's real output cap.
+  Only `WriteCustomContextWindow` re-derives one, because there the user is
+  changing the size of the thing being divided.
+- **`EnsureContextBudget`'s change-check must compare the reserve.** It
+  enumerates its keys explicitly, and every profile that has this bug already
+  declares all three window keys correctly — a check that omits the fourth
+  reports "unchanged" and never writes the file, silently skipping exactly the
+  broken profiles the sweep exists to repair.
+- **A window of 1M or more is left alone**, the same branch that already ships
+  no compaction cap there. The overflow exists at 1M too, just far rarer.
+
+Known limit, by construction: a single huge tool result can still carry one turn
+past the threshold in one step and be rejected once. That is inherent to a 32K
+window, not something a profile can prevent.
+
+Guarded by `internal/claudeconfig/outputreserve_test.go` (including the sweep's
+backfill of a window-current profile, whose change-check is the trap above, and
+a check that every shipped sub-1M default declares the reserve its window
+implies) and
+`TestApplyPendingSubscriptionModel_reserves_output_room_for_a_small_window`.
+
 ## Code Conventions
 
 ### Avoid Over-Engineering

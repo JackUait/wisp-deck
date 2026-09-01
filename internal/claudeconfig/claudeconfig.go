@@ -189,7 +189,7 @@ func AddForProvider(listFile, configsDir, name, providerKey string) (string, err
 		env[key] = provider.DefaultModels[i]
 	}
 	if budget, ok := ContextBudget(env); ok {
-		for key, value := range contextWindowEnv(strconv.Itoa(budget)) {
+		for key, value := range contextWindowEnv(strconv.Itoa(budget), 0) {
 			if value != "" {
 				env[key] = value
 			}
@@ -500,7 +500,10 @@ func WriteCustomContextWindow(configsDir, file, window string) error {
 	if err := ValidateCustomContextWindow(window); err != nil {
 		return err
 	}
-	return writeEnvValues(configsDir, file, contextWindowEnv(strings.TrimSpace(window)))
+	// The reserve is derived from the window being written rather than carried
+	// over: the user is changing how much the endpoint can hold, and the room
+	// for a reply is a share of that. A later sweep keeps whatever lands here.
+	return writeEnvValues(configsDir, file, contextWindowEnv(strings.TrimSpace(window), 0))
 }
 
 // ValidateCustomModel reports why a model id cannot be stored, if it cannot.

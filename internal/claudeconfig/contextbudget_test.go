@@ -136,6 +136,15 @@ func TestAddForProvider_stamps_the_providers_real_context_window(t *testing.T) {
 			if disabled != wantCap {
 				t.Errorf("1M marker disabled = %v, want %v", disabled, wantCap)
 			}
+			// The window has to hold the reply as well as the conversation, and
+			// Claude Code sizes max_tokens from a catalog that cannot see this
+			// endpoint.
+			reserve, reserved := env[OutputReserveKey]
+			if reserved != wantCap {
+				t.Errorf("output reserved = %v, want %v", reserved, wantCap)
+			} else if reserved && reserve != strconv.Itoa(outputReserve(want)) {
+				t.Errorf("output reserve = %q, want %q", reserve, strconv.Itoa(outputReserve(want)))
+			}
 			for _, id := range provider.DefaultModels {
 				if window, _, known := ModelLimit(id); known && want > window {
 					t.Errorf("declared budget %d exceeds %s's real window %d", want, id, window)
@@ -467,6 +476,13 @@ func TestShippedDefaultConfigs_declare_their_providers_window(t *testing.T) {
 			_, disabled := env["CLAUDE_CODE_DISABLE_1M_CONTEXT"]
 			if disabled != wantCap {
 				t.Errorf("1M marker disabled = %v, want %v", disabled, wantCap)
+			}
+			// Same window, same reply: a shipped default has to reserve it too.
+			reserve, reserved := env[OutputReserveKey]
+			if reserved != wantCap {
+				t.Errorf("output reserved = %v, want %v", reserved, wantCap)
+			} else if reserved && reserve != strconv.Itoa(outputReserve(want)) {
+				t.Errorf("output reserve = %q, want %q", reserve, strconv.Itoa(outputReserve(want)))
 			}
 		})
 	}

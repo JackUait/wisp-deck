@@ -20,16 +20,71 @@ const (
 	oneMillionContextSize = 1000000
 )
 
-func contextWindowEnv(window string) map[string]string {
+// OutputReserveKey caps the max_tokens Claude Code asks for. It sizes that
+// figure from its own catalog, which knows nothing about a subscription
+// endpoint, and settles on 32000 — the whole of a small window. An endpoint
+// enforcing input + max_tokens <= context then rejects every turn a real
+// session sends, before the model reads a word of it.
+//
+// Measured against api.featherless.ai on 2026-09-02 by replaying a request
+// captured from a live pane against a model with a 32768-token window:
+// max_tokens 32000 and 30000 both answered 400 "The request was rejected as
+// invalid", 28000 and below answered 200, and adding ~4000 tokens of input
+// moved the boundary down by the same amount. The identical profile carrying an
+// 8192 reserve ran the turn to completion.
+const OutputReserveKey = "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
+
+// claudeDefaultOutputTokens is the max_tokens Claude Code asks for unprompted.
+// The reserve never exceeds it: this exists to fit a small window, not to let a
+// session ask a provider for more than Claude would have asked for anyway.
+const claudeDefaultOutputTokens = 32000
+
+// outputReserveShare is how much of a window the reply may claim. A quarter
+// leaves three quarters for the system prompt, the tool schemas and the
+// conversation.
+const outputReserveShare = 4
+
+// outputReserve is the room a reply needs inside a window of the given size.
+// Never zero: a window that small is already unusable, and max_tokens 0 is
+// rejected outright, which would fail the pane for the wrong reason.
+func outputReserve(window int) int {
+	reserve := window / outputReserveShare
+	if reserve > claudeDefaultOutputTokens {
+		return claudeDefaultOutputTokens
+	}
+	if reserve < 1 {
+		return 1
+	}
+	return reserve
+}
+
+// contextWindowEnv renders the keys a declared window implies. declaredReserve
+// is the profile's own output cap, or 0 to derive one from the window.
+//
+// Declaring the reserve is the whole of the fit: Claude Code's own auto-compact
+// buffer is sized from it, so once it is right the room for the reply is
+// already carved out of the window. Measured on a live pane with a 32768-token
+// model — /context reported "Autocompact buffer: 33k tokens (100.7%)" and no
+// free space at all before, "21.2k (64.7%)" with "Free space: 9.3k (28.3%)"
+// after. Taking the reserve out of the auto-compact window on top of that
+// changes nothing: 32768, 24576, 20000 and 10000 all produced identical
+// accounting, so that key keeps naming the window.
+func contextWindowEnv(window string, declaredReserve int) map[string]string {
 	values := map[string]string{
 		ContextBudgetKey:     window,
 		autoCompactWindowKey: "",
 		disable1MContextKey:  "",
+		OutputReserveKey:     "",
 	}
 	tokens, _ := strconv.Atoi(window)
 	if tokens > 0 && tokens < oneMillionContextSize {
+		reserve := declaredReserve
+		if reserve <= 0 || reserve >= tokens {
+			reserve = outputReserve(tokens)
+		}
 		values[autoCompactWindowKey] = window
 		values[disable1MContextKey] = "1"
+		values[OutputReserveKey] = strconv.Itoa(reserve)
 	}
 	return values
 }
@@ -71,6 +126,14 @@ func stampContextBudget(env map[string]any, configName string) {
 			declaredWindow = strconv.Itoa(tokens)
 		}
 	}
+	// A reserve the profile already declares is the user's own figure for an
+	// endpoint whose output cap they know, so it survives every sweep.
+	declaredReserve := 0
+	if declared, ok := env[OutputReserveKey].(string); ok {
+		if tokens, err := strconv.Atoi(strings.TrimSpace(declared)); err == nil && tokens > 0 {
+			declaredReserve = tokens
+		}
+	}
 	marker, _ := env["WISP_DECK_SUBSCRIPTION_PROVIDER"].(string)
 	provider, marked := providerByKey(marker)
 	userConfigured := marked && provider.SuppliesOwnModel()
@@ -103,7 +166,7 @@ func stampContextBudget(env map[string]any, configName string) {
 	if window == "" {
 		return
 	}
-	for key, value := range contextWindowEnv(window) {
+	for key, value := range contextWindowEnv(window, declaredReserve) {
 		if value == "" {
 			delete(env, key)
 		} else {
@@ -134,13 +197,16 @@ func EnsureContextBudget(configsDir, file string) (bool, error) {
 	beforeBudget, hadBudget := env[ContextBudgetKey].(string)
 	beforeAuto, hadAuto := env[autoCompactWindowKey].(string)
 	beforeDisable, hadDisable := env[disable1MContextKey].(string)
+	beforeReserve, hadReserve := env[OutputReserveKey].(string)
 	stampContextBudget(env, file)
 	afterBudget, hasBudget := env[ContextBudgetKey].(string)
 	afterAuto, hasAuto := env[autoCompactWindowKey].(string)
 	afterDisable, hasDisable := env[disable1MContextKey].(string)
+	afterReserve, hasReserve := env[OutputReserveKey].(string)
 	if hadBudget == hasBudget && beforeBudget == afterBudget &&
 		hadAuto == hasAuto && beforeAuto == afterAuto &&
-		hadDisable == hasDisable && beforeDisable == afterDisable {
+		hadDisable == hasDisable && beforeDisable == afterDisable &&
+		hadReserve == hasReserve && beforeReserve == afterReserve {
 		return false, nil
 	}
 	settings["env"] = env
