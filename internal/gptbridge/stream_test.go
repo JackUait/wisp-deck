@@ -430,3 +430,97 @@ func TestWriteSSEErrorEvent(t *testing.T) {
 		t.Fatalf("error SSE:\n%s", output.String())
 	}
 }
+
+// messageDeltaUsage returns the usage block of the single message_delta event,
+// decoded the way Claude Code decodes it off the wire.
+func messageDeltaUsage(t *testing.T, events []StreamEvent) Usage {
+	t.Helper()
+	for _, event := range events {
+		if event.Event != "message_delta" {
+			continue
+		}
+		raw, err := json.Marshal(event.Data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded struct {
+			Usage Usage `json:"usage"`
+		}
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		return decoded.Usage
+	}
+	t.Fatalf("no message_delta event in %+v", events)
+	return Usage{}
+}
+
+// message_start is emitted before the turn runs, so it can only carry the byte
+// estimate. message_delta is the sole channel that can correct it, and Claude
+// Code replaces input_tokens/cache_read_input_tokens from it whenever they are
+// positive. Reporting output alone left every bridged turn recorded as a fully
+// uncached prompt, which priced a month of Codex traffic ~5x over.
+func TestResponseReducerReportsCodexCacheReadsInTheStreamedUsage(t *testing.T) {
+	reducer := NewResponseReducer(ResponseOptions{
+		MessageID: "msg_cache", Model: "gpt-5.6-sol", EstimatedInputTokens: 40000,
+	})
+	events := reducer.Start()
+	text, err := reducer.Apply(Notification{
+		Method: "item/agentMessage/delta",
+		Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","delta":"ok"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events = append(events, text...)
+	usage, err := reducer.Apply(Notification{
+		Method: "thread/tokenUsage/updated",
+		Params: json.RawMessage(`{
+			"threadId":"thread-1","turnId":"turn-1",
+			"tokenUsage":{"last":{"inputTokens":38000,"cachedInputTokens":36000,"outputTokens":120,"reasoningOutputTokens":80,"totalTokens":38120}}
+		}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events = append(events, usage...)
+	final, err := reducer.Finish("end_turn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events = append(events, final...)
+
+	got := messageDeltaUsage(t, events)
+	want := Usage{InputTokens: 2000, OutputTokens: 120, CacheReadInputTokens: 36000}
+	if got != want {
+		t.Errorf("message_delta usage = %+v, want %+v", got, want)
+	}
+}
+
+// Without a tokenUsage notification the estimate is all there is, and the delta
+// must restate it. Emitting a bare output-only usage sends "input_tokens":0,
+// which the Anthropic SDK accumulator copies over the estimate.
+func TestResponseReducerRestatesTheInputEstimateWhenCodexReportsNoUsage(t *testing.T) {
+	reducer := NewResponseReducer(ResponseOptions{
+		MessageID: "msg_estimate", Model: "gpt-5.6-sol", EstimatedInputTokens: 1234,
+	})
+	events := reducer.Start()
+	text, err := reducer.Apply(Notification{
+		Method: "item/agentMessage/delta",
+		Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","delta":"ok"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events = append(events, text...)
+	final, err := reducer.Finish("end_turn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events = append(events, final...)
+
+	got := messageDeltaUsage(t, events)
+	if got.InputTokens != 1234 || got.CacheReadInputTokens != 0 {
+		t.Errorf("message_delta usage = %+v, want input 1234 and no cache read", got)
+	}
+}

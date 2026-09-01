@@ -555,9 +555,11 @@ func (r *ResponseReducer) Finish(stopReason string) ([]StreamEvent, error) {
 				"delta": map[string]any{
 					"stop_reason": stopReason, "stop_sequence": nil,
 				},
-				"usage": Usage{
-					OutputTokens: r.usage.OutputTokens, ServerToolUse: r.usage.ServerToolUse,
-				},
+				// The whole usage, not just output: message_start went out before the
+				// turn ran, so it could only carry the byte estimate, and this is
+				// the only chance to correct it. Claude Code replaces input_tokens
+				// and cache_read_input_tokens from here whenever they are positive.
+				"usage": r.usage,
 			},
 		},
 		StreamEvent{Event: "message_stop", Data: map[string]any{"type": "message_stop"}},
