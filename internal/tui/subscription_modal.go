@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -2271,6 +2272,15 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 			lines = append(lines, valueRow(row, name, value, style))
 		}
 		lines = append(lines, dim.Render("Every model alias runs this one model."))
+		// A window under the floor still runs; it just cannot carry MCP tool
+		// schemas on top of the base prompt. Said here, while the profile is
+		// being set up, rather than left to surface as a context overflow on
+		// the first real turn.
+		if window, err := strconv.Atoi(strings.TrimSpace(m.subscriptionModal.draft.window)); err == nil &&
+			!claudeconfig.WindowFitsMCP(window) {
+			lines = append(lines,
+				amber.Render(modalTruncate("Too small for MCP servers — run this profile with them off.", width)))
+		}
 		imagesName, imagesValue := subscriptionImagesLabel(m.subscriptionModal.draft.imagesBlocked)
 		imagesStyle := green
 		if m.subscriptionModal.draft.imagesBlocked {
@@ -2766,9 +2776,8 @@ func (m *MainMenuModel) renderSubscriptionModalCard() string {
 	}
 	help := "↑↓ profile · → details · " + xLabel + " · Tab pane · Enter action · Esc close"
 	if m.subscriptionModal.mode == subscriptionPickModel {
-		return "type to search · ↑↓ model · Enter pick · Esc cancel"
-	}
-	if m.subscriptionModal.mode == subscriptionAddProvider {
+		help = "type to search · ↑↓ model · Enter pick · Esc cancel"
+	} else if m.subscriptionModal.mode == subscriptionAddProvider {
 		help = "↑↓ provider · Enter choose · Esc cancel"
 	} else if m.subscriptionModal.mode != subscriptionBrowse {
 		help = "←→ action · Enter choose · Esc cancel"

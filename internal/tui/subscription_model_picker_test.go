@@ -396,3 +396,26 @@ func TestMainMenuView_survives_an_open_model_picker(t *testing.T) {
 	m.Update(featherlessCatalogMsg{models: pickerCorpus()})
 	_ = m.View() // ready
 }
+
+// renderSubscriptionModalCard returns the WHOLE card. Returning the picker's
+// help string from it replaced the card with that one line, which then painted
+// over the settings menu underneath — the modal simply never appeared.
+func TestModalCard_with_the_picker_open_is_a_card_not_a_help_line(t *testing.T) {
+	m := openPickerOn(t, "Featherless")
+	m.SetSize(120, 40)
+	card := m.renderSubscriptionModalCard()
+
+	if !strings.Contains(card, "Pick a Featherless model") {
+		t.Errorf("the card does not render the picker:\n%s", card)
+	}
+	if !strings.Contains(card, "moonshotai/Kimi-K3") {
+		t.Errorf("the card does not list the models:\n%s", card)
+	}
+	if lines := strings.Count(card, "\n"); lines < 10 {
+		t.Errorf("card is %d lines, want a full modal card:\n%s", lines+1, card)
+	}
+	// The help line belongs in the card's footer, not instead of the card.
+	if !strings.Contains(card, "Enter pick") {
+		t.Errorf("the picker's help line is missing from the card:\n%s", card)
+	}
+}
