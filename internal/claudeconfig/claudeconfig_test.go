@@ -733,12 +733,13 @@ func TestProviders_haveDisplayNamesAndValidDefaults(t *testing.T) {
 		if provider.Name == "" {
 			t.Errorf("provider %q has no display name", provider.Key)
 		}
-		if provider.UserConfigured {
-			// The user names the model, so a shipped default would be a guess
-			// at an id only their own endpoint can answer for.
+		if provider.SuppliesOwnModel() {
+			// The user names the model — by typing it, or by picking it from a
+			// remote catalog — so a shipped default would be a guess at an id
+			// only that endpoint can answer for.
 			for i, id := range provider.DefaultModels {
 				if id != "" {
-					t.Errorf("user-configured provider %q ships default %s = %q, want none",
+					t.Errorf("own-model provider %q ships default %s = %q, want none",
 						provider.Key, AnthropicAliases[i], id)
 				}
 			}

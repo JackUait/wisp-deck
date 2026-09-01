@@ -41,7 +41,18 @@ type Provider struct {
 	// catalog: the user supplies both. The modal offers text fields for them
 	// instead of the model cycler, which is inert with an empty model list.
 	UserConfigured bool
+	// RemoteCatalog marks a provider that ships an endpoint but fetches its
+	// model list at runtime instead of declaring one here. The modal offers a
+	// searchable picker rather than the cycler, for the same reason.
+	RemoteCatalog bool
 }
+
+// SuppliesOwnModel reports whether the profile's model id, context window, and
+// image policy come from the user or the picker rather than from this catalog.
+// True for a self-hosted endpoint and for a remote-catalog gateway — both must
+// skip WriteModelMappings, which writes the four aliases from an empty model
+// list and so deletes the stored model on every save.
+func (p Provider) SuppliesOwnModel() bool { return p.UserConfigured || p.RemoteCatalog }
 
 // Providers is the single source of truth for subscription providers and their
 // models. Prices are official vendor list prices (USD per 1M tokens); limits are
@@ -95,6 +106,23 @@ var Providers = []Provider{
 			{"gpt-5.4-mini", 0, 0, 272000, 0},
 			{"gpt-5.3-codex-spark", 0, 0, 128000, 0},
 		},
+	},
+	{
+		// Featherless hosts ~22,000 HuggingFace models behind one key and —
+		// undocumented, verified live on 2026-09-01 — serves the Anthropic
+		// Messages API natively at /v1/messages, so no translating proxy is
+		// involved. Its catalog is fetched at runtime by internal/featherless.
+		//
+		// It sits ahead of the moonshot entries because profiles are named
+		// after the picked model: "Featherless Kimi-K3" contains moonshot's
+		// "kimi" alias, and alias matching is substring in slice order.
+		Key:            "featherless",
+		Name:           "Featherless",
+		Aliases:        []string{"featherless"},
+		BaseURL:        "https://api.featherless.ai",
+		Auth:           AuthAPIKey,
+		MirrorOpenCode: false,
+		RemoteCatalog:  true,
 	},
 	{
 		// Moonshot's flat-rate Kimi For Coding subscription is a different
@@ -175,14 +203,24 @@ var Providers = []Provider{
 // checked in slice order, so resolution is deterministic.
 func providerFor(configName string) Provider {
 	lower := strings.ToLower(configName)
-	for _, p := range Providers {
+	best, bestLen := -1, 0
+	for i, p := range Providers {
 		for _, a := range p.Aliases {
-			if strings.Contains(lower, a) {
-				return p
+			// The longest matching alias wins, not the first in slice order. A
+			// Featherless profile is named after the model it runs, so
+			// "Featherless GLM-5.2" contains zhipu's "glm" and "Featherless
+			// Kimi-K3" contains moonshot's "kimi" — under slice order those
+			// resolve to a gateway that cannot serve them. Ties keep slice
+			// order, so "kimi for coding" still beats "kimi".
+			if len(a) > bestLen && strings.Contains(lower, a) {
+				best, bestLen = i, len(a)
 			}
 		}
 	}
-	return Providers[0]
+	if best < 0 {
+		return Providers[0]
+	}
+	return Providers[best]
 }
 
 // ProviderForName returns the provider selected by legacy display-name
