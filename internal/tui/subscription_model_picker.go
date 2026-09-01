@@ -67,18 +67,12 @@ func (m *MainMenuModel) openSubscriptionModelPicker() tea.Cmd {
 	path := m.featherlessCache()
 	key := m.featherlessKey()
 	return func() tea.Msg {
-		if models, fetchedAt, ok := featherless.LoadCache(path); ok && !featherless.Stale(fetchedAt) {
-			return featherlessCatalogMsg{models: models}
-		}
-		models, err := featherless.Fetch(context.Background(), key)
+		models, err := featherless.LoadOrFetch(path, func() ([]featherless.Model, error) {
+			return featherless.Fetch(context.Background(), key)
+		})
 		if err != nil {
-			// A stale list beats no list: the picker stays usable offline.
-			if cached, _, ok := featherless.LoadCache(path); ok {
-				return featherlessCatalogMsg{models: cached}
-			}
 			return featherlessCatalogMsg{err: err}
 		}
-		_ = featherless.SaveCache(path, models)
 		return featherlessCatalogMsg{models: models}
 	}
 }
@@ -204,6 +198,11 @@ func (m *MainMenuModel) subscriptionModelPickerLines(width, height int) []string
 			model.ID, model.Context/1024, model.InPerM, model.OutPerM)
 		if !model.OnPlan {
 			row += "  (not on plan)"
+		}
+		// A window this small still runs, just not with MCP servers loaded, so
+		// the row says what the choice costs instead of hiding the model.
+		if !claudeconfig.WindowFitsMCP(model.Context) {
+			row += "  (needs MCP off)"
 		}
 		row = modalTruncate(row, width-2)
 		// ▌ is the modal's cursor marker everywhere else, and the query field

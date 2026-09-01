@@ -74,3 +74,25 @@ func DefaultCachePath() string {
 	}
 	return filepath.Join(base, "wisp-deck", "featherless-models.json")
 }
+
+// LoadOrFetch serves the cached catalog while it is fresh, and otherwise
+// refreshes it. A fetch that fails over a stale cache serves the stale one: a
+// list from yesterday beats an empty picker, and the models in it are still
+// there. Only a failure with nothing cached is an error.
+//
+// The fetch is a parameter so the fallback is testable without a network.
+func LoadOrFetch(path string, fetch func() ([]Model, error)) ([]Model, error) {
+	cached, fetchedAt, hasCache := LoadCache(path)
+	if hasCache && !Stale(fetchedAt) {
+		return cached, nil
+	}
+	models, err := fetch()
+	if err != nil {
+		if hasCache {
+			return cached, nil
+		}
+		return nil, err
+	}
+	_ = SaveCache(path, models)
+	return models, nil
+}
