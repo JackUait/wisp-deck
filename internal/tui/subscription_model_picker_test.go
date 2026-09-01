@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/jackuait/wisp-deck/internal/claudeconfig"
 	"github.com/jackuait/wisp-deck/internal/featherless"
 )
 
@@ -152,5 +153,73 @@ func TestModelPicker_reports_a_fetch_failure(t *testing.T) {
 	}
 	if m.subscriptionModal.picker.err == nil {
 		t.Error("a failed fetch must be reported")
+	}
+}
+
+// Choosing Featherless with nothing else configured should land on the picker,
+// not on a name prompt for a profile with no model.
+func TestAddFeatherless_opens_the_picker_before_naming(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.featherlessCachePath = filepath.Join(t.TempDir(), "featherless-models.json")
+	m.openSubscriptionModal()
+	m.startSubscriptionAdd()
+	for i, provider := range claudeconfig.Providers {
+		if provider.Key == "featherless" {
+			m.subscriptionModal.providerCursor = i
+		}
+	}
+	m.beginSubscriptionAddName()
+
+	if m.subscriptionModal.mode != subscriptionPickModel {
+		t.Fatal("picking Featherless must open the model picker first")
+	}
+}
+
+// The name is derived from the model so a user can add several Featherless
+// profiles without inventing names for them.
+func TestFeatherlessProfileName_is_derived_from_the_model(t *testing.T) {
+	for model, want := range map[string]string{
+		"moonshotai/Kimi-K3":             "Featherless Kimi-K3",
+		"zai-org/GLM-5.2":                "Featherless GLM-5.2",
+		"unsloth/Llama-3.3-70B-Instruct": "Featherless Llama-3.3-70B-Instruct",
+	} {
+		if got := featherlessProfileName(model); got != want {
+			t.Errorf("featherlessProfileName(%q) = %q, want %q", model, got, want)
+		}
+	}
+}
+
+// Adding a second model should not mean typing the key again.
+func TestAddFeatherless_reuses_a_sibling_profiles_key(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.featherlessCachePath = filepath.Join(t.TempDir(), "featherless-models.json")
+	existing := addFeatherlessProfile(t, m, "Featherless Kimi-K3")
+	if err := claudeconfig.WriteAPIKey(m.claudeConfigsDir, existing, "rc_shared"); err != nil {
+		t.Fatal(err)
+	}
+	m.SetClaudeConfigs(LoadClaudeConfigsList(m.claudeConfigsList))
+
+	m.subscriptionModal.providerKey = "featherless"
+	m.subscriptionModal.draft = subscriptionDraft{}
+	m.subscriptionModal.pendingModel = &featherless.Model{
+		ID: "zai-org/GLM-5.2", Context: 262144, OnPlan: true,
+	}
+	m.addSubscriptionProfile("Featherless GLM-5.2")
+	if m.subscriptionModal.err != nil {
+		t.Fatalf("add: %v", m.subscriptionModal.err)
+	}
+
+	file := m.subscriptionModalProfile().File
+	if got := claudeconfig.ReadAPIKey(m.claudeConfigsDir, file); got != "rc_shared" {
+		t.Errorf("key = %q, want the sibling profile's key reused", got)
+	}
+	if got := claudeconfig.ReadCustomModel(m.claudeConfigsDir, file); got != "zai-org/GLM-5.2" {
+		t.Errorf("model = %q, want the pending pick applied", got)
+	}
+	if got := claudeconfig.ReadContextWindow(m.claudeConfigsDir, file); got != "262144" {
+		t.Errorf("window = %q, want the pick's context length", got)
+	}
+	if !m.subscriptionModalProfile().Ready {
+		t.Error("model + window + reused key must make the profile ready immediately")
 	}
 }

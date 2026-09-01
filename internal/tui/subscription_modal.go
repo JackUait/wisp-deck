@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/jackuait/wisp-deck/internal/claudeconfig"
+	"github.com/jackuait/wisp-deck/internal/featherless"
 	"github.com/jackuait/wisp-deck/internal/gptbridge"
 	"github.com/mattn/go-runewidth"
 )
@@ -188,9 +189,11 @@ type subscriptionModalState struct {
 	pendingMode     subscriptionModalMode
 	pendingClose    bool
 	picker          subscriptionModelPickerState
-	hover           subscriptionHitTarget
-	err             error
-	auth            subscriptionAuthState
+	// A model picked before the profile exists, applied once it does.
+	pendingModel *featherless.Model
+	hover        subscriptionHitTarget
+	err          error
+	auth         subscriptionAuthState
 }
 
 type subscriptionProfile struct {
@@ -1384,6 +1387,13 @@ func (m *MainMenuModel) beginSubscriptionAddName() tea.Cmd {
 	}
 	provider := claudeconfig.Providers[m.subscriptionModal.providerCursor]
 	m.subscriptionModal.providerKey = provider.Key
+	// A remote-catalog provider has nothing to name yet: the profile is named
+	// after the model, so the pick comes first.
+	if provider.RemoteCatalog {
+		m.subscriptionModal.draft = subscriptionDraft{}
+		m.subscriptionModal.pendingModel = nil
+		return m.openSubscriptionModelPicker()
+	}
 	m.subscriptionModal.input = m.newSubscriptionNameInput(provider.Name)
 	m.enterSubscriptionLifecycle(subscriptionAddName)
 	m.subscriptionModal.err = nil
@@ -1474,6 +1484,10 @@ func (m *MainMenuModel) addSubscriptionProfile(name string) {
 		m.subscriptionModal.providerKey,
 	)
 	if err != nil {
+		m.subscriptionModal.err = err
+		return
+	}
+	if err := m.applyPendingSubscriptionModel(file); err != nil {
 		m.subscriptionModal.err = err
 		return
 	}

@@ -125,8 +125,14 @@ func (m *MainMenuModel) updateSubscriptionModelPicker(msg tea.KeyMsg) (tea.Model
 			return m, nil
 		}
 		picker.query.Blur()
+		// A pick made mid-add moves on to naming; applyFeatherlessPick sets
+		// that mode itself, so only an edit of an existing profile returns to
+		// browsing here.
+		adding := m.subscriptionModal.draft.file == ""
 		m.applyFeatherlessPick(model)
-		m.subscriptionModal.mode = subscriptionBrowse
+		if !adding {
+			m.subscriptionModal.mode = subscriptionBrowse
+		}
 		return m, nil
 	}
 
@@ -146,6 +152,15 @@ func (m *MainMenuModel) updateSubscriptionModelPicker(msg tea.KeyMsg) (tea.Model
 // follows the model's own image_input: sending an image to a text-only endpoint
 // fails the turn.
 func (m *MainMenuModel) applyFeatherlessPick(model featherless.Model) {
+	// Mid-add there is no profile to write onto yet, so the pick is held and
+	// applied by addSubscriptionProfile once the file exists.
+	if m.subscriptionModal.draft.file == "" {
+		m.subscriptionModal.pendingModel = &model
+		m.subscriptionModal.input = m.newSubscriptionNameInput(featherlessProfileName(model.ID))
+		m.enterSubscriptionLifecycle(subscriptionAddName)
+		m.subscriptionModal.err = nil
+		return
+	}
 	draft := &m.subscriptionModal.draft
 	draft.model = model.ID
 	draft.window = fmt.Sprintf("%d", model.Context)
@@ -212,4 +227,42 @@ func (m *MainMenuModel) subscriptionModelPickerLines(width, height int) []string
 		picker.offset = picker.cursor - visible + 1
 	}
 	return append(lines, modalWindow(rows, picker.offset, visible, width)...)
+}
+
+// featherlessProfileName derives a profile name from a model id. Ids are
+// namespaced (owner/name) and the owner is noise in a profile list.
+func featherlessProfileName(modelID string) string {
+	name := modelID
+	if slash := strings.LastIndex(name, "/"); slash >= 0 {
+		name = name[slash+1:]
+	}
+	return "Featherless " + name
+}
+
+// applyPendingSubscriptionModel writes a model picked before the profile
+// existed. The window comes from the catalog for the same reason it does on an
+// edit, and a sibling profile's key is reused so a second model on the same
+// account is not a second key to type.
+func (m *MainMenuModel) applyPendingSubscriptionModel(file string) error {
+	pick := m.subscriptionModal.pendingModel
+	if pick == nil {
+		return nil
+	}
+	if err := claudeconfig.WriteCustomModel(m.claudeConfigsDir, file, pick.ID); err != nil {
+		return err
+	}
+	if err := claudeconfig.WriteCustomContextWindow(
+		m.claudeConfigsDir, file, fmt.Sprintf("%d", pick.Context)); err != nil {
+		return err
+	}
+	if err := claudeconfig.WriteImagesBlocked(m.claudeConfigsDir, file, !pick.ImageInput); err != nil {
+		return err
+	}
+	if key := m.featherlessKey(); key != "" {
+		if err := claudeconfig.WriteAPIKey(m.claudeConfigsDir, file, key); err != nil {
+			return err
+		}
+	}
+	m.subscriptionModal.pendingModel = nil
+	return nil
 }
