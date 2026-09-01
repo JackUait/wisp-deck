@@ -143,3 +143,27 @@ func TestFeatherlessUnreadyMessage_does_not_ask_for_an_endpoint(t *testing.T) {
 		t.Errorf("message asks for an endpoint the provider supplies: %q", got)
 	}
 }
+
+// The window is picked long before the first session, and a 32k one fails only
+// once MCP schemas are already in the prompt — by which point the cause is not
+// obvious. The detail pane names it while the profile is still being set up.
+func TestFeatherlessProfile_warns_when_the_window_cannot_hold_MCP(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	addFeatherlessProfile(t, m, "Featherless Small")
+
+	draft := &m.subscriptionModal.draft
+	draft.model = "unsloth/Llama-3.3-70B-Instruct"
+	draft.window = "32768"
+	small := stripAnsi(strings.Join(
+		m.subscriptionDetailLines(m.subscriptionDetailPaneWidth(), 30), "\n"))
+	if !strings.Contains(small, "MCP") {
+		t.Errorf("a 32768 profile renders no MCP warning:\n%s", small)
+	}
+
+	draft.window = "262144"
+	large := stripAnsi(strings.Join(
+		m.subscriptionDetailLines(m.subscriptionDetailPaneWidth(), 30), "\n"))
+	if strings.Contains(large, "MCP") {
+		t.Errorf("a 262144 profile should not warn about MCP:\n%s", large)
+	}
+}
