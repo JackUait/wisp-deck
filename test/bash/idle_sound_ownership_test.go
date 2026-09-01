@@ -10931,6 +10931,7 @@ func auditedProductionProcessCalls() map[string]int {
 		`cmd/wisp-deck-tui/claude_background.go:claudeBackgroundProcessStart:exec.CommandContext(ctx, "/bin/ps", "-p", strconv.Itoa(pid), "-o", "lstart=")`: 1,
 		`cmd/wisp-deck-tui/host_effects.go:runHostEffect:exec.CommandContext(ctx, plan.executable, plan.arguments...)`:                                      1,
 		`cmd/wisp-deck-tui/select_branch.go:runSelectBranch:exec.Command("git", "-C", projectPathFlag, "worktree", "list", "--porcelain")`:                  1,
+		`cmd/wisp-deck-tui/claude_rolefix.go:runClaudeRolefixChild:exec.Command(argv[0], argv[1:]...)`:                                                      1,
 		`cmd/wisp-deck-tui/screenshot_filter.go:runScreenshotFilter:exec.Command(args[0], args[1:]...)`:                                                     2,
 		`internal/attention/claude_registry.go:commandOutput:exec.CommandContext(ctx, name, args...)`:                                                       1,
 		`internal/attention/claude_supervisor.go:ClaudeSupervisor.Run:exec.Command(name, args...)`:                                                          1,
