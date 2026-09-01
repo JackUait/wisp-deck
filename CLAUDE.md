@@ -138,6 +138,7 @@ WISP_DECK_LIVE_IMAGE_E2E=1 go test ./internal/gptbridge/ -run TestLiveImageEndTo
 WISP_DECK_LIVE_INJECT_E2E=1 go test ./internal/gptbridge/ -run TestLiveInjectItemsAppends -v  # After a codex upgrade: verify repeated thread/inject_items still APPEND in order, which chunked history injection depends on (costs one short turn)
 WISP_DECK_LIVE_SANDBOX_PROSE_E2E=1 go test ./internal/gptbridge/ -run TestLiveCodexSandboxProseIsSuppressed -v  # After a codex upgrade: verify the include_* config keys still stop Codex describing its read-only sandbox to the model, which is what makes a bridged pane refuse to edit (costs one short turn)
 WISP_DECK_LIVE_CODEX_COLD_E2E=1 go test ./internal/codexadapter/ -run TestLiveColdAppServerIsObserved -v  # After a codex upgrade: verify a real app-server still binds its socket and completes the observer handshake inside defaultCodexStartupTimeout (copies the vendored binary to a fresh inode so the exec goes cold, and logs the measured start)
+WISP_DECK_LIVE_FEATHERLESS_E2E=1 FEATHERLESS_API_KEY=... go test ./internal/featherless/ -run TestLiveFeatherless -v  # After a Featherless-side change is suspected: verify /v1/messages still speaks Anthropic with tool_use, and that its ": keep-alive" comments still keep the worst byte silence well under Claude Code's 20s watchdog trigger (costs one short turn)
 ```
 
 ### Reading a red CI run
@@ -802,6 +803,66 @@ default 300s) with no SSE events.
 Guarded by `internal/claudeconfig/bytewatchdog_test.go`,
 `TestSubscriptionModal_savingACustomProfileDisarmsTheByteWatchdog`, and
 `test/bash/byte_watchdog_sweep_test.go`.
+
+### Featherless speaks Anthropic natively, and keeps its own socket warm
+
+Featherless is documented as an OpenAI-compatible provider, which by the rule
+above would put it behind a translating proxy. It does not need one:
+`POST /v1/messages` is a real Anthropic Messages route, undocumented and verified
+live — it answers unauthenticated with Anthropic's error envelope where
+`/v1/chat/completions` answers with OpenAI's and an unknown path answers with a
+fastify 404, and with a key it streams `content_block_start{tool_use}` →
+`input_json_delta` → `stop_reason:"tool_use"`. So the provider is an ordinary
+API-key gateway at `https://api.featherless.ai`, and ~15,500 models are reachable
+from the Subscription modal's picker.
+
+- **The credential is `ANTHROPIC_AUTH_TOKEN`, never `ANTHROPIC_API_KEY`.**
+  Featherless answers `x-api-key` with a 401 and `Authorization: Bearer` with a
+  200.
+- **The byte watchdog stays ARMED here**, unlike a self-hosted profile.
+  Featherless fills the wait before the first token with
+  `: keep-alive (awaiting first token)` SSE **comments** — the watchdog counts
+  bytes, not events, so a comment is as good as a token. Measured on a cold 14B
+  with a 22k-token prompt: comments every ~1.2s across a 12s model load, worst
+  byte silence 4.8s against the 20s trigger. Disarming would trade a real
+  dead-connection signal for nothing.
+- **It sends no `event: ping` at all**, so those comments are the whole
+  mechanism, and they appear **only when there is a wait to fill** — a small
+  prompt to a hot model emits none. That is why the live guard sends a large
+  prompt and asserts the measured byte silence rather than the comments'
+  presence: the property is "never silent long enough to trip the watchdog", and
+  a keep-alive count is only how Featherless currently achieves it.
+- **Only tool-calling models are offered.** 15,571 of the 21,908 report
+  `features.tool_use`; the rest produce a pane that cannot read or edit a single
+  file, so `Parse` drops them — along with any model declaring no
+  `context_length`, because an undeclared window falls back to the flat 200000
+  that strands a 32768 model permanently.
+- **`available_on_current_plan` is absent on an unauthenticated listing**, and
+  absent must read as available, or the picker is empty until a key is typed.
+- **`is_gated` is about HuggingFace, not Featherless.**
+  `meta-llama/Llama-3.3-70B-Instruct` is gated and serves normally, so it is
+  never shown and never blocks a pick.
+- **`RemoteCatalog` shares `UserConfigured`'s save path** via
+  `Provider.SuppliesOwnModel()`: both must skip `WriteModelMappings`, which
+  writes the four aliases from an empty model list and so deletes the picked
+  model on every save. What it does **not** share is the watchdog disarm, which
+  stays keyed to `UserConfigured` alone.
+- **The bash side never learns the marker, and must not need to.**
+  `get_claude_config_provider` allowlists only the gateways whose key changes a
+  launch decision, and every consumer compares the result against
+  `openai-chatgpt` alone — so an unlisted `featherless` marker resolving to the
+  empty string is the right answer, exactly as `custom` already does. Pinned by
+  `TestGetClaudeConfigProvider_never_reports_featherless_as_the_gpt_bridge`;
+  adding a second provider-specific branch there is what would break it.
+- **Alias resolution takes the LONGEST matching alias, not the first in slice
+  order.** Profiles are named after the picked model, so "Featherless GLM-5.2"
+  contains zhipu's `glm` and "Featherless Kimi-K3" contains moonshot's `kimi` —
+  and zhipu is `Providers[0]`, so no placement could fix it. Ties keep slice
+  order, so "kimi for coding" still beats "kimi".
+
+Guarded by `internal/claudeconfig/featherless_provider_test.go`,
+`internal/featherless/*_test.go`, `internal/tui/subscription_model_picker_test.go`,
+and `internal/tui/subscription_modal_featherless_test.go`.
 
 ### A text-only model is declared by the profile, because Claude Code has no flag for it
 

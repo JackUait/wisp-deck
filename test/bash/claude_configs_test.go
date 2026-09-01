@@ -165,3 +165,24 @@ func TestActiveConfigName_unknown_file_falls_back_to_standard(t *testing.T) {
 // Mutations (add / rename / delete / slugify and collision handling) moved to
 // Go — see internal/claudeconfig/claudeconfig_test.go. Only the read/launch
 // helpers remain in bash, tested above.
+
+// The provider marker's only consumers compare it against "openai-chatgpt" to
+// decide whether the pane launches through the GPT bridge. A Featherless
+// profile is an ordinary API-key subscription, so whatever the marker resolves
+// to, it must never be that value — a bridged launch would ignore
+// ANTHROPIC_BASE_URL entirely and run Codex instead.
+func TestGetClaudeConfigProvider_never_reports_featherless_as_the_gpt_bridge(t *testing.T) {
+	dir := t.TempDir()
+	settings := filepath.Join(dir, "featherless.json")
+	writeTempFile(t, dir, "featherless.json", `{"env":{
+		"WISP_DECK_SUBSCRIPTION_PROVIDER":"featherless",
+		"ANTHROPIC_BASE_URL":"https://api.featherless.ai",
+		"ANTHROPIC_AUTH_TOKEN":"rc_test"
+	}}`)
+	out, code := runBashFunc(t, "lib/claude-configs.sh", "get_claude_config_provider",
+		[]string{settings}, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) == "openai-chatgpt" {
+		t.Fatalf("a featherless profile resolved to the GPT bridge provider: %q", out)
+	}
+}

@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -221,5 +222,42 @@ func TestAddFeatherless_reuses_a_sibling_profiles_key(t *testing.T) {
 	}
 	if !m.subscriptionModalProfile().Ready {
 		t.Error("model + window + reused key must make the profile ready immediately")
+	}
+}
+
+// The query field renders its own "> " prompt, so the highlighted row must not
+// also start with one — two arrows on screen read as two cursors. The rest of
+// the modal marks its cursor with ▌.
+func TestModelPickerLines_marks_the_cursor_the_way_the_rest_of_the_modal_does(t *testing.T) {
+	m := openPickerOn(t, "Featherless")
+	lines := m.subscriptionModelPickerLines(60, 12)
+
+	var row string
+	for _, line := range lines {
+		if strings.Contains(line, "moonshotai/Kimi-K3") {
+			row = line
+		}
+	}
+	if row == "" {
+		t.Fatalf("the cursor row is not in the render: %q", lines)
+	}
+	if !strings.Contains(row, "▌") {
+		t.Errorf("cursor row = %q, want the modal's ▌ marker", row)
+	}
+	if strings.Contains(row, ">") {
+		t.Errorf("cursor row = %q, want no > — the query field already renders one", row)
+	}
+}
+
+// Every row carries what the choice turns on: the id, the window it declares,
+// and what it costs.
+func TestModelPickerLines_show_the_window_and_the_price(t *testing.T) {
+	m := openPickerOn(t, "Featherless")
+	joined := strings.Join(m.subscriptionModelPickerLines(60, 12), "\n")
+
+	for _, want := range []string{"moonshotai/Kimi-K3", "256K", "$3/$15", "(not on plan)"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("render is missing %q:\n%s", want, joined)
+		}
 	}
 }

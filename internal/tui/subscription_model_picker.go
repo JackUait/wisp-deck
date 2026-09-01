@@ -206,9 +206,11 @@ func (m *MainMenuModel) subscriptionModelPickerLines(width, height int) []string
 			row += "  (not on plan)"
 		}
 		row = modalTruncate(row, width-2)
+		// ▌ is the modal's cursor marker everywhere else, and the query field
+		// above already renders a "> " prompt of its own.
 		switch {
 		case i == picker.cursor:
-			rows = append(rows, accent.Render("> "+row))
+			rows = append(rows, accent.Render("▌")+" "+accent.Render(row))
 		case !model.OnPlan:
 			rows = append(rows, dim.Render("  "+row))
 		default:
