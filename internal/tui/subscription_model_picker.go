@@ -250,6 +250,13 @@ func (m *MainMenuModel) applyPendingSubscriptionModel(file string) error {
 	if pick == nil {
 		return nil
 	}
+	// A Featherless model id means nothing to another gateway, and its key even
+	// less. Only the provider the pick was made for may receive it.
+	if provider, ok := claudeconfig.ProviderByKey(m.subscriptionModal.providerKey); !ok ||
+		!provider.RemoteCatalog {
+		m.subscriptionModal.pendingModel = nil
+		return nil
+	}
 	if err := claudeconfig.WriteCustomModel(m.claudeConfigsDir, file, pick.ID); err != nil {
 		return err
 	}
@@ -267,4 +274,13 @@ func (m *MainMenuModel) applyPendingSubscriptionModel(file string) error {
 	}
 	m.subscriptionModal.pendingModel = nil
 	return nil
+}
+
+// abandonSubscriptionNameInput closes the name prompt and drops any model
+// picked for the profile it would have created. Left set, the pick is applied
+// to whatever profile is added next.
+func (m *MainMenuModel) abandonSubscriptionNameInput() {
+	m.subscriptionModal.mode = subscriptionBrowse
+	m.subscriptionModal.input.Blur()
+	m.subscriptionModal.pendingModel = nil
 }

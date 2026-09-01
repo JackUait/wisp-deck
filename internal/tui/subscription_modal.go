@@ -1078,9 +1078,10 @@ func (m *MainMenuModel) saveSubscriptionDraft() {
 	m.syncOpenCode()
 }
 
-// writeSubscriptionCustomFields persists the endpoint, model, and window a
-// user-configured profile supplies. It writes nothing until every value passes,
-// so a rejected window cannot leave the endpoint half-applied.
+// writeSubscriptionCustomFields persists the model and window a profile supplies
+// itself, plus the endpoint when the provider ships none. It writes nothing
+// until every value passes, so a rejected window cannot leave the endpoint
+// half-applied.
 func (m *MainMenuModel) writeSubscriptionCustomFields(
 	draft *subscriptionDraft, provider claudeconfig.Provider,
 ) error {
@@ -1195,13 +1196,11 @@ func (m *MainMenuModel) updateSubscriptionFieldInput(msg tea.KeyMsg) (tea.Model,
 		m.moveSubscriptionLifecycleAction(1)
 		return m, nil
 	case tea.KeyEsc, tea.KeyCtrlC:
-		m.subscriptionModal.mode = subscriptionBrowse
-		m.subscriptionModal.input.Blur()
+		m.abandonSubscriptionNameInput()
 		return m, nil
 	case tea.KeyEnter:
 		if m.subscriptionModal.lifecycleCursor == subscriptionLifecycleCancel {
-			m.subscriptionModal.mode = subscriptionBrowse
-			m.subscriptionModal.input.Blur()
+			m.abandonSubscriptionNameInput()
 			return m, nil
 		}
 		m.commitSubscriptionField(strings.TrimSpace(m.subscriptionModal.input.Value()))
@@ -1263,13 +1262,11 @@ func (m *MainMenuModel) updateSubscriptionKeyInput(msg tea.KeyMsg) (tea.Model, t
 		m.moveSubscriptionLifecycleAction(1)
 		return m, nil
 	case tea.KeyEsc, tea.KeyCtrlC:
-		m.subscriptionModal.mode = subscriptionBrowse
-		m.subscriptionModal.input.Blur()
+		m.abandonSubscriptionNameInput()
 		return m, nil
 	case tea.KeyEnter:
 		if m.subscriptionModal.lifecycleCursor == subscriptionLifecycleCancel {
-			m.subscriptionModal.mode = subscriptionBrowse
-			m.subscriptionModal.input.Blur()
+			m.abandonSubscriptionNameInput()
 			return m, nil
 		}
 		key := strings.TrimSpace(m.subscriptionModal.input.Value())
@@ -1428,13 +1425,11 @@ func (m *MainMenuModel) updateSubscriptionNameInput(msg tea.KeyMsg) (tea.Model, 
 		m.moveSubscriptionLifecycleAction(1)
 		return m, nil
 	case tea.KeyEsc, tea.KeyCtrlC:
-		m.subscriptionModal.mode = subscriptionBrowse
-		m.subscriptionModal.input.Blur()
+		m.abandonSubscriptionNameInput()
 		return m, nil
 	case tea.KeyEnter:
 		if m.subscriptionModal.lifecycleCursor == subscriptionLifecycleCancel {
-			m.subscriptionModal.mode = subscriptionBrowse
-			m.subscriptionModal.input.Blur()
+			m.abandonSubscriptionNameInput()
 			return m, nil
 		}
 		name := strings.TrimSpace(m.subscriptionModal.input.Value())

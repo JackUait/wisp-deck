@@ -261,3 +261,61 @@ func TestModelPickerLines_show_the_window_and_the_price(t *testing.T) {
 		}
 	}
 }
+
+// Abandoning the name prompt abandons the pick. Left set, it is applied to
+// whatever profile is created next — writing a Featherless model id, window and
+// API key onto an unrelated gateway's profile and breaking it.
+func TestAddFeatherless_a_cancelled_name_prompt_drops_the_pick(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.featherlessCachePath = filepath.Join(t.TempDir(), "featherless-models.json")
+	m.openSubscriptionModal()
+	m.startSubscriptionAdd()
+	for i, provider := range claudeconfig.Providers {
+		if provider.Key == "featherless" {
+			m.subscriptionModal.providerCursor = i
+		}
+	}
+	m.beginSubscriptionAddName()
+	m.Update(featherlessCatalogMsg{models: pickerCorpus()})
+	m.updateSubscriptionModelPicker(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.subscriptionModal.pendingModel == nil {
+		t.Fatal("the pick was not recorded")
+	}
+
+	m.updateSubscriptionNameInput(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.subscriptionModal.pendingModel != nil {
+		t.Error("a cancelled name prompt must drop the pick")
+	}
+
+	// Now add an unrelated gateway; it must be untouched by the abandoned pick.
+	m.subscriptionModal.providerKey = "zhipu"
+	m.subscriptionModal.draft = subscriptionDraft{}
+	m.addSubscriptionProfile("Zhipu GLM Two")
+	if m.subscriptionModal.err != nil {
+		t.Fatalf("add: %v", m.subscriptionModal.err)
+	}
+	file := m.subscriptionModalProfile().File
+	if got := claudeconfig.ReadCustomModel(m.claudeConfigsDir, file); got == "moonshotai/Kimi-K3" {
+		t.Errorf("the abandoned Featherless pick was written onto a zhipu profile: %q", got)
+	}
+	if got := claudeconfig.ReadAPIKey(m.claudeConfigsDir, file); got != "" {
+		t.Errorf("a zhipu profile was given a key it never asked for: %q", got)
+	}
+}
+
+// Even if a pick somehow survives, it belongs only to a remote-catalog profile:
+// the model id means nothing to another gateway.
+func TestApplyPendingSubscriptionModel_refuses_a_provider_that_did_not_pick(t *testing.T) {
+	m := newSubscriptionModalMenu(t)
+	m.subscriptionModal.pendingModel = &featherless.Model{ID: "moonshotai/Kimi-K3", Context: 262144}
+	m.subscriptionModal.providerKey = "zhipu"
+	m.subscriptionModal.draft = subscriptionDraft{}
+	m.addSubscriptionProfile("Zhipu GLM Three")
+	if m.subscriptionModal.err != nil {
+		t.Fatalf("add: %v", m.subscriptionModal.err)
+	}
+	file := m.subscriptionModalProfile().File
+	if got := claudeconfig.ReadCustomModel(m.claudeConfigsDir, file); got == "moonshotai/Kimi-K3" {
+		t.Errorf("a featherless pick reached a zhipu profile: %q", got)
+	}
+}
