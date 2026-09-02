@@ -1076,6 +1076,120 @@ returned the bare verdict.
 
 Guarded by `internal/rolefix/structured_test.go`.
 
+### Claude Code's floor is ~20,000 tokens, so a 32K model is not a small model
+
+Everything Claude Code sends before the conversation starts was measured on the
+wire on 2026-09-02, by pointing a bare headless pane (`--strict-mcp-config`, an
+empty `CLAUDE_CONFIG_DIR`, a two-file project) at a logging proxy and posting the
+captured request to Featherless's `/v1/chat/completions`, which reports the
+prompt cost its `/v1/messages` route does not:
+
+| part | bytes |
+|---|---|
+| 26 tool schemas | 65,526 |
+| system prompt | 7,037 |
+| agent + skill rosters (a `role: "system"` message) | 7,390 |
+| **charged by the endpoint** | **19,838 tokens** |
+
+A profile also reserves a quarter of the window for the reply, so a
+32,768-token model has `32768 - 8192 - 19838` = **4,738 tokens** for the whole
+conversation. One file read spends that. The model is not "small for long
+sessions" — it cannot finish one task.
+
+That is **88% of Featherless's tool-calling catalog**: of 15,573 models
+declaring `tool_use` and a context length, 13,712 are exactly 32768, another
+1,835 are 4096 or 8192, and **26** are 65536 or wider. So `featherless.Parse`
+drops anything under `MinContext`, for the same reason it already drops a model
+without tool calling: it produces a pane that cannot do the work.
+
+- **`MinContext` is derived, not chosen.** The room left for the conversation
+  (`window - window/4 - floor`) has to be at least as large as the floor itself,
+  which puts the bar at 53,334; 65536 is the next power of two, and the catalog
+  holds nothing between 32768 and 131072 anyway.
+- **`ClaudeCodeFloorTokens` and the proxy's estimator are pinned to one
+  recording.** `internal/rolefix/testdata/claude-code-first-turn.json` is that
+  captured request, and `TestEstimateInputTokens_matches_what_the_endpoint_charged`
+  holds the estimate to what Featherless billed for it. Re-capture it when
+  Claude Code's tool set changes shape; both numbers move together.
+
+### Featherless reports no usage at all, so nothing ever compacts
+
+`/v1/messages` answers **every** turn with `usage: {input_tokens: 0,
+output_tokens: 0}` — streamed and not, on every model tried. The count exists:
+the same conversation through `/v1/chat/completions` reports 19,838 prompt
+tokens. Only the Anthropic adapter drops it.
+
+Claude Code sizes auto-compaction from that figure, so a permanent zero is not a
+cosmetic statusline bug. The transcript never compacts, `/context` reads empty,
+the cost line reads 0.0%, and the conversation grows until the endpoint starts
+rejecting every turn — at which point there is no way back, because `/compact`
+must itself send the oversized transcript and is larger than the turn that
+already failed. On a narrow model that arrives within a couple of turns.
+
+So `internal/rolefix/usage.go` supplies what the endpoint dropped:
+`message_start` gets the request's own estimate, `message_delta` gets the reply's
+streamed bytes, and a body that was not streamed gets both.
+
+- **A figure the endpoint reported is never replaced.** A gateway that counts
+  knows better than an estimate.
+- **The estimate counts the JSON whole, not the strings inside it.** A tool
+  schema reaches the model as the schema — braces, keys and all — and counting
+  only its string values read 17,023 for a request charged 19,838.
+- **It leans high, deliberately.** `bytesPerTokenDenominator` is 3.8 against a
+  measured 3.98, because reading low ends a session and reading high only
+  compacts a little early — the same direction `cellWidth` rounds.
+- **An image is priced flat** (`imageTokens`, the GPT bridge's own figure). Its
+  base64 is orders of magnitude larger than its token cost, so counting those
+  bytes would report one screenshot as larger than the window.
+
+### Featherless's Qwen tool parser destroys the tool call it strips
+
+This is what "I can't use Qwen from Featherless" actually is. On the captured
+first request above, `Qwen/Qwen3-VL-30B-A3B-Instruct` billed **181 completion
+tokens** and returned **22 tokens of prose and no tool call** — 159 generated
+tokens discarded. `Qwen/Qwen3.5-397B-A17B` billed the same and returned an
+**empty** reply. The parser lifts the model's `<tool_call>` markup out of the
+text and then emits nothing in its place; `finish_reason: null` marks it on the
+chat-completions route, and the Anthropic route normalizes that to
+`stop_reason: "end_turn"`, so the pane sees a model that announces work and
+stops. Forever — a `/goal` Stop hook loops on it until the block cap fires.
+
+It is Qwen-specific, not endpoint-wide. Replaying that same request across all
+26 models wide enough to run Claude Code: **21 call tools normally** (every GLM,
+every Kimi, DeepSeek V3.1/V3.2/V4, MiniMax M2/M2.5/M2.7/M3, Step-3.5-Flash,
+Laguna-S-2.1), most of them with a prose preamble in the same message. The
+failures are `Qwen/Qwen3.5-397B-A17B`, `Qwen/Qwen3-VL-30B-A3B-Instruct`, the two
+oldest DeepSeeks, and one MiniMax that 400s. **There is currently no Qwen on
+Featherless that can run a pane**: the ones that call tools are all 32768.
+
+- **The discarded bytes cannot be recovered**, so the proxy does the one thing
+  left: it refuses to pass the silence on. A reply that declares tools and
+  arrives with no content block at all — a shape Anthropic's API cannot produce
+  — is given a text block naming what happened. A reply carrying anything at all
+  is the model's, and commenting on it would put words in its mouth.
+- **`thinking` is not a way out.** It disables the parser for the 27B class (the
+  raw markup then arrives as text, recoverable in principle), and does nothing
+  for Qwen3-VL, whose call is destroyed either way. Stripping `thinking` stays
+  right.
+- **Neither is prompting.** A rule telling the model to emit the call with no
+  preamble changed nothing across 12 runs on both models.
+
+### The endpoint passes through a tool name the model mis-spelled
+
+Anthropic's API validates a tool call's name against the tools the request
+declared, so a client never receives one it did not supply. Featherless passes
+the model's own spelling through: `TurboVadim/Qwen3.8-27B-OBLITERATED` answered
+a tool declared as `Read` with `read`, on both routes, and not every time —
+which is what makes it read as a flaky model rather than a missing check. Claude
+Code answers that with `No such tool available`, spending the turn on an error
+for a call that was right in every way that matters.
+
+`internal/rolefix/toolnames.go` restores the declared spelling. A name matching
+no declared tool is left exactly as it arrived — that is the model inventing a
+tool (`read_file` was observed), and the client's own error beats running
+something nobody asked for. Two tools whose names differ only by case resolve to
+neither.
+
 ### A text-only model is declared by the profile, because Claude Code has no flag for it
 
 Claude Code sends images to whatever `ANTHROPIC_BASE_URL` points at. Decoding
