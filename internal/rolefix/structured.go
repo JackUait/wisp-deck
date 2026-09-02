@@ -48,13 +48,24 @@ var keepAliveInterval = 5 * time.Second
 // drive it without allocating the real budget.
 var maxRepairBytes = 8 << 20
 
-// jsonContract carries a request's declared required fields to its own response.
-// A typed slice so a schema with no required list still asserts cleanly.
-type jsonContract []string
+// responsePlan carries to a response everything repairing it needs: the JSON
+// contract its request declared, if any; a meter holding the prompt cost the
+// endpoint will report as zero; and the tools it supplied, which decide both
+// what a tool call may be named and whether an empty reply lost one.
+type responsePlan struct {
+	required []string
+	schema   bool
+	usage    *usageMeter
+	tools    map[string]string
+	// declaresTools is separate from len(tools): a request can supply tools
+	// whose names are all ambiguous, and it is the supplying that decides
+	// whether an empty reply lost a tool call.
+	declaresTools bool
+}
 
-type contractKeyType struct{}
+type planKeyType struct{}
 
-var contractKey contractKeyType
+var planKey planKeyType
 
 // JSONSchemaContract reports whether a request asked the endpoint to constrain
 // its reply to a JSON schema, and which fields that schema requires. Both the
@@ -166,26 +177,27 @@ func hasAll(object string, required []string) bool {
 	return true
 }
 
-// repairResponse rewrites an assistant reply so it honours the JSON schema its
-// request declared. A streamed body is repaired event by event; a body that was
-// not streamed is repaired in place. Anything else is left alone.
-func repairResponse(resp *http.Response, required []string) error {
+// repairResponse rewrites an assistant reply so it reports the tokens it spent
+// and, when its request declared one, honours that JSON schema. A streamed body
+// is repaired event by event; a body that was not streamed is repaired in place.
+// Anything else is left alone.
+func repairResponse(resp *http.Response, plan responsePlan) error {
 	contentType := resp.Header.Get("Content-Type")
 	switch {
 	case strings.Contains(contentType, "text/event-stream"):
 		source := resp.Body
 		reader, writer := io.Pipe()
-		go repairEventStream(writer, source, required)
+		go repairEventStream(writer, source, plan)
 		resp.Body = reader
 		resp.ContentLength = -1
 		resp.Header.Del("Content-Length")
 	case strings.Contains(contentType, "application/json"):
-		return repairJSONBody(resp, required)
+		return repairJSONBody(resp, plan)
 	}
 	return nil
 }
 
-func repairJSONBody(resp *http.Response, required []string) error {
+func repairJSONBody(resp *http.Response, plan responsePlan) error {
 	original := resp.Body
 	// One byte past the budget is how an oversized body is recognized, and it is
 	// then handed on unread: io.LimitReader alone would truncate it silently.
@@ -198,8 +210,18 @@ func repairJSONBody(resp *http.Response, required []string) error {
 		return nil
 	}
 	_ = original.Close()
-	fixed, changed := repairMessageBody(body, required)
-	if changed {
+	if plan.schema {
+		if fixed, changed := repairMessageBody(body, plan.required); changed {
+			body = fixed
+		}
+	}
+	if fixed, changed := repairToolNamesInBody(plan.tools, body); changed {
+		body = fixed
+	}
+	if fixed, changed := noticeBody(plan.declaresTools, body); changed {
+		body = fixed
+	}
+	if fixed, changed := plan.usage.repairBody(body); changed {
 		body = fixed
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
@@ -254,12 +276,15 @@ func repairMessageBody(body []byte, required []string) ([]byte, bool) {
 	return out, true
 }
 
-// repairEventStream copies an Anthropic SSE stream through, holding back the
-// deltas of each assistant text block so the finished text can be checked
-// against the contract. A block that already conforms is replayed exactly as it
-// arrived; one that does not is replaced by a single delta carrying the object
-// it contained.
-func repairEventStream(dst *io.PipeWriter, src io.ReadCloser, required []string) {
+// repairEventStream copies an Anthropic SSE stream through, repairing each
+// event as it passes: the token counts the endpoint left at zero, the spelling
+// of a tool name it did not check, and — for a request that declared a JSON
+// schema — the text of a block held back long enough to check it against the
+// contract. A block that already conforms is replayed exactly as it arrived;
+// one that does not is replaced by a single delta carrying the object it
+// contained. A reply that turns out to hold nothing at all is given the notice
+// that says so.
+func repairEventStream(dst *io.PipeWriter, src io.ReadCloser, plan responsePlan) {
 	defer func() { _ = src.Close() }()
 
 	var mu sync.Mutex
@@ -288,7 +313,8 @@ func repairEventStream(dst *io.PipeWriter, src io.ReadCloser, required []string)
 		}
 	}()
 
-	stream := &textBlockBuffer{required: required}
+	stream := &textBlockBuffer{required: plan.required, schema: plan.schema}
+	empty := &emptyReplyWatch{armed: plan.declaresTools}
 	var event bytes.Buffer
 	scanner := bufio.NewScanner(src)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxRewriteBytes)
@@ -300,7 +326,13 @@ func repairEventStream(dst *io.PipeWriter, src io.ReadCloser, required []string)
 		if line != "" {
 			continue
 		}
-		out, held := stream.consume(event.Bytes())
+		plan.usage.observe(event.Bytes())
+		notice := empty.precede(event.Bytes())
+		repaired := repairToolName(plan.tools, plan.usage.repair(event.Bytes()))
+		out, held := stream.consume(repaired)
+		if len(notice) > 0 {
+			out = append(notice, out...)
+		}
 		mu.Lock()
 		holding = held
 		mu.Unlock()
@@ -329,6 +361,7 @@ func repairEventStream(dst *io.PipeWriter, src io.ReadCloser, required []string)
 // textBlockBuffer decides, one SSE event at a time, what the client sees.
 type textBlockBuffer struct {
 	required []string
+	schema   bool
 	index    *int // the text block being held, if any
 	text     strings.Builder
 	raw      bytes.Buffer // the held events, verbatim, for a conforming block
@@ -337,6 +370,11 @@ type textBlockBuffer struct {
 // consume returns the bytes to forward for one event and whether the stream is
 // now holding a block back.
 func (b *textBlockBuffer) consume(event []byte) ([]byte, bool) {
+	if !b.schema {
+		// Only a request that declared a JSON schema has a contract to hold a
+		// text block back for. A normal turn's prose is the answer.
+		return event, false
+	}
 	kind, index, block := classify(event)
 	switch {
 	case kind == "content_block_start" && block == "text" && b.index == nil && startText(event) == "":

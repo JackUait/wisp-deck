@@ -167,12 +167,29 @@ func TestNewHandler_repairs_a_prose_preamble_the_request_asked_the_endpoint_to_p
 
 // A response that already honours the contract must reach the client exactly as
 // the endpoint sent it: repairing what is not broken is how a proxy invents bugs.
+// The upstream here reports its own token counts, so the usage repair has
+// nothing to supply either and the stream is byte-identical.
 func TestNewHandler_leaves_a_response_that_already_answers_in_json_alone(t *testing.T) {
-	upstream := sseUpstream(t, verdictJSON)
+	metered := meteredStream(sseTextResponse(verdictJSON))
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, metered)
+	}))
+	t.Cleanup(upstream.Close)
+
 	_, body := through(t, upstream, hookEvaluatorBody)
-	if body != sseTextResponse(verdictJSON) {
+	if body != metered {
 		t.Fatalf("a conforming response was rewritten:\n%s", body)
 	}
+}
+
+// meteredStream turns the zero usage Featherless reports into real counts, for
+// the tests that assert a stream travels untouched.
+func meteredStream(stream string) string {
+	stream = strings.ReplaceAll(stream,
+		`"usage":{"input_tokens":0,"output_tokens":0}`, `"usage":{"input_tokens":11,"output_tokens":0}`)
+	return strings.ReplaceAll(stream, `"usage":{"output_tokens":0}`, `"usage":{"output_tokens":22}`)
 }
 
 // Only a request that declared a JSON schema is repaired. A normal turn's prose

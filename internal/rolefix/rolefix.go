@@ -122,11 +122,11 @@ func NewHandler(upstream string) http.Handler {
 		// watchdog from aborting and replaying a working turn.
 		FlushInterval: -1,
 		ModifyResponse: func(resp *http.Response) error {
-			required, ok := resp.Request.Context().Value(contractKey).(jsonContract)
+			plan, ok := resp.Request.Context().Value(planKey).(responsePlan)
 			if !ok {
 				return nil
 			}
-			return repairResponse(resp, required)
+			return repairResponse(resp, plan)
 		},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -138,9 +138,10 @@ func NewHandler(upstream string) http.Handler {
 }
 
 // repairRequestBody applies the request repairs and returns the request to
-// forward. A request that declared a JSON schema carries that contract to its
-// own response, and asks for an unencoded body — a compressed one is bytes the
-// repair cannot read.
+// forward, carrying to the response what repairing it will need: the JSON
+// contract the request declared, if any, and the prompt's own token cost, which
+// the endpoint reports as zero. It asks for an unencoded body because a
+// compressed one is bytes neither repair can read.
 func repairRequestBody(r *http.Request) *http.Request {
 	if r.ContentLength > maxRewriteBytes {
 		return r
@@ -160,9 +161,13 @@ func repairRequestBody(r *http.Request) *http.Request {
 	r.Header.Set("Content-Length", strconv.Itoa(len(fixed)))
 
 	required, declared := JSONSchemaContract(body)
-	if !declared {
-		return r
+	plan := responsePlan{
+		required:      required,
+		schema:        declared,
+		usage:         &usageMeter{input: EstimateInputTokens(fixed)},
+		tools:         DeclaredToolNames(fixed),
+		declaresTools: declaresTools(fixed),
 	}
 	r.Header.Set("Accept-Encoding", "identity")
-	return r.WithContext(context.WithValue(r.Context(), contractKey, jsonContract(required)))
+	return r.WithContext(context.WithValue(r.Context(), planKey, plan))
 }
