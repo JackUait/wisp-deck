@@ -2119,16 +2119,17 @@ func TestStatusline_account_color_reads_existing_assignment(t *testing.T) {
 }
 
 // --- gt_usage_bar ---
-// Renders a percentage (0-100) as a 10-cell bar — one cell per 10% — as filled
-// (█), half (▌), or empty (░) cells. The cell count rounds to the nearest
-// HALF, so the bar reads to 5% at a glance without a number. Out-of-range input
-// clamps to empty/full.
+// Renders a percentage (0-100) as 10 countable sections — one per 10%. Each
+// section paints only the LEFT part of its cell, so the cell's right side is
+// the gap that separates it from the next: filled (▌), half (▖), empty (▏).
+// The count rounds to the nearest HALF, so the bar reads to 5% at a glance
+// without a number. Out-of-range input clamps to empty/full.
 
 const (
-	barFull  = "█" // U+2588 full cell
-	barHalf  = "▌" // U+258C half cell (5%)
-	barEmpty = "░" // U+2591 empty cell
-	barWidth = 10  // one cell per 10%
+	barFull  = "▌" // U+258C filled section
+	barHalf  = "▖" // U+2596 half-reached section (5%)
+	barEmpty = "▏" // U+258F empty section
+	barWidth = 10  // one section per 10%
 )
 
 // bar builds an expected pill of `full` filled squares then empties.
