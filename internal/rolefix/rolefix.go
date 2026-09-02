@@ -1,7 +1,8 @@
-// Package rolefix is a loopback Anthropic pass-through that repairs the two
-// things a strict endpoint mishandles about a Claude Code request. Both were
-// measured against Featherless by replaying a request captured from a live
-// pane, and this proxy touches nothing else.
+// Package rolefix is a loopback Anthropic pass-through that repairs the three
+// things Featherless mishandles about a Claude Code exchange. Each was measured
+// by replaying a request captured from a live pane, and this proxy touches
+// nothing else. The third — a JSON schema the endpoint accepts and ignores —
+// lives in structured.go, because it is the only one that repairs a response.
 //
 // First, roles. Claude Code puts its capability listings (agent types, skills)
 // into messages[] as entries with role "system". Anthropic's own API accepts
@@ -25,6 +26,7 @@
 package rolefix
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -119,24 +121,35 @@ func NewHandler(upstream string) http.Handler {
 		// its first token, and those are what keep Claude Code's byte-stall
 		// watchdog from aborting and replaying a working turn.
 		FlushInterval: -1,
+		ModifyResponse: func(resp *http.Response) error {
+			required, ok := resp.Request.Context().Value(contractKey).(jsonContract)
+			if !ok {
+				return nil
+			}
+			return repairResponse(resp, required)
+		},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.Body != nil {
-			repairRequestBody(r)
+			r = repairRequestBody(r)
 		}
 		proxy.ServeHTTP(w, r)
 	})
 }
 
-func repairRequestBody(r *http.Request) {
+// repairRequestBody applies the request repairs and returns the request to
+// forward. A request that declared a JSON schema carries that contract to its
+// own response, and asks for an unencoded body — a compressed one is bytes the
+// repair cannot read.
+func repairRequestBody(r *http.Request) *http.Request {
 	if r.ContentLength > maxRewriteBytes {
-		return
+		return r
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxRewriteBytes))
 	_ = r.Body.Close()
 	if err != nil {
 		r.Body = io.NopCloser(strings.NewReader(""))
-		return
+		return r
 	}
 	fixed, changed, err := Rewrite(body)
 	if err != nil || !changed {
@@ -145,4 +158,11 @@ func repairRequestBody(r *http.Request) {
 	r.Body = io.NopCloser(strings.NewReader(string(fixed)))
 	r.ContentLength = int64(len(fixed))
 	r.Header.Set("Content-Length", strconv.Itoa(len(fixed)))
+
+	required, declared := JSONSchemaContract(body)
+	if !declared {
+		return r
+	}
+	r.Header.Set("Accept-Encoding", "identity")
+	return r.WithContext(context.WithValue(r.Context(), contractKey, jsonContract(required)))
 }

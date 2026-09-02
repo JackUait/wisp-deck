@@ -986,6 +986,59 @@ Guarded by `internal/rolefix/*_test.go`,
 `cmd/wisp-deck-tui/claude_rolefix_test.go`, and
 `test/bash/claude_rolefix_launch_test.go`.
 
+### That proxy also repairs the response, because a JSON schema is only advice here
+
+`/goal`, a prompt hook, memory selection and auto-mode setup all ask the model
+for a JSON object and then run a plain `JSON.parse` over the reply — Claude Code
+strips a markdown fence (`$x`) and nothing else. What makes that safe on
+Anthropic's API is `output_config.format`: the server constrains the decode, so
+the reply cannot be anything but the object.
+
+Featherless accepts that field and ignores it. Measured 2026-09-02 on
+`TurboVadim/Qwen3.8-27B-OBLITERATED`: under a schema requiring
+`{capital_city, population_millions}`, a system prompt asking for one sentence of
+prose answered `Paris`. Every other lever an OpenAI-compatible server usually
+offers — `response_format`, `guided_json`, `extra_body.guided_json` — is likewise
+accepted and unhonoured, and there is no client-side off switch either:
+`s3o`/`hEt` add `format` for any model whose name is not an old Claude, so a
+Featherless pane sends the schema and the `structured-outputs-2025-12-15` beta on
+every one of these side queries (confirmed on the wire).
+
+So the contract degrades to a suggestion in the prompt, and the model breaks it
+whenever it feels like explaining itself first. A `/goal` Stop hook came back as
+a paragraph followed by a perfectly good verdict object; Claude Code reported
+**`Stop hook error: JSON validation failed`** and the goal never held. The proxy
+therefore delivers what the endpoint dropped: a text block that does not parse is
+replaced by the JSON object inside it.
+
+- **Only a request that declared a schema is touched.** `output_config` carries
+  `effort` on every ordinary turn, so the trigger is `format`, never the object
+  holding it. Extracting an object out of a normal reply would replace the answer
+  with a fragment of itself.
+- **A conforming block is replayed verbatim, delta for delta.** Repairing what is
+  not broken is how a proxy invents bugs, and a byte-identical passthrough is
+  what the test asserts.
+- **Nothing is invented.** Text holding no complete object is forwarded as it
+  arrived: the client's own error beats a fabricated verdict.
+- **The outermost object wins, and the schema breaks the tie.** A member object
+  decodes at its own opening brace too, so the scan skips past each match; among
+  the outermost ones the last carrying every `required` key is the verdict, which
+  is what stops a trailing `the schema is {…}` aside from being read as one.
+- **Holding a block back is silence, so the proxy fills it.** It writes
+  `: keep-alive` comments while buffering — bytes are all the byte-stall watchdog
+  counts, the same mechanism Featherless uses before a first token.
+- **A body past the repair budget is delivered, not truncated.** An
+  `io.LimitReader` alone would silently cut it; the read goes one byte past the
+  budget and hands the rest on unread.
+- **The request asks for `identity`.** A compressed body is bytes the repair
+  cannot read, and `ReverseProxy` does not decode one.
+
+Verified live before and after on the real endpoint: the same request direct to
+Featherless returned prose then JSON (a hook failure), and through the proxy
+returned the bare verdict.
+
+Guarded by `internal/rolefix/structured_test.go`.
+
 ### A text-only model is declared by the profile, because Claude Code has no flag for it
 
 Claude Code sends images to whatever `ANTHROPIC_BASE_URL` points at. Decoding
