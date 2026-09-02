@@ -1797,6 +1797,41 @@ func TestDiscardWorktreeFile_deletes_untracked_file(t *testing.T) {
 	}
 }
 
+// git does not descend into a nested repository, so a subagent's
+// .claude/worktrees/<name> checkout arrives as ONE untracked entry, "<dir>/".
+// `git clean -f` never removes a directory and still exits 0, so discarding
+// such a row reported success and deleted nothing.
+func TestDiscardWorktreeFile_deletes_an_untracked_nested_worktree(t *testing.T) {
+	dir := t.TempDir()
+	git := discardGitRepo(t, dir)
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeTempFile(t, dir, "a.txt", "committed\n")
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "init")
+	git("worktree", "add", "-q", ".claude/worktrees/agent-a02ee641e06fabfe7", "-b", "agent-work")
+
+	_, code := runBashFunc(t, "lib/compact-view.sh", "discard_worktree_file",
+		[]string{dir, ".claude/worktrees/agent-a02ee641e06fabfe7/"}, nil)
+	if code != 0 {
+		t.Fatalf("discard_worktree_file exit = %d, want 0", code)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "worktrees", "agent-a02ee641e06fabfe7")); !os.IsNotExist(err) {
+		t.Errorf("nested worktree should be deleted, but it still exists (stat err = %v)", err)
+	}
+	// Removing the checkout alone leaves its registration behind, and the
+	// project menu polls `git worktree list` — a leftover is a menu row that
+	// launches into a path that no longer exists.
+	c := exec.Command("git", "-C", dir, "worktree", "list", "--porcelain")
+	out, err := c.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git worktree list: %v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "agent-a02ee641e06fabfe7") {
+		t.Errorf("discarded worktree is still registered: %q", out)
+	}
+}
+
 // file_diff_command builds the git diff invocation that feeds the diff-view
 // pager. A tracked file diffs against HEAD (its committed version).
 func TestFileDiffCommand_tracked_file_diffs_head(t *testing.T) {

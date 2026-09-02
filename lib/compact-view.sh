@@ -649,13 +649,24 @@ should_discard() {
 # to restore FROM, so "discard" means undoing the creation: the file is removed
 # (git clean). ls-files --error-unmatch exits 0 only when the path is tracked,
 # which is how the two cases are told apart. Returns git's exit status.
+# The clean needs -ffd, not -f: untracked_numstat's own comment says a nested
+# repository (a subagent's .claude/worktrees/<name>) arrives as one entry,
+# "<dir>/" — and plain -f removes no directory at all, and refuses a nested
+# repository even with -d, exiting 0 either way. Discarding such a row reported
+# success and deleted nothing. Removing the checkout then leaves its
+# registration behind, and the project menu polls `git worktree list`, so a
+# leftover is a menu row launching into a path that no longer exists; prune only
+# drops registrations whose directory is already gone.
 # Usage: discard_worktree_file <project_dir> <file>
 discard_worktree_file() {
   local dir="$1" file="$2"
   if git -C "$dir" ls-files --error-unmatch -- "$file" >/dev/null 2>&1; then
     git -C "$dir" restore -- "$file"
   else
-    git -C "$dir" clean -fq -- "$file"
+    git -C "$dir" clean -ffdq -- "$file" || return "$?"
+    case "$file" in
+      */) git -C "$dir" worktree prune ;;
+    esac
   fi
 }
 
