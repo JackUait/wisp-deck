@@ -1048,6 +1048,12 @@ func TestCompactView_mouse_marks_and_discards(t *testing.T) {
 
 	// The confirm overlays the same row: "  Discard 2 files? [ yes ] [ no ]"; the
 	// "[ yes ]" button spans cols 36-42. Assert it landed on the group-header row.
+	// The wait is what the other steps do: a click is answered by a redraw, and
+	// sampling the frame in the same breath reads the row before it is repainted.
+	deadline = time.Now().Add(3 * time.Second)
+	for !strings.Contains(frame(), "Discard 2 files?") && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
 	confirmLine := ""
 	for _, ln := range strings.Split(frame(), "\n") {
 		if strings.Contains(ln, "Discard 2 files?") {
