@@ -142,6 +142,57 @@ func TestSubUsage_wrapper_stale_cache_shows_placeholder(t *testing.T) {
 	assertContains(t, out, "…")
 }
 
+// Only zhipu and openai-chatgpt publish a quota API; for every other provider
+// (featherless, mimo, moonshot, moonshot-coding, custom) subusage.Fetch reports
+// "no usage API" without an error, so the refresher writes a FRESH snapshot
+// carrying no windows. The wrapper used to read that exactly like "the first
+// fetch has not landed yet" and paint the "…" placeholder — permanently, since
+// the answer never changes. A fresh snapshot is the provider's final word, so
+// its silence hides the pill instead.
+func TestSubUsage_wrapper_hides_the_pill_when_the_provider_publishes_no_quota(t *testing.T) {
+	env := setupWrapperTest(t)
+	env = append(env, "CLAUDE_CONFIG_DIR=", "WISP_DECK_CLAUDE_CONFIG=featherless.json")
+	fakeHome := wrapperHome(env)
+	cfg := filepath.Join(fakeHome, ".config", "wisp-deck")
+	writeTempFile(t, cfg, "settings", "usage_bars=both\n")
+	now := time.Now().Unix()
+	seedSubUsageCache(t, fakeHome, "featherless.json", fmt.Sprintf(
+		`{"rate_limits":{},"provider":"featherless","fetched_at":%d}`, now))
+
+	out, code := runWrapperWithInput(t, env,
+		`{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"workspace":{"current_dir":"/tmp"}}`)
+	assertExitCode(t, code, 0)
+	assertNotContains(t, out, "7d")
+	assertNotContains(t, out, "5h")
+	assertNotContains(t, out, "…")
+	// The whole usage group goes with it — no orphaned " |" separator.
+	if strings.HasSuffix(strings.TrimSpace(out), "|") {
+		t.Fatalf("usage group left a dangling separator: %q", out)
+	}
+}
+
+// A provider can publish one window and not the other — a ChatGPT Pro account
+// reports its weekly window as primary with no secondary. The window it does
+// report still draws; only the absent one hides.
+func TestSubUsage_wrapper_hides_only_the_window_the_provider_lacks(t *testing.T) {
+	env := setupWrapperTest(t)
+	env = append(env, "CLAUDE_CONFIG_DIR=", "WISP_DECK_CLAUDE_CONFIG=chatgpt.json")
+	fakeHome := wrapperHome(env)
+	cfg := filepath.Join(fakeHome, ".config", "wisp-deck")
+	writeTempFile(t, cfg, "settings", "usage_bars=both\n")
+	now := time.Now().Unix()
+	seedSubUsageCache(t, fakeHome, "chatgpt.json", fmt.Sprintf(
+		`{"rate_limits":{"seven_day":{"used_percentage":40}},"provider":"openai-chatgpt","fetched_at":%d}`, now))
+
+	out, code := runWrapperWithInput(t, env,
+		`{"model":{"id":"claude-fable-5","display_name":"Fable 5"},"workspace":{"current_dir":"/tmp"}}`)
+	assertExitCode(t, code, 0)
+	assertContains(t, out, "7d")
+	assertContains(t, out, bar(4))
+	assertNotContains(t, out, "5h")
+	assertNotContains(t, out, "…")
+}
+
 // The wrapper keeps the cache alive: every render on a subscription pane
 // spawns the (self-throttling) refresher with the pane's config.
 func TestSubUsage_wrapper_spawns_refresher_for_subscription_pane(t *testing.T) {

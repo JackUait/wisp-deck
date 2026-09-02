@@ -143,6 +143,9 @@ if [ -n "${WISP_DECK_CLAUDE_CONFIG:-}" ]; then
   [ -f "$_gt_sub_cache" ] && _gt_sub_json="$(cat "$_gt_sub_cache" 2>/dev/null)"
   if [ -n "$_gt_sub_json" ] && type gt_sub_usage_fresh &>/dev/null \
      && gt_sub_usage_fresh "$_gt_sub_json" "$(date +%s)"; then
+    # A fresh snapshot is the provider's answer, so a window still empty below
+    # is one the provider does not publish rather than one still being fetched.
+    _gt_sub_answered=1
     if type gt_weekly_used_pct &>/dev/null; then
       weekly_pct=$(gt_weekly_used_pct "$_gt_sub_json")
       [ -n "$weekly_pct" ] && weekly_bar=$(gt_usage_bar "$weekly_pct")
@@ -259,6 +262,19 @@ fi
 # which exists regardless of how many Claude logins are connected.
 _usage_eligible=""
 { [ -n "$account_label" ] || [ -n "${WISP_DECK_CLAUDE_CONFIG:-}" ]; } && _usage_eligible=1
+# The placeholder promises a figure that is on its way, which is true for an
+# unanswered window (a native login before its first API response, or a
+# subscription whose snapshot is missing or stale) and false once the provider
+# has answered: only zhipu and openai-chatgpt publish a quota API, so for every
+# other backend the refresher writes a FRESH snapshot carrying no windows, and
+# "…" there stood forever. An answered-but-absent window hides instead — which
+# also drops the 5h pill for a ChatGPT Pro account, whose plan reports the
+# weekly window alone. Both absent leaves $_usage_seg empty, so the group's
+# " | " never renders either.
+if [ -n "${_gt_sub_answered:-}" ]; then
+  [ -n "$five_hour_bar" ] || show_5h=0
+  [ -n "$weekly_bar" ] || show_7d=0
+fi
 _usage_seg=""
 if [ "$show_5h" = 1 ] && [ -n "$_usage_eligible" ]; then
   _seg="$five_hour_bar"; [ -z "$_seg" ] && _seg="…"
