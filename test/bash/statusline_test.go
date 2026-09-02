@@ -2119,15 +2119,15 @@ func TestStatusline_account_color_reads_existing_assignment(t *testing.T) {
 }
 
 // --- gt_usage_bar ---
-// Renders a percentage (0-100) as a 10-cell segmented pill bar — one cell per
-// 10% — as filled (◼), half (◧), or empty (◻) squares. The cell count rounds to
-// the nearest HALF, so the bar reads to 5% at a glance without a number.
-// Out-of-range input clamps to empty/full.
+// Renders a percentage (0-100) as a 10-cell bar — one cell per 10% — as filled
+// (█), half (▌), or empty (░) cells. The cell count rounds to the nearest
+// HALF, so the bar reads to 5% at a glance without a number. Out-of-range input
+// clamps to empty/full.
 
 const (
-	barFull  = "◼" // ◼ full cell
-	barHalf  = "◧" // ◧ half cell (5%)
-	barEmpty = "◻" // ◻ empty cell
+	barFull  = "█" // U+2588 full cell
+	barHalf  = "▌" // U+258C half cell (5%)
+	barEmpty = "░" // U+2591 empty cell
 	barWidth = 10  // one cell per 10%
 )
 
@@ -2221,6 +2221,26 @@ func TestStatusline_usage_bar_honors_custom_width(t *testing.T) {
 	assertExitCode(t, code, 0)
 	if want := strings.Repeat(barFull, 6); strings.TrimSpace(out) != want {
 		t.Fatalf("expected %q, got %q", want, strings.TrimSpace(out))
+	}
+}
+
+// Every cell must come from Block Elements (U+2580-U+259F), the one range a
+// terminal draws from its own sprite font rather than a fallback typeface — so
+// all three cells share the terminal's exact metrics. The Geometric Shapes
+// squares this replaced (◼ ◧ ◻) were supplied by different fonts: ◧ painted
+// ~10px inside a ~17px cell, so a half-filled bar read as a clipped box.
+func TestStatusline_usage_bar_cells_are_block_elements(t *testing.T) {
+	out, code := runBashFunc(t, "lib/statusline.sh", "gt_usage_bar", []string{"65", "10"}, nil)
+	assertExitCode(t, code, 0)
+	got := strings.TrimSpace(out)
+	if got != barH(6) {
+		t.Fatalf("65%% should be 6½ cells, expected %q, got %q", barH(6), got)
+	}
+	for _, r := range got {
+		if r < 0x2580 || r > 0x259F {
+			t.Fatalf("cell %q (U+%04X) is outside Block Elements; a fallback font sizes "+
+				"it differently from the other cells and the bar breaks up", string(r), r)
+		}
 	}
 }
 

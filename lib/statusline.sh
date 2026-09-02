@@ -297,19 +297,23 @@ gt_claude_account_label() {
   printf '%s\n' "$default_label"
 }
 
-# Render a percentage (0-100) as a fixed-width segmented pill bar of squares:
-# full (◼) for the used share, empty (◻) for what remains, and one half square
-# (◧) when the fill lands on a half-cell — so a 10-cell bar reads to 5% at a
-# glance without a number. The fill is rounded to the nearest HALF cell and
-# clamped to 0..width, so out-of-range input never overflows. Width defaults to
-# 10 (one cell per 10%). The math runs locale-independently (macOS awk reads a
-# comma decimal as a truncated integer otherwise). The cells are laid down with
-# `printf FMT arg-per-cell` rather than appending in a loop: macOS bash 3.2
-# corrupts a multibyte character appended to a variable ("$out◼") under a UTF-8
-# locale, but repeating it through a printf format and joining via command
-# substitution is byte-safe. Literal UTF-8 squares are embedded directly (bash
-# 3.2 printf has no \u/\U escapes).
-# Usage: gt_usage_bar 45 [10]  =>  "◼◼◼◼◧◻◻◻◻◻"
+# Render a percentage (0-100) as a fixed-width bar: a full cell (█) for the
+# used share, light shade (░) for the track, and a left half block (▌) when
+# the fill lands on a half-cell — so a 10-cell bar reads to 5% at a glance
+# without a number. All three come from Block Elements (U+2580-U+259F), the one
+# range a terminal draws from its own sprite font instead of a fallback
+# typeface; the Geometric Shapes squares these replaced (◼ ◧ ◻) were
+# supplied by different fonts, so ◧ painted about 10px inside a 17px cell and a
+# half-filled bar read as a clipped box. The fill is rounded to the nearest HALF
+# cell and clamped to 0..width, so out-of-range input never overflows. Width
+# defaults to 10 (one cell per 10%). The math runs locale-independently (macOS
+# awk reads a comma decimal as a truncated integer otherwise). The cells are
+# laid down with `printf FMT arg-per-cell` rather than appending in a loop:
+# macOS bash 3.2 corrupts a multibyte character appended to a variable
+# ("$out█") under a UTF-8 locale, but repeating it through a printf format and
+# joining via command substitution is byte-safe. Literal UTF-8 blocks are
+# embedded directly (bash 3.2 printf has no \u/\U escapes).
+# Usage: gt_usage_bar 45 [10]  =>  "████▌░░░░░"
 gt_usage_bar() {
   local pct="$1" width="${2:-10}" halves full half empty a="" b="" c=""
   # Count of half-cells filled, rounded to nearest and clamped to [0, 2*width].
@@ -324,10 +328,10 @@ gt_usage_bar() {
   # seq feeds one arg per cell so printf stamps the glyph exactly that many
   # times; unquoted on purpose (word splitting is what supplies the args).
   # shellcheck disable=SC2046
-  [ "$full" -gt 0 ] && a=$(printf '◼%.0s' $(seq 1 "$full"))
-  [ "$half" -gt 0 ] && b='◧'
+  [ "$full" -gt 0 ] && a=$(printf '█%.0s' $(seq 1 "$full"))
+  [ "$half" -gt 0 ] && b='▌'
   # shellcheck disable=SC2046
-  [ "$empty" -gt 0 ] && c=$(printf '◻%.0s' $(seq 1 "$empty"))
+  [ "$empty" -gt 0 ] && c=$(printf '░%.0s' $(seq 1 "$empty"))
   printf '%s%s%s\n' "$a" "$b" "$c"
 }
 
