@@ -204,7 +204,7 @@ If an image drag does not land where expected, press **`Ctrl+b`**, then **`i`**,
 Claude Code sessions get a compact status line (glyphs approximated):
 
 ```text
-my-project | 23.5% | 512M | 4% | Opus 4.8 [high] | 5h ▌▌▏ 7d ▌▏▏
+my-project | 23.5% | 512M | 4% | Opus 4.8 [high] | 5h ▌▌▁ 7d ▌▁▁
 ```
 
 - **Project** — the active project, with a marker for worktrees.

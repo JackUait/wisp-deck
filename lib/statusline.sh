@@ -297,12 +297,17 @@ gt_claude_account_label() {
   printf '%s\n' "$default_label"
 }
 
-# Render a percentage (0-100) as a fixed-width bar of countable sections. Each
-# section paints only the LEFT part of its own cell, so the cell's right side is
-# the gap that divides it from the next one: a used section is a left half block
-# (▌), an unused one a left one-eighth tick (▏), and a section the fill reaches
-# only halfway a lower-left quadrant (▖) — so a 10-cell bar reads to 5% at a
-# glance without a number. All three come from Block Elements (U+2580-U+259F),
+# Render a percentage (0-100) as a fixed-width bar of countable sections, where
+# HEIGHT carries the reading: a section the fill covers is a left half block
+# (▌), one it covers halfway a lower-left quadrant (▖), and one it has not
+# reached a lower one-eighth line (▁) — so a 10-cell bar reads to 5% at a glance
+# without a number. The two reached shapes paint only the LEFT part of their
+# cell, so the cell's right side is the gap dividing one section from the next.
+# The unreached one is deliberately the exception: full width, so it merges with
+# its neighbours into a thin baseline. Dividing what has not started adds ticks
+# as tall as the fill and no information — the reading is where the fill ENDS,
+# and a recessive track is what makes that edge obvious.
+# All three come from Block Elements (U+2580-U+259F),
 # the one range a terminal draws from its own sprite font instead of a fallback
 # typeface; the Geometric Shapes squares these replaced (◼ ◧ ◻) were supplied by
 # different fonts, so ◧ painted about 10px inside a 17px cell and a half-filled
@@ -315,7 +320,7 @@ gt_claude_account_label() {
 # locale, but repeating it through a printf format and joining via command
 # substitution is byte-safe. Literal UTF-8 blocks are embedded directly (bash
 # 3.2 printf has no \u/\U escapes).
-# Usage: gt_usage_bar 45 [10]  =>  "▌▌▌▌▖▏▏▏▏▏"
+# Usage: gt_usage_bar 45 [10]  =>  "▌▌▌▌▖▁▁▁▁▁"
 gt_usage_bar() {
   local pct="$1" width="${2:-10}" halves full half empty a="" b="" c=""
   # Count of half-cells filled, rounded to nearest and clamped to [0, 2*width].
@@ -333,7 +338,7 @@ gt_usage_bar() {
   [ "$full" -gt 0 ] && a=$(printf '▌%.0s' $(seq 1 "$full"))
   [ "$half" -gt 0 ] && b='▖'
   # shellcheck disable=SC2046
-  [ "$empty" -gt 0 ] && c=$(printf '▏%.0s' $(seq 1 "$empty"))
+  [ "$empty" -gt 0 ] && c=$(printf '▁%.0s' $(seq 1 "$empty"))
   printf '%s%s%s\n' "$a" "$b" "$c"
 }
 
