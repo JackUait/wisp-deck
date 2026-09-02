@@ -28,8 +28,8 @@ func TestFetch_sends_the_key_as_a_bearer_token(t *testing.T) {
 	if gotAPIKey != "" {
 		t.Errorf("x-api-key sent (%q); Featherless 401s on it", gotAPIKey)
 	}
-	if len(models) != 4 {
-		t.Errorf("got %d models, want the 4 usable ones", len(models))
+	if len(models) != 3 {
+		t.Errorf("got %d models, want the 3 usable ones", len(models))
 	}
 }
 

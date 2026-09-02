@@ -4,5 +4,6 @@
  {"id":"zai-org/GLM-5.2","is_gated":false,"created":1780000000,"model_class":"glm52-753b","context_length":262144,"pricing":{"input":0.75,"output":2.4},"features":{"tool_use":true}},
  {"id":"meta-llama/Llama-3.3-70B-Instruct","is_gated":true,"created":1733521405,"model_class":"llama33-70b","context_length":32768,"pricing":{"input":0.65,"output":0.75},"features":{"tool_use":true},"available_on_current_plan":false},
  {"id":"unsloth/Llama-3.3-70B-Instruct","is_gated":false,"created":1733616012,"model_class":"llama33-70b","context_length":32768,"pricing":{"input":2.6,"output":3},"features":{"tool_use":true}},
+ {"id":"widecorp/Wide-131k","is_gated":false,"created":1786000000,"model_class":"wide-131k","context_length":131072,"pricing":{"input":0.5,"output":1.5},"features":{"tool_use":true}},
  {"id":"broken/no-context","is_gated":false,"created":1730000000,"model_class":"weird-1b","pricing":{"input":1,"output":1},"features":{"tool_use":true}}
 ]}

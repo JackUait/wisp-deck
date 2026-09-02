@@ -42,8 +42,8 @@ func TestParse_keeps_only_sizable_tool_calling_models(t *testing.T) {
 			t.Errorf("%s kept with context %d", m.ID, m.Context)
 		}
 	}
-	if len(models) != 4 {
-		t.Fatalf("kept %d models (%v), want 4", len(models), ids(models))
+	if len(models) != 3 {
+		t.Fatalf("kept %d models (%v), want 3", len(models), ids(models))
 	}
 }
 
@@ -57,8 +57,7 @@ func TestParse_orders_by_context_then_newest(t *testing.T) {
 	want := []string{
 		"moonshotai/Kimi-K3",
 		"zai-org/GLM-5.2",
-		"unsloth/Llama-3.3-70B-Instruct",
-		"meta-llama/Llama-3.3-70B-Instruct",
+		"widecorp/Wide-131k",
 	}
 	got := ids(models)
 	for i := range want {
@@ -118,5 +117,46 @@ func TestParse_rejects_a_body_that_is_not_the_catalog(t *testing.T) {
 		if _, err := Parse([]byte(body)); err == nil {
 			t.Errorf("%s body accepted, want an error", name)
 		}
+	}
+}
+
+// A model whose window cannot hold Claude Code's own floor produces a pane that
+// cannot finish one task, so it is never offered — the same reason a model
+// without tool calling is dropped. 88% of the tool-calling catalog is exactly
+// 32768, which is why this filter removes most of it.
+func TestParse_drops_models_too_small_to_run_claude_code(t *testing.T) {
+	models, err := Parse(fixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range models {
+		if m.Context < MinContext {
+			t.Errorf("%s kept with a %d-token window, below the %d-token minimum",
+				m.ID, m.Context, MinContext)
+		}
+	}
+	for _, tooSmall := range []string{"unsloth/Llama-3.3-70B-Instruct", "meta-llama/Llama-3.3-70B-Instruct"} {
+		for _, m := range models {
+			if m.ID == tooSmall {
+				t.Errorf("%s has a 32768-token window and must be dropped", tooSmall)
+			}
+		}
+	}
+}
+
+// The minimum is derived, not guessed: Claude Code's floor was measured at
+// ~20000 tokens from a request captured off a live pane, and a profile reserves
+// a quarter of the window for the reply, so a window must be wide enough to
+// leave the conversation at least as much room as the floor itself costs.
+func TestMinContext_leaves_a_conversation_as_much_room_as_the_floor_costs(t *testing.T) {
+	reserve := MinContext / 4
+	free := MinContext - reserve - ClaudeCodeFloorTokens
+	if free < ClaudeCodeFloorTokens {
+		t.Errorf("a %d-token window leaves %d tokens for the conversation, less than the %d-token floor",
+			MinContext, free, ClaudeCodeFloorTokens)
+	}
+	// The window that actually shipped this bug must not pass the same test.
+	if free := 32768 - 32768/4 - ClaudeCodeFloorTokens; free >= ClaudeCodeFloorTokens {
+		t.Errorf("a 32768-token window must not qualify; it leaves %d", free)
 	}
 }
