@@ -1107,9 +1107,12 @@ without tool calling: it produces a pane that cannot do the work.
   which puts the bar at 53,334; 65536 is the next power of two, and the catalog
   holds nothing between 32768 and 131072 anyway.
 - **`ClaudeCodeFloorTokens` and the proxy's estimator are pinned to one
-  recording.** `internal/rolefix/testdata/claude-code-first-turn.json` is that
+  recording.** `test/internal/rolefix/testdata/claude-code-first-turn.json` is that
   captured request, and `TestEstimateInputTokens_matches_what_the_endpoint_charged`
-  holds the estimate to what Featherless billed for it. Re-capture it when
+  holds the estimate to what Featherless billed for it. It lives under `test/`
+  because the host-effect audit reads every tracked text file under `internal/`
+  as production source, and this one is a verbatim capture of Claude Code's own
+  tool descriptions. Re-capture it when
   Claude Code's tool set changes shape; both numbers move together.
 
 ### Featherless reports no usage at all, so nothing ever compacts

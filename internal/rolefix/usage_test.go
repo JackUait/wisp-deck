@@ -5,11 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
-
-	"github.com/jackuait/wisp-deck/internal/featherless"
 )
 
 // streamedUsage returns the input and output token counts a client reads out of
@@ -57,7 +54,7 @@ func streamedUsage(t *testing.T, body string) (input, output int) {
 // Featherless answers /v1/messages with usage {input_tokens: 0, output_tokens:
 // 0} on every turn, streamed and not — measured 2026-09-02 against the live
 // endpoint, where the same conversation through /v1/chat/completions reported
-// 23,165 prompt tokens. Claude Code sizes auto-compaction from that figure, so
+// 19,838 prompt tokens. Claude Code sizes auto-compaction from that figure, so
 // a permanent zero means the transcript never compacts, /context reads empty,
 // and the conversation grows until the endpoint rejects every turn — with no
 // warning and no way back, because /compact must itself send the oversized
@@ -190,48 +187,6 @@ func TestEstimateInputTokens_never_reports_zero(t *testing.T) {
 		if got := EstimateInputTokens([]byte(body)); got < 1 {
 			t.Errorf("EstimateInputTokens(%q) = %d, want at least 1", body, got)
 		}
-	}
-}
-
-// The estimate is pinned to what the endpoint actually charged. The fixture is
-// the verbatim first request a headless Claude Code pane sent on 2026-09-02 —
-// 26 tool schemas, the system prompt, and the agent and skill rosters — and
-// Featherless priced that exact conversation at 19,838 prompt tokens on its own
-// tokenizer (posted to /v1/chat/completions, which reports usage where
-// /v1/messages returns zero).
-//
-// The direction matters more than the margin. Reading low lets a conversation
-// grow past a window the endpoint then rejects, and there is no way back from
-// that: /compact must itself send the oversized transcript. Reading high only
-// compacts a little early.
-func TestEstimateInputTokens_matches_what_the_endpoint_charged(t *testing.T) {
-	const charged = 19838
-	body, err := os.ReadFile("testdata/claude-code-first-turn.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := EstimateInputTokens(body)
-	if got < charged {
-		t.Errorf("estimate = %d for a request charged %d; an estimate that reads low is the one that kills a session",
-			got, charged)
-	}
-	if got > charged*5/4 {
-		t.Errorf("estimate = %d for a request charged %d; over a quarter high compacts away a quarter of the window",
-			got, charged)
-	}
-}
-
-// Claude Code's floor is what makes a narrow model unusable, and the featherless
-// picker's MinContext is derived from it. Both numbers come from this one
-// request, so a change to either must be a deliberate one.
-func TestEstimateInputTokens_prices_claude_codes_floor_near_the_pickers_assumption(t *testing.T) {
-	body, err := os.ReadFile("testdata/claude-code-first-turn.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := EstimateInputTokens(body); got < featherless.ClaudeCodeFloorTokens {
-		t.Errorf("a bare Claude Code turn estimates %d tokens, under the %d the picker assumes",
-			got, featherless.ClaudeCodeFloorTokens)
 	}
 }
 
