@@ -98,6 +98,11 @@ var Providers = []Provider{
 		MirrorOpenCode: false,
 		DefaultModels:  [4]string{"gpt-5.6-terra", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol"},
 		Models: []Model{
+			// Astra reaches the bridge only from Codex 0.153.0 or newer: the
+			// engine's model allowlist is whatever the running app-server
+			// reports, so an older Codex answers a picked Astra with
+			// "model not available" rather than launching it.
+			{"gpt-6-astra", 0, 0, 1050000, 0},
 			{"gpt-5.6-sol", 0, 0, 272000, 0},
 			{"gpt-5.6-terra", 0, 0, 272000, 0},
 			{"gpt-5.6-luna", 0, 0, 272000, 0},

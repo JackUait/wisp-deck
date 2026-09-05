@@ -211,6 +211,7 @@ func TestRateFor_codexModelsUseRealPrices(t *testing.T) {
 		{"gpt-5.2-codex", 1.75, 14},     // == gpt-5.2
 		{"gpt-5.3-codex", 1.75, 14},     // == gpt-5.3
 		{"gpt-5.6-sol", 5, 30},          // its own tier, NOT the gpt-5 fallback
+		{"gpt-6-astra", 10, 50},         // gpt-6 tier; "gpt-5" is not a prefix of it
 	}
 	for _, c := range cases {
 		for i := 0; i < 30; i++ { // map order is randomized; hammer it

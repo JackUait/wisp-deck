@@ -38,6 +38,7 @@ func TestDisplayModelName(t *testing.T) {
 		{"gpt-5.6-luna", "GPT-5.6 Luna"},
 		{"gpt-5.6-sol", "GPT-5.6 Sol"},
 		{"gpt-5.6-terra", "GPT-5.6 Terra"},
+		{"gpt-6-astra", "GPT-6 Astra"},
 		// Zhipu and Moonshot.
 		{"glm-4.7-free", "GLM-4.7 Free"},
 		{"k3", "K3"},
