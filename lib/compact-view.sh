@@ -356,7 +356,7 @@ body_path_map() {
       # here forked a subshell PER FILE, seconds per tick at a few hundred files.
       numstat_path "$f"
       printf '\n'
-    done <<< "$data"
+    done < <(printf '%s\n' "$data")
     printf '\n'                       # trailing blank row -> no path
   }
   emit_group "$staged"
@@ -427,7 +427,7 @@ ledger_empty_state() {
   fi
 
   local c_cap c_body c_low c_feet c_blush c_pupil
-  read -r c_cap c_body c_low c_feet c_blush c_pupil <<< "$(ledger_wisp_colors "$theme")"
+  read -r c_cap c_body c_low c_feet c_blush c_pupil < <(printf '%s\n' "$(ledger_wisp_colors "$theme")")
 
   local pad=$(( (width - art_w) / 2 ))
   local top=$(( (rows - total) / 2 ))
@@ -596,7 +596,7 @@ nth_line() {
   while IFS= read -r line; do
     i=$((i + 1))
     if [ "$i" -eq "$n" ]; then NTH_LINE="$line"; return 0; fi
-  done <<< "$1"
+  done < <(printf '%s\n' "$1")
   return 0
 }
 
@@ -628,7 +628,7 @@ split_content() {
       if [ "$BODY_TOTAL" -eq 0 ]; then BODY="$line"; else BODY="${BODY}"$'\n'"${line}"; fi
       BODY_TOTAL=$((BODY_TOTAL + 1))
     fi
-  done <<< "$1"
+  done < <(printf '%s\n' "$1")
   return 0
 }
 
@@ -686,7 +686,7 @@ toggle_selection() {
     [ -z "$line" ] && continue
     if [ "$line" = "$filepath" ]; then found=1; continue; fi
     out="${out}${line}"$'\n'
-  done <<< "$selected"
+  done < <(printf '%s\n' "$selected")
   [ "$found" -eq 0 ] && out="${out}${filepath}"$'\n'
   printf '%s' "${out%$'\n'}"
 }
@@ -713,7 +713,7 @@ selection_count() {
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     n=$((n + 1))
-  done <<< "$selected"
+  done < <(printf '%s\n' "$selected")
   printf '%d' "$n"
 }
 
@@ -728,7 +728,7 @@ prune_selection() {
     if selection_contains "$valid" "$line"; then
       out="${out}${line}"$'\n'
     fi
-  done <<< "$selected"
+  done < <(printf '%s\n' "$selected")
   printf '%s' "${out%$'\n'}"
 }
 
@@ -781,7 +781,7 @@ apply_checkboxes() {
     fi
     [ -n "$marker" ] && bline="${marker}${bline#   }"   # swap indent for the box
     out="${out}${bline}"$'\n'
-  done <<< "$body" 3<<< "$map"
+  done < <(printf '%s\n' "$body") 3< <(printf '%s\n' "$map")
   printf '%s' "${out%$'\n'}"
 }
 
@@ -834,7 +834,7 @@ discard_worktree_files() {
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     discard_worktree_file "$dir" "$line" || rc=1
-  done <<< "$selected"
+  done < <(printf '%s\n' "$selected")
   return "$rc"
 }
 
@@ -1080,7 +1080,7 @@ highlight_body_line() {
     else
       out="${out}${row}"$'\n'
     fi
-  done <<< "$body"
+  done < <(printf '%s\n' "$body")
   printf '%s' "${out%$'\n'}"   # drop the single trailing newline the loop added
 }
 
@@ -1385,7 +1385,7 @@ compact_view_shell() {
         [ "$deleted" = "-" ] && deleted=0
         format_ledger_row "$added" "$deleted" "$display" "$gcolor"
       fi
-    done <<< "$data"
+    done < <(printf '%s\n' "$data")
     printf "\n"
   }
 

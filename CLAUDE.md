@@ -793,6 +793,54 @@ Guarded by `internal/tui/mainmenu_worktree_refresh_test.go` — including
 against a real repo, and `TestAppModel_deliversAWorktreeRefreshToTheMenuUnderAPushedScreen` —
 plus `TestDetectWorktreesFor_*` in `test/internal/models/worktree_refresh_test.go`.
 
+### A here-document is a pipe under bash 5.3, and a pipe holds 512 bytes
+
+Bash 5.3 writes a here-document — and a here-string, which is one — into a
+**pipe** rather than a temp file whenever it is under a hardcoded 64KB, and it
+writes the whole body *before* the reader starts. So the body has to fit the
+pipe, and a pipe is only as big as the kernel granted it. On a Mac running a
+deck of long-lived stands it grants the **512-byte minimum**: ~22,000 open pipe
+fds exhaust the pipe budget and capacity never grows from there. Measured
+2026-09-05: 500B fine, 512B hangs forever, 70KB fine again (the temp-file
+fallback). `/bin/bash` (3.2) and zsh are unaffected, and TMPDIR is not involved.
+
+Nothing about this looks like a bug in the script. The shell blocks in
+`heredoc_write` with no error, no timeout and no output, so the caller simply
+waits. It shipped as **"the model switcher does nothing"**:
+`_current_session_identities` reads `tmux show-environment` (PATH alone runs
+past 512 bytes) through `done <<< "$session_env"`, so the first click on the
+account pill deadlocked its bash — and because `LedgerModel.openAccountSwitch`
+guards on `switchingAccount` until `OpenSwitcher` returns, *every later click
+was a silent no-op* for the life of the pane. The same deadlock sat on the
+launch path in `get_loading_art` (704B of ASCII art), so a new tab hung on the
+splash.
+
+- **Never feed a here-document anything that can outgrow 512 bytes.** Fixed
+  text goes through `printf '%s\n' 'line' 'line'`; an embedded script goes
+  through `python3 -c "$script"` (`-c` puts `sys.argv[1:]` exactly where
+  `python3 -` did); a variable read line by line goes through
+  `< <(printf '%s\n' "$var")`.
+- **Process substitution is NOT available everywhere.** tmux runs `run-shell`
+  under `/bin/sh`, which is bash 3.2 in POSIX mode, where `< <(...)` is a
+  **syntax error** — the file fails to parse and the click dies before dispatch.
+  Ten lib files parse there today and must keep parsing there; in those, split
+  on newline instead (`IFS=$'\n'; set -f; for line in $var`), which also keeps
+  the loop in the current shell where a pipe would subshell it.
+  `TestShellCodeThatParsesUnderBinSh_keepsParsingThere` compares each file
+  against its own HEAD version, so it fails only on a file that *lost* the
+  property.
+- **A here-string carrying small, bounded data is left alone** — a terminal
+  size, an 8-entry palette, one window's pane list. Rewriting those in the
+  POSIX-safe form buys nothing and costs legibility.
+- **Only the literal body is decidable**, so
+  `TestShippedShellCode_hasNoHereDocumentThePipeCannotHold` caps that at 400
+  bytes; a here-string's size is whatever the variable holds at runtime, which
+  is why the deadlock is also pinned behaviorally by
+  `TestCurrentSessionIdentities_survives_an_environment_past_the_pipe_buffer`.
+
+Reducing the number of open stands restores normal pipe sizes and hides all of
+this again — which is exactly why it presents as intermittent.
+
 ### A self-hosted subscription supplies what the catalog cannot
 
 The `custom` provider is a subscription whose endpoint and model belong to the

@@ -128,7 +128,7 @@ render_update_frame() {
   local palette_override="$4" version="$5" step="$6"
 
   local -a palette
-  read -ra palette <<< "${palette_override:-$(get_tool_palette claude)}"
+  read -ra palette < <(printf '%s\n' "${palette_override:-$(get_tool_palette claude)}")
   local pal_len=${#palette[@]}
   local hi="${palette[$(( pal_len - 1 ))]}"
 
@@ -137,7 +137,7 @@ render_update_frame() {
   # stack rather than art with a footer stuck under it.
   local start_row art_height
   read -r start_row _ art_height _ \
-    <<< "$(loading_art_geometry "$rows" "$cols" 4)"
+    < <(printf '%s\n' "$(loading_art_geometry "$rows" "$cols" 4)")
 
   render_loading_frame "" "$frame" "$cols" "$rows" "$palette_override" 4
 
@@ -183,7 +183,7 @@ _run_update_behind_screen() {
   shift 3
 
   local rows cols
-  read -r rows cols <<< "$(_detect_term_size)"
+  read -r rows cols < <(printf '%s\n' "$(_detect_term_size)")
 
   npx --yes wisp-deck@latest "$@" > "$log" 2>&1 &
   local pid=$!
@@ -198,7 +198,7 @@ _run_update_behind_screen() {
     render_update_frame "$frame" "$cols" "$rows" "$pal_override" "$version" "$step"
     frame=$(( frame + 1 ))
     sleep 0.12
-    read -r rows cols <<< "$(_detect_term_size)"
+    read -r rows cols < <(printf '%s\n' "$(_detect_term_size)")
   done
 
   local rc=0

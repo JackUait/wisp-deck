@@ -221,7 +221,7 @@ tab_view_stamp_windows() {
       ''|*[!0-9]*) ;;
       *) [ "$wwidth" -gt "$cols" ] && cols="$wwidth" ;;
     esac
-  done <<< "$inventory"
+  done < <(printf '%s\n' "$inventory")
 
   budget="$(tab_view_title_budget "$cols" "$windows")"
 
@@ -236,7 +236,7 @@ tab_view_stamp_windows() {
     if [ "$prog" != "$oprog" ]; then
       "$tmux_cmd" set-option -w -t "$wid" @wd_tab_progress "$prog" 2>/dev/null || true
     fi
-  done <<< "$inventory"
+  done < <(printf '%s\n' "$inventory")
   return 0
 }
 

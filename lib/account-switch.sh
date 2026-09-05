@@ -399,7 +399,7 @@ current_session_account() {
         return 0
         ;;
     esac
-  done <<< "$session_env"
+  done < <(printf '%s\n' "$session_env")
   get_active_claude_account "$pointer_file"
 }
 
@@ -423,7 +423,7 @@ _current_session_identities() {
         config_stamped=1
         ;;
     esac
-  done <<< "$session_env"
+  done < <(printf '%s\n' "$session_env")
   if [ "$account_stamped" = 1 ]; then
     session_acct="$account"
   else
@@ -457,7 +457,7 @@ current_session_config() {
         return 0
         ;;
     esac
-  done <<< "$session_env"
+  done < <(printf '%s\n' "$session_env")
   get_active_claude_config "$pointer_file"
 }
 
@@ -573,12 +573,7 @@ stash_ai_draft() {
   "$tmux_cmd" send-keys -t "$pane" Escape 2>/dev/null || return 1
   sleep 0.2
   "$tmux_cmd" send-keys -t "$pane" Escape Escape 2>/dev/null || return 1
-  for _ in $(seq 1 15); do
-    after=0
-    [ -f "$hist" ] && after="$(wc -l < "$hist")"
-    if [ "$after" -gt "$before" ]; then
-      out="$(python3 - "$hist" "$before" "$project" <<'PYEOF'
-import json, sys
+  local _draft_py='import json, sys
 path, skip, project = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 with open(path, "rb") as f:
     lines = [l for l in f.read().splitlines() if l.strip()][skip:]
@@ -590,9 +585,12 @@ for line in reversed(lines):
     if project and entry.get("project") != project:
         continue
     print(entry.get("display", ""), end="")
-    break
-PYEOF
-)" || out=""
+    break'
+  for _ in $(seq 1 15); do
+    after=0
+    [ -f "$hist" ] && after="$(wc -l < "$hist")"
+    if [ "$after" -gt "$before" ]; then
+      out="$(python3 -c "$_draft_py" "$hist" "$before" "$project")" || out=""
       if [ -n "$out" ]; then
         printf '%s' "$out"
         return 0

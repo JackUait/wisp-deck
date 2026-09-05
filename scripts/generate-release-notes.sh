@@ -74,7 +74,7 @@ generate_release_notes() {
       capitalized="$(echo "${msg:0:1}" | tr '[:lower:]' '[:upper:]')${msg:1}"
       others+=("$capitalized")
     fi
-  done <<< "$commits"
+  done < <(printf '%s\n' "$commits")
 
   # Output sections in order: Features, Bug Fixes, Refactoring, Other Changes
   local has_output=false

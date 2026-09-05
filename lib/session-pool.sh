@@ -98,8 +98,7 @@ export_claude_handoff() {
   local transcript="$1" out="$2" max="${3:-15}"
   [ -f "$transcript" ] || return 1
   command -v python3 >/dev/null 2>&1 || return 1
-  python3 - "$transcript" "$out" "$max" <<'PYEOF'
-import json, sys
+  local _handoff_py='import json, sys
 transcript, out, per_role = sys.argv[1], sys.argv[2], int(sys.argv[3])
 msgs = []
 with open(transcript, "rb") as f:
@@ -130,8 +129,8 @@ with open(out, "w") as f:
     f.write("# Conversation so far\n\n")
     for i in sorted(keep):
         role, text = msgs[i]
-        f.write("**%s:** %s\n\n" % ("User" if role == "user" else "Assistant", text))
-PYEOF
+        f.write("**%s:** %s\n\n" % ("User" if role == "user" else "Assistant", text))'
+  python3 -c "$_handoff_py" "$transcript" "$out" "$max"
 }
 
 # export_codex_handoff <rollout_jsonl> <out_md> [max_per_role] — same markdown
@@ -143,8 +142,7 @@ export_codex_handoff() {
   local rollout="$1" out="$2" max="${3:-15}"
   [ -f "$rollout" ] || return 1
   command -v python3 >/dev/null 2>&1 || return 1
-  python3 - "$rollout" "$out" "$max" <<'PYEOF'
-import json, sys
+  local _rollout_py='import json, sys
 rollout, out, per_role = sys.argv[1], sys.argv[2], int(sys.argv[3])
 msgs = []
 with open(rollout, "rb") as f:
@@ -174,8 +172,8 @@ with open(out, "w") as f:
     f.write("# Conversation so far\n\n")
     for i in sorted(keep):
         role, text = msgs[i]
-        f.write("**%s:** %s\n\n" % ("User" if role == "user" else "Assistant", text))
-PYEOF
+        f.write("**%s:** %s\n\n" % ("User" if role == "user" else "Assistant", text))'
+  python3 -c "$_rollout_py" "$rollout" "$out" "$max"
 }
 
 # handoff_prompt <handoff_md> <from_tool> — the initial prompt that seeds a

@@ -178,13 +178,15 @@ gt_paste_latest_screenshot() {
   # Search the saved location AND the screencaptureui temp dirs, so a screenshot
   # taken moments ago (still a floating thumbnail, not yet on disk in the saved
   # dir) is found too.
-  local dir latest line temp_dirs=()
+  local dir latest line temp_dirs=() _wd_ifs _wd_glob
   dir="$(gt_screenshot_dir)"
-  # Heredoc + command substitution (not `< <(...)`) so the array is populated in
-  # this shell AND the lib still parses under `bash --posix` (iTerm2's launch).
-  while IFS= read -r line; do [ -n "$line" ] && temp_dirs+=("$line"); done <<EOF
-$(gt_screenshot_temp_dirs)
-EOF
+  # Not `<<<`/`<<`: bash 5.3 pipes a here-document and that pipe can hold only
+  # 512 bytes. Not `< <(...)` either — this file must parse under /bin/sh.
+  _wd_ifs="$IFS"
+  case $- in *f*) _wd_glob=1 ;; *) _wd_glob=0 ;; esac
+  IFS=$'\n'; set -f
+  for line in $(gt_screenshot_temp_dirs); do temp_dirs+=("$line"); done
+  IFS="$_wd_ifs"; [ "$_wd_glob" = 1 ] || set +f
   latest="$(gt_latest_screenshot "$dir" "${temp_dirs[@]}")" || {
     "$tmux_cmd" display-message "wisp-deck: no screenshot found in $dir" 2>/dev/null || true
     return 0

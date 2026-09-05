@@ -85,39 +85,40 @@ bind $n run-shell \"$envpfx select-window -t $outer:$((n - 1)) 2>/dev/null || tr
   click="bash -c 'source \\\"\$1\\\" && spare_tabs_dispatch \\\"\$2\\\" \\\"\$3\\\"'"
   click="$click wisp-spare-tabs \\\"$lib\\\" \\\"$label\\\" \\\"#{mouse_status_range}\\\""
 
-  cat <<EOF
-set -g mouse on
-set -g status-position top
-set -g exit-unattached on
-set -g remain-on-exit on
-set -g base-index 1
-set -g status-justify left
-set -g status-style "fg=colour250,bg=default"
-set -g window-status-style "bg=default"
-# The whole tab list lives in status-left via #{W:...} so the + add button can
-# sit immediately after the last tab (status-right is pinned far-right, which is
-# why it isn't used). #{?window_active,...} picks the active vs inactive look;
-# commas inside #[...] within that conditional are escaped as #, so they aren't
-# read as argument separators. The auto window list is blanked out to avoid a
-# duplicate. status-left-length is raised so the list is never truncated.
-set -g status-left-length 1000
-set -g status-left "$(spare_tabs_status_left "$accent")"
-set -g status-right ""
-set -g window-status-separator ""
-set -g window-status-format ""
-set -g window-status-current-format ""
-set -g @gt_dir "$dir"
-# Keyboard new-tab from *inside* the spare pane: the inner tmux owns the prefix
-# here, and its default prefix+t is clock-mode. Rebind t to new-window (in the
-# project dir) so the new tab joins the existing list — matching the outer
-# prefix+t binding so the shortcut works the same regardless of pane focus.
-bind t new-window -c "$dir"
-$fwd
-bind -n MouseDown1Status run-shell "$click"
-bind -n MouseDown1StatusLeft run-shell "$click"
-bind -n MouseDown1StatusRight run-shell "$click"
-set-hook -g pane-died "if -F \"#{==:#{session_windows},1}\" \"respawn-pane -k\" \"kill-window\""
-EOF
+  local status_left
+  status_left="$(spare_tabs_status_left "$accent")"
+  printf '%s\n' \
+    "set -g mouse on" \
+    "set -g status-position top" \
+    "set -g exit-unattached on" \
+    "set -g remain-on-exit on" \
+    "set -g base-index 1" \
+    "set -g status-justify left" \
+    "set -g status-style \"fg=colour250,bg=default\"" \
+    "set -g window-status-style \"bg=default\"" \
+    "# The whole tab list lives in status-left via #{W:...} so the + add button can" \
+    "# sit immediately after the last tab (status-right is pinned far-right, which is" \
+    "# why it isn't used). #{?window_active,...} picks the active vs inactive look;" \
+    "# commas inside #[...] within that conditional are escaped as #, so they aren't" \
+    "# read as argument separators. The auto window list is blanked out to avoid a" \
+    "# duplicate. status-left-length is raised so the list is never truncated." \
+    "set -g status-left-length 1000" \
+    "set -g status-left \"$status_left\"" \
+    "set -g status-right \"\"" \
+    "set -g window-status-separator \"\"" \
+    "set -g window-status-format \"\"" \
+    "set -g window-status-current-format \"\"" \
+    "set -g @gt_dir \"$dir\"" \
+    "# Keyboard new-tab from *inside* the spare pane: the inner tmux owns the prefix" \
+    "# here, and its default prefix+t is clock-mode. Rebind t to new-window (in the" \
+    "# project dir) so the new tab joins the existing list — matching the outer" \
+    "# prefix+t binding so the shortcut works the same regardless of pane focus." \
+    "bind t new-window -c \"$dir\"" \
+    "$fwd" \
+    "bind -n MouseDown1Status run-shell \"$click\"" \
+    "bind -n MouseDown1StatusLeft run-shell \"$click\"" \
+    "bind -n MouseDown1StatusRight run-shell \"$click\"" \
+    "set-hook -g pane-died \"if -F \\\"#{==:#{session_windows},1}\\\" \\\"respawn-pane -k\\\" \\\"kill-window\\\"\""
 }
 
 # The command the spare pane runs. Sheds the parent $TMUX env so tmux allows

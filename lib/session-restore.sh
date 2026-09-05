@@ -174,7 +174,7 @@ codex_identity_referenced() {
       | grep -Fqx -- "WISP_DECK_CODEX_SESSION_FILE=$config_dir/session-identities/$key"; then
       return 0
     fi
-  done <<< "$sessions"
+  done < <(printf '%s\n' "$sessions")
   return 1
 }
 
@@ -299,7 +299,7 @@ write_session_snapshot() {
     seq="$(echo "$env" | sed -n 's/^WISP_DECK_SEQ=//p')"
     case "$seq" in '' | *[!0-9]*) seq="$_created" ;; esac
     echo "${seq} ${boot}|${proj}|${filepath}|${tool}|${term}|${sid}|${layout}|${acct}|${identity_key}" >> "$keyed"
-  done <<< "$sessions"
+  done < <(printf '%s\n' "$sessions")
   sort -sn "$keyed" | cut -d' ' -f2- > "$tmp"
   rm -f "$keyed"
   mv "$tmp" "$snap_file"
@@ -458,13 +458,13 @@ maybe_restore_session() {
   # tab keeps the plain `-c` fallback — no guessing needed.
   local n=${#entries[@]} i j path2 tool2 sid2 dupes used
   for ((i = 0; i < n; i++)); do
-    IFS='|' read -r filepath tool sid <<< "${entries[$i]}"
+    IFS='|' read -r filepath tool sid < <(printf '%s\n' "${entries[$i]}")
     if [ "$tool" = "claude" ] && [ -z "$sid" ]; then
       dupes=0
       used=""
       for ((j = 0; j < n; j++)); do
         [ "$j" -eq "$i" ] && continue
-        IFS='|' read -r path2 tool2 sid2 <<< "${entries[$j]}"
+        IFS='|' read -r path2 tool2 sid2 < <(printf '%s\n' "${entries[$j]}")
         [ "$tool2" = "claude" ] && [ "$path2" = "$filepath" ] || continue
         dupes=1
         [ -n "$sid2" ] && used="${used}${sid2}"$'\n'
@@ -725,7 +725,7 @@ restore_sid_already_open() {
         fi
         ;;
     esac
-  done <<< "$sessions"
+  done < <(printf '%s\n' "$sessions")
   return 1
 }
 
@@ -740,7 +740,7 @@ restore_sid_already_open() {
 #   entry = path|tool|sid|layout|account|identity_key
 restore_entry_wanted() {
   local tmux_cmd="$1" entry="$2" filepath tool sid _layout _account _identity_key
-  IFS='|' read -r filepath tool sid _layout _account _identity_key <<< "$entry"
+  IFS='|' read -r filepath tool sid _layout _account _identity_key < <(printf '%s\n' "$entry")
   [ -d "$filepath" ] || return 1
   ! restore_sid_already_open "$tmux_cmd" "$tool" "$sid"
 }
@@ -780,7 +780,7 @@ claude_pick_transcript() {
       echo "$sid"
       return 0
     fi
-  done <<< "$(ls -t "$dir"/*.jsonl 2>/dev/null)"
+  done < <(printf '%s\n' "$(ls -t "$dir"/*.jsonl 2>/dev/null)")
   return 0
 }
 

@@ -3,19 +3,18 @@
 
 # Print the loading screen ASCII art to stdout.
 get_loading_art() {
-  cat << 'ART'
-888       888 d8b                       8888888b.                    888
-888   o   888 Y8P                       888  "Y88b                   888
-888  d8b  888                           888    888                   888
-888 d888b 888 888 .d8888b  88888b.      888    888  .d88b.   .d8888b 888  888
-888d88888b888 888 88K      888 "88b     888    888 d8P  Y8b d88P"    888 .88P
-88888P Y88888 888 "Y8888b. 888  888     888    888 88888888 888      888888K
-8888P   Y8888 888      X88 888 d88P     888  .d88P Y8b.     Y88b.    888 "88b
-888P     Y888 888  88888P' 88888P"      8888888P"   "Y8888   "Y8888P 888  888
-                            888
-                            888
-                            888
-ART
+  printf '%s\n' \
+    '888       888 d8b                       8888888b.                    888' \
+    '888   o   888 Y8P                       888  "Y88b                   888' \
+    '888  d8b  888                           888    888                   888' \
+    '888 d888b 888 888 .d8888b  88888b.      888    888  .d88b.   .d8888b 888  888' \
+    '888d88888b888 888 88K      888 "88b     888    888 d8P  Y8b d88P"    888 .88P' \
+    '88888P Y88888 888 "Y8888b. 888  888     888    888 88888888 888      888888K' \
+    '8888P   Y8888 888      X88 888 d88P     888  .d88P Y8b.     Y88b.    888 "88b' \
+    '888P     Y888 888  88888P'\'' 88888P"      8888888P"   "Y8888   "Y8888P 888  888' \
+    '                            888' \
+    '                            888' \
+    '                            888'
 }
 
 # Get color palette for a given AI tool. Prints space-separated 256-color codes.
@@ -34,12 +33,18 @@ get_tool_palette() {
 # screen) centres the pair rather than the art alone.
 loading_art_geometry() {
   local rows="${1:-24}" cols="${2:-80}" reserved="${3:-0}"
-  local art line height=0 width=0
+  local art line height=0 width=0 _wd_ifs _wd_glob
   art="$(get_loading_art)"
-  while IFS= read -r line; do
+  # Not `<<<`/`<<`: bash 5.3 pipes a here-document and that pipe can hold only
+  # 512 bytes. Not `< <(...)` either — this file must parse under /bin/sh.
+  _wd_ifs="$IFS"
+  case $- in *f*) _wd_glob=1 ;; *) _wd_glob=0 ;; esac
+  IFS=$'\n'; set -f
+  for line in $art; do
     height=$(( height + 1 ))
     if (( ${#line} > width )); then width=${#line}; fi
-  done <<< "$art"
+  done
+  IFS="$_wd_ifs"; [ "$_wd_glob" = 1 ] || set +f
 
   local start_row=$(( (rows - height - reserved) / 2 + 1 ))
   local start_col=$(( (cols - width) / 2 + 1 ))
@@ -59,12 +64,19 @@ render_loading_frame() {
   local reserved="${6:-0}"
 
   # Get art lines into array
-  local art
+  local art _wd_ifs _wd_glob
   art="$(get_loading_art)"
   local -a lines=()
-  while IFS= read -r line; do
+  # Not `<<<`/`<<`: bash 5.3 pipes a here-document and that pipe can hold only
+  # 512 bytes. Not `< <(...)` either — this file must parse under /bin/sh.
+  _wd_ifs="$IFS"
+  case $- in *f*) _wd_glob=1 ;; *) _wd_glob=0 ;; esac
+  IFS=$'\n'; set -f
+  # The art carries no blank line for the split to drop.
+  for line in $art; do
     lines+=("$line")
-  done <<< "$art"
+  done
+  IFS="$_wd_ifs"; [ "$_wd_glob" = 1 ] || set +f
 
   # Get palette
   local -a palette

@@ -90,9 +90,7 @@ write_claude_launch_settings() {
 
   target="$generation_dir/claude-settings.json"
   tmp="$(umask 077; mktemp "$generation_dir/.claude-settings.XXXXXX")" || return 1
-  if ! chmod 600 "$tmp" \
-     || ! python3 - "$source_settings" "$tmp" "$user_settings" << 'PYEOF'
-import json
+  local _launch_py='import json
 import sys
 
 source_path, output_path = sys.argv[1], sys.argv[2]
@@ -125,8 +123,9 @@ if (
     settings["disableClaudeAiConnectors"] = True
 with open(output_path, "w", encoding="utf-8") as output:
     json.dump(settings, output, indent=2)
-    output.write("\n")
-PYEOF
+    output.write("\n")'
+  if ! chmod 600 "$tmp" \
+     || ! python3 -c "$_launch_py" "$source_settings" "$tmp" "$user_settings"
   then
     rm -f "$tmp"
     return 1
@@ -161,8 +160,7 @@ remove_waiting_indicator_hooks() {
     echo "not_found"
     return 0
   fi
-  python3 - "$filepath" "$config_dir" << 'PYEOF'
-import fcntl
+  local _notif_py='import fcntl
 import json
 import os
 import stat
@@ -239,7 +237,7 @@ if not hooks:
     del settings["hooks"]
 
 # Follow a settings symlink rather than replacing the link itself. The managed
-# Claude accounts intentionally share the standard login's settings this way.
+# Claude accounts intentionally share the standard login'\''s settings this way.
 write_path = os.path.realpath(settings_path)
 directory = os.path.dirname(write_path) or "."
 try:
@@ -294,8 +292,8 @@ except Exception:
         pass
     raise
 
-print("removed")
-PYEOF
+print("removed")'
+  python3 -c "$_notif_py" "$filepath" "$config_dir"
 }
 
 # migrate_legacy_claude_notif_channel <settings-file> <wisp-config-root>
@@ -314,8 +312,7 @@ migrate_legacy_claude_notif_channel() {
   [ -n "$settings_path" ] && [ -d "$config_dir" ] || return 0
   [ -f "$config_dir/prev-notif-channel" ] || return 0
 
-  python3 - "$settings_path" "$config_dir" << 'PYEOF'
-import fcntl
+  local _restore_py='import fcntl
 import json
 import os
 import stat
@@ -449,6 +446,6 @@ except Exception:
 try:
     os.unlink(legacy_path)
 except FileNotFoundError:
-    pass
-PYEOF
+    pass'
+  python3 -c "$_restore_py" "$settings_path" "$config_dir"
 }

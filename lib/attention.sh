@@ -55,13 +55,17 @@ _attention_root_is_owned() {
 }
 
 _attention_forget_root() {
-  local root="${1-}" line rebuilt=$'\n'
-  while IFS= read -r line; do
+  local root="${1-}" line rebuilt=$'\n' _wd_ifs _wd_glob
+  # Not `<<<`/`<<`: bash 5.3 pipes a here-document and that pipe can hold only
+  # 512 bytes. Not `< <(...)` either — this file must parse under /bin/sh.
+  _wd_ifs="$IFS"
+  case $- in *f*) _wd_glob=1 ;; *) _wd_glob=0 ;; esac
+  IFS=$'\n'; set -f
+  for line in $_ATTENTION_OWNED_ROOTS; do
     [ -n "$line" ] || continue
     [ "$line" = "$root" ] || rebuilt="${rebuilt}${line}"$'\n'
-  done <<EOF
-$_ATTENTION_OWNED_ROOTS
-EOF
+  done
+  IFS="$_wd_ifs"; [ "$_wd_glob" = 1 ] || set +f
   _ATTENTION_OWNED_ROOTS="$rebuilt"
 }
 

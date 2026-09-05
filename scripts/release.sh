@@ -104,7 +104,7 @@ verify_release_tui_metadata() {
       fi
       ldflags_lines=$((ldflags_lines + 1))
     fi
-  done <<< "$metadata"
+  done < <(printf '%s\n' "$metadata")
 
   if [[ "$ldflags_lines" -ne 1 ]]; then
     echo "Error: Release artifact is missing exact linker metadata: $asset" >&2

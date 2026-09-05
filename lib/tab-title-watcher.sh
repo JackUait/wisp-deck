@@ -332,10 +332,15 @@ apply_tab_title() {
 # Usage: discover_ai_pane <session_name> <tmux_cmd>
 # Outputs its stable tmux pane ID (for example, %42).
 discover_ai_pane() {
-  local session_name="${1-}" tmux_cmd="${2-}" listing line pane flag extra
+  local session_name="${1-}" tmux_cmd="${2-}" listing line pane flag extra _wd_ifs _wd_glob
   local found="" count=0 suffix
   listing="$("$tmux_cmd" list-panes -t "$session_name" -F $'#{pane_id}\t#{@gt_ai}' 2>/dev/null)" || return 1
-  while IFS= read -r line; do
+  # Not `<<<`/`<<`: bash 5.3 pipes a here-document and that pipe can hold only
+  # 512 bytes. Not `< <(...)` either — this file must parse under /bin/sh.
+  _wd_ifs="$IFS"
+  case $- in *f*) _wd_glob=1 ;; *) _wd_glob=0 ;; esac
+  IFS=$'\n'; set -f
+  for line in $listing; do
     pane=${line%%$'\t'*}
     [ "$pane" != "$line" ] || continue
     flag=${line#*$'\t'}
@@ -352,9 +357,8 @@ discover_ai_pane() {
     esac
     found="$pane"
     count=$((count + 1))
-  done <<EOF
-$listing
-EOF
+  done
+  IFS="$_wd_ifs"; [ "$_wd_glob" = 1 ] || set +f
   [ "$count" -eq 1 ] || return 1
   printf '%s\n' "$found"
 }

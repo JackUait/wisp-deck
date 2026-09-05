@@ -25,7 +25,7 @@ ledger_hover_clone_table() {
   replacement="-T $to"
   while IFS= read -r binding; do
     printf '%s\n' "${binding/$needle/$replacement}"
-  done <<< "$bindings" > "$config"
+  done < <(printf '%s\n' "$bindings") > "$config"
   "$tmux_cmd" unbind-key -a -T "$to" 2>/dev/null || true
   if ! "$tmux_cmd" source-file -n "$config" >/dev/null 2>&1 ||
      ! "$tmux_cmd" source-file "$config" >/dev/null 2>&1; then
@@ -37,7 +37,7 @@ ledger_hover_clone_table() {
   expected=$(
     while IFS= read -r binding; do
       printf '%s\n' "${binding/-T $from/-T __table__}"
-    done <<< "$bindings"
+    done < <(printf '%s\n' "$bindings")
   )
   got=$(
     while IFS= read -r binding; do
@@ -100,7 +100,7 @@ ledger_hover_sync_root_changes() {
     if [ "$current" != "$active" ]; then
       ledger_hover_copy_binding "$tmux_cmd" root "$original_table" "$key" || return 1
     fi
-  done <<< "$keys"
+  done < <(printf '%s\n' "$keys")
 }
 
 ledger_hover_restore_root_pane_bindings() {
@@ -114,7 +114,7 @@ ledger_hover_restore_root_pane_bindings() {
     [ -n "$key" ] || continue
     "$tmux_cmd" unbind-key -T root "$key" 2>/dev/null || true
     ledger_hover_copy_binding "$tmux_cmd" "$original_table" root "$key" || return 1
-  done <<< "$keys"
+  done < <(printf '%s\n' "$keys")
 }
 
 ledger_hover_wrap_root_pane_bindings() {
@@ -156,7 +156,7 @@ ledger_hover_wrap_root_pane_bindings() {
   while IFS= read -r key; do
     [ -n "$key" ] || continue
     "$tmux_cmd" unbind-key -T root "$key" 2>/dev/null || true
-  done <<< "$keys"
+  done < <(printf '%s\n' "$keys")
   if ! "$tmux_cmd" source-file "$config" >/dev/null 2>&1; then
     rm -f "$config"
     ledger_hover_restore_root_pane_bindings "$tmux_cmd" "$original_table" "$active_table" || true
@@ -172,7 +172,7 @@ ledger_hover_wrap_root_pane_bindings() {
       ledger_hover_restore_root_pane_bindings "$tmux_cmd" "$original_table" "$active_table" || true
       return 1
     fi
-  done <<< "$keys"
+  done < <(printf '%s\n' "$keys")
   if ! ledger_hover_clone_table "$tmux_cmd" root "$active_table"; then
     ledger_hover_restore_root_pane_bindings "$tmux_cmd" "$original_table" "$active_table" || true
     return 1
@@ -359,7 +359,7 @@ ledger_hover_install() {
     else
       printf 'bind-key -T %s %s %s\n' "$table" "$key" "$wrapped_binding"
     fi
-  done <<< "$bindings" > "$config"
+  done < <(printf '%s\n' "$bindings") > "$config"
   if ! "$tmux_cmd" source-file -n "$config" >/dev/null 2>&1 ||
      ! "$tmux_cmd" source-file "$config" >/dev/null 2>&1; then
     rm -f "$config"
@@ -375,7 +375,7 @@ ledger_hover_install() {
       "$tmux_cmd" unbind-key -a -T "$table" 2>/dev/null || true
       return 1
     fi
-  done <<< "$keys"
+  done < <(printf '%s\n' "$keys")
 
   if ! "$tmux_cmd" set-option -t "$session_name" '@wisp_ledger_hover_base' "$base" \; \
     set-option -t "$session_name" '@wisp_ledger_hover_mouse' "$base_mouse" \; \
