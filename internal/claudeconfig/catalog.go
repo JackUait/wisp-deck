@@ -96,7 +96,11 @@ var Providers = []Provider{
 		Aliases:        []string{"openai gpt", "chatgpt"},
 		Auth:           AuthCodexChatGPT,
 		MirrorOpenCode: false,
-		DefaultModels:  [4]string{"gpt-5.6-terra", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol"},
+		// Fable is the alias a GPT pane launches on, so Astra is what the
+		// session actually runs. The other three stay on the 5.6 tier, which
+		// keeps ContextBudget's minimum at 272000 — /model and subagents move
+		// freely across all four, so the session must fit the tightest of them.
+		DefaultModels: [4]string{"gpt-5.6-terra", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"},
 		Models: []Model{
 			// Astra reaches the bridge only from Codex 0.153.0 or newer: the
 			// engine's model allowlist is whatever the running app-server

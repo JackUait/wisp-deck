@@ -416,7 +416,7 @@ func TestOpenAIProviderDefaultTierMapping(t *testing.T) {
 	if !ok {
 		t.Fatal("openai-chatgpt provider missing")
 	}
-	want := [4]string{"gpt-5.6-terra", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol"}
+	want := [4]string{"gpt-5.6-terra", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"}
 	if provider.DefaultModels != want {
 		t.Fatalf("DefaultModels = %v, want %v (opus, sonnet, haiku, fable)", provider.DefaultModels, want)
 	}
