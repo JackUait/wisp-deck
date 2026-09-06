@@ -1157,6 +1157,24 @@ compact_view() {
 
 # compact_view_shell is the compatibility renderer retained for older binaries,
 # noninteractive fixtures, and WISP_DECK_LEDGER_SHELL_FALLBACK=1 recovery.
+# Echo how many refresh timeouts to skip before the next Git build.
+#
+# The ledger polls Git on a timer, and on a real 17-session deck 99.1% of those
+# polls found nothing changed while one build tick costs ~35 processes. So an
+# unchanged build backs the next one off (skip 0 -> 1 -> 3, i.e. 1x -> 2x -> 4x
+# the interval) and any change resets it, exactly like the Go renderer's
+# 2s -> 4s -> 8s. The cap is deliberately the same 4x ratio: it bounds how late
+# the FIRST change after a quiet spell can appear.
+# Usage: cv_idle_backoff_next <unchanged:0|1> <current_skips>
+cv_idle_backoff_next() {
+  local unchanged="$1" current="$2" next
+  [ "$unchanged" = 1 ] || { echo 0; return 0; }
+  case "$current" in '' | *[!0-9]*) current=0 ;; esac
+  next=$(( current * 2 + 1 ))
+  [ "$next" -gt 3 ] && next=3
+  echo "$next"
+}
+
 compact_view_shell() {
   local project_dir="${1:-.}"
 
@@ -1437,6 +1455,9 @@ compact_view_shell() {
   local scroll=0
   local need_build=1
   local need_draw=1
+  # Idle backoff: how many refresh timeouts to skip before touching Git
+  # again, and the signature of the last build's content that decides it.
+  local _cv_idle_skips=0 _cv_prev_sig="" _cv_sig=""
   local hover_line=0
   # Account pill (mid-session login switcher). Recomputed each build tick from the
   # relaunch-context file wrapper.sh writes for an eligible claude session (2+
@@ -1754,6 +1775,16 @@ compact_view_shell() {
         behind=$(echo "$ab_counts" | cut -f2)
       fi
     fi
+    # Everything the rows and the bar are built from. Comparing it in the shell
+    # costs nothing, and it is what lets a dormant repository stop paying ~35
+    # processes every interval.
+    _cv_sig="$staged|$unstaged|$untracked|$ahead|$behind"
+    if [ "$_cv_sig" = "$_cv_prev_sig" ]; then
+      _cv_idle_skips="$(cv_idle_backoff_next 1 "$_cv_idle_skips")"
+    else
+      _cv_idle_skips=0
+    fi
+    _cv_prev_sig="$_cv_sig"
     # Changed-file stamp figures for the bottom bar: total changed files and the
     # net line +/- across staged+unstaged+untracked. A new file's every line
     # counts as an addition, so untracked rows feed the +total too. Gathered here
@@ -1964,6 +1995,16 @@ compact_view_shell() {
     # Idle: just refresh on a timer. Interactive: refresh OR react to input.
     if [ "$interactive" != 1 ]; then
       sleep "$interval"
+      if [ "$_cv_idle_skips" -gt 0 ]; then
+        _cv_idle_skips=$((_cv_idle_skips - 1))
+        # need_build is never cleared on the timer path, so it has to be
+        # cleared here or the loop rebuilds anyway and the skip buys nothing.
+        # Any rebuild another event asked for has already run: the input path
+        # clears the flag before handle_key and the loop builds at the top.
+        need_build=0
+        need_draw=0
+        continue
+      fi
       need_build=1
       need_draw=1
       continue
@@ -1971,10 +2012,25 @@ compact_view_shell() {
 
     # Block for the next event, or fall through to a refresh on the interval.
     if ! read_key "$interval"; then
-      need_build=1   # timed out -> refresh the ledger
+      # Timed out. Refresh the ledger unless the repository has been sitting
+      # still, in which case skip this one and stay cheap.
+      if [ "$_cv_idle_skips" -gt 0 ]; then
+        _cv_idle_skips=$((_cv_idle_skips - 1))
+        # need_build is never cleared on the timer path, so it has to be
+        # cleared here or the loop rebuilds anyway and the skip buys nothing.
+        # Any rebuild another event asked for has already run: the input path
+        # clears the flag before handle_key and the loop builds at the top.
+        need_build=0
+        need_draw=0
+        continue
+      fi
+      need_build=1
       need_draw=1
       continue
     fi
+
+    # Real input: someone is reading this pane, so make it current again.
+    _cv_idle_skips=0
 
     # COALESCE the input flood. Under any-motion tracking (?1003h) the terminal
     # emits one report per cursor cell, so a single fast mouse move buffers a
