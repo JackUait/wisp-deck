@@ -1,33 +1,55 @@
 #!/bin/bash
 # Statusline helper functions — pure, no side effects on source.
 
+# Collect a process and every descendant, one batched query per LEVEL of the
+# tree. macOS pgrep takes a comma-separated parent list and answers the union of
+# their children, so a tree of any WIDTH costs one process per level of depth.
+#
+# This is on the statusline repaint path, which runs on every token-usage update
+# in every open session. Asking the kernel about one PID at a time forked once
+# per process in the agent's tree, three times over: a session running a test
+# sweep reaches hundreds of processes, and the walk alone was measured at 3.74
+# CPU-seconds a render.
+#
+# The child list is split on newline rather than fed through a here-string: bash
+# 5.3 writes a here-document into a pipe, and a busy tree's PID list runs past
+# the 512-byte buffer a loaded Mac grants, where it deadlocks with no output.
+# Usage: statusline_tree_pids 12345  =>  "12345 12346 12350"
+statusline_tree_pids() {
+  local root_pid="$1"
+  local all="$root_pid" frontier="$root_pid" kids next child old_ifs
+  local level=0
+  # A process tree cannot cycle, but a PID reparented mid-walk could be seen
+  # twice; the cap keeps that a wrong number rather than a hung statusline.
+  while [ -n "$frontier" ] && [ "$level" -lt 64 ]; do
+    level=$((level + 1))
+    kids=$(pgrep -P "$frontier" 2>/dev/null) || true
+    [ -n "$kids" ] || break
+    next=""
+    old_ifs="$IFS"
+    IFS=$'\n'
+    set -f
+    for child in $kids; do
+      [ -n "$child" ] || continue
+      next="${next:+$next,}$child"
+      all="$all $child"
+    done
+    set +f
+    IFS="$old_ifs"
+    frontier="$next"
+  done
+  printf '%s\n' "$all"
+}
+
 # Returns total RSS in KB for a process and all its descendants.
 # Usage: get_tree_rss_kb 12345  =>  "92160"
 get_tree_rss_kb() {
-  local root_pid="$1"
-  local total=0
-  local queue=("$root_pid")
-
-  while [ ${#queue[@]} -gt 0 ]; do
-    local pid="${queue[0]}"
-    queue=("${queue[@]:1}")
-
-    local rss
-    rss=$(ps -o rss= -p "$pid" 2>/dev/null | tr -d ' ')
-    if [ -n "$rss" ] && [ "$rss" -gt 0 ] 2>/dev/null; then
-      total=$((total + rss))
-    fi
-
-    local children
-    children=$(pgrep -P "$pid" 2>/dev/null) || true
-    if [ -n "$children" ]; then
-      while IFS= read -r child; do
-        queue+=("$child")
-      done <<< "$children"
-    fi
-  done
-
-  echo "$total"
+  local pids
+  pids="$(statusline_tree_pids "$1")"
+  ps -o rss= -p "${pids// /,}" 2>/dev/null | LC_ALL=C awk '
+    { total += $1 }
+    END { printf "%d\n", total + 0 }
+  '
 }
 
 # Returns combined phys_footprint in KB for a process and all its descendants,
@@ -40,26 +62,15 @@ get_tree_footprint_kb() {
   local root_pid="$1"
   command -v footprint >/dev/null 2>&1 || return 0
 
-  # Collect the root pid and every descendant.
-  local pids=() queue=("$root_pid")
-  while [ ${#queue[@]} -gt 0 ]; do
-    local pid="${queue[0]}"
-    queue=("${queue[@]:1}")
-    pids+=("$pid")
-
-    local children
-    children=$(pgrep -P "$pid" 2>/dev/null) || true
-    if [ -n "$children" ]; then
-      while IFS= read -r child; do
-        queue+=("$child")
-      done <<< "$children"
-    fi
-  done
+  local pids
+  pids="$(statusline_tree_pids "$root_pid")"
 
   # Sum the per-process `phys_footprint:` lines (ignoring `phys_footprint_peak:`).
   # gsub + LC_ALL=C make the parse locale-independent: macOS emits a comma
   # decimal (e.g. "1,5 GB") under comma-locales, which would otherwise truncate.
-  footprint "${pids[@]}" 2>/dev/null | LC_ALL=C awk '
+  # Word splitting is deliberate: footprint takes one argument per PID.
+  # shellcheck disable=SC2086
+  footprint $pids 2>/dev/null | LC_ALL=C awk '
     /^[[:space:]]*phys_footprint:/ {
       val = $2; unit = $3; mult = 1
       gsub(/,/, ".", val)
@@ -81,35 +92,15 @@ get_tree_footprint_kb() {
 # caller omits the segment rather than showing a stale value.
 # Usage: get_tree_cpu_pct 12345  =>  "23"
 get_tree_cpu_pct() {
-  local root_pid="$1"
-  local queue=("$root_pid")
-  local cpus=()
-
-  while [ ${#queue[@]} -gt 0 ]; do
-    local pid="${queue[0]}"
-    queue=("${queue[@]:1}")
-
-    local cpu
-    cpu=$(ps -o %cpu= -p "$pid" 2>/dev/null | tr -d ' ')
-    if [ -n "$cpu" ]; then
-      cpus+=("$cpu")
-    fi
-
-    local children
-    children=$(pgrep -P "$pid" 2>/dev/null) || true
-    if [ -n "$children" ]; then
-      while IFS= read -r child; do
-        queue+=("$child")
-      done <<< "$children"
-    fi
-  done
-
-  [ ${#cpus[@]} -eq 0 ] && return 0
+  local pids readings
+  pids="$(statusline_tree_pids "$1")"
+  readings="$(ps -o %cpu= -p "${pids// /,}" 2>/dev/null)" || true
+  [ -n "$readings" ] || return 0
 
   # gsub + LC_ALL=C make the sum locale-independent: macOS `ps` emits a comma
   # decimal (e.g. "10,4") under comma-locales, which awk would otherwise read as
   # 10 and silently under-report the CPU load.
-  printf '%s\n' "${cpus[@]}" | LC_ALL=C awk '
+  printf '%s\n' "$readings" | LC_ALL=C awk '
     { gsub(/,/, "."); total += $0 }
     END { printf "%d\n", total + 0.5 }
   '

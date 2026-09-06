@@ -19,26 +19,39 @@ import (
 func TestStatusline_get_tree_rss_kb_sums_memory_of_process_and_its_children(t *testing.T) {
 	dir := t.TempDir()
 
-	// Mock pgrep: 100 -> [101, 102], 101 -> [103], others -> exit 1
+	// Mock pgrep: 100 -> [101, 102], 101 -> [103]. Like the real pgrep it
+	// takes a comma-separated parent list and answers the union.
 	mockCommand(t, dir, "pgrep", `
-pid="${@: -1}"
-case "$pid" in
-  100) printf '101\n102\n' ;;
-  101) printf '103\n' ;;
-  *) exit 1 ;;
-esac
+__wd_query="${@: -1}"
+__wd_ifs="$IFS"; IFS=","
+for pid in $__wd_query; do
+  IFS="$__wd_ifs"
+  case "$pid" in
+    100) printf '101\n102\n' ;;
+    101) printf '103\n' ;;
+    *) : ;;
+  esac
+  IFS=","
+done
+IFS="$__wd_ifs"
 `)
 
-	// Mock ps: return RSS per pid
+	// Mock ps: one RSS row per PID, for a single PID or a comma-separated list.
 	mockCommand(t, dir, "ps", `
-pid="${@: -1}"
-case "$pid" in
-  100) echo "  51200" ;;
-  101) echo "  25600" ;;
-  102) echo "  10240" ;;
-  103) echo "  5120" ;;
-  *) echo "" ;;
-esac
+__wd_query="${@: -1}"
+__wd_ifs="$IFS"; IFS=","
+for pid in $__wd_query; do
+  IFS="$__wd_ifs"
+  case "$pid" in
+    100) echo "  51200" ;;
+    101) echo "  25600" ;;
+    102) echo "  10240" ;;
+    103) echo "  5120" ;;
+    *) echo "" ;;
+  esac
+  IFS=","
+done
+IFS="$__wd_ifs"
 `)
 
 	binDir := filepath.Join(dir, "bin")
@@ -86,22 +99,34 @@ func TestStatusline_get_tree_rss_kb_handles_child_that_disappears_mid_walk(t *te
 
 	// 100 -> [101, 102], others -> exit 1
 	mockCommand(t, dir, "pgrep", `
-pid="${@: -1}"
-case "$pid" in
-  100) printf '101\n102\n' ;;
-  *) exit 1 ;;
-esac
+__wd_query="${@: -1}"
+__wd_ifs="$IFS"; IFS=","
+for pid in $__wd_query; do
+  IFS="$__wd_ifs"
+  case "$pid" in
+    100) printf '101\n102\n' ;;
+    *) : ;;
+  esac
+  IFS=","
+done
+IFS="$__wd_ifs"
 `)
 
 	// 101 returns empty (disappeared), 102 returns value
 	mockCommand(t, dir, "ps", `
-pid="${@: -1}"
-case "$pid" in
-  100) echo "  51200" ;;
-  101) echo "" ;;
-  102) echo "  10240" ;;
-  *) echo "" ;;
-esac
+__wd_query="${@: -1}"
+__wd_ifs="$IFS"; IFS=","
+for pid in $__wd_query; do
+  IFS="$__wd_ifs"
+  case "$pid" in
+    100) echo "  51200" ;;
+    101) echo "" ;;
+    102) echo "  10240" ;;
+    *) echo "" ;;
+  esac
+  IFS=","
+done
+IFS="$__wd_ifs"
 `)
 
 	binDir := filepath.Join(dir, "bin")
@@ -510,11 +535,17 @@ func TestStatusline_get_tree_footprint_kb_sums_phys_footprint_excluding_peak(t *
 
 	// 100 -> [101], others none
 	mockCommand(t, dir, "pgrep", `
-pid="${@: -1}"
-case "$pid" in
-  100) printf '101\n' ;;
-  *) exit 1 ;;
-esac
+__wd_query="${@: -1}"
+__wd_ifs="$IFS"; IFS=","
+for pid in $__wd_query; do
+  IFS="$__wd_ifs"
+  case "$pid" in
+    100) printf '101\n' ;;
+    *) : ;;
+  esac
+  IFS=","
+done
+IFS="$__wd_ifs"
 `)
 	// footprint output for the tree; phys_footprint_peak lines must be ignored.
 	mockCommand(t, dir, "footprint", `
@@ -554,13 +585,20 @@ func TestStatusline_get_tree_footprint_kb_handles_GB_units(t *testing.T) {
 func TestStatusline_get_tree_footprint_kb_passes_every_tree_pid_to_footprint(t *testing.T) {
 	dir := t.TempDir()
 	// 100 -> [101,102], 101 -> [103]  => tree is {100,101,102,103}
+	// pgrep answers a comma-separated parent list with the union, as macOS does.
 	mockCommand(t, dir, "pgrep", `
-pid="${@: -1}"
-case "$pid" in
-  100) printf '101\n102\n' ;;
-  101) printf '103\n' ;;
-  *) exit 1 ;;
-esac
+__wd_query="${@: -1}"
+__wd_ifs="$IFS"; IFS=","
+for pid in $__wd_query; do
+  IFS="$__wd_ifs"
+  case "$pid" in
+    100) printf '101\n102\n' ;;
+    101) printf '103\n' ;;
+    *) : ;;
+  esac
+  IFS=","
+done
+IFS="$__wd_ifs"
 `)
 	// Emit one 10 MB phys_footprint line per pid argument, so the summed total
 	// proves every collected pid was passed to footprint.
@@ -754,22 +792,34 @@ func TestStatusline_get_tree_cpu_pct_sums_cpu_of_process_and_children(t *testing
 
 	// 100 -> [101, 102], 101 -> [103]
 	mockCommand(t, dir, "pgrep", `
-pid="${@: -1}"
-case "$pid" in
-  100) printf '101\n102\n' ;;
-  101) printf '103\n' ;;
-  *) exit 1 ;;
-esac
+__wd_query="${@: -1}"
+__wd_ifs="$IFS"; IFS=","
+for pid in $__wd_query; do
+  IFS="$__wd_ifs"
+  case "$pid" in
+    100) printf '101\n102\n' ;;
+    101) printf '103\n' ;;
+    *) : ;;
+  esac
+  IFS=","
+done
+IFS="$__wd_ifs"
 `)
 	mockCommand(t, dir, "ps", `
-pid="${@: -1}"
-case "$pid" in
-  100) echo " 10.4" ;;
-  101) echo "  5.3" ;;
-  102) echo "  2.0" ;;
-  103) echo "  0.0" ;;
-  *) echo "" ;;
-esac
+__wd_query="${@: -1}"
+__wd_ifs="$IFS"; IFS=","
+for pid in $__wd_query; do
+  IFS="$__wd_ifs"
+  case "$pid" in
+    100) echo " 10.4" ;;
+    101) echo "  5.3" ;;
+    102) echo "  2.0" ;;
+    103) echo "  0.0" ;;
+    *) echo "" ;;
+  esac
+  IFS=","
+done
+IFS="$__wd_ifs"
 `)
 
 	binDir := filepath.Join(dir, "bin")
@@ -831,19 +881,31 @@ func TestStatusline_get_tree_cpu_pct_empty_when_process_gone(t *testing.T) {
 func TestStatusline_get_tree_cpu_pct_handles_comma_decimal_locale(t *testing.T) {
 	dir := t.TempDir()
 	mockCommand(t, dir, "pgrep", `
-pid="${@: -1}"
-case "$pid" in
-  100) printf '101\n' ;;
-  *) exit 1 ;;
-esac
+__wd_query="${@: -1}"
+__wd_ifs="$IFS"; IFS=","
+for pid in $__wd_query; do
+  IFS="$__wd_ifs"
+  case "$pid" in
+    100) printf '101\n' ;;
+    *) : ;;
+  esac
+  IFS=","
+done
+IFS="$__wd_ifs"
 `)
 	mockCommand(t, dir, "ps", `
-pid="${@: -1}"
-case "$pid" in
-  100) echo " 10,4" ;;
-  101) echo "  5,3" ;;
-  *) echo "" ;;
-esac
+__wd_query="${@: -1}"
+__wd_ifs="$IFS"; IFS=","
+for pid in $__wd_query; do
+  IFS="$__wd_ifs"
+  case "$pid" in
+    100) echo " 10,4" ;;
+    101) echo "  5,3" ;;
+    *) echo "" ;;
+  esac
+  IFS=","
+done
+IFS="$__wd_ifs"
 `)
 
 	binDir := filepath.Join(dir, "bin")
@@ -2583,11 +2645,17 @@ func setupWrapperSpawnedTest(t *testing.T) []string {
 	// The claude root pid is dynamic ($PPID of the wrapper), so the default case
 	// answers it; the children are terminal.
 	mockCommand(t, dir, "pgrep", `
-pid="${@: -1}"
-case "$pid" in
-  201|202) exit 1 ;;
-  *) printf '201\n202\n' ;;
-esac
+__wd_query="${@: -1}"
+__wd_ifs="$IFS"; IFS=","
+for pid in $__wd_query; do
+  IFS="$__wd_ifs"
+  case "$pid" in
+    201|202) : ;;
+    *) printf '201\n202\n' ;;
+  esac
+  IFS=","
+done
+IFS="$__wd_ifs"
 `)
 	mockCommand(t, dir, "footprint", `for _ in "$@"; do printf '    phys_footprint: 10 MB\n'; done`)
 	mockCommand(t, dir, "ps", `
@@ -2595,19 +2663,31 @@ case "$*" in
   *comm=*) printf '/Users/test/.local/bin/claude\n' ;;
   *ppid=*) printf '1\n' ;;
   *%cpu=*)
-    pid="${@: -1}"
-    case "$pid" in
-      201) printf ' 5.0\n' ;;
-      202) printf ' 10.0\n' ;;
-      *) printf ' 27.0\n' ;;
-    esac ;;
+    __wd_query="${@: -1}"
+    __wd_ifs="$IFS"; IFS=","
+    for pid in $__wd_query; do
+      IFS="$__wd_ifs"
+      case "$pid" in
+        201) printf ' 5.0\n' ;;
+        202) printf ' 10.0\n' ;;
+        *) printf ' 27.0\n' ;;
+      esac
+      IFS=","
+    done
+    IFS="$__wd_ifs" ;;
   *rss=*)
-    pid="${@: -1}"
-    case "$pid" in
-      201) printf '10240\n' ;;
-      202) printf '10240\n' ;;
-      *) printf '20480\n' ;;
-    esac ;;
+    __wd_query="${@: -1}"
+    __wd_ifs="$IFS"; IFS=","
+    for pid in $__wd_query; do
+      IFS="$__wd_ifs"
+      case "$pid" in
+        201) printf '10240\n' ;;
+        202) printf '10240\n' ;;
+        *) printf '20480\n' ;;
+      esac
+      IFS=","
+    done
+    IFS="$__wd_ifs" ;;
 esac
 `)
 
