@@ -10,9 +10,23 @@ _TAB_TITLE_WATCHER_PID=""
 # reaches the running session.
 # Usage: read_settings_value <settings_file> <key>
 read_settings_value() {
-  local file="$1" key="$2"
+  local file="$1" key="$2" line value
   [ -f "$file" ] || return 0
-  grep "^${key}=" "$file" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]'
+  # Read in the shell, with no process at all. This was
+  # `grep | head -1 | cut | tr` -- four processes per key, and the watcher tick
+  # reads three keys twice a second in EVERY open session.
+  # `|| [ -n "$line" ]` keeps a final line that has no trailing newline, which
+  # grep used to see. The quoted "$key=" is a literal case pattern, not a glob.
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "$key="*)
+        value="${line#"$key="}"
+        printf '%s\n' "${value//[[:space:]]/}"
+        return 0
+        ;;
+    esac
+  done < "$file"
+  return 0
 }
 
 # Re-apply the theme accent to a running tmux session's chrome so a mid-session
