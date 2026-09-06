@@ -650,27 +650,21 @@ func claudeDescendantsDeepFirst(processes []SupervisorProcess, rootPID int) []in
 		parents[process.PID] = process.PPID
 		orders[process.PID] = i
 	}
+	// Memoised, for the same reason the registry poll memoises: walking each
+	// PID's own ancestry re-walks the same chain once per process hanging off
+	// it, and this runs every tick for the life of the session.
+	ancestry := newAncestryResolver(rootPID, len(parents), func(pid int) (int, bool) {
+		parent, ok := parents[pid]
+		return parent, ok
+	})
+
 	var found []ranked
 	for pid := range parents {
-		if pid == rootPID {
+		depth, descendant := ancestry.depth(pid)
+		if !descendant {
 			continue
 		}
-		depth := 0
-		current := pid
-		seen := map[int]bool{}
-		for current != rootPID && current > 0 && !seen[current] {
-			seen[current] = true
-			parent, ok := parents[current]
-			if !ok {
-				current = -1
-				break
-			}
-			depth++
-			current = parent
-		}
-		if current == rootPID {
-			found = append(found, ranked{pid: pid, depth: depth, order: orders[pid]})
-		}
+		found = append(found, ranked{pid: pid, depth: depth, order: orders[pid]})
 	}
 	sort.SliceStable(found, func(i, j int) bool {
 		if found[i].depth != found[j].depth {

@@ -3,8 +3,12 @@ package attention
 import (
 	"context"
 	"errors"
+	"fmt"
 	"runtime"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 )
 
 // syntheticProcessTable returns a launch tree of treeSize processes rooted at
@@ -151,5 +155,98 @@ func TestSystemProcessTable_neverReportsAPIDTwice(t *testing.T) {
 			}
 			seen[row.PID] = struct{}{}
 		}
+	}
+}
+
+// deepLaunchTree returns a launch tree that is one chain of `chain` processes
+// below rootPID, padded with unrelated processes to `total` rows. It is the
+// shape a busy agent actually makes: a session that runs a test sweep or a dev
+// server puts hundreds of processes under its own root.
+func deepLaunchTree(rootPID, chain, total int) []SupervisorProcess {
+	rows := make([]SupervisorProcess, 0, total)
+	rows = append(rows, SupervisorProcess{PID: rootPID, PPID: 1, StartSec: 1})
+	for i := 1; i < chain; i++ {
+		rows = append(rows, SupervisorProcess{
+			PID: rootPID + i, PPID: rootPID + i - 1, StartSec: int64(i + 1),
+		})
+	}
+	for pid := rootPID + chain; len(rows) < total; pid++ {
+		rows = append(rows, SupervisorProcess{PID: pid, PPID: 1, StartSec: 7})
+	}
+	return rows
+}
+
+func deepTreeAllocations(t *testing.T, chain int) float64 {
+	t.Helper()
+	const (
+		rootPID  = 900000
+		rootSec  = int64(1_704_067_200)
+		rootJSON = `{"pid":900000,"kind":"interactive","procStart":"%s","status":"busy","updatedAt":1}`
+	)
+	// The supervised agent is the root and it IS running, which is the shape a
+	// live session has: a shallow record under a tree that may be enormous.
+	record := []byte(fmt.Sprintf(rootJSON, time.Unix(rootSec, 0).UTC().Format(lstartLayout)))
+	rows := deepLaunchTree(rootPID, chain, 3500)
+	rows[0].StartSec = rootSec
+
+	mapper := ClaudeRegistryMapper{
+		ConfigDir:     t.TempDir(),
+		LaunchRootPID: rootPID,
+		ReadFile: func(path string) ([]byte, error) {
+			if strings.HasSuffix(path, strconv.Itoa(rootPID)+".json") {
+				return record, nil
+			}
+			return nil, errors.New("no record")
+		},
+		Processes: rows,
+	}
+	ctx := context.Background()
+	status, found, err := mapper.Poll(ctx)
+	if err != nil {
+		t.Fatalf("poll a %d-deep tree: %v", chain, err)
+	}
+	if !found || status.Status != "busy" {
+		t.Fatalf("poll a %d-deep tree: found=%v status=%q, want the root record", chain, found, status.Status)
+	}
+	return testing.AllocsPerRun(5, func() {
+		if _, _, err := mapper.Poll(ctx); err != nil {
+			t.Fatalf("poll a %d-deep tree: %v", chain, err)
+		}
+	})
+}
+
+// A poll answers one question: what is the shallowest supervised session doing?
+// Two things made it cost the SIZE of the tree instead of the shape of the
+// answer. It resolved each process's depth by walking that process's own
+// ancestry, re-walking the same chain once per process hanging off it and
+// building a cycle-detection set for every walk; and it then opened a registry
+// file for every descendant, never stopping once the shallowest record was in
+// hand. Measured on a 3500-row table, a 200-process tree cost 4.2ms a poll and
+// a 1000-process one 61ms — half a core for a SINGLE session at 4Hz. Live
+// sessions reach 1265 descendants: an agent running a test sweep or a dev
+// server puts hundreds of processes under its own root.
+//
+// Depths are memoised in one pass, and the candidate scan stops once no
+// remaining candidate can be shallower. Neither may cost per descendant again.
+func TestClaudeRegistryPoll_resolvesADeepTreeWithoutWalkingItRepeatedly(t *testing.T) {
+	const (
+		shallow = 200
+		deep    = 1000
+	)
+
+	shallowAllocs := deepTreeAllocations(t, shallow)
+	deepAllocs := deepTreeAllocations(t, deep)
+
+	perDescendant := (deepAllocs - shallowAllocs) / float64(deep-shallow)
+	const budgetPerDescendant = 1.0
+
+	if perDescendant > budgetPerDescendant {
+		t.Errorf(
+			"poll allocates %.2f times per extra descendant, budget %.2f\n"+
+				"  %d deep: %.0f allocations\n"+
+				"  %d deep: %.0f allocations\n"+
+				"this poll runs 4 times a second for the life of the session",
+			perDescendant, budgetPerDescendant, shallow, shallowAllocs, deep, deepAllocs,
+		)
 	}
 }
