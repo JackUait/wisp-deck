@@ -25,7 +25,7 @@ func systemProcessTable() ([]SupervisorProcess, error) {
 	}
 	processes := make([]SupervisorProcess, 0, len(parsed))
 	for pid, row := range parsed {
-		processes = append(processes, SupervisorProcess{PID: pid, PPID: row.parent, Start: row.start})
+		processes = append(processes, SupervisorProcess{PID: pid, PPID: row.parent, StartSec: row.startSec})
 	}
 	return processes, nil
 }

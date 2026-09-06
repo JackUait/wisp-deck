@@ -15,8 +15,9 @@ import (
 // session. Forking `ps` to answer that costs 80 CPU-ms a call and made 17
 // sessions keep ~17 `ps` processes resident at all times, so the table is read
 // from the kernel instead. This pins the replacement to the command it
-// replaced: same PIDs, same parents, and a start string byte-identical to the
-// one Claude Code writes into its own registry records.
+// replaced: same PIDs, same parents, and the same start instant that Claude
+// Code records as procStart — `ps -o lstart=` parsed to whole seconds, which is
+// all the lstart format ever carried.
 func TestSystemProcessTable_matches_the_ps_command_it_replaced(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("the kernel process table is read through a darwin sysctl")
@@ -70,11 +71,11 @@ func TestSystemProcessTable_matches_the_ps_command_it_replaced(t *testing.T) {
 			continue
 		}
 		compared++
-		if psRow.parent != row.PPID || psRow.start != row.Start {
+		if psRow.parent != row.PPID || psRow.startSec != row.StartSec {
 			mismatched++
 			if mismatched <= 5 {
-				t.Errorf("pid %d: ps reported parent %d start %q, kernel reported parent %d start %q",
-					pid, psRow.parent, psRow.start, row.PPID, row.Start)
+				t.Errorf("pid %d: ps reported parent %d start %d, kernel reported parent %d start %d",
+					pid, psRow.parent, psRow.startSec, row.PPID, row.StartSec)
 			}
 		}
 	}

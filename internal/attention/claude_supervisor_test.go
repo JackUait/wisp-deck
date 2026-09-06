@@ -323,7 +323,7 @@ func TestClaudeSupervisor_waitReapedRootBetweenArbitrationAndForwardingIsNeverSi
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
-			return []SupervisorProcess{{PID: rootPID, PPID: 999, Start: "recycled-root"}}, nil
+			return []SupervisorProcess{{PID: rootPID, PPID: 999, StartSec: startSecFor("recycled-root")}}, nil
 		},
 		SignalProcess: func(pid int, sig syscall.Signal) error {
 			numericSignals = append(numericSignals, fmt.Sprintf("%d:%s", pid, sig))
@@ -405,11 +405,11 @@ func TestClaudeSupervisor_waitFirstExternalSignalCleansRetainedVerifiedDescendan
 		Snapshot: func(context.Context) ([]SupervisorProcess, error) {
 			select {
 			case <-waitDelivered:
-				return []SupervisorProcess{{PID: childPID, PPID: 1, Start: "known-child"}}, nil
+				return []SupervisorProcess{{PID: childPID, PPID: 1, StartSec: startSecFor("known-child")}}, nil
 			default:
 				return []SupervisorProcess{
-					{PID: rootPID, PPID: 1, Start: "owned-root"},
-					{PID: childPID, PPID: rootPID, Start: "known-child"},
+					{PID: rootPID, PPID: 1, StartSec: startSecFor("owned-root")},
+					{PID: childPID, PPID: rootPID, StartSec: startSecFor("known-child")},
 				}, nil
 			}
 		},
@@ -650,10 +650,10 @@ func TestClaudeSupervisor_forwards_signal_deepest_first(t *testing.T) {
 		},
 		Snapshot: func(context.Context) ([]SupervisorProcess, error) {
 			return []SupervisorProcess{
-				{PID: childPID, PPID: 1, Start: "root"},
-				{PID: childPID + 1, PPID: childPID, Start: "child-1"},
-				{PID: childPID + 2, PPID: childPID + 1, Start: "child-2"},
-				{PID: childPID + 3, PPID: 999, Start: "unrelated"},
+				{PID: childPID, PPID: 1, StartSec: startSecFor("root")},
+				{PID: childPID + 1, PPID: childPID, StartSec: startSecFor("child-1")},
+				{PID: childPID + 2, PPID: childPID + 1, StartSec: startSecFor("child-2")},
+				{PID: childPID + 3, PPID: 999, StartSec: startSecFor("unrelated")},
 			}, nil
 		},
 		SignalProcess: func(pid int, sig syscall.Signal) error {
@@ -702,8 +702,8 @@ func TestClaudeSupervisor_kills_deepest_first_after_grace(t *testing.T) {
 		},
 		Snapshot: func(context.Context) ([]SupervisorProcess, error) {
 			return []SupervisorProcess{
-				{PID: childPID, PPID: 1, Start: "root"},
-				{PID: childPID + 1, PPID: childPID, Start: "child"},
+				{PID: childPID, PPID: 1, StartSec: startSecFor("root")},
+				{PID: childPID + 1, PPID: childPID, StartSec: startSecFor("child")},
 			}, nil
 		},
 		SignalProcess: func(pid int, sig syscall.Signal) error {
@@ -790,11 +790,11 @@ func TestClaudeSupervisor_kills_captured_descendants_after_root_exits(t *testing
 			}
 			liveSnapshots++
 			if liveSnapshots > 2 {
-				return []SupervisorProcess{{PID: rootPID + 1, PPID: 1, Start: "child"}}, nil
+				return []SupervisorProcess{{PID: rootPID + 1, PPID: 1, StartSec: startSecFor("child")}}, nil
 			}
 			return []SupervisorProcess{
-				{PID: rootPID, PPID: 1, Start: "root"},
-				{PID: rootPID + 1, PPID: rootPID, Start: "child"},
+				{PID: rootPID, PPID: 1, StartSec: startSecFor("root")},
+				{PID: rootPID + 1, PPID: rootPID, StartSec: startSecFor("child")},
 			}, nil
 		},
 		SignalProcess: func(pid int, sig syscall.Signal) error {
@@ -846,8 +846,8 @@ func TestClaudeSupervisor_revalidates_process_identity_before_kill(t *testing.T)
 				childParent = 999
 			}
 			return []SupervisorProcess{
-				{PID: rootPID, PPID: 1, Start: "root-original"},
-				{PID: rootPID + 1, PPID: childParent, Start: childStart},
+				{PID: rootPID, PPID: 1, StartSec: startSecFor("root-original")},
+				{PID: rootPID + 1, PPID: childParent, StartSec: startSecFor(childStart)},
 			}, nil
 		},
 		SignalProcess: func(pid int, sig syscall.Signal) error {
@@ -895,13 +895,13 @@ func TestClaudeSupervisor_does_not_follow_reused_root_tree(t *testing.T) {
 			snapshots++
 			if snapshots > 2 {
 				return []SupervisorProcess{
-					{PID: rootPID, PPID: 999, Start: "reused-root"},
-					{PID: rootPID + 1, PPID: rootPID, Start: "unrelated-child"},
+					{PID: rootPID, PPID: 999, StartSec: startSecFor("reused-root")},
+					{PID: rootPID + 1, PPID: rootPID, StartSec: startSecFor("unrelated-child")},
 				}, nil
 			}
 			return []SupervisorProcess{
-				{PID: rootPID, PPID: 1, Start: "owned-root"},
-				{PID: rootPID + 1, PPID: rootPID, Start: "owned-child"},
+				{PID: rootPID, PPID: 1, StartSec: startSecFor("owned-root")},
+				{PID: rootPID + 1, PPID: rootPID, StartSec: startSecFor("owned-child")},
 			}, nil
 		},
 		SignalProcess: func(pid int, sig syscall.Signal) error {
@@ -946,10 +946,10 @@ func TestClaudeSupervisor_kills_descendants_spawned_during_grace(t *testing.T) {
 				return nil, nil
 			}
 			snapshots++
-			processes := []SupervisorProcess{{PID: rootPID, PPID: 1, Start: "root"}}
+			processes := []SupervisorProcess{{PID: rootPID, PPID: 1, StartSec: startSecFor("root")}}
 			if snapshots > 1 {
 				processes = append(processes, SupervisorProcess{
-					PID: rootPID + 1, PPID: rootPID, Start: "late-child",
+					PID: rootPID + 1, PPID: rootPID, StartSec: startSecFor("late-child"),
 				})
 			}
 			return processes, nil
@@ -1062,4 +1062,24 @@ func TestClaudeSupervisor_rejects_empty_command(t *testing.T) {
 	if err == nil {
 		t.Fatal("empty command accepted")
 	}
+}
+
+// startSecFor maps an opaque identity token these tests use ("owned-root",
+// "recycled-root", ...) to a distinct start time. A start time is only ever
+// compared for equality, so the values are arbitrary — but they must stay
+// distinct, or a test that means to tell two identities apart passes vacuously.
+var (
+	startSecMu     sync.Mutex
+	startSecByName = map[string]int64{}
+)
+
+func startSecFor(token string) int64 {
+	startSecMu.Lock()
+	defer startSecMu.Unlock()
+	if sec, ok := startSecByName[token]; ok {
+		return sec
+	}
+	sec := int64(1_700_000_000 + len(startSecByName))
+	startSecByName[token] = sec
+	return sec
 }

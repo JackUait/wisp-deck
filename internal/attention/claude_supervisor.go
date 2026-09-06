@@ -32,9 +32,12 @@ type ClaudeExitResult struct {
 // deepest-first shutdown. Start is the locale-stable UTC lstart identity used
 // to reject a PID that was recycled during the grace period.
 type SupervisorProcess struct {
-	PID   int
-	PPID  int
-	Start string
+	PID  int
+	PPID int
+	// StartSec is the process start time in whole Unix seconds, the resolution
+	// `ps -o lstart=` prints and Claude Code records. It is an identity token,
+	// never displayed: zero means the start time is unknown.
+	StartSec int64
 }
 
 // claudeDescendantTracker retains only PID + start-time identities observed in
@@ -411,7 +414,7 @@ func (s *ClaudeSupervisor) refreshTrackedDescendants(
 	var root SupervisorProcess
 	rootFound := false
 	for _, process := range processes {
-		if process.PID == tracked.rootPID && process.Start != "" {
+		if process.PID == tracked.rootPID && process.StartSec != 0 {
 			root = process
 			rootFound = true
 			break
@@ -431,7 +434,7 @@ func (s *ClaudeSupervisor) refreshTrackedDescendants(
 	captured := make([]SupervisorProcess, 0, len(targets))
 	capturedPIDs := make(map[int]struct{}, len(targets))
 	for _, target := range targets {
-		if target.PID <= 0 || target.PID == root.PID || target.Start == "" {
+		if target.PID <= 0 || target.PID == root.PID || target.StartSec == 0 {
 			continue
 		}
 		if _, duplicate := capturedPIDs[target.PID]; duplicate {
@@ -447,7 +450,7 @@ func (s *ClaudeSupervisor) refreshTrackedDescendants(
 	merged = append(merged, captured...)
 	seenPIDs := capturedPIDs
 	for _, target := range tracked.ordered {
-		if target.PID <= 0 || target.PID == tracked.rootPID || target.Start == "" {
+		if target.PID <= 0 || target.PID == tracked.rootPID || target.StartSec == 0 {
 			continue
 		}
 		if _, duplicate := seenPIDs[target.PID]; duplicate {
@@ -480,14 +483,14 @@ func (s *ClaudeSupervisor) verifiedTrackedDescendants(
 	verified := make([]SupervisorProcess, 0, len(tracked.ordered))
 	seen := make(map[int]struct{}, len(tracked.ordered))
 	for _, target := range tracked.ordered {
-		if target.PID <= 0 || target.PID == tracked.rootPID || target.Start == "" {
+		if target.PID <= 0 || target.PID == tracked.rootPID || target.StartSec == 0 {
 			continue
 		}
 		if _, duplicate := seen[target.PID]; duplicate {
 			continue
 		}
 		observed, ok := current[target.PID]
-		if !ok || observed.Start != target.Start {
+		if !ok || observed.StartSec != target.StartSec {
 			continue
 		}
 		seen[target.PID] = struct{}{}

@@ -26,7 +26,7 @@ func TestClaudeSupervisorTick_reads_the_process_table_once_and_shares_it(t *test
 			mu.Lock()
 			snapshots++
 			mu.Unlock()
-			return []SupervisorProcess{{PID: 1, PPID: 0, Start: "Mon Jul 13 09:00:00 2026"}}, nil
+			return []SupervisorProcess{{PID: 1, PPID: 0, StartSec: 1_752_397_200}}, nil
 		},
 		Poll: func(_ context.Context, _ int, processes []SupervisorProcess) error {
 			mu.Lock()

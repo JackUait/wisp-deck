@@ -130,7 +130,7 @@ func (m ClaudeRegistryMapper) Poll(ctx context.Context) (ClaudeRegistryStatus, b
 	if m.Snapshot == nil && len(m.Processes) > 0 {
 		processes = make(map[int]snapshotProcess, len(m.Processes))
 		for _, row := range m.Processes {
-			processes[row.PID] = snapshotProcess{parent: row.PPID, start: row.Start}
+			processes[row.PID] = snapshotProcess{parent: row.PPID, startSec: row.StartSec}
 		}
 	} else if m.Snapshot != nil {
 		data, err := m.Snapshot(ctx)
@@ -149,7 +149,7 @@ func (m ClaudeRegistryMapper) Poll(ctx context.Context) (ClaudeRegistryStatus, b
 		}
 		processes = make(map[int]snapshotProcess, len(table))
 		for _, row := range table {
-			processes[row.PID] = snapshotProcess{parent: row.PPID, start: row.Start}
+			processes[row.PID] = snapshotProcess{parent: row.PPID, startSec: row.StartSec}
 		}
 	}
 	if _, ok := processes[m.LaunchRootPID]; !ok {
@@ -157,23 +157,23 @@ func (m ClaudeRegistryMapper) Poll(ctx context.Context) (ClaudeRegistryStatus, b
 	}
 
 	type candidate struct {
-		pid   int
-		depth int
-		start string
+		pid      int
+		depth    int
+		startSec int64
 	}
 	var candidates []candidate
 	for pid, process := range processes {
 		// bash -c may exec its final simple command in place. In that common
 		// fresh-launch case Claude is the stable supervised root, not a child.
 		if pid == m.LaunchRootPID {
-			candidates = append(candidates, candidate{pid: pid, depth: 0, start: process.start})
+			candidates = append(candidates, candidate{pid: pid, depth: 0, startSec: process.startSec})
 			continue
 		}
 		depth, descendant := processDepth(processes, pid, m.LaunchRootPID)
 		if !descendant {
 			continue
 		}
-		candidates = append(candidates, candidate{pid: pid, depth: depth, start: process.start})
+		candidates = append(candidates, candidate{pid: pid, depth: depth, startSec: process.startSec})
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].depth != candidates[j].depth {
@@ -195,7 +195,7 @@ func (m ClaudeRegistryMapper) Poll(ctx context.Context) (ClaudeRegistryStatus, b
 		}
 		record, parseErr := parseClaudeRegistryRecord(recordData)
 		if parseErr != nil || record.kind != "interactive" ||
-			record.PID != candidate.pid || record.procStart != candidate.start {
+			record.PID != candidate.pid || record.procStartSec != candidate.startSec {
 			continue
 		}
 
@@ -279,7 +279,7 @@ func resolveParkedJob(
 		}
 		record, parseErr := parseClaudeRegistryRecord(recordData)
 		if parseErr != nil || record.kind != "bg" || record.jobID != jobID ||
-			record.PID != pid || record.procStart != process.start {
+			record.PID != pid || record.procStartSec != process.startSec {
 			continue
 		}
 		if found {
@@ -331,9 +331,14 @@ func readClaudeRegistryFile(path string) ([]byte, error) {
 	return data, nil
 }
 
+// lstartLayout is the format `ps -o lstart=` prints under LC_ALL=C and TZ=UTC,
+// and the shape Claude Code writes procStart in. `_2` is the space-padded day.
+// It is parsed, never rendered: a start time travels as seconds.
+const lstartLayout = "Mon Jan _2 15:04:05 2006"
+
 type snapshotProcess struct {
-	parent int
-	start  string
+	parent   int
+	startSec int64
 }
 
 func parseProcessSnapshot(data []byte) (map[int]snapshotProcess, error) {
@@ -356,14 +361,14 @@ func parseProcessSnapshot(data []byte) (map[int]snapshotProcess, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid parent PID on ps row %d: %w", lineNumber+1, err)
 		}
-		start := strings.TrimSpace(match[3])
-		if _, err := time.Parse("Mon Jan _2 15:04:05 2006", start); err != nil {
+		started, err := time.Parse(lstartLayout, strings.TrimSpace(match[3]))
+		if err != nil {
 			return nil, fmt.Errorf("invalid start time on ps row %d: %w", lineNumber+1, err)
 		}
 		if _, duplicate := processes[pid]; duplicate {
 			return nil, fmt.Errorf("duplicate PID %d in ps snapshot", pid)
 		}
-		processes[pid] = snapshotProcess{parent: parent, start: start}
+		processes[pid] = snapshotProcess{parent: parent, startSec: started.Unix()}
 	}
 	return processes, nil
 }
@@ -392,7 +397,7 @@ func processDepth(processes map[int]snapshotProcess, pid, root int) (int, bool) 
 
 type claudeRegistryRecord struct {
 	ClaudeRegistryStatus
-	procStart string
+	procStartSec int64
 	// kind is validated but not filtered here: the caller decides which kind it
 	// is asking about — "interactive" for the supervised session, "bg" for the
 	// job a parked session handed its turn to.
@@ -466,7 +471,8 @@ func parseClaudeRegistryRecord(data []byte) (claudeRegistryRecord, error) {
 	if err != nil {
 		return claudeRegistryRecord{}, fmt.Errorf("invalid Claude registry procStart: %w", err)
 	}
-	if _, err := time.Parse("Mon Jan _2 15:04:05 2006", procStart); err != nil {
+	started, err := time.Parse(lstartLayout, procStart)
+	if err != nil {
 		return claudeRegistryRecord{}, fmt.Errorf("invalid Claude registry procStart: %w", err)
 	}
 	status, err := parseJSONString(fields["status"])
@@ -517,10 +523,10 @@ func parseClaudeRegistryRecord(data []byte) (claudeRegistryRecord, error) {
 			StatusIdentity: identity,
 			WaitingFor:     waitingFor,
 		},
-		procStart:   procStart,
-		kind:        kind,
-		jobID:       jobID,
-		parkedJobID: parkedJobID,
+		procStartSec: started.Unix(),
+		kind:         kind,
+		jobID:        jobID,
+		parkedJobID:  parkedJobID,
 	}, nil
 }
 
