@@ -97,16 +97,65 @@ keep_awake_set() {
 # Usage: keep_awake_reap <config_dir>
 keep_awake_reap() {
   local holders
-  holders="$(keep_awake_holders_dir "$1")"
+  holders="$1/keep-awake.d"
   [ -d "$holders" ] || return 0
-  local f pid
+  local f pid entries="" batch="" saved_ifs="$IFS"
   for f in "$holders"/*; do
     [ -e "$f" ] || continue
-    { pid="$(tr -d '[:space:]' < "$f")"; } 2>/dev/null || pid=""
-    if [ -z "$pid" ] || ! ps -p "$pid" >/dev/null 2>&1; then
+    pid=""
+    { read -r pid < "$f"; } 2>/dev/null || pid=""
+    pid="${pid//[[:space:]]/}"
+    # A PID that is empty, non-numeric, or wider than the kernel's own range
+    # can never be probed, and `ps -p` refuses the WHOLE batch on one of them
+    # ("process id too large") -- which would report every other holder as dead
+    # and release the veto out from under every live session. Drop it here.
+    case "$pid" in
+      '' | *[!0-9]*)
+        rm -f "$f" 2>/dev/null || true
+        continue
+        ;;
+    esac
+    if [ "${#pid}" -gt 5 ]; then
       rm -f "$f" 2>/dev/null || true
+      continue
     fi
+    entries="$entries$pid $f
+"
+    batch="$batch,$pid"
   done
+  [ -n "$batch" ] || return 0
+
+  # ONE liveness probe for the whole directory. Every live session reaps every
+  # other session's holder twice a second, so a probe per holder made the
+  # machine-wide cost quadratic in sessions -- 24 of a watcher tick's 52 forks
+  # on a 17-session deck.
+  #
+  # Every PID above is 1-5 digits, so ps cannot fail on the argument itself: a
+  # non-zero status here means none of them are alive, not that the probe broke.
+  local live
+  live="$(ps -o pid= -p "${batch#,}" 2>/dev/null)"
+
+  local live_set=" " token
+  # Split on newline/space/tab in the current shell. A pipe would run the loop
+  # in a subshell, and a here-string is a 512-byte pipe under bash 5.3.
+  IFS="
+ 	"
+  set -f
+  for token in $live; do
+    [ -n "$token" ] && live_set="$live_set$token "
+  done
+  IFS="
+"
+  for token in $entries; do
+    pid="${token%% *}"
+    f="${token#* }"
+    case "$live_set" in
+      *" $pid "*) ;;
+      *) rm -f "$f" 2>/dev/null || true ;;
+    esac
+  done
+  set +f
+  IFS="$saved_ifs"
 }
 
 # Reconcile the kernel flag with the live holder set. Called on every watcher
