@@ -28,6 +28,9 @@ func setupContextWrapperTest(t *testing.T, tuiBody string) (env []string, npxInp
 
 	npxInput = filepath.Join(fakeHome, "npx-input.json")
 	mockCommand(t, dir, "npx", fmt.Sprintf(`cat > %q; echo "12.3%%"`, npxInput))
+	// The wrapper prefers the ccstatusline binary over npx, so the capture
+	// has to sit on the binary too or the rewritten JSON is never recorded.
+	mockCommand(t, dir, "ccstatusline", fmt.Sprintf(`cat > %q; echo "12.3%%"`, npxInput))
 	mockCommand(t, dir, "ps", `
 if [[ "$*" == *"comm="* ]]; then echo "sh"; else echo "1"; fi
 `)
@@ -133,6 +136,9 @@ func TestSubContext_wrapper_survives_missing_tui_binary(t *testing.T) {
 	writeTempFile(t, fakeHome, ".claude/statusline-command.sh", `echo "GITINFO"`)
 	npxInput := filepath.Join(fakeHome, "npx-input.json")
 	mockCommand(t, dir, "npx", fmt.Sprintf(`cat > %q; echo "12.3%%"`, npxInput))
+	// The wrapper prefers the ccstatusline binary over npx, so the capture
+	// has to sit on the binary too or the rewritten JSON is never recorded.
+	mockCommand(t, dir, "ccstatusline", fmt.Sprintf(`cat > %q; echo "12.3%%"`, npxInput))
 	mockCommand(t, dir, "ps", `
 if [[ "$*" == *"comm="* ]]; then echo "sh"; else echo "1"; fi
 `)

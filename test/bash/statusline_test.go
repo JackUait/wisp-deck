@@ -397,6 +397,9 @@ func setupWrapperTest(t *testing.T) []string {
 
 	// npx ccstatusline -> context percentage
 	mockCommand(t, dir, "npx", `echo "12.3%"`)
+	// The wrapper runs the ccstatusline binary directly when PATH has one;
+	// npx is only its fallback, so both have to answer for a hermetic run.
+	mockCommand(t, dir, "ccstatusline", `echo "12.3%"`)
 	// ps: comm= -> non-claude name, ppid= -> 1 (terminates parent walk)
 	mockCommand(t, dir, "ps", `
 if [[ "$*" == *"comm="* ]]; then echo "sh"; else echo "1"; fi
@@ -430,6 +433,9 @@ func setupWrapperMemTest(t *testing.T, claudeComm, memMB string) []string {
 
 	// npx ccstatusline -> context percentage
 	mockCommand(t, dir, "npx", `echo "12.3%"`)
+	// The wrapper runs the ccstatusline binary directly when PATH has one;
+	// npx is only its fallback, so both have to answer for a hermetic run.
+	mockCommand(t, dir, "ccstatusline", `echo "12.3%"`)
 	// pgrep -P <pid> -> no children (deterministic single-process tree)
 	mockCommand(t, dir, "pgrep", `exit 1`)
 	// footprint -> phys_footprint = memMB MB, plus a peak line that must be ignored
@@ -612,6 +618,9 @@ func wrapperHomeWithCmd(t *testing.T) (string, string) {
 	fakeHome := filepath.Join(dir, "home")
 	writeTempFile(t, fakeHome, ".claude/statusline-command.sh", `echo "GITINFO"`)
 	mockCommand(t, dir, "npx", `echo "12.3%"`)
+	// The wrapper runs the ccstatusline binary directly when PATH has one;
+	// npx is only its fallback, so both have to answer for a hermetic run.
+	mockCommand(t, dir, "ccstatusline", `echo "12.3%"`)
 	mockCommand(t, dir, "pgrep", `exit 1`)
 	return dir, fakeHome
 }
@@ -2568,6 +2577,9 @@ func setupWrapperSpawnedTest(t *testing.T) []string {
 	fakeHome := filepath.Join(dir, "home")
 	writeTempFile(t, fakeHome, ".claude/statusline-command.sh", `echo "GITINFO"`)
 	mockCommand(t, dir, "npx", `echo "12.3%"`)
+	// The wrapper runs the ccstatusline binary directly when PATH has one;
+	// npx is only its fallback, so both have to answer for a hermetic run.
+	mockCommand(t, dir, "ccstatusline", `echo "12.3%"`)
 	// The claude root pid is dynamic ($PPID of the wrapper), so the default case
 	// answers it; the children are terminal.
 	mockCommand(t, dir, "pgrep", `

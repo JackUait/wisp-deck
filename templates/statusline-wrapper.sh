@@ -29,7 +29,10 @@ if [ -n "${WISP_DECK_CLAUDE_CONFIG:-}" ] && [ -n "$_gt_tui_bin" ]; then
   _gt_ctx_rewritten=$(printf '%s' "$input" | "$_gt_tui_bin" statusline-context 2>/dev/null)
   [ -n "$_gt_ctx_rewritten" ] && _gt_ctx_input="$_gt_ctx_rewritten"
 fi
-context_pct=$(echo "$_gt_ctx_input" | npx ccstatusline 2>/dev/null)
+# Resolved through the helper so the statusline runs the ccstatusline binary
+# directly; npx boots the npm graph on every repaint (5724ms vs 2521ms).
+_gt_ccstatusline="$(gt_ccstatusline_cmd 2>/dev/null || echo "npx ccstatusline")"
+context_pct=$(echo "$_gt_ctx_input" | $_gt_ccstatusline 2>/dev/null)
 model_name=$(echo "$input" | sed -n 's/.*"display_name":"\([^"]*\)".*/\1/p')
 # Reasoning effort (low/medium/high/xhigh/max). Conditionally present in the
 # statusline JSON — only when the current model supports the effort parameter —
