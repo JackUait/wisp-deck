@@ -70,6 +70,7 @@ func BuildClaudeEnvironment(base []string, bridgeURL, bridgeKey string) []string
 		"ANTHROPIC_API_KEY":    "",
 		"ANTHROPIC_AUTH_TOKEN": bridgeKey,
 		"CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT": "1",
+		"CLAUDE_ENABLE_STREAM_WATCHDOG":                        "0",
 	}
 	var noProxy string
 	result := make([]string, 0, len(base)+4)
@@ -94,6 +95,12 @@ func BuildClaudeEnvironment(base []string, bridgeURL, bridgeKey string) []string
 		"ANTHROPIC_BASE_URL="+bridgeURL,
 		"ANTHROPIC_AUTH_TOKEN="+bridgeKey,
 		"CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1",
+		// The bridge answers a reasoning turn with keepalive pings alone, and
+		// Claude Code re-arms its event-tier idle watchdog for only 30 of them
+		// before aborting the stream and replaying the whole turn. The byte
+		// tier stays armed: the ping is an honest liveness signal, so a bridge
+		// that dies is still caught there.
+		"CLAUDE_ENABLE_STREAM_WATCHDOG=0",
 		"NO_PROXY="+noProxy,
 	)
 	return result

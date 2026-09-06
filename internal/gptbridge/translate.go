@@ -95,19 +95,36 @@ func TranslateRequest(request MessagesRequest) (Translation, error) {
 	return translation, nil
 }
 
+// claudeSummarizationTemplates are Claude Code's own summarization prompts. It
+// wraps them in boilerplate that changes between releases — 2.1.263 prepends a
+// "CRITICAL: Respond with TEXT ONLY" preamble and appends a reminder — so each
+// is matched wherever it sits in the message. Anchoring to either end is what
+// broke: the downgrade silently stopped firing on that release, and compaction
+// ran at the session's full effort instead.
+var claudeSummarizationTemplates = []string{
+	"Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.",
+	"Your task is to create a detailed summary of the RECENT portion of the conversation — the messages that follow earlier retained context.",
+	"Your task is to create a detailed summary of this conversation. This summary will be placed at the start of a continuing session; newer messages that build on this context will follow after your summary (you do not see them here).",
+}
+
 // Claude Code reuses the session's thinking budget for this generated prompt.
-// Keep the summarizer fast so a full conversation can recover.
+// Keep the summarizer fast so a full conversation can recover: a long silent
+// generation is torn down and replayed by Codex's own upstream idle timeout,
+// which is not configurable for the built-in provider, so the effort is the
+// only lever the bridge has over it.
+//
+// The analysis-tag instruction is required alongside a template so an ordinary
+// user message asking for a summary is not mistaken for compaction.
 func isClaudeCompactionInput(input []UserInput) bool {
 	for _, item := range input {
 		if item.Type != "text" ||
 			!strings.Contains(item.Text, "Before providing your final summary, wrap your analysis in <analysis> tags") {
 			continue
 		}
-		switch {
-		case strings.HasPrefix(item.Text, "Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions."),
-			strings.HasPrefix(item.Text, "Your task is to create a detailed summary of the RECENT portion of the conversation — the messages that follow earlier retained context."),
-			strings.HasPrefix(item.Text, "Your task is to create a detailed summary of this conversation. This summary will be placed at the start of a continuing session; newer messages that build on this context will follow after your summary (you do not see them here)."):
-			return true
+		for _, template := range claudeSummarizationTemplates {
+			if strings.Contains(item.Text, template) {
+				return true
+			}
 		}
 	}
 	return false

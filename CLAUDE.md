@@ -937,6 +937,117 @@ Guarded by `internal/claudeconfig/bytewatchdog_test.go`,
 `TestSubscriptionModal_savingACustomProfileDisarmsTheByteWatchdog`, and
 `test/bash/byte_watchdog_sweep_test.go`.
 
+### A keepalive buys 30 pings, so every pane disarms the EVENT watchdog too
+
+The byte watchdog above is one of **two** stall watchdogs, and answering it with
+a ping does not answer the other. Decoded from 2.1.263 and then measured live:
+
+```js
+var Fis=1e4, Bis=30;                       // 10s probe, 30-ping cap
+async function*Uis(e,t,r=Fis){ …           // t = the byte tracker
+  if(I===E){ if(t.lastAt>d){ d=…; yield {type:"ping"} } continue } … }
+…
+if(VV(Ma)){ if(Vy++, Vy<=Bis) nW(); else if(!XI||nS) continue; … }
+Vy=0, nW();                                // a REAL event resets the counter
+```
+
+`nW()` arms `zj=setTimeout(… "Streaming idle timeout: no chunks received", VR)`
+with `VR = Math.max(CLAUDE_STREAM_IDLE_TIMEOUT_MS||0, 300000)`. So the client
+**synthesizes** a `{type:"ping"}` event every 10s while raw bytes keep arriving,
+re-arms the idle timer for at most **30 consecutive** synthetic pings, and then
+lets it run out — aborting the stream and replaying the whole turn. A turn that
+emits no **real** Anthropic stream event for `30 x 10s + 300s` is killed.
+
+Measured against a live 2.1.263 client with a mock endpoint that sends only
+`event: ping`: **400s of pings completed in one attempt; 700s of pings was
+aborted and re-POSTed at 610s**; the same 700s stream with
+`CLAUDE_ENABLE_STREAM_WATCHDOG=0` completed in **one** attempt.
+
+The premise — a healthy stream emits a real event within 10 minutes — holds for
+Anthropic's API and for nothing wisp-deck points Claude Code at. The GPT bridge
+forwards **only** keepalives while Codex reasons (`display:"omitted"` maps to
+`Effort==""`, so `stream.go` drops every reasoning delta), a gateway routes to
+models that think for minutes, and a self-hosted endpoint sends nothing at all
+until its first token. Worse, the replay repeats the same work, so a turn slow
+enough to exceed the ceiling *every* time can never complete — which is what
+"compaction never finishes" looks like.
+
+- **Every provider, not just the user-configured ones**, unlike
+  `stampByteWatchdog`. A gateway forwards Anthropic's own `event: ping`, which
+  the SDK drops *before* the stream loop — so a gateway keepalive feeds the byte
+  tier and the 30-ping cap exactly like a self-hosted silence does.
+- **The byte tier stays armed wherever it is today.** It measures raw bytes,
+  which is what a keepalive honestly reports, so it still catches an endpoint
+  that has actually gone away. Disarming both would leave a wedged bridge with
+  no abort at all.
+- **Two delivery points, because there are two launch shapes.**
+  `BuildClaudeEnvironment` stamps the bridge's child env; every subscription
+  profile declares the key in `env`, which the launch overlay copies verbatim.
+- **A declared value is the user's own and is kept**, exactly like the byte
+  watchdog's key, and the `ensure-watchdog` sweep repairs profiles written
+  before it existed.
+- **Raising `CLAUDE_STREAM_IDLE_TIMEOUT_MS` is not the fix.** It also raises the
+  byte timeout (`dno`'s `o=t` when the key is set), it is clamped at 1800000,
+  and it only moves the ceiling — 30 pings plus 30 minutes is still a ceiling.
+
+Guarded by `internal/claudeconfig/streamwatchdog_test.go`,
+`internal/gptbridge/adapter_streamwatchdog_test.go` (including
+`_LeavesTheByteWatchdogAlone`), and
+`test/bash/stream_watchdog_launch_test.go` (the overlay end of the chain, which
+goes red if the overlay is ever narrowed).
+
+### Compaction runs at low effort, and the match must not be anchored
+
+Claude Code reuses the session's thinking budget for the summarization prompt it
+generates, so a bridged compaction runs at whatever effort the pane is on.
+`isClaudeCompactionInput` downgrades it to `low`, and that downgrade is the only
+lever wisp-deck has over how long the model generates in silence — which
+matters because **Codex tears down its own upstream connection when a
+generation is silent too long, and replays the request from scratch**:
+
+```
+13:06:57  message item msg_…eca3ab8da1c7623 starts
+   [ 7m55s silent ]
+13:14:52  WARN stream disconnected - retrying (1/5 in 210ms)
+          sampling_error=… idle timeout waiting for websocket
+13:15:23  NEW message item msg_…9698bfc377a8f277     <- replayed from scratch
+13:20:37  done
+```
+
+That is one real compaction (`~/.codex/logs_2.sqlite`, thread
+`01a076d3-88d7-…`): the finished first summary was discarded and the session
+was blocked **14.5 minutes**. `stream_max_retries` is 5, so a model slow enough
+to trip it every time fails the turn outright.
+
+**That timeout is not configurable.** `stream_idle_timeout_ms` exists on
+`ModelProviderInfo`, but `codex app-server --strict-config -c
+model_providers.openai.stream_idle_timeout_ms=…` answers *"model_providers
+contains reserved built-in provider IDs: `openai`. Built-in providers cannot be
+overridden"*, and there is no root-level key (`unknown configuration field`) and
+no env var. Effort is the whole lever.
+
+- **Never anchor the match to either end of the message.** It was
+  `strings.HasPrefix` against the three template sentences; 2.1.263 began
+  building every prompt as `CRITICAL: Respond with TEXT ONLY…` + template +
+  `REMINDER: Do NOT call any tools…` (`oPn` and `B0e` in the bundle), so the
+  downgrade silently stopped firing and the compaction above ran at
+  `codex.turn.reasoning_effort=ultra`. The failure is invisible: nothing errors,
+  the session just gets slower once per compaction.
+- **The analysis-tag instruction is still required alongside a template**, so an
+  ordinary user message asking for a summary is not mistaken for compaction.
+- **The effort reaches Codex only through `turn/start`.** `Execute` routes a
+  request carrying tool results to `resume`, which never sends `effort` — a
+  compaction request is a plain user turn, which
+  `TestTranslateClaudeCompactionCarriesNoToolResults` pins.
+- **The templates are vendor-controlled, so a test reads the installed client.**
+  `TestClaudeCompactionTemplatesStillMatchTheInstalledClient` scans every binary
+  under `~/.local/share/claude/versions` for the analysis-tag anchor and fails
+  if the surrounding prompt matches no template — so the next rewording goes red
+  instead of costing minutes per compaction. It skips where no client is
+  installed, which is every CI runner.
+
+Guarded by `internal/gptbridge/compaction_prompt_test.go`.
+
 ### Featherless speaks Anthropic natively, and keeps its own socket warm
 
 Featherless is documented as an OpenAI-compatible provider, which by the rule

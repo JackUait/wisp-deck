@@ -93,15 +93,24 @@ var claudeConfigEnsureBudgetCmd = &cobra.Command{
 // A user-configured endpoint makes no promise to keep its stream warm, and a
 // profile already on disk is never re-copied from defaults, so the watchdog it
 // was written with can only be disarmed here.
+//
+// Both tiers are swept together because both are launch-time env keys with the
+// same repair story. They differ in scope: the byte tier is wrong only for a
+// self-hosted endpoint, while the event tier is wrong for every endpoint
+// wisp-deck configures.
 var claudeConfigEnsureWatchdogCmd = &cobra.Command{
 	Use:   "ensure-watchdog",
-	Short: "Disarm the byte stall watchdog on self-hosted configs and print how many changed",
+	Short: "Disarm the stall watchdogs on subscription configs and print how many changed",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		changed, err := claudeconfig.EnsureByteWatchdogAll(ccDir)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), changed)
+		streamChanged, err := claudeconfig.EnsureStreamWatchdogAll(ccDir)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), changed+streamChanged)
 		return nil
 	},
 }
