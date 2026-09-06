@@ -1914,6 +1914,76 @@ a check that every shipped sub-1M default declares the reserve its window
 implies) and
 `TestApplyPendingSubscriptionModel_reserves_output_room_for_a_small_window`.
 
+### The deck's own overhead outweighed the agents it hosts, and a fork is only half of why
+
+The section above is about forks. Measuring a live 16-session deck end to end
+turned up the rest: **wisp-deck's own processes held 99% of one core
+continuously while the 16 Claude agents together held 40%**, and that figure
+counts only long-lived processes. The statusline (43% of a core) and tmux's
+own client processes (49%) are short-lived and invisible to a survivor-diff
+sampler, so the real total was closer to two full cores of pure overhead.
+
+Method notes, because getting them wrong sends the work down a blind alley:
+
+- **Measure CPU, never wall clock.** A deck under load sits at 400-500 on 11
+  cores, where `go test` ns/op swings 3x for identical work and a 5ms sysctl
+  reads as 170ms. Use `getrusage`, bash's `times` builtin, or `ps -o time=`
+  deltas.
+- **Allocation counts and spawn counts do not lie under load.** Prefer a guard
+  that asserts a COUNT over one that asserts a duration; every perf test in
+  this repo is shaped that way for this reason.
+- **A survivor-diff of the process table misses everything short-lived.** It
+  found the daemons and the ledgers and completely missed the statusline,
+  which was the second-largest consumer on the machine.
+- **The live deck runs older code than HEAD.** The bash lib is a copy synced by
+  the installer, resident bash caches functions from session start, and a
+  running Go binary is whatever was on disk when its pane launched. Diff the
+  installed tree and compare process start times against commit times before
+  treating any live reading as a statement about HEAD.
+
+What the fixes had in common is not forking — it is that **a steady-state tick
+did work proportional to something it does not own**:
+
+- The supervisor's process-table read rendered an lstart STRING per process on
+  the machine (~3700 allocations a call, a quarter of a million a second across
+  the deck) for a value only ever compared, and hashed every PID into a set to
+  drop a repeat the kernel does not produce.
+- The registry poll resolved each process's depth by walking that process's own
+  ancestry, re-walking one chain once per process hanging off it — quadratic in
+  the supervised tree. A 1000-process tree cost 61ms a poll, and at 4Hz that is
+  half a core for ONE session. It then opened a registry file for every
+  descendant without stopping, although candidates are sorted shallowest first.
+- The statusline asked the kernel about one PID at a time, three separate walks
+  per render, so a render forked ~7 processes per process in the agent's tree.
+- The snapshot heartbeat asked tmux for one session's layout at a time, inside
+  a loop over every session, in a tick every session runs.
+- keep_awake_tick built a path through a command substitution — a fork with no
+  exec, which no PATH-shim spawn guard can see.
+
+**The unit to think in is (per-item cost) x (items) x (tick rate) x (sessions).**
+At 2-4Hz across 16 sessions, one item of per-item work is 32-64 of them a
+second, and anything per-session is squared across the deck.
+
+Known and measured but NOT fixed here, in descending size:
+
+- **Every session's snapshot heartbeat writes a byte-identical file** from the
+  same input (tmux state alone), so 15 of 16 are pure waste — ~0.83 of a core.
+  Electing one writer is the fix.
+- **The installed statusline is not HEAD.** `lib/statusline-setup.sh` only runs
+  from `bin/wisp-deck`, so a `git pull` never updates `~/.claude/`; the machine
+  measured was still booting `npx` per render (1.048s of CPU against 0.730s for
+  the resolved binary).
+- **Several sessions on one repository each poll Git independently** — six
+  ledgers on the same checkout, ~0.14 of a core of duplicated work.
+- **The ledger forks `tmux show-environment` on every tick** to read two
+  session-scoped variables (~20% of all tmux client spawns). It cannot simply
+  be gated on the relaunch file: the account switch stamps tmux's environment
+  WITHOUT rewriting that file, so a stat-gate would miss a switch.
+- **`@wd_tab_progress` defeats its own diff-guard.** Progress is rendered at
+  second resolution, so a running turn writes a new value every tick, and
+  `set-option` is the one tmux verb whose cost scales with the number of
+  attached clients (19x at 16 clients).
+
 ### A steady-state tick costs (sessions x itself), so nothing in one may fork per session
 
 Every open session runs the same loops forever: the attention watcher at 2Hz,
