@@ -242,7 +242,13 @@ keep_awake_tick() {
   # common case: feature off (or agent idle) and this session holds nothing.
   # Without this every session pays two subprocesses a second for a feature it
   # is not using.
-  [ -e "$(keep_awake_holders_dir "$config_dir")/$session" ] || return 0
+  # The path is written out rather than taken from keep_awake_holders_dir: a
+  # bash function cannot hand back a string without a subshell, and this line
+  # runs twice a second in every open session for a feature that is off by
+  # default. Measured over 1000 ticks: 0.681s of child CPU through the
+  # substitution, 0.000s through the literal.
+  # TestKeepAwakeTick_holder_path_matches_the_helper pins the two together.
+  [ -e "$config_dir/keep-awake.d/$session" ] || return 0
   keep_awake_drop "$config_dir" "$session"
 }
 
