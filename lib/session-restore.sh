@@ -251,25 +251,42 @@ write_session_snapshot() {
   : > "$keyed"
   local config_dir="${snap_file%/*}"
   local s env boot proj filepath tool term sid layout acct seq identity_file identity_key
-  local _created
+  local _created _line _marked _acct_present _claude_sid _codex_sid
   while read -r _created s; do
     [ -n "$s" ] || continue
     env="$("$tmux_cmd" show-environment -t "$s" 2>/dev/null)" || continue
-    echo "$env" | grep -q '^WISP_DECK=1$' || continue
-    boot="$(echo "$env" | sed -n 's/^WISP_DECK_BOOT=//p')"
-    proj="$(echo "$env" | sed -n 's/^WISP_DECK_PROJECT=//p')"
-    filepath="$(echo "$env" | sed -n 's/^WISP_DECK_PATH=//p')"
-    tool="$(echo "$env" | sed -n 's/^WISP_DECK_TOOL=//p')"
-    term="$(echo "$env" | sed -n 's/^WISP_DECK_TERMINAL=//p')"
-    identity_file="$(echo "$env" | sed -n 's/^WISP_DECK_CODEX_SESSION_FILE=//p')"
+    # ONE pass over the environment block. Each field used to come from its own
+    # `echo "$env" | sed`/`grep` pipeline -- eleven processes per session, inside
+    # a loop over EVERY session on the machine. Every session runs this
+    # heartbeat and they all produce the identical file, so that made the
+    # machine-wide cost quadratic in the size of the deck: measured at 11
+    # spawns for one session and 110 for ten.
+    boot=""; proj=""; filepath=""; tool=""; term=""; identity_file=""; seq=""
+    _marked=0; _acct_present=0; _claude_sid=""; _codex_sid=""; acct=""
+    while IFS= read -r _line; do
+      case "$_line" in
+        'WISP_DECK=1') _marked=1 ;;
+        WISP_DECK_BOOT=*) boot="${_line#WISP_DECK_BOOT=}" ;;
+        WISP_DECK_PROJECT=*) proj="${_line#WISP_DECK_PROJECT=}" ;;
+        WISP_DECK_PATH=*) filepath="${_line#WISP_DECK_PATH=}" ;;
+        WISP_DECK_TOOL=*) tool="${_line#WISP_DECK_TOOL=}" ;;
+        WISP_DECK_TERMINAL=*) term="${_line#WISP_DECK_TERMINAL=}" ;;
+        WISP_DECK_CODEX_SESSION_FILE=*) identity_file="${_line#WISP_DECK_CODEX_SESSION_FILE=}" ;;
+        WISP_DECK_CLAUDE_SESSION=*) _claude_sid="${_line#WISP_DECK_CLAUDE_SESSION=}" ;;
+        WISP_DECK_CODEX_SESSION=*) _codex_sid="${_line#WISP_DECK_CODEX_SESSION=}" ;;
+        WISP_DECK_CLAUDE_ACCOUNT=*) _acct_present=1; acct="${_line#WISP_DECK_CLAUDE_ACCOUNT=}" ;;
+        WISP_DECK_SEQ=*) seq="${_line#WISP_DECK_SEQ=}" ;;
+      esac
+    done < <(printf '%s\n' "$env")
+    [ "$_marked" -eq 1 ] || continue
     identity_key="$(codex_identity_key "$config_dir" "$identity_file" 2>/dev/null || true)"
     case "$tool" in
       claude)
-        sid="$(echo "$env" | sed -n 's/^WISP_DECK_CLAUDE_SESSION=//p')"
+        sid="$_claude_sid"
         identity_key=""
         ;;
       codex)
-        sid="$(echo "$env" | sed -n 's/^WISP_DECK_CODEX_SESSION=//p')"
+        sid="$_codex_sid"
         codex_session_id_valid "$sid" || sid=""
         if [ -n "$identity_key" ]; then
           local durable_sid
@@ -285,18 +302,15 @@ write_session_snapshot() {
     # A stamped EMPTY account is a positive "this session runs Default" —
     # encode it as "default" so restore can tell it apart from "unknown"
     # (var absent, empty field) which falls back to the pointer.
-    if echo "$env" | grep -q '^WISP_DECK_CLAUDE_ACCOUNT='; then
-      acct="$(echo "$env" | sed -n 's/^WISP_DECK_CLAUDE_ACCOUNT=//p')"
-      [ -z "$acct" ] && acct="default"
-    else
-      acct=""
+    if [ "$_acct_present" -eq 1 ] && [ -z "$acct" ]; then
+      acct="default"
     fi
     # The exact pane geometry (7th field). tmux's #{window_layout} is an opaque
     # string that select-layout can replay to reproduce the panes at the sizes
     # they hold right now. It contains no '|', so it is delimiter-safe. Empty
     # when unavailable (old tmux / race) — restore falls back to the default split.
     layout="$("$tmux_cmd" display-message -p -t "$s:0" '#{window_layout}' 2>/dev/null || true)"
-    seq="$(echo "$env" | sed -n 's/^WISP_DECK_SEQ=//p')"
+    # seq came out of the single parse pass above; only its validation is left.
     case "$seq" in '' | *[!0-9]*) seq="$_created" ;; esac
     echo "${seq} ${boot}|${proj}|${filepath}|${tool}|${term}|${sid}|${layout}|${acct}|${identity_key}" >> "$keyed"
   done < <(printf '%s\n' "$sessions")
