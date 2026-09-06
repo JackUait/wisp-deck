@@ -38,9 +38,26 @@ keep_awake_veto_marker() { echo "$1/keep-awake.veto"; }
 # takes standing root and defeats the lid switch, so it must never turn itself on.
 # Usage: keep_awake_enabled <settings_file>
 keep_awake_enabled() {
-  local settings_file="$1"
+  local settings_file="$1" line
   [ -f "$settings_file" ] || return 1
-  grep -qE '^keep_awake=on[[:space:]]*$' "$settings_file" 2>/dev/null
+  # Read in the shell: this runs on every watcher tick in every open session,
+  # and it is the first thing the tick does even when the feature is off, which
+  # is the default. The grep it replaces was anchored at both ends and allowed
+  # only trailing whitespace, so both halves of that are reproduced here.
+  # `|| [ -n "$line" ]` keeps a final line with no trailing newline, which grep
+  # would have seen.
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      keep_awake=on) return 0 ;;
+      keep_awake=on*)
+        case "${line#keep_awake=on}" in
+          *[![:space:]]*) ;;
+          *) return 0 ;;
+        esac
+        ;;
+    esac
+  done < "$settings_file"
+  return 1
 }
 
 # Return 0 when the sudoers rule is in place (passwordless pmset works).
