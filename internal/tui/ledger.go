@@ -65,6 +65,7 @@ type LedgerModel struct {
 	backdropCache       ledger.BackdropCache
 	tool                string
 	backdropRefreshing  bool
+	backdropRefreshedAt time.Time
 	opening             bool
 	openedPath          string
 	openCancel          context.CancelFunc
@@ -165,9 +166,9 @@ func (m *LedgerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.state.Resize(msg.Width, msg.Height, ledgerHeaderHeight, ledgerFooterHeight)
 		return m, nil
 	case tea.MouseMsg:
-		return m, m.handleLedgerMouse(msg)
+		return m, m.withBackdropRefresh(m.handleLedgerMouse(msg))
 	case tea.KeyMsg:
-		return m, m.handleLedgerKey(msg)
+		return m, m.withBackdropRefresh(m.handleLedgerKey(msg))
 	case ledgerRefreshTickMsg:
 		return m, m.startLoad()
 	case ledgerSnapshotMsg:
@@ -183,7 +184,7 @@ func (m *LedgerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		// relaunch context AFTER the tmux batch that spawns this pane, so the
 		// first load can find no file — or a half-written one — and a one-shot
 		// load would leave the pill hidden for the pane's whole life.
-		return m, tea.Batch(m.scheduleRefresh(), m.refreshBackdrop(), m.loadSession())
+		return m, tea.Batch(m.scheduleRefresh(), m.loadSession())
 	case ledgerLoadErrMsg:
 		if msg.generation != m.requestedGeneration {
 			return m, nil
@@ -272,10 +273,41 @@ func (m *LedgerModel) scheduleRefresh() tea.Cmd {
 	})
 }
 
+// withBackdropRefresh arms a backdrop rebuild alongside whatever the
+// interaction itself produced.
+//
+// An interaction that OPENED a popup is excluded: that popup is already reading
+// the backdrop, so rebuilding now could only race it, and a click has never
+// been allowed to wait on or start one. The hover or keystroke that necessarily
+// preceded the click is what armed it.
+func (m *LedgerModel) withBackdropRefresh(handled tea.Cmd) tea.Cmd {
+	if m.opening {
+		return handled
+	}
+	return tea.Batch(handled, m.refreshBackdrop())
+}
+
+// backdropRefreshThrottle is the shortest gap between two backdrop rebuilds.
+// A mouse crossing the pane emits a motion event per cell, and one rebuild
+// spawns a tmux capture of every pane, so the burst has to collapse to one.
+const backdropRefreshThrottle = 750 * time.Millisecond
+
+// refreshBackdrop rebuilds the dimmed screen painted behind the diff popup.
+//
+// It is armed by user interaction, never by the data refresh. The backdrop is
+// only ever read when a popup opens, and a popup cannot open until the user has
+// moved onto a row, so an unattended pane needs none at all -- it used to
+// rebuild one every 2 seconds regardless, spawning a `tmux capture-pane` per
+// pane and rewriting a temp file, in every open session, forever.
 func (m *LedgerModel) refreshBackdrop() tea.Cmd {
 	if m.backdropCache == nil || m.backdropRefreshing {
 		return nil
 	}
+	now := time.Now()
+	if !m.backdropRefreshedAt.IsZero() && now.Sub(m.backdropRefreshedAt) < backdropRefreshThrottle {
+		return nil
+	}
+	m.backdropRefreshedAt = now
 	m.backdropRefreshing = true
 	return func() tea.Msg {
 		return ledgerBackdropReadyMsg{err: m.backdropCache.Refresh(context.Background())}
