@@ -1914,6 +1914,128 @@ a check that every shipped sub-1M default declares the reserve its window
 implies) and
 `TestApplyPendingSubscriptionModel_reserves_output_room_for_a_small_window`.
 
+### A steady-state tick costs (sessions x itself), so nothing in one may fork per session
+
+Every open session runs the same loops forever: the attention watcher at 2Hz,
+the Claude supervisor at 4Hz, the ledger at 0.5Hz, the snapshot heartbeat every
+10s. On a 17-session deck that is the whole cost model — a single fork added to
+a tick is 34 processes a second, and a tick that *enumerates the other sessions*
+is quadratic.
+
+Measured on a live 17-session deck (CPU-time deltas, not wall clock, because the
+machine sits at load ~380): wisp-deck's own infrastructure burned **60% of one
+core continuously — the same as all 17 Claude agents put together**. The rules
+that came out of fixing that:
+
+- **The process table is read from the kernel, never from `ps`.**
+  `systemProcessTable` (`internal/attention/processtable_darwin.go`) uses
+  `unix.SysctlKinfoProcSlice`. The supervisor tick asked for the whole table
+  *twice* — once for descendant tracking, once inside the registry poll — and
+  each fork cost **80.33 CPU-ms against 5.12**, so 17 sessions kept **16.84 `ps`
+  processes resident at all times** and the 250ms poll self-throttled to ~1s.
+  Equivalence is proven through the package's own `psSnapshotLine` regex with the
+  `ps` snapshot bracketed by two kernel reads: 1835 PIDs, 0 mismatches, and the
+  formatted start string is byte-identical to the `procStart` Claude Code writes.
+  The kernel reports the kernel task as **PID 0** where `ps -ax` does not, and
+  every consumer here rejects a non-positive PID, so it must be skipped.
+- **One read per tick, shared.** `refreshTrackedDescendants` returns the table it
+  read and `ClaudeRegistryMapper.Processes` takes it. The mapper is built as a
+  fresh struct literal inside the poll closure, so nothing can cache across ticks
+  by accident — the sharing has to be explicit or it silently doubles again.
+- **Never probe per item where one batched probe answers.** `keep_awake_reap`
+  ran `tr` + `ps -p` *per holder file*, and every session reaps every other
+  session's holder twice a second: the tick's exec count was literally
+  `28 + 2*(holders+1)`. It is now one `ps -o pid= -p a,b,c`. That batch has a
+  trap of its own: **`ps -p` refuses the WHOLE list on a single out-of-range PID**
+  ("process id too large", verified at 100000 while 99999 is accepted), so one
+  garbage holder file would report every other holder dead and drop the sleep
+  veto under every live session. PIDs are validated before the batch is built.
+  `kill -0` is still not an option — it answers EPERM for another user's live
+  process, which reads as dead.
+- **A `key=value` file is read in the shell.** `read_settings_value`
+  (`lib/tab-title-watcher.sh`) and `keep_awake_enabled` (`lib/keep-awake.sh`) ran
+  `grep | head | cut | tr` and `grep` per tick — 13 processes a tick for values
+  that almost never change, paid even by users who have the feature off. A
+  `while read` loop costs nothing. Reproduce the pipeline exactly when replacing
+  one: `head -1` means FIRST match, `tr -d '[:space:]'` means strip the value,
+  an anchored regex means a suffixed value does NOT match, and
+  `|| [ -n "$line" ]` is required to keep a final line with no trailing newline.
+- **A per-session tick must not parse every session.** `write_session_snapshot`
+  enumerates every tmux session and used eleven `echo | sed`/`grep` pipelines per
+  session to pull its environment apart — 11 processes for one session, 110 for
+  ten, in each of 17 sessions every 10 seconds. One `while read` pass over the
+  block extracts every field.
+
+Guarded by `internal/attention/processtable_test.go` (including
+`TestClaudeRegistryPoll_forks_no_process`, which asserts child CPU time is
+*exactly zero* across five polls — a fork always costs some),
+`TestClaudeSupervisorTick_reads_the_process_table_once_and_shares_it`,
+`test/bash/keep_awake_scaling_test.go`, `test/bash/keep_awake_read_test.go`,
+`test/bash/settings_read_forkless_test.go`, and
+`test/bash/session_snapshot_scaling_test.go` — the scaling ones compare the spawn
+count at one item against twenty, so they fail on the *shape* rather than on a
+number that drifts.
+
+### The ledger polls Git for a repository that is almost never changing
+
+Sampling every repository a live ledger was watching, at the ledger's own 2s
+cadence, for two minutes while agents were working: **320 polls, 3 of which found
+anything changed — 99.1% waste**. Five concurrent git processes each time, which
+came to **~63% of one core continuously**, on a machine where all 17 Claude
+agents together used 59%. The ledger cost more than the agents it was watching.
+
+So an unchanged load slows the next one (2s → 4s → 8s) and anything that moves
+resets it to 2s: a changed snapshot, or the user touching the pane. Measured over
+a dormant 600s: 76 loads instead of 300.
+
+- **The tick keeps firing at the base interval; only the LOAD backs off.** A
+  timer is free and five git processes are not, so resetting the cadence takes
+  effect within one tick rather than waiting out the long one.
+- **The Git load backs off. The session context does NOT.** It is the account
+  pill's only source, `wrapper.sh` writes it *after* the tmux batch that spawns
+  the pane, and a mid-session switch rewrites it under a live pane. The first
+  draft skipped it on a backed-off tick and broke
+  `TestLedgerAccountPillRecoversWhenSessionContextArrivesLate` — see the pill
+  section above, which is the same class of bug.
+- **`SameContent` must ignore `Generation`.** It counts loads, so including it
+  makes every comparison unequal and the backoff dead code. It must NOT ignore
+  line counts: a file edited twice stays "modified" while only its numbers move.
+- **Both renderers, as always.** `lib/compact-view.sh` carries the same backoff
+  (skip 0 → 1 → 3 timeouts, the same 4x ratio). There, `need_build` is the trap:
+  nothing on the timer path ever cleared it, so the loop rebuilt on every pass
+  and the first draft bought exactly nothing — the skip must clear it.
+- **The shell guard is RELATIVE, deliberately.** It runs a dormant and a busy
+  repository concurrently and compares their poll counts, because a shell build
+  tick is essentially pure fork cost and an absolute polls-per-second assertion
+  measures the machine, not the code. Without the backoff the arms are level (12
+  vs 11); with it the dormant arm runs at ~0.68 of the busy one.
+- **A pty test of `compact_view` exercises the GO renderer** unless
+  `WISP_DECK_LEDGER_SHELL_FALLBACK=1` is set — `[ -t 0 ]` makes it native-eligible.
+
+### The popup backdrop is built for a user, not for a timer
+
+`refreshBackdrop` ran on every 2s ledger refresh, spawning `tmux
+display-message`, `tmux list-panes` and one `tmux capture-pane` **per pane**,
+then writing and renaming a temp file — 220-247ms, forever, in every session,
+maintaining the dimmed screen behind a popup that only ever opens on a click.
+It is now armed by interaction, which also makes it *fresher* than a 2s timer.
+
+- **Throttled to one rebuild per 750ms**: a mouse crossing the pane emits a
+  motion event per cell, and un-throttled that costs more than the timer did.
+- **An interaction that OPENED a popup is excluded**, preserving the existing
+  contract that a click never waits on or starts a refresh
+  (`TestLedgerOpenClickStartsPopupOffInputLoopOnCacheMiss`). The hover that
+  necessarily preceded the click is what armed it.
+
+### `npx` on a hot path re-resolves the npm graph every time
+
+The statusline wrapper reached ccstatusline through `npx`, and Claude Code
+repaints the statusline constantly. Measured, same input, same package:
+**5724ms through npx against 2521ms for the binary npx itself resolves to.**
+`gt_ccstatusline_cmd` prefers the executable and keeps `npx ccstatusline` as the
+fallback for a machine that only has the package. Anything on a repaint or launch
+path gets the same treatment — see also the launch-critical-path section above.
+
 ## Code Conventions
 
 ### Avoid Over-Engineering
