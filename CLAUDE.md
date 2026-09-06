@@ -1917,11 +1917,19 @@ implies) and
 ### The deck's own overhead outweighed the agents it hosts, and a fork is only half of why
 
 The section above is about forks. Measuring a live 16-session deck end to end
-turned up the rest: **wisp-deck's own processes held 99% of one core
-continuously while the 16 Claude agents together held 40%**, and that figure
-counts only long-lived processes. The statusline (43% of a core) and tmux's
-own client processes (49%) are short-lived and invisible to a survivor-diff
-sampler, so the real total was closer to two full cores of pure overhead.
+turned up the rest. Over a 181s window, diffing the CPU time of processes alive
+at both ends, **wisp-deck's own long-lived processes held 99% of one core
+continuously while the 16 Claude agents together held 40%** — the daemons 45%,
+the ledgers 26%, the bash watchers 21%, the tmux server 6%.
+
+That is only what survives a sampling interval. Two large costs are short-lived
+and invisible to it, measured separately: the statusline at **43% of a core**
+(0.433 CPU-s/s across the deck) and tmux's own **client** processes at 49%
+(66.6 spawns/s x 7.4ms). Those two overlap each other and the first figure —
+the statusline's own `tmux set-environment` calls are counted in both, and
+22.5% of the client spawns were the popup backdrop already fixed at HEAD — so
+they do not simply add. The safe statement is that overhead exceeded one core
+and the agents did not.
 
 Method notes, because getting them wrong sends the work down a blind alley:
 
@@ -1950,9 +1958,11 @@ did work proportional to something it does not own**:
   drop a repeat the kernel does not produce.
 - The registry poll resolved each process's depth by walking that process's own
   ancestry, re-walking one chain once per process hanging off it — quadratic in
-  the supervised tree. A 1000-process tree cost 61ms a poll, and at 4Hz that is
-  half a core for ONE session. It then opened a registry file for every
-  descendant without stopping, although candidates are sorted shallowest first.
+  the supervised tree. Worst case is a deep chain: 1000 processes in a line cost
+  61ms a poll, which at 4Hz would be half a core for ONE session. Real trees are
+  wide and shallow, where the walk is cheap (1.53ms at 1265 descendants) and the
+  cost is instead the registry file it opened for EVERY descendant without
+  stopping — ~5ms a tick — although candidates are sorted shallowest first.
 - The statusline asked the kernel about one PID at a time, three separate walks
   per render, so a render forked ~7 processes per process in the agent's tree.
 - The snapshot heartbeat asked tmux for one session's layout at a time, inside
@@ -1963,6 +1973,18 @@ did work proportional to something it does not own**:
 **The unit to think in is (per-item cost) x (items) x (tick rate) x (sessions).**
 At 2-4Hz across 16 sessions, one item of per-item work is 32-64 of them a
 second, and anything per-session is squared across the deck.
+
+End-to-end check on the attention daemon, both binaries run CONCURRENTLY
+against private fake sessions so they meet the same load, own CPU over 180s:
+
+  before (4f23c2e)  2.85s  = 1.58% of a core
+  after             2.00s  = 1.11% of a core   -> 30% less
+
+That lab daemon supervises one `sleep` and has no registry record to read, so
+it isolates the table read alone; a real session pays the tree-shaped costs on
+top, which is where the poll fixes land. Per-call figures, which are what the
+guards actually pin: the table read went from 3670 allocations and 7.23ms to 21
+and 4.81ms, and a poll over a 1000-deep tree from 61ms to 0.94ms.
 
 Known and measured but NOT fixed here, in descending size:
 

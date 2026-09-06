@@ -250,3 +250,56 @@ func TestClaudeRegistryPoll_resolvesADeepTreeWithoutWalkingItRepeatedly(t *testi
 		)
 	}
 }
+
+// The per-PID walk carried a cycle-detection set; the memoised resolver bounds
+// the walk by the size of the snapshot instead, since a chain longer than the
+// table must repeat a process. A parent cycle must therefore still terminate,
+// and must still read as "not a descendant" -- a process whose ancestry never
+// reaches the root has no claim to be the supervised session, however it got
+// that way.
+func TestClaudeRegistryPoll_terminatesOnAParentCycle(t *testing.T) {
+	const (
+		rootPID = 900000
+		loopA   = 800001
+		loopB   = 800002
+		loopSec = int64(1_704_067_200)
+	)
+	record := []byte(fmt.Sprintf(
+		`{"pid":%d,"kind":"interactive","procStart":"%s","status":"busy","updatedAt":1}`,
+		loopA, time.Unix(loopSec, 0).UTC().Format(lstartLayout)))
+
+	mapper := ClaudeRegistryMapper{
+		ConfigDir:     t.TempDir(),
+		LaunchRootPID: rootPID,
+		ReadFile: func(path string) ([]byte, error) {
+			if strings.HasSuffix(path, strconv.Itoa(loopA)+".json") {
+				return record, nil
+			}
+			return nil, errors.New("no record")
+		},
+		Processes: []SupervisorProcess{
+			{PID: rootPID, PPID: 1, StartSec: 1},
+			{PID: loopA, PPID: loopB, StartSec: loopSec},
+			{PID: loopB, PPID: loopA, StartSec: loopSec},
+		},
+	}
+
+	done := make(chan struct{})
+	var found bool
+	var err error
+	go func() {
+		defer close(done)
+		_, found, err = mapper.Poll(context.Background())
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("poll did not return on a snapshot containing a parent cycle")
+	}
+	if err != nil {
+		t.Fatalf("poll a snapshot with a parent cycle: %v", err)
+	}
+	if found {
+		t.Error("a process in a parent cycle was reported as the supervised session")
+	}
+}
