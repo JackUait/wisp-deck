@@ -94,6 +94,9 @@ func TestLedgerAccountPillRecoversWhenSessionContextArrivesLate(t *testing.T) {
 		RefreshInterval: time.Millisecond,
 	})
 	sizeLedger(m, 80, 14)
+	// A refresh tick only reaches Git once its interval has elapsed, so the
+	// clock is driven explicitly rather than raced against.
+	clock := freezeClock(m)
 
 	runLedgerCmds(m, m.Init())
 	if m.session.Pill != nil {
@@ -101,6 +104,7 @@ func TestLedgerAccountPillRecoversWhenSessionContextArrivesLate(t *testing.T) {
 	}
 
 	// One ordinary refresh cycle: tick -> snapshot load -> snapshot applied.
+	clock.advance(time.Second)
 	_, tickCmd := m.Update(ledgerRefreshTickMsg{})
 	if tickCmd == nil {
 		t.Fatal("refresh tick returned no load command")
@@ -140,12 +144,14 @@ func TestLedgerAccountPillRecoversFromEmptySessionContext(t *testing.T) {
 		RefreshInterval: time.Millisecond,
 	})
 	sizeLedger(m, 80, 14)
+	clock := freezeClock(m)
 
 	runLedgerCmds(m, m.Init())
 	if m.session.Pill != nil {
 		t.Fatalf("empty context produced a pill: %#v", m.session.Pill)
 	}
 
+	clock.advance(time.Second)
 	_, tickCmd := m.Update(ledgerRefreshTickMsg{})
 	message := tickCmd()
 	_, followUp := m.Update(message)

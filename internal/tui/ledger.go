@@ -66,22 +66,28 @@ type LedgerModel struct {
 	tool                string
 	backdropRefreshing  bool
 	backdropRefreshedAt time.Time
-	opening             bool
-	openedPath          string
-	openCancel          context.CancelFunc
-	sessionSource       LedgerSessionSource
-	sessionPath         string
-	session             ledger.SessionContext
-	sessionLoading      bool
-	accountSwitcher     ledger.AccountSwitcher
-	accountHover        bool
-	switchingAccount    bool
-	accountCancel       context.CancelFunc
-	discardArmed        bool
-	discardPaths        []string
-	discarding          bool
-	actionError         error
-	renderRow           func(ledger.Row, int, ledger.RowVisualState) string
+	// loadInterval is the adaptive gap between real Git loads. The tick
+	// itself keeps running at refreshInterval, because a timer is free and a
+	// git load is not.
+	loadInterval     time.Duration
+	lastLoadAt       time.Time
+	clock            func() time.Time
+	opening          bool
+	openedPath       string
+	openCancel       context.CancelFunc
+	sessionSource    LedgerSessionSource
+	sessionPath      string
+	session          ledger.SessionContext
+	sessionLoading   bool
+	accountSwitcher  ledger.AccountSwitcher
+	accountHover     bool
+	switchingAccount bool
+	accountCancel    context.CancelFunc
+	discardArmed     bool
+	discardPaths     []string
+	discarding       bool
+	actionError      error
+	renderRow        func(ledger.Row, int, ledger.RowVisualState) string
 }
 
 type ledgerSnapshotMsg struct {
@@ -125,7 +131,7 @@ func NewLedgerModel(source LedgerSource, snapshot ledger.Snapshot, options Ledge
 	state.Resize(80, 24, ledgerHeaderHeight, ledgerFooterHeight)
 	interval := options.RefreshInterval
 	if interval <= 0 {
-		interval = 2 * time.Second
+		interval = defaultLedgerRefreshInterval
 	}
 	return &LedgerModel{
 		source:              source,
@@ -136,6 +142,8 @@ func NewLedgerModel(source LedgerSource, snapshot ledger.Snapshot, options Ledge
 		loading:             options.Loading,
 		refreshError:        options.RefreshError,
 		refreshInterval:     interval,
+		loadInterval:        interval,
+		clock:               time.Now,
 		requestedGeneration: snapshot.Generation,
 		mutator:             options.Mutator,
 		popup:               options.Popup,
@@ -166,16 +174,27 @@ func (m *LedgerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.state.Resize(msg.Width, msg.Height, ledgerHeaderHeight, ledgerFooterHeight)
 		return m, nil
 	case tea.MouseMsg:
+		m.loadInterval = m.refreshInterval
 		return m, m.withBackdropRefresh(m.handleLedgerMouse(msg))
 	case tea.KeyMsg:
+		m.loadInterval = m.refreshInterval
 		return m, m.withBackdropRefresh(m.handleLedgerKey(msg))
 	case ledgerRefreshTickMsg:
+		if !m.dueForLoad() {
+			// The Git load backs off, the session context never does. It is the
+			// account pill's only source and it becomes valid LATE -- wrapper.sh
+			// writes it after the tmux batch that spawns this pane, and a
+			// mid-session switch rewrites it under a live pane -- so a tick that
+			// skips it would leave the pill hidden for the pane's whole life.
+			return m, tea.Batch(m.scheduleRefresh(), m.loadSession())
+		}
 		return m, m.startLoad()
 	case ledgerSnapshotMsg:
 		if msg.generation != m.requestedGeneration {
 			return m, nil
 		}
 		m.finishLoad()
+		m.adaptLoadInterval(ledger.SameContent(m.state.Snapshot, msg.snapshot))
 		m.state.ReplaceSnapshot(msg.snapshot)
 		m.loading = false
 		m.refreshError = nil
@@ -240,6 +259,9 @@ func (m *LedgerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *LedgerModel) startLoad() tea.Cmd {
+	// Every load records itself, so the idle gate measures the gap since Git
+	// was last run -- including loads a user action started, which bypass it.
+	m.lastLoadAt = m.currentTime()
 	if m.source == nil {
 		return nil
 	}
@@ -265,6 +287,54 @@ func (m *LedgerModel) finishLoad() {
 		m.loadCancel()
 		m.loadCancel = nil
 	}
+}
+
+// defaultLedgerRefreshInterval is the base cadence an active repository is
+// polled at, and the floor the backoff always returns to.
+const defaultLedgerRefreshInterval = 2 * time.Second
+
+// ledgerIdleRefreshCap bounds how far the Git poll may slow down. Reaching it
+// takes two unchanged loads (2s -> 4s -> 8s), and it is the worst-case delay
+// before the FIRST change after a quiet spell appears; every change after that
+// is seen at the base cadence.
+const ledgerIdleRefreshCap = 8 * time.Second
+
+func (m *LedgerModel) currentTime() time.Time {
+	if m.clock != nil {
+		return m.clock()
+	}
+	return time.Now()
+}
+
+// dueForLoad reports whether enough time has passed to spend five git processes
+// on this repository again.
+func (m *LedgerModel) dueForLoad() bool {
+	if m.lastLoadAt.IsZero() || m.loadInterval <= 0 {
+		return true
+	}
+	return !m.currentTime().Before(m.lastLoadAt.Add(m.loadInterval))
+}
+
+// adaptLoadInterval slows the poll while the changeset is unchanged and snaps
+// it back the moment it moves, so an active repository is never polled slower
+// than it is today.
+func (m *LedgerModel) adaptLoadInterval(unchanged bool) {
+	base := m.refreshInterval
+	if base <= 0 {
+		base = defaultLedgerRefreshInterval
+	}
+	if !unchanged {
+		m.loadInterval = base
+		return
+	}
+	next := m.loadInterval * 2
+	if next < base {
+		next = base
+	}
+	if next > ledgerIdleRefreshCap {
+		next = ledgerIdleRefreshCap
+	}
+	m.loadInterval = next
 }
 
 func (m *LedgerModel) scheduleRefresh() tea.Cmd {

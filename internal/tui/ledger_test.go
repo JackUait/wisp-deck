@@ -559,11 +559,15 @@ func (s blockingLedgerSource) Load(ctx context.Context, _ string, _ uint64) (led
 func TestLedgerRefreshSupersedesAndCancelsPriorLoad(t *testing.T) {
 	source := blockingLedgerSource{started: make(chan context.Context, 2)}
 	m := NewLedgerModel(source, ledger.NewSnapshot(0, nil, ledger.Metadata{}), LedgerOptions{RefreshInterval: time.Hour})
+	clock := freezeClock(m)
 	_, firstCmd := m.Update(ledgerRefreshTickMsg{})
 	firstDone := make(chan tea.Msg, 1)
 	go func() { firstDone <- firstCmd() }()
 	firstContext := <-source.started
 
+	// A refresh tick only loads once its interval has elapsed, so move the
+	// clock past it; superseding is what this test is about.
+	clock.advance(2 * time.Hour)
 	_, secondCmd := m.Update(ledgerRefreshTickMsg{})
 
 	if secondCmd == nil {

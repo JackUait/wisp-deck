@@ -101,7 +101,7 @@ func drainCmd(cmd tea.Cmd) {
 		return
 	}
 	msg := cmd()
-	if batch, ok := msg.([]tea.Cmd); ok {
+	if batch, ok := msg.(tea.BatchMsg); ok {
 		for _, inner := range batch {
 			drainCmd(inner)
 		}
