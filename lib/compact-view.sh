@@ -2002,7 +2002,11 @@ compact_view_shell() {
         # Any rebuild another event asked for has already run: the input path
         # clears the flag before handle_key and the loop builds at the top.
         need_build=0
-        need_draw=0
+        # The REDRAW still happens. Only the ~35-process Git build is skipped;
+        # repainting cached content is the same path a scroll key already takes,
+        # it keeps a late-arriving account pill rendering, and it keeps the
+        # steady frame cadence that the no-blink guard reads.
+        need_draw=1
         continue
       fi
       need_build=1
@@ -2021,7 +2025,11 @@ compact_view_shell() {
         # Any rebuild another event asked for has already run: the input path
         # clears the flag before handle_key and the loop builds at the top.
         need_build=0
-        need_draw=0
+        # The REDRAW still happens. Only the ~35-process Git build is skipped;
+        # repainting cached content is the same path a scroll key already takes,
+        # it keeps a late-arriving account pill rendering, and it keeps the
+        # steady frame cadence that the no-blink guard reads.
+        need_draw=1
         continue
       fi
       need_build=1
