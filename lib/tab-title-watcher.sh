@@ -122,7 +122,10 @@ apply_settings_to_all_sessions_if_changed() {
 _attention_watcher_read_record() {
   local file="${1-}" bytes line="" extra="" second_status=0
   [ -f "$file" ] || return 1
-  bytes="$(wc -c 2>/dev/null <"$file" | tr -d '[:space:]')" || return 1
+  # wc pads its count; bash strips that with a builtin. The `tr` this replaces
+  # ran on all four records the tick reads, twice a second, in every session.
+  bytes="$(wc -c 2>/dev/null <"$file")" || return 1
+  bytes="${bytes//[[:space:]]/}"
   case "$bytes" in
     ''|*[!0-9]*) return 1 ;;
   esac
