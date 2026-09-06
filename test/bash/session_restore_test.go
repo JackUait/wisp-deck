@@ -119,6 +119,7 @@ case "$1" in
   list-sessions) echo "100 dev-app-1" ;;
   show-environment)
     printf 'WISP_DECK=1\nWISP_DECK_BOOT=111\nWISP_DECK_PROJECT=app\nWISP_DECK_PATH=/p/app\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\n' ;;
+  list-windows) echo "0 ` + sampleLayout + ` dev-app-1" ;;
   display-message) echo "` + sampleLayout + `" ;;
 esac
 `

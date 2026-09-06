@@ -33,6 +33,7 @@ case "$1" in
   show-environment)
     printf 'WISP_DECK=1\nWISP_DECK_BOOT=111\nWISP_DECK_PROJECT=app\nWISP_DECK_PATH=/p/app\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\n'
     printf '`+extraEnv+`' ;;
+  list-windows) echo "0 `+layout+` dev-app-1" ;;
   display-message) echo "`+layout+`" ;;
 esac
 `)
