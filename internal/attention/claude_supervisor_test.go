@@ -65,7 +65,7 @@ func TestClaudeSupervisor_polls_with_supervised_root_pid(t *testing.T) {
 	var roots []int
 	s := ClaudeSupervisor{
 		PollInterval: 5 * time.Millisecond,
-		Poll: func(_ context.Context, rootPID int) error {
+		Poll: func(_ context.Context, rootPID int, _ []SupervisorProcess) error {
 			mu.Lock()
 			roots = append(roots, rootPID)
 			mu.Unlock()
@@ -215,7 +215,7 @@ func TestClaudeSupervisor_RunDefaultReconcileStressMarksDelayedTrappedExitExtern
 			Snapshot: func(context.Context) ([]SupervisorProcess, error) {
 				return nil, nil
 			},
-			Poll: func(ctx context.Context, rootPID int) error {
+			Poll: func(ctx context.Context, rootPID int, _ []SupervisorProcess) error {
 				if triggered {
 					return pollErr
 				}
@@ -391,7 +391,7 @@ func TestClaudeSupervisor_waitFirstExternalSignalCleansRetainedVerifiedDescendan
 	var numericSignals []string
 	s := ClaudeSupervisor{
 		GracePeriod: time.Millisecond,
-		Poll: func(ctx context.Context, _ int) error {
+		Poll: func(ctx context.Context, _ int, _ []SupervisorProcess) error {
 			pollOnce.Do(func() {
 				_ = cmd.Process.Signal(syscall.SIGTERM)
 				select {
@@ -643,7 +643,7 @@ func TestClaudeSupervisor_forwards_signal_deepest_first(t *testing.T) {
 		PollInterval: 5 * time.Millisecond,
 		GracePeriod:  50 * time.Millisecond,
 		Signals:      signalCh,
-		Poll: func(_ context.Context, rootPID int) error {
+		Poll: func(_ context.Context, rootPID int, _ []SupervisorProcess) error {
 			childPID = rootPID
 			once.Do(func() { signalCh <- syscall.SIGTERM })
 			return nil
@@ -692,7 +692,7 @@ func TestClaudeSupervisor_kills_deepest_first_after_grace(t *testing.T) {
 		PollInterval: time.Millisecond,
 		GracePeriod:  time.Millisecond,
 		Signals:      signalCh,
-		Poll: func(_ context.Context, rootPID int) error {
+		Poll: func(_ context.Context, rootPID int, _ []SupervisorProcess) error {
 			if _, err := os.Stat(ready); err != nil {
 				return nil
 			}
@@ -737,7 +737,7 @@ func TestClaudeSupervisor_snapshot_failure_still_kills_owned_root(t *testing.T) 
 		PollInterval: time.Millisecond,
 		GracePeriod:  5 * time.Millisecond,
 		Signals:      signalCh,
-		Poll: func(_ context.Context, _ int) error {
+		Poll: func(_ context.Context, _ int, _ []SupervisorProcess) error {
 			if _, err := os.Stat(ready); err != nil {
 				return nil
 			}
@@ -779,7 +779,7 @@ func TestClaudeSupervisor_kills_captured_descendants_after_root_exits(t *testing
 		PollInterval: time.Millisecond,
 		GracePeriod:  5 * time.Millisecond,
 		Signals:      signalCh,
-		Poll: func(_ context.Context, pid int) error {
+		Poll: func(_ context.Context, pid int, _ []SupervisorProcess) error {
 			rootPID = pid
 			once.Do(func() { signalCh <- syscall.SIGTERM })
 			return nil
@@ -826,7 +826,7 @@ func TestClaudeSupervisor_revalidates_process_identity_before_kill(t *testing.T)
 		PollInterval: time.Millisecond,
 		GracePeriod:  5 * time.Millisecond,
 		Signals:      signalCh,
-		Poll: func(_ context.Context, pid int) error {
+		Poll: func(_ context.Context, pid int, _ []SupervisorProcess) error {
 			if _, err := os.Stat(ready); err != nil {
 				return nil
 			}
@@ -883,7 +883,7 @@ func TestClaudeSupervisor_does_not_follow_reused_root_tree(t *testing.T) {
 		PollInterval: time.Millisecond,
 		GracePeriod:  5 * time.Millisecond,
 		Signals:      signalCh,
-		Poll: func(_ context.Context, pid int) error {
+		Poll: func(_ context.Context, pid int, _ []SupervisorProcess) error {
 			rootPID = pid
 			once.Do(func() { signalCh <- syscall.SIGTERM })
 			return nil
@@ -933,7 +933,7 @@ func TestClaudeSupervisor_kills_descendants_spawned_during_grace(t *testing.T) {
 		PollInterval: time.Millisecond,
 		GracePeriod:  5 * time.Millisecond,
 		Signals:      signalCh,
-		Poll: func(_ context.Context, pid int) error {
+		Poll: func(_ context.Context, pid int, _ []SupervisorProcess) error {
 			if _, err := os.Stat(ready); err != nil {
 				return nil
 			}
@@ -987,7 +987,7 @@ func TestClaudeSupervisor_context_cancel_cleans_descendants(t *testing.T) {
 	s := ClaudeSupervisor{
 		PollInterval: time.Millisecond,
 		GracePeriod:  20 * time.Millisecond,
-		Poll: func(context.Context, int) error {
+		Poll: func(context.Context, int, []SupervisorProcess) error {
 			if _, err := os.Stat(readyFile); err == nil {
 				once.Do(func() {
 					cancel()

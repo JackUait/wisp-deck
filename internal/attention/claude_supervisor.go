@@ -57,8 +57,10 @@ type ClaudeSupervisor struct {
 	PollInterval    time.Duration
 	GracePeriod     time.Duration
 	SignalReconcile time.Duration
-	Poll            func(context.Context, int) error
-	OnExit          func(ClaudeExitResult) error
+	// Poll receives the process table the tick already read, so the registry
+	// does not materialise it a second time milliseconds later.
+	Poll   func(context.Context, int, []SupervisorProcess) error
+	OnExit func(ClaudeExitResult) error
 
 	CommandContext func(context.Context, string, ...string) *exec.Cmd
 	Snapshot       func(context.Context) ([]SupervisorProcess, error)
@@ -146,9 +148,9 @@ func (s *ClaudeSupervisor) superviseStarted(
 	// Poll callbacks may synchronously observe cancellation and wait for the root
 	// to exit. Capture descendants first while the owned process handle can still
 	// prove that the snapshot belongs to this launch.
-	s.refreshTrackedDescendants(ctx, rootProcess, descendants)
+	shared := s.refreshTrackedDescendants(ctx, rootProcess, descendants)
 	if s.Poll != nil {
-		_ = s.Poll(ctx, rootPID)
+		_ = s.Poll(ctx, rootPID, shared)
 	}
 
 	var waitErr error
@@ -205,9 +207,9 @@ func (s *ClaudeSupervisor) superviseStarted(
 		case waitErr = <-waitCh:
 			waitReady = true
 		case <-ticks:
-			s.refreshTrackedDescendants(ctx, rootProcess, descendants)
+			shared := s.refreshTrackedDescendants(ctx, rootProcess, descendants)
 			if s.Poll != nil {
-				_ = s.Poll(ctx, rootPID)
+				_ = s.Poll(ctx, rootPID, shared)
 			}
 		case received, ok := <-signals:
 			if !ok {
@@ -390,18 +392,22 @@ func (s *ClaudeSupervisor) snapshotProcesses(ctx context.Context) ([]SupervisorP
 	return snapshot(ctx)
 }
 
+// refreshTrackedDescendants re-reads the process table and returns it, so the
+// caller can hand the same reading to the registry poll instead of paying for
+// a second one in the same tick.
 func (s *ClaudeSupervisor) refreshTrackedDescendants(
 	ctx context.Context,
 	rootProcess *os.Process,
 	tracked *claudeDescendantTracker,
-) {
+) (shared []SupervisorProcess) {
 	if rootProcess == nil || tracked == nil || tracked.rootPID <= 0 || rootProcess.Pid != tracked.rootPID {
-		return
+		return nil
 	}
 	processes, err := s.snapshotProcesses(ctx)
 	if err != nil {
 		return
 	}
+	shared = processes
 	var root SupervisorProcess
 	rootFound := false
 	for _, process := range processes {
@@ -451,6 +457,7 @@ func (s *ClaudeSupervisor) refreshTrackedDescendants(
 		merged = append(merged, target)
 	}
 	tracked.ordered = merged
+	return shared
 }
 
 func (s *ClaudeSupervisor) verifiedTrackedDescendants(

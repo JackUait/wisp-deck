@@ -114,13 +114,16 @@ func runClaudeAttention(
 	}
 
 	supervisor := attention.ClaudeSupervisor{
-		Poll: func(pollContext context.Context, rootPID int) error {
+		Poll: func(pollContext context.Context, rootPID int, processes []attention.SupervisorProcess) error {
 			if !monitoring {
 				return nil
 			}
+			// processes is the table this tick already read for descendant
+			// tracking; reusing it halves the tick's process-table work.
 			status, found, pollErr := (attention.ClaudeRegistryMapper{
 				ConfigDir:     options.ConfigDir,
 				LaunchRootPID: rootPID,
+				Processes:     processes,
 			}).Poll(pollContext)
 			if pollErr != nil {
 				found = false

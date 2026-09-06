@@ -98,6 +98,10 @@ type ClaudeRegistryMapper struct {
 	LaunchRootPID int
 	Snapshot      ProcessSnapshotFunc
 	ReadFile      ReadFileFunc
+	// Processes is the process table the supervisor tick already read. When it
+	// is supplied the poll reuses it rather than materialising the table a
+	// second time within the same tick.
+	Processes []SupervisorProcess
 }
 
 // Poll returns the unique shallowest valid interactive session in the
@@ -123,7 +127,12 @@ func (m ClaudeRegistryMapper) Poll(ctx context.Context) (ClaudeRegistryStatus, b
 	// reads the same fields straight from the kernel, because forking `ps` here
 	// cost 80 CPU-ms a call and kept one `ps` process resident per session.
 	var processes map[int]snapshotProcess
-	if m.Snapshot != nil {
+	if m.Snapshot == nil && len(m.Processes) > 0 {
+		processes = make(map[int]snapshotProcess, len(m.Processes))
+		for _, row := range m.Processes {
+			processes[row.PID] = snapshotProcess{parent: row.PPID, start: row.Start}
+		}
+	} else if m.Snapshot != nil {
 		data, err := m.Snapshot(ctx)
 		if err != nil {
 			return ClaudeRegistryStatus{}, false, fmt.Errorf("capture Claude process snapshot: %w", err)
