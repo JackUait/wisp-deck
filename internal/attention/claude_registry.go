@@ -113,22 +113,35 @@ func (m ClaudeRegistryMapper) Poll(ctx context.Context) (ClaudeRegistryStatus, b
 		return ClaudeRegistryStatus{}, false, errors.New("Claude launch root PID must be positive")
 	}
 
-	snapshot := m.Snapshot
-	if snapshot == nil {
-		snapshot = (PSSnapshotter{}).Snapshot
-	}
 	readFile := m.ReadFile
 	if readFile == nil {
 		readFile = readClaudeRegistryFile
 	}
 
-	data, err := snapshot(ctx)
-	if err != nil {
-		return ClaudeRegistryStatus{}, false, fmt.Errorf("capture Claude process snapshot: %w", err)
-	}
-	processes, err := parseProcessSnapshot(data)
-	if err != nil {
-		return ClaudeRegistryStatus{}, false, fmt.Errorf("parse Claude process snapshot: %w", err)
+	// This poll runs 4 times a second in every open session. An injected
+	// Snapshot is a test seam and still travels as ps-shaped bytes; production
+	// reads the same fields straight from the kernel, because forking `ps` here
+	// cost 80 CPU-ms a call and kept one `ps` process resident per session.
+	var processes map[int]snapshotProcess
+	if m.Snapshot != nil {
+		data, err := m.Snapshot(ctx)
+		if err != nil {
+			return ClaudeRegistryStatus{}, false, fmt.Errorf("capture Claude process snapshot: %w", err)
+		}
+		parsed, err := parseProcessSnapshot(data)
+		if err != nil {
+			return ClaudeRegistryStatus{}, false, fmt.Errorf("parse Claude process snapshot: %w", err)
+		}
+		processes = parsed
+	} else {
+		table, err := systemProcessTable()
+		if err != nil {
+			return ClaudeRegistryStatus{}, false, fmt.Errorf("capture Claude process snapshot: %w", err)
+		}
+		processes = make(map[int]snapshotProcess, len(table))
+		for _, row := range table {
+			processes[row.PID] = snapshotProcess{parent: row.PPID, start: row.Start}
+		}
 	}
 	if _, ok := processes[m.LaunchRootPID]; !ok {
 		return ClaudeRegistryStatus{}, false, nil

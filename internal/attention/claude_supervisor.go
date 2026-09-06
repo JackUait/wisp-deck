@@ -1,7 +1,6 @@
 package attention
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -10,7 +9,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"sort"
-	"strings"
 	"syscall"
 	"time"
 )
@@ -598,45 +596,8 @@ func claudeExitResult(waitErr error) (ClaudeExitResult, error) {
 	return result, nil
 }
 
-func claudeSupervisorSnapshot(ctx context.Context) ([]SupervisorProcess, error) {
-	cmd := exec.CommandContext(ctx, claudePSExecutable, "-axo", "pid=,ppid=,lstart=")
-	cmd.Env = applyEnvironmentOverrides(os.Environ(), []string{"LC_ALL=C", "TZ=UTC"})
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("snapshot processes: %w", err)
-	}
-	var processes []SupervisorProcess
-	scanner := bufio.NewScanner(strings.NewReader(string(out)))
-	seen := make(map[int]struct{})
-	lineNumber := 0
-	for scanner.Scan() {
-		lineNumber++
-		match := psSnapshotLine.FindStringSubmatch(scanner.Text())
-		if match == nil {
-			return nil, fmt.Errorf("invalid ps row %d", lineNumber)
-		}
-		pid, err := parsePositiveInt(match[1])
-		if err != nil {
-			return nil, fmt.Errorf("invalid PID on ps row %d: %w", lineNumber, err)
-		}
-		ppid, err := parseNonnegativeInt(match[2])
-		if err != nil {
-			return nil, fmt.Errorf("invalid parent PID on ps row %d: %w", lineNumber, err)
-		}
-		start := strings.TrimSpace(match[3])
-		if _, err := time.Parse("Mon Jan _2 15:04:05 2006", start); err != nil {
-			return nil, fmt.Errorf("invalid start time on ps row %d: %w", lineNumber, err)
-		}
-		if _, duplicate := seen[pid]; duplicate {
-			return nil, fmt.Errorf("duplicate PID %d in ps snapshot", pid)
-		}
-		seen[pid] = struct{}{}
-		processes = append(processes, SupervisorProcess{PID: pid, PPID: ppid, Start: start})
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("parse process snapshot: %w", err)
-	}
-	return processes, nil
+func claudeSupervisorSnapshot(_ context.Context) ([]SupervisorProcess, error) {
+	return systemProcessTable()
 }
 
 func claudeShutdownTargets(processes []SupervisorProcess, rootPID int) []SupervisorProcess {
