@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
 	"github.com/jackuait/wisp-deck/internal/ledger"
+	"github.com/muesli/termenv"
 )
 
 // The top-of-pane header and its separator rule are gone: the first rendered

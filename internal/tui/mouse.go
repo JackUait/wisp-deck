@@ -502,7 +502,6 @@ func (m *MainMenuModel) scrollBody(delta int) {
 	}
 }
 
-
 // directionFor maps the prev/next flag to the "prev"/"next" strings the Cycle*
 // helpers expect.
 func directionFor(prev bool) string {
