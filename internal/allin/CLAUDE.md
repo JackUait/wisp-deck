@@ -845,3 +845,55 @@ come back whatever `EnsureProfile` writes, and both have been read as bugs once.
   because `Route` accepts an id with no marker, but a Claude row saved before
   `OneMillionMarker` existed now reaches the upstream without the 1M beta
   header. Picking any row rewrites the stored value and the extra row goes.
+
+### A borrowed login's OAuth token is refreshed here, because nothing else does
+
+Claude Code refreshes the login of the config dir it is RUNNING under. All-In
+borrows another login's credential without ever starting a process under that
+dir, so a login nobody has opened a pane on simply ages out: its Keychain entry
+keeps a valid `refreshToken` while its `accessToken` goes stale, and every turn
+routed to that row gets `401 OAuth access token has expired` from Anthropic.
+Measured on this machine: the `personal` login's entry was last touched
+2026-09-14 11:02 and its token expired 2026-09-14 18:18, while the default
+login — which had a live pane — was valid throughout.
+
+The 401 is the expensive half. It comes from the upstream, not from
+`writeRoutingError`, so it is outside the "every routing failure answers 400"
+rule above and Claude Code retries it about eleven times before the user sees
+anything.
+
+`keychainToken` (`keychain_darwin.go`) therefore reads `expiresAt` and
+`refreshToken` as well, and `freshToken` (`refresh.go`) refreshes through
+`internal/proxy`'s `RefreshToken` when the token is inside `refreshSkew` of
+expiring. Three things that look optional and are not:
+
+- **The skew is wider than a turn.** A token minutes from expiring outlives the
+  request that swaps it in but not the stream it starts, and that mid-turn 401
+  lands on the same eleven-retry ladder.
+- **The refresh is taken under a cross-process lock, and the entry is re-read
+  inside it.** A refresh ROTATES the refresh token, so two panes refreshing one
+  login at once means the loser spends a token the server has already retired —
+  and is then permanently unable to refresh. The lock is keyed by the Keychain
+  service name, so two logins never wait on each other.
+- **A failed write-back does NOT fail the turn.** The rotation already happened
+  upstream by then, so refusing would lose the turn without saving the login.
+
+The write patches the three OAuth fields into the existing blob rather than
+rebuilding it: `subscriptionType`, `scopes`, `rateLimitTier` and
+`refreshTokenExpiresAt` sit beside them and Claude Code reads this same entry
+when a pane does run under that dir. It also has to name the item's own `acct`
+attribute, read back from `security`, because `-U` matches on the attributes it
+is given — a guessed account creates a SECOND item under one service name and
+leaves the read answering whichever the Keychain returns first.
+
+The password reaches `security` as an argv value. There is no alternative:
+`add-generic-password` ignores stdin (verified — it stores an empty password)
+and prompts on a tty when `-w` is omitted. It costs nothing anyway, since a
+process that can read the entry unprompted could read the token directly.
+
+An entry recording `expiresAt: 0` is served as-is. Refreshing it would rotate
+the refresh token on every single request.
+
+`wisp-deck-tui account-usage` picks this up for free: it already reads every
+login's token on a 300s throttle, so it now also keeps every login's token
+alive whether or not a pane ever routes to that row.

@@ -34,6 +34,7 @@ WISP_DECK_LIVE_CHATGPT_BRIDGE_E2E=1 go test ./internal/gptbridge/ -run TestLiveC
 WISP_DECK_LIVE_CODEX_EOF_E2E=1 go test ./internal/gptbridge/ -run TestLiveCodexAppServerExitsWhenItsParentPipeCloses -v  # After a codex upgrade: verify a real app-server still exits on stdin EOF, which is the only thing that reaps it when claude-allin is killed without running a defer (costs no quota)
 WISP_DECK_LIVE_ALLIN_CHATGPT_E2E=1 go test ./cmd/wisp-deck-tui/ -run TestLiveClaudeAllInReachesTheChatGPTEngine -v  # After a codex upgrade: drive a wisp/cfg.openai-chatgpt row through the whole router chain to the engine's own model allowlist (costs no quota — the model it asks for is one no app-server serves)
 WISP_DECK_LIVE_FEATHERLESS_E2E=1 FEATHERLESS_API_KEY=... go test ./internal/featherless/ -run TestLiveFeatherless -v  # After a Featherless-side change is suspected: verify /v1/messages still speaks Anthropic with tool_use, and that its ": keep-alive" comments still keep the worst byte silence well under Claude Code's 20s watchdog trigger (costs one short turn)
+WISP_DECK_LIVE_KEYCHAIN_E2E=1 WISP_DECK_LIVE_KEYCHAIN_DIR=~/.config/wisp-deck/claude-accounts/<login> go test ./internal/allin/ -run TestLiveKeychainRefresh -v  # After a change to the All-In credential path: verify an EXPIRED login's token still refreshes against Anthropic and is written back to the Keychain (name a login whose token has actually expired; a live one is served untouched and proves nothing, and the run spends that login's refresh token a rotation)
 ```
 
 ### Reading a red CI run
