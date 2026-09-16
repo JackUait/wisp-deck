@@ -116,16 +116,15 @@ keep_awake_reap() {
   local holders
   holders="$1/keep-awake.d"
   [ -d "$holders" ] || return 0
-  local f pid entries="" batch="" saved_ifs="$IFS"
+  local f pid entries="" want="" saved_ifs="$IFS"
   for f in "$holders"/*; do
     [ -e "$f" ] || continue
     pid=""
     { read -r pid < "$f"; } 2>/dev/null || pid=""
     pid="${pid//[[:space:]]/}"
-    # A PID that is empty, non-numeric, or wider than the kernel's own range
-    # can never be probed, and `ps -p` refuses the WHOLE batch on one of them
-    # ("process id too large") -- which would report every other holder as dead
-    # and release the veto out from under every live session. Drop it here.
+    # An early drop, not load-bearing: the table probe below already reports a
+    # junk PID as absent and the reap removes it. It mattered when the probe was
+    # `ps -p <list>`, which refused the WHOLE list on one out-of-range PID.
     case "$pid" in
       '' | *[!0-9]*)
         rm -f "$f" 2>/dev/null || true
@@ -138,19 +137,28 @@ keep_awake_reap() {
     fi
     entries="$entries$pid $f
 "
-    batch="$batch,$pid"
+    want="$want$pid "
   done
-  [ -n "$batch" ] || return 0
+  [ -n "$entries" ] || return 0
 
   # ONE liveness probe for the whole directory. Every live session reaps every
   # other session's holder twice a second, so a probe per holder made the
   # machine-wide cost quadratic in sessions -- 24 of a watcher tick's 52 forks
   # on a 17-session deck.
   #
-  # Every PID above is 1-5 digits, so ps cannot fail on the argument itself: a
-  # non-zero status here means none of them are alive, not that the probe broke.
+  # The probe reads the WHOLE table, never `-p <list>`. The cliff is the NUMBER
+  # OF `-p` ARGUMENTS, not the size of the machine: one pid costs 3.4ms, two
+  # cost 88ms, and the penalty is flat in list length and fires even on the SAME
+  # pid twice. On a loaded box (2002 processes) those two pids cost 7-13s, which
+  # at 2Hz per session never drained -- 9 `ps` stayed resident, one statusline
+  # render cost 12-21s, and opening a session took 10-15s. Membership in the full
+  # table is the same liveness answer at 22.5ms of CPU against 94ms, and it
+  # cannot fail on its argument.
   local live
-  live="$(ps -o pid= -p "${batch#,}" 2>/dev/null)"
+  live="$(ps -A -o pid= 2>/dev/null | LC_ALL=C awk -v want="$want" '
+    BEGIN { n = split(want, a, " "); for (i = 1; i <= n; i++) keep[a[i]] = 1 }
+    ($1 in keep) { print $1 }
+  ')"
 
   local live_set=" " token
   # Split on newline/space/tab in the current shell. A pipe would run the loop

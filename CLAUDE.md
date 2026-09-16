@@ -213,16 +213,33 @@ that came out of fixing that:
   read and `ClaudeRegistryMapper.Processes` takes it. The mapper is built as a
   fresh struct literal inside the poll closure, so nothing can cache across ticks
   by accident — the sharing has to be explicit or it silently doubles again.
-- **Never probe per item where one batched probe answers.** `keep_awake_reap`
-  ran `tr` + `ps -p` *per holder file*, and every session reaps every other
-  session's holder twice a second: the tick's exec count was literally
-  `28 + 2*(holders+1)`. It is now one `ps -o pid= -p a,b,c`. That batch has a
-  trap of its own: **`ps -p` refuses the WHOLE list on a single out-of-range PID**
-  ("process id too large", verified at 100000 while 99999 is accepted), so one
-  garbage holder file would report every other holder dead and drop the sleep
-  veto under every live session. PIDs are validated before the batch is built.
-  `kill -0` is still not an option — it answers EPERM for another user's live
-  process, which reads as dead.
+- **Never probe per item where one batched probe answers — but the batch is the
+  WHOLE TABLE, never `ps -p a,b,c`.** `keep_awake_reap` ran `tr` + `ps -p` *per
+  holder file*, and every session reaps every other session's holder twice a
+  second: the tick's exec count was literally `28 + 2*(holders+1)`. Batching that
+  into one `ps -o pid= -p a,b,c` fixed the exec count and introduced something far
+  worse. **The cliff is the NUMBER OF `-p` ARGUMENTS, not the size of the
+  machine.** Measured at 805 processes: one pid **3.4ms**, two pids **88ms**,
+  three 85ms, four 83ms — flat in list length, and `-p 1,1` (the SAME pid twice)
+  costs 188ms. It is a fixed penalty on ps's multi-pid path, almost all of it
+  system time. On a box at load 138 with 2002 processes that penalty became
+  **7-13s**: at 2Hz per session the probes never drained — 9 `ps` stayed
+  resident, one statusline render cost 12-21s (16.89s of it in that single call),
+  and opening a session took 10-15s. Every such probe now reads `ps -A` once and
+  filters in awk: **22.5ms of CPU against 94ms**, and equivalent on every edge
+  (`ps` already deduped a repeated pid, `-A` shows other users' processes and
+  zombies, and neither form reports PID 0). Guarded by
+  `test/bash/ps_pid_list_probe_test.go`, which tests the SHAPE — it also rejects
+  `csv="${pids// /,}"; ps -p "$csv"`, and it scans
+  `templates/statusline-wrapper.sh`, whose single-pid fallbacks are the likeliest
+  place a list comes back.
+  Reading the whole table also retires the old trap: `ps -p` refuses the WHOLE
+  list on a single out-of-range PID ("process id too large", verified at 100000
+  while 99999 is accepted), which would have reported every other holder dead and
+  dropped the sleep veto under every live session. PIDs are still validated, but
+  that check is no longer load-bearing — the table probe reports a junk PID as
+  absent and the reap removes it anyway. `kill -0` is still not an option
+  — it answers EPERM for another user's live process, which reads as dead.
 - **A `key=value` file is read in the shell.** `read_settings_value`
   (`lib/tab-title-watcher.sh`) and `keep_awake_enabled` (`lib/keep-awake.sh`) ran
   `grep | head | cut | tr` and `grep` per tick — 13 processes a tick for values

@@ -36,22 +36,9 @@ done
 IFS="$__wd_ifs"
 `)
 
-	// Mock ps: one RSS row per PID, for a single PID or a comma-separated list.
+	// Mock ps: the whole table as "pid rss" rows; the caller filters to its tree.
 	mockCommand(t, dir, "ps", `
-__wd_query="${@: -1}"
-__wd_ifs="$IFS"; IFS=","
-for pid in $__wd_query; do
-  IFS="$__wd_ifs"
-  case "$pid" in
-    100) echo "  51200" ;;
-    101) echo "  25600" ;;
-    102) echo "  10240" ;;
-    103) echo "  5120" ;;
-    *) echo "" ;;
-  esac
-  IFS=","
-done
-IFS="$__wd_ifs"
+printf '%s\n' "  100  51200" "  101  25600" "  102  10240" "  103   5120"
 `)
 
 	binDir := filepath.Join(dir, "bin")
@@ -68,7 +55,7 @@ func TestStatusline_get_tree_rss_kb_handles_process_with_no_children(t *testing.
 	dir := t.TempDir()
 
 	mockCommand(t, dir, "pgrep", `exit 1`)
-	mockCommand(t, dir, "ps", `echo "  51200"`)
+	mockCommand(t, dir, "ps", `echo "  100  51200"`)
 
 	binDir := filepath.Join(dir, "bin")
 	env := buildEnv(t, []string{binDir})
@@ -112,21 +99,9 @@ done
 IFS="$__wd_ifs"
 `)
 
-	// 101 returns empty (disappeared), 102 returns value
+	// 101 is absent from the table (it disappeared mid-walk); 100 and 102 remain.
 	mockCommand(t, dir, "ps", `
-__wd_query="${@: -1}"
-__wd_ifs="$IFS"; IFS=","
-for pid in $__wd_query; do
-  IFS="$__wd_ifs"
-  case "$pid" in
-    100) echo "  51200" ;;
-    101) echo "" ;;
-    102) echo "  10240" ;;
-    *) echo "" ;;
-  esac
-  IFS=","
-done
-IFS="$__wd_ifs"
+printf '%s\n' "  100  51200" "  102  10240"
 `)
 
 	binDir := filepath.Join(dir, "bin")
@@ -376,8 +351,8 @@ func TestStatusline_wrapper_prefixes_cpu_segment_with_icon(t *testing.T) {
 	mockCommand(t, dir, "ps", `
 case "$*" in
   *comm=*)  printf '%s\n' "/Users/test/.local/bin/claude" ;;
-  *%cpu=*)  printf '%s\n' " 42.4" ;;
-  *rss=*)   printf '%s\n' "51200" ;;
+  *%cpu=*)  /bin/ps -A -o pid= | while read -r p; do echo "$p 42.4"; done ;;
+  *rss=*)   /bin/ps -A -o pid= | while read -r p; do echo "$p 51200"; done ;;
   *ppid=*)  printf '%s\n' "1" ;;
 esac
 `)
@@ -472,7 +447,7 @@ printf 'proc [1]: 64-bit Footprint: %s MB\n    phys_footprint: %s MB\n    phys_f
 	mockCommand(t, dir, "ps", fmt.Sprintf(`
 case "$*" in
   *comm=*) printf '%%s\n' %q ;;
-  *rss=*)  printf '%%s\n' "$(( %s * 1024 ))" ;;
+  *rss=*)  /bin/ps -A -o pid= | while read -r p; do echo "$p $(( %s * 1024 ))"; done ;;
   *ppid=*) printf '%%s\n' "1" ;;
 esac
 `, claudeComm, memMB))
@@ -671,7 +646,7 @@ func TestStatusline_wrapper_prefers_footprint_over_rss(t *testing.T) {
 	mockCommand(t, dir, "ps", `
 case "$*" in
   *comm=*) printf '%s\n' "/Users/test/.local/bin/claude" ;;
-  *rss=*)  printf '%s\n' "51200" ;;
+  *rss=*)  /bin/ps -A -o pid= | while read -r p; do echo "$p 51200"; done ;;
   *ppid=*) printf '%s\n' "1" ;;
 esac
 `)
@@ -696,7 +671,7 @@ func TestStatusline_wrapper_falls_back_to_rss_when_footprint_unavailable(t *test
 	mockCommand(t, dir, "ps", `
 case "$*" in
   *comm=*) printf '%s\n' "/Users/test/.local/bin/claude" ;;
-  *rss=*)  printf '%s\n' "51200" ;;
+  *rss=*)  /bin/ps -A -o pid= | while read -r p; do echo "$p 51200"; done ;;
   *ppid=*) printf '%s\n' "1" ;;
 esac
 `)
@@ -806,20 +781,7 @@ done
 IFS="$__wd_ifs"
 `)
 	mockCommand(t, dir, "ps", `
-__wd_query="${@: -1}"
-__wd_ifs="$IFS"; IFS=","
-for pid in $__wd_query; do
-  IFS="$__wd_ifs"
-  case "$pid" in
-    100) echo " 10.4" ;;
-    101) echo "  5.3" ;;
-    102) echo "  2.0" ;;
-    103) echo "  0.0" ;;
-    *) echo "" ;;
-  esac
-  IFS=","
-done
-IFS="$__wd_ifs"
+printf '%s\n' "  100  10.4" "  101   5.3" "  102   2.0" "  103   0.0"
 `)
 
 	binDir := filepath.Join(dir, "bin")
@@ -835,7 +797,7 @@ IFS="$__wd_ifs"
 func TestStatusline_get_tree_cpu_pct_rounds_to_nearest_integer(t *testing.T) {
 	dir := t.TempDir()
 	mockCommand(t, dir, "pgrep", `exit 1`)
-	mockCommand(t, dir, "ps", `echo " 12.6"`)
+	mockCommand(t, dir, "ps", `echo "  100  12.6"`)
 
 	binDir := filepath.Join(dir, "bin")
 	env := buildEnv(t, []string{binDir})
@@ -849,7 +811,7 @@ func TestStatusline_get_tree_cpu_pct_rounds_to_nearest_integer(t *testing.T) {
 func TestStatusline_get_tree_cpu_pct_reports_zero_for_idle_process(t *testing.T) {
 	dir := t.TempDir()
 	mockCommand(t, dir, "pgrep", `exit 1`)
-	mockCommand(t, dir, "ps", `echo "  0.0"`)
+	mockCommand(t, dir, "ps", `echo "  100   0.0"`)
 
 	binDir := filepath.Join(dir, "bin")
 	env := buildEnv(t, []string{binDir})
@@ -894,18 +856,7 @@ done
 IFS="$__wd_ifs"
 `)
 	mockCommand(t, dir, "ps", `
-__wd_query="${@: -1}"
-__wd_ifs="$IFS"; IFS=","
-for pid in $__wd_query; do
-  IFS="$__wd_ifs"
-  case "$pid" in
-    100) echo " 10,4" ;;
-    101) echo "  5,3" ;;
-    *) echo "" ;;
-  esac
-  IFS=","
-done
-IFS="$__wd_ifs"
+printf '%s\n' "  100  10,4" "  101   5,3"
 `)
 
 	binDir := filepath.Join(dir, "bin")
@@ -926,8 +877,8 @@ func TestStatusline_wrapper_shows_cpu_segment_for_claude_ancestor(t *testing.T) 
 	mockCommand(t, dir, "ps", `
 case "$*" in
   *comm=*)  printf '%s\n' "/Users/test/.local/bin/claude" ;;
-  *%cpu=*)  printf '%s\n' " 42.4" ;;
-  *rss=*)   printf '%s\n' "51200" ;;
+  *%cpu=*)  /bin/ps -A -o pid= | while read -r p; do echo "$p 42.4"; done ;;
+  *rss=*)   /bin/ps -A -o pid= | while read -r p; do echo "$p 51200"; done ;;
   *ppid=*)  printf '%s\n' "1" ;;
 esac
 `)
@@ -2663,31 +2614,15 @@ case "$*" in
   *comm=*) printf '/Users/test/.local/bin/claude\n' ;;
   *ppid=*) printf '1\n' ;;
   *%cpu=*)
-    __wd_query="${@: -1}"
-    __wd_ifs="$IFS"; IFS=","
-    for pid in $__wd_query; do
-      IFS="$__wd_ifs"
-      case "$pid" in
-        201) printf ' 5.0\n' ;;
-        202) printf ' 10.0\n' ;;
-        *) printf ' 27.0\n' ;;
-      esac
-      IFS=","
-    done
-    IFS="$__wd_ifs" ;;
+    printf '%s\n' "201  5.0" "202 10.0"
+    /bin/ps -A -o pid= | while read -r p; do
+      case "$p" in 201|202) ;; *) echo "$p 27.0" ;; esac
+    done ;;
   *rss=*)
-    __wd_query="${@: -1}"
-    __wd_ifs="$IFS"; IFS=","
-    for pid in $__wd_query; do
-      IFS="$__wd_ifs"
-      case "$pid" in
-        201) printf '10240\n' ;;
-        202) printf '10240\n' ;;
-        *) printf '20480\n' ;;
-      esac
-      IFS=","
-    done
-    IFS="$__wd_ifs" ;;
+    printf '%s\n' "201 10240" "202 10240"
+    /bin/ps -A -o pid= | while read -r p; do
+      case "$p" in 201|202) ;; *) echo "$p 20480" ;; esac
+    done ;;
 esac
 `)
 

@@ -46,8 +46,10 @@ statusline_tree_pids() {
 get_tree_rss_kb() {
   local pids
   pids="$(statusline_tree_pids "$1")"
-  ps -o rss= -p "${pids// /,}" 2>/dev/null | LC_ALL=C awk '
-    { total += $1 }
+  # Whole table plus a filter, never `ps -p <list>` -- see get_tree_cpu_pct.
+  ps -A -o pid=,rss= 2>/dev/null | LC_ALL=C awk -v want="$pids" '
+    BEGIN { n = split(want, a, " "); for (i = 1; i <= n; i++) keep[a[i]] = 1 }
+    ($1 in keep) { total += $2 }
     END { printf "%d\n", total + 0 }
   '
 }
@@ -94,7 +96,19 @@ get_tree_footprint_kb() {
 get_tree_cpu_pct() {
   local pids readings
   pids="$(statusline_tree_pids "$1")"
-  readings="$(ps -o %cpu= -p "${pids// /,}" 2>/dev/null)" || true
+  # The whole table, filtered here -- NOT `ps -p <pid,pid,...>`. The cliff is the
+  # NUMBER OF `-p` ARGUMENTS, not the size of the machine: one pid costs 3.4ms,
+  # two cost 88ms, flat in list length, and it fires even on the same pid twice.
+  # On a loaded box those two pids cost 7-13s, which made one statusline repaint
+  # cost 12-21s and kept `ps` permanently resident.
+  #
+  # This reads the table a second time (get_tree_rss_kb reads it too). Merging
+  # them into one `-o pid=,rss=,%cpu=` would halve it, but each caller runs in
+  # its own command substitution, so there is no process to cache the table in.
+  readings="$(ps -A -o pid=,%cpu= 2>/dev/null | LC_ALL=C awk -v want="$pids" '
+    BEGIN { n = split(want, a, " "); for (i = 1; i <= n; i++) keep[a[i]] = 1 }
+    ($1 in keep) { print $2 }
+  ')" || true
   [ -n "$readings" ] || return 0
 
   # gsub + LC_ALL=C make the sum locale-independent: macOS `ps` emits a comma
