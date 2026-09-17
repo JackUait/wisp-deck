@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,4 +101,64 @@ func TestClaudeAllIn_accepts_a_default_label_file_flag(t *testing.T) {
 
 func hasLoopbackPrefix(url string) bool {
 	return len(url) > 17 && url[:17] == "http://127.0.0.1:"
+}
+
+// Opening a pane reaches no usage endpoint. The round this replaces fanned out
+// to every login and every enabled profile, so a deck spent a request on
+// subscriptions the session never routes to — and read every login's Keychain
+// entry, refreshing (and rotating) the OAuth token of logins nobody had opened
+// a pane on. Quota numbers are refreshed by account-usage and
+// subscription-usage instead, which the user runs when they want them.
+//
+// The two account caches are pre-written fresh so the throttle, not the
+// network, is what keeps a RED run off api.anthropic.com: only the Zhipu stub
+// can be reached, and reaching it is the failure.
+func TestClaudeAllIn_fetches_no_usage_at_launch(t *testing.T) {
+	hits := make(chan string, 8)
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits <- r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer stub.Close()
+
+	root := t.TempDir()
+	configsDir := filepath.Join(root, "claude-configs")
+	for _, dir := range []string{configsDir, filepath.Join(root, "account-usage")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(path, body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(root, "claude-accounts.list"), "Personal:personal\n")
+	write(filepath.Join(root, "claude-configs.list"), "Zhipu GLM:zhipu-glm.json\n")
+	write(filepath.Join(configsDir, "zhipu-glm.json"), fmt.Sprintf(
+		`{"env":{"ANTHROPIC_BASE_URL":%q,"ANTHROPIC_AUTH_TOKEN":"k"}}`, stub.URL+"/api/anthropic"))
+	fresh := fmt.Sprintf(`{"provider":"claude","fetched_at":%d,"checked_at":%d}`,
+		time.Now().Unix(), time.Now().Unix())
+	for _, login := range []string{"default", "personal"} {
+		write(filepath.Join(root, "account-usage", login+".json"), fresh)
+	}
+
+	command := newClaudeAllInCommand(func([]string) error { return nil })
+	command.SetArgs([]string{
+		"--settings", filepath.Join(root, "absent.json"),
+		"--accounts-list", filepath.Join(root, "claude-accounts.list"),
+		"--accounts-dir", filepath.Join(root, "claude-accounts"),
+		"--configs-list", filepath.Join(root, "claude-configs.list"),
+		"--configs-dir", configsDir,
+		"--", "true"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case path := <-hits:
+		t.Fatalf("the launch fetched usage from a subscription the session never picked: %s", path)
+	case <-time.After(2 * time.Second):
+	}
 }

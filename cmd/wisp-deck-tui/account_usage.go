@@ -28,6 +28,14 @@ var (
 	accountUsageMinInterval  int
 )
 
+// usageRefreshOptions is what one round needs beyond the files on disk.
+// anthropic is overridden only by tests.
+type usageRefreshOptions struct {
+	env         allin.Env
+	anthropic   string
+	minInterval int
+}
+
 // accountUsageToken is the Keychain read, as a seam so tests never touch the
 // real Keychain.
 var accountUsageToken = allin.AccountToken

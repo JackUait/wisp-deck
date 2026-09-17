@@ -61,11 +61,6 @@ func newClaudeAllInCommandWithBridge(
 			// execs Codex when a ChatGPT row actually resolves, so a session
 			// that never picks one pays for this exactly nothing.
 			bridge := newBridge(sessionCodexPath(codexPath))
-			// Armed, never waited on. Claude Code snapshots modelPicker once
-			// at launch, so a reading that lands after this point cannot reach
-			// this session's picker anyway — blocking for it would spend a
-			// network round trip of launch time on the next tab's numbers.
-			go allInUsageRefresh(env)
 			resolver := allin.NewResolver(env)
 			resolver.Bridge = bridge
 			newHandler := func(upstream string) http.Handler {

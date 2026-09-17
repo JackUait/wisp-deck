@@ -799,13 +799,23 @@ added after launch never appeared. Everything else here follows from that:
 - **A quota belongs to a SOURCE, not a row.** `SourceKey` reduces a row to the
   credential it spends, so one login's rows all carry the same number and all
   vanish together.
-- **The refresh is armed at launch and never waited on** (`claude_allin.go`). A
-  reading landing after that point cannot reach this session's picker anyway, so
-  blocking would spend a round trip of launch time on the *next* tab's numbers.
-- **`account-usage` refreshes every login on the machine**, not the session's
-  own. Claude Code puts only the running session's rate limits in its statusline
-  payload, and the picker offers a row per login — including logins no pane is
-  running, which only that endpoint can answer.
+- **Nothing refreshes these caches at launch.** Opening a pane used to arm a
+  round that fetched every login AND every enabled profile, so a deck spent a
+  request per source on subscriptions the session never routes to, and read
+  every login's Keychain entry on the way — refreshing, and therefore
+  ROTATING, the OAuth token of logins nobody had opened a pane on. It was
+  removed: the picker reads whatever the caches already hold, and
+  `account-usage` / `subscription-usage` are what write them, on demand.
+  Guarded by `TestClaudeAllIn_fetches_no_usage_at_launch`
+  (`cmd/wisp-deck-tui/claude_allin_test.go`), which pre-writes fresh account
+  caches so the throttle keeps a failing run off api.anthropic.com and only the
+  provider stub can be reached.
+- **So a number goes unknown rather than stale.** Past `usageFreshFor`,
+  `quotaFromSnapshot` returns an empty `Quota` and `Known` is false, which drops
+  the `N% left` suffix and — since `Exhausted()` requires `Known` — makes the
+  spent-row filter inert. That is the safe direction the section above already
+  argues for: a wrong hide stands for a whole session, an offered spent row
+  costs one turn.
 
 The behavior is a checkbox in the modal's All-In block, stored beside the
 configs list as `claude-allin.hide-exhausted` — the same sidecar shape as
@@ -822,8 +832,8 @@ the first line of the block, so every checklist row moved down one line and
 
 Guarded by `internal/allin/usage_test.go`,
 `internal/tui/subscription_modal_allin_hidespent_test.go`,
-`cmd/wisp-deck-tui/allin_usage_test.go` and
-`cmd/wisp-deck-tui/account_usage_cmd_test.go`.
+`cmd/wisp-deck-tui/account_usage_cmd_test.go` and
+`cmd/wisp-deck-tui/claude_allin_test.go`.
 
 ### Two rows in `/model` belong to Claude Code, not to the roster
 
@@ -894,6 +904,9 @@ process that can read the entry unprompted could read the token directly.
 An entry recording `expiresAt: 0` is served as-is. Refreshing it would rotate
 the refresh token on every single request.
 
-`wisp-deck-tui account-usage` picks this up for free: it already reads every
-login's token on a 300s throttle, so it now also keeps every login's token
-alive whether or not a pane ever routes to that row.
+Nothing sweeps the other logins for this. `Resolve`'s `KindAccount` branch is
+the only automatic caller, so a borrowed login is refreshed by the first turn
+that routes to it and not before — which is the whole point: a login the user
+never picks is never touched. `wisp-deck-tui account-usage` does walk every
+login on the machine, but **nothing in the tree invokes it** (`lib/`, `bin/`,
+`templates/` and `scripts/` carry no reference); it is a by-hand command.
