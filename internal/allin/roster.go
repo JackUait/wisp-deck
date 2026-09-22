@@ -65,13 +65,30 @@ type claudeModel struct {
 	label string
 }
 
-// claudeLineup is pinned rather than discovered: Claude Code ships no catalog a
-// third party can read, and an id it does not know still routes fine.
+// claudeLineup is the fallback until the router has cached Anthropic's own
+// list (modelcache.go). An id it does not know still routes fine.
 var claudeLineup = []claudeModel{
 	{"claude-opus-5", "Opus 5"},
 	{"claude-sonnet-5", "Sonnet 5"},
 	{"claude-fable-5-1", "Fable 5.1"},
 	{"claude-haiku-4-5-20251001", "Haiku 4.5"},
+}
+
+// claudeModels is the cached Anthropic list, or the pinned lineup.
+func claudeModels(cache ModelCache) []claudeModel {
+	entry, ok := cache[anthropicCacheKey]
+	if !ok || len(entry.Models) == 0 {
+		return claudeLineup
+	}
+	out := make([]claudeModel, 0, len(entry.Models))
+	for _, m := range entry.Models {
+		label := strings.TrimPrefix(m.Label, "Claude ")
+		if label == "" {
+			label = m.ID
+		}
+		out = append(out, claudeModel{id: m.ID, label: label})
+	}
+	return out
 }
 
 // SourceCount reports how many distinct credentials the roster spans: each
@@ -113,9 +130,10 @@ func accountRows(env Env) []Row {
 		}
 		accounts = append(accounts, struct{ label, dir string }{label, dir})
 	}
+	lineup := claudeModels(LoadModelCache(ModelCachePath(env)))
 	var rows []Row
 	for _, account := range accounts {
-		for _, model := range claudeLineup {
+		for _, model := range lineup {
 			// The marker must trail the whole id: Claude Code matches it at the
 			// end of the raw model string, and Route strips it there too.
 			rows = append(rows, Row{
@@ -128,8 +146,15 @@ func accountRows(env Env) []Row {
 	return rows
 }
 
-func configRows(env Env) []Row {
-	var rows []Row
+type routableConfig struct {
+	Config   claudeconfig.Config
+	Provider claudeconfig.Provider
+}
+
+// routableConfigs is every profile the picker may offer. The refresher walks
+// the same list, so it never fetches for a row the picker would not show.
+func routableConfigs(env Env) []routableConfig {
+	var out []routableConfig
 	// A disabled subscription stays fully manageable in the modal but is
 	// hidden from the in-session switcher popup (claudeconfig.LoadDisabled);
 	// All-In must treat it the same way — the user turned it off.
@@ -159,12 +184,22 @@ func configRows(env Env) []Row {
 		if !routableAuth(provider.Auth) {
 			continue
 		}
+		out = append(out, routableConfig{Config: config, Provider: provider})
+	}
+	return out
+}
+
+func configRows(env Env) []Row {
+	var rows []Row
+	cache := LoadModelCache(ModelCachePath(env))
+	for _, rc := range routableConfigs(env) {
+		config, provider := rc.Config, rc.Provider
 		// RemoteCatalog (Featherless) is offered too: proxy.go delegates a
 		// resolved RemoteCatalog target to internal/rolefix's own handler,
 		// which repairs the role:"system" 400 and the thinking-disables-tool-
 		// parsing failure on the way through. See credential.go's Resolve.
 		source := strings.TrimSuffix(config.File, ".json")
-		for _, model := range providerModels(env, config, provider) {
+		for _, model := range offeredModels(env, config, provider, cache) {
 			if model.Context != 0 && model.Context < minRosterContext {
 				continue
 			}
@@ -176,6 +211,24 @@ func configRows(env Env) []Row {
 		}
 	}
 	return rows
+}
+
+// offeredModels prefers the cached live list. A model's window comes from the
+// listing, then the catalog, else stays 0 (unknown, admitted by the floor).
+func offeredModels(env Env, config claudeconfig.Config, provider claudeconfig.Provider, cache ModelCache) []claudeconfig.Model {
+	entry, ok := cache[configCacheKey(config.File)]
+	if provider.SuppliesOwnModel() || !ok || len(entry.Models) == 0 {
+		return providerModels(env, config, provider)
+	}
+	out := make([]claudeconfig.Model, 0, len(entry.Models))
+	for _, m := range entry.Models {
+		window := m.Context
+		if window == 0 {
+			window, _, _ = claudeconfig.ModelLimit(m.ID)
+		}
+		out = append(out, claudeconfig.Model{ID: m.ID, Context: window})
+	}
+	return out
 }
 
 // providerModels returns the catalog's models, or the single model the user
