@@ -547,3 +547,31 @@ func TestFollowAgentCheckout_moves_a_live_spare_servers_directory(t *testing.T) 
 		t.Fatalf("live spare server still opens terminals in %q, want %q", strings.TrimSpace(string(got)), wt)
 	}
 }
+
+// A watcher that was already running when the session argument was added keeps
+// its old child script, which passes three arguments. The wrapper names the
+// relaunch file after its session, so that name still pins the right tab.
+func TestFollowAgentCheckout_without_a_session_uses_the_relaunch_files_name(t *testing.T) {
+	dir := t.TempDir()
+	repo, wt := worktreeSwitchRepo(t, dir)
+	ctx := worktreeSwitchCtx(t, dir, repo)
+	relaunch := filepath.Join(filepath.Dir(ctx), "relaunch-own.tab")
+	if err := os.Rename(ctx, relaunch); err != nil {
+		t.Fatal(err)
+	}
+	env := isolationServer(t)
+	lib := isoStubLib(t)
+	isoTab(t, env, "own.tab", repo, lib)
+	isoTab(t, env, "other", resolved(t, t.TempDir()), lib)
+	otherBefore := isoPanes(t, env, "other")
+
+	_, code := runBashSnippet(t, accountSwitchSnippet(t,
+		fmt.Sprintf("follow_agent_checkout tmux %q %q", relaunch, wt)), env)
+	assertExitCode(t, code, 0)
+	if after := isoPanes(t, env, "other"); fmt.Sprint(after) != fmt.Sprint(otherBefore) {
+		t.Fatalf("the other tab's panes were rebuilt:\nbefore %v\nafter  %v", otherBefore, after)
+	}
+	if got := isoSessionEnv(t, env, "own_tab", "WISP_DECK_PATH"); got != "WISP_DECK_PATH="+wt {
+		t.Fatalf("the tab named by its relaunch file did not follow: %q", got)
+	}
+}
