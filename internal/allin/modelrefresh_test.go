@@ -162,3 +162,26 @@ func TestObserve_refreshes_once_and_never_blocks(t *testing.T) {
 		t.Fatal("the background refresh never finished")
 	}
 }
+
+// A cached time comes back from JSON in a different Location than a freshly
+// parsed one, so an unchanged list must not read as changed.
+func TestRefresh_does_not_rewrite_the_profile_for_an_unchanged_list(t *testing.T) {
+	env := rosterEnv(t)
+	var hits, ensures int32
+	zhipu := listServer(t, `{"data":[{"id":"glm-6","created":1786636800,"context_length":1000000}]}`, &hits, nil)
+	pointZhipuAt(t, env, zhipu.URL)
+	old := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	seedCache(t, env, ModelCache{configCacheKey("zhipu-glm.json"): {FetchedAt: old, Models: []Listed{
+		{ID: "glm-6", Created: time.Unix(1786636800, 0).UTC(), Context: 1000000},
+	}}})
+
+	r := &ModelRefresher{Env: env, Client: http.DefaultClient,
+		Now:    func() time.Time { return old.Add(48 * time.Hour) },
+		Ensure: func(Env) error { atomic.AddInt32(&ensures, 1); return nil }}
+	if r.Refresh(nil) || ensures != 0 {
+		t.Fatalf("an unchanged list rewrote the profile (ensures=%d)", ensures)
+	}
+	if hits != 1 {
+		t.Fatalf("hits = %d", hits)
+	}
+}

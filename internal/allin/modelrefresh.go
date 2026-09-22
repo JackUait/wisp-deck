@@ -2,7 +2,6 @@ package allin
 
 import (
 	"net/http"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -48,7 +47,7 @@ func (r *ModelRefresher) Refresh(sessionAuth http.Header) bool {
 			return
 		}
 		reduced := Latest(models)
-		if !reflect.DeepEqual(cache[key].Models, reduced) {
+		if !sameModels(cache[key].Models, reduced) {
 			changed = true
 		}
 		cache[key] = CacheEntry{FetchedAt: now, Models: reduced}
@@ -93,4 +92,19 @@ func (r *ModelRefresher) Refresh(sessionAuth http.Header) bool {
 		_ = r.Ensure(r.Env)
 	}
 	return changed
+}
+
+// sameModels compares times with Equal: a time read back from the cache file
+// carries a different Location than a freshly parsed one, so DeepEqual would
+// call every list changed and rewrite the profile on each refresh.
+func sameModels(a, b []Listed) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].ID != b[i].ID || a[i].Label != b[i].Label || a[i].Context != b[i].Context || !a[i].Created.Equal(b[i].Created) {
+			return false
+		}
+	}
+	return true
 }
