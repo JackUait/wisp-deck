@@ -160,6 +160,10 @@ auto_switch_guard() {
 auto_switch_maybe_trigger() {
   local five_hour="${1:-}" weekly="${2:-}"
   [ -n "${TMUX:-}" ] || return 0
+  # run-shell's child gets no $TMUX_PANE, and every relaunch helper asks tmux
+  # for "this" session untargeted — which from there is the tab the user last
+  # typed in. Hand this pane down so the switch stays in its own tab.
+  [ -n "${TMUX_PANE:-}" ] || return 0
   local relaunch="${WISP_DECK_RELAUNCH_FILE:-}" lib="${WISP_DECK_LIB_DIR:-}"
   [ -n "$relaunch" ] && [ -f "$relaunch" ] || return 0
   [ -n "$lib" ] && [ -f "$lib/account-switch.sh" ] || return 0
@@ -183,6 +187,6 @@ auto_switch_maybe_trigger() {
     "$lib/statusline.sh" "$lib/claude-accounts.sh" "$lib/claude-shared-settings.sh" \
     "$lib/tmux-session.sh" "$lib/account-switch.sh" \
     "$relaunch" "$target")"
-  tmux run-shell -b "bash -c $(printf '%q' "$cmd")" 2>/dev/null || true
+  tmux run-shell -b "TMUX_PANE=$(printf '%q' "$TMUX_PANE") bash -c $(printf '%q' "$cmd")" 2>/dev/null || true
   return 0
 }

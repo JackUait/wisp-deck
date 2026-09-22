@@ -78,6 +78,13 @@ func worktreeSwitchMockTmux(t *testing.T, dir, sid, rec string) string {
 		sessionLine = "WISP_DECK_CLAUDE_SESSION=" + sid
 	}
 	return mockCommand(t, dir, "tmux", fmt.Sprintf(`
+orig="$*"
+if [ "$1" = "has-session" ]; then exit 0; fi
+# Drop a leading "-t <target>" so the matches below see the verb's arguments;
+# the log keeps the target so tests can assert the call named its session.
+verb="$1"; shift
+[ "$1" = "-t" ] && shift 2
+set -- "$verb" "$@"
 if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_CLAUDE_SESSION" ]; then
   printf '%%s\n' %q; exit 0
 fi
@@ -98,7 +105,7 @@ if [ "$1" = "list-panes" ]; then
   exit 0
 fi
 if [ "$1" = "capture-pane" ]; then printf '❯\n'; exit 0; fi
-printf '%%s\n' "$*" >> %q`, sessionLine, filepath.Join(projectRoot(t), "lib"), rec))
+printf '%%s\n' "$orig" >> %q`, sessionLine, filepath.Join(projectRoot(t), "lib"), rec))
 }
 
 // _session_worktrees turns git's porcelain listing into the switcher's
@@ -154,7 +161,7 @@ func TestApplyAccountSwitchChoice_worktree_rebuilds_the_tab_at_the_checkout(t *t
 	}
 
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
-	assertContains(t, logOut, "set-environment WISP_DECK_PATH "+wt)
+	assertContains(t, logOut, "set-environment -t =wisp-session WISP_DECK_PATH "+wt)
 	for _, pane := range []string{"%1", "%2", "%3"} {
 		want := "respawn-pane -k -t " + pane
 		if !strings.Contains(logOut, want) {
@@ -243,8 +250,9 @@ func TestApplyAccountSwitchChoice_worktree_current_checkout_is_a_noop(t *testing
 
 // The spare pane's inner tmux reads its config at every (re)start, so the config
 // must be regenerated at the new checkout — otherwise its + button and prefix+t
-// keep opening tabs in the tree the session just left. The outer prefix+t bind
-// follows for the same reason.
+// keep opening tabs in the tree the session just left. The outer prefix+t reads
+// that directory at key time, so nothing server-wide is rebound: a bind is
+// shared by every tab, and rebinding it here would move every tab's prefix+t.
 func TestApplyAccountSwitchChoice_worktree_retargets_the_spare_tabs(t *testing.T) {
 	dir := t.TempDir()
 	repo, wt := worktreeSwitchRepo(t, dir)
@@ -273,10 +281,7 @@ func TestApplyAccountSwitchChoice_worktree_retargets_the_spare_tabs(t *testing.T
 		t.Fatalf("spare prefix+t still opens the old checkout:\n%s", body)
 	}
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
-	assertContains(t, logOut, "bind-key t run-shell")
-	if !strings.Contains(logOut, wt) {
-		t.Fatalf("outer prefix+t not rebound to the new checkout:\n%s", logOut)
-	}
+	assertNotContains(t, logOut, "bind-key")
 }
 
 // The popup can only offer checkouts it is told about.

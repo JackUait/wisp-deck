@@ -177,7 +177,9 @@ EOF
 # Args: <socket_label> <window_id>
 spare_tabs_close() {
   local label="$1" win="$2" count dir
-  count="$(tmux -L "$label" list-windows -F '#{window_id}' 2>/dev/null | grep -c .)"
+  # Count the window's OWN session: tab-view tabs share this server, and an
+  # untargeted count reads whichever inner session was used last.
+  count="$(tmux -L "$label" list-windows -t "$win" -F '#{window_id}' 2>/dev/null | grep -c .)"
   if [ "${count:-0}" -le 1 ]; then
     dir="$(tmux -L "$label" show -gv @gt_dir 2>/dev/null)"
     tmux -L "$label" respawn-pane -k -t "$win" ${dir:+-c "$dir"} 2>/dev/null || true
@@ -192,6 +194,43 @@ spare_tabs_close_current() {
   local label="$1" win
   win="$(tmux -L "$label" display-message -p '#{window_id}' 2>/dev/null)"
   [ -n "$win" ] && spare_tabs_close "$label" "$win"
+}
+
+# The OUTER prefix+t / w / Tab / BTab. Those binds are server-wide, shared by
+# every tab, so the target is resolved at key time from the tab the key was
+# pressed in: the spare server from its session name, and the inner session
+# from the tty of that window's spare pane (a tab-view tab adds a sibling inner
+# session to the same server, and an untargeted command on it lands on
+# whichever one was used last). A new tab opens in the server's own @gt_dir,
+# which a worktree retarget rewrites. A pane or window target needs "=name:";
+# "=name" alone resolves to nothing there, and a bare numeric name to a pane.
+# Args: <outer_session> <outer_window_id> <new|close|next|prev>
+spare_tabs_outer_key() {
+  local session="$1" window="$2" action="$3" label ptty ai cmd inner="" dir win
+  [ -n "$session" ] || return 0
+  label="$(spare_tabs_socket "$session")"
+  # Every candidate pane is tried: a pane the user added is not a spare, and
+  # its tty matches no inner client. No match means no key action at all.
+  while IFS='|' read -r ptty ai cmd; do
+    [ "$ai" = "1" ] && continue
+    case "$cmd" in *compact_view*) continue ;; esac
+    inner="$(spare_tabs_session_for_tty "$label" "$ptty")"
+    [ -n "$inner" ] && break
+  done < <(tmux list-panes -t "$window" -F '#{pane_tty}|#{@gt_ai}|#{pane_start_command}' 2>/dev/null)
+  [ -n "$inner" ] || return 0
+  case "$action" in
+    new)
+      dir="$(tmux -L "$label" show -gv @gt_dir 2>/dev/null)"
+      tmux -L "$label" new-window -t "=$inner:" ${dir:+-c "$dir"} 2>/dev/null || true
+      ;;
+    close)
+      win="$(tmux -L "$label" display-message -p -t "=$inner:" '#{window_id}' 2>/dev/null)"
+      [ -n "$win" ] && spare_tabs_close "$label" "$win"
+      ;;
+    next) tmux -L "$label" next-window -t "=$inner" 2>/dev/null || true ;;
+    prev) tmux -L "$label" previous-window -t "=$inner" 2>/dev/null || true ;;
+  esac
+  return 0
 }
 
 # Route a status-bar click to its action by the clicked user-range tag.

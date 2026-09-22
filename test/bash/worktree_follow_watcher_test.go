@@ -34,7 +34,7 @@ func followWatcherRun(t *testing.T, dir, stateFile, relaunch string, calls int) 
 	lib := filepath.Join(projectRoot(t), "lib")
 
 	body := strings.Repeat(fmt.Sprintf(
-		"attention_watcher_follow_agent tmux %q %q %q\n", stateFile, relaunch, lib), calls)
+		"attention_watcher_follow_agent tmux %q %q %q wisp-session\n", stateFile, relaunch, lib), calls)
 	_, code := runBashSnippet(t, fmt.Sprintf(
 		"source %q && source %q && attention_watcher_reset && %s",
 		filepath.Join(lib, "tui.sh"), filepath.Join(lib, "tab-title-watcher.sh"), body), env)
@@ -52,7 +52,7 @@ func TestAttentionWatcherFollowAgent_moves_the_tab_into_the_agents_worktree(t *t
 	stateFile := followWatcherGeneration(t, dir, wt)
 
 	logOut := followWatcherRun(t, dir, stateFile, relaunch, 1)
-	assertContains(t, logOut, "set-environment WISP_DECK_PATH "+wt)
+	assertContains(t, logOut, "set-environment -t =wisp-session WISP_DECK_PATH "+wt)
 	assertContains(t, logOut, "respawn-pane -k -t %2")
 
 	ctx, err := os.ReadFile(relaunch)
@@ -105,7 +105,7 @@ func TestAttentionWatcherFollowAgent_attempts_each_directory_once(t *testing.T) 
 	// A refused follow reaches tmux only through the library probes it makes
 	// before validating; it must never respawn a pane or move the session env.
 	assertNotContains(t, logOut, "respawn-pane")
-	assertNotContains(t, logOut, "set-environment WISP_DECK_PATH")
+	assertNotContains(t, logOut, "set-environment")
 
 	ctx, err := os.ReadFile(relaunch)
 	if err != nil {
@@ -156,7 +156,7 @@ func TestAttentionWatcherFollowAgent_follows_the_agent_back_out(t *testing.T) {
 	stateFile := followWatcherGeneration(t, dir, repo)
 
 	logOut := followWatcherRun(t, dir, stateFile, relaunch, 1)
-	assertContains(t, logOut, "set-environment WISP_DECK_PATH "+repo)
+	assertContains(t, logOut, "set-environment -t =wisp-session WISP_DECK_PATH "+repo)
 }
 
 // The watcher is started before the session has a relaunch context to follow,
@@ -229,7 +229,8 @@ wait
 	assertExitCode(t, code, 0)
 
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q 2>/dev/null", rec), nil)
-	assertContains(t, logOut, "set-environment WISP_DECK_PATH "+wt)
+	// The tick's own session, never tmux's current one.
+	assertContains(t, logOut, "set-environment -t =session WISP_DECK_PATH "+wt)
 	assertNotContains(t, logOut, "respawn-pane -k -t %1")
 
 	ctx, err := os.ReadFile(relaunch)

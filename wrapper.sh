@@ -644,7 +644,10 @@ spare_tabs_config "$PROJECT_NAME" "$PROJECT_DIR" "$_WRAPPER_DIR/lib/spare-tabs.s
 # "(base)"). Echoes empty for non-zsh shells, leaving them untouched.
 _spare_zdotdir="$(spare_prompt_zdotdir "$SHARE_DIR" "$SESSION_NAME" "$SHELL" "${ZDOTDIR:-$HOME}")"
 _spare_cmd="$(spare_tabs_launch_cmd "$_spare_label" "$_spare_conf" "$PROJECT_DIR" "$_spare_zdotdir")"
-_spare_close_bind="bash -c 'source \"$_WRAPPER_DIR/lib/spare-tabs.sh\" && spare_tabs_close_current \"$_spare_label\"'"
+# prefix+t/w/Tab/BTab reach the spare terminal of the tab the key was pressed
+# in. Binds are server-wide, so the tab comes from #{...} at key time — a baked
+# $_spare_label would send every tab's keys to the tab launched last.
+_spare_key_bind="env -u TMUX_PANE bash -c 'source \"\$1/spare-tabs.sh\" && spare_tabs_outer_key \"\$2\" \"\$3\" \"\$4\"' wisp-spare \"$_WRAPPER_DIR/lib\" #{q:session_name} #{q:window_id}"
 
 # Launch the session with the COMPLETE three-pane layout FIRST — before any of
 # the remaining setup (relaunch context, watchers, hover routing). The agent
@@ -775,7 +778,7 @@ HEARTBEAT_PID=$!
 #      the AI pane is focused lands in the AI tool.
 #   2. prefix+i injects the most recent screenshot straight into the AI pane
 #      regardless of which pane is active. See lib/screenshot.sh.
-_screenshot_bind="bash -c 'source \"$_WRAPPER_DIR/lib/screenshot.sh\" && gt_paste_latest_screenshot'"
+_screenshot_bind="bash -c 'source \"\$1/screenshot.sh\" && gt_paste_latest_screenshot \"\$2\"' wisp-shot \"$_WRAPPER_DIR/lib\" #{q:session_name}"
 
 # tmux normally delivers pointer motion only to the pane underneath it, so the
 # ledger cannot observe the event that enters its neighbour. Install a private
@@ -819,7 +822,9 @@ _tab_view_new_bind="bash -c 'source \"\$1/tab-view.sh\" && tab_view_new_window \
 # Realign the bar to the AI pane's offset and hook resize/layout changes so
 # the ┬ junction keeps tracking the split. Built as an array so the hook
 # commands drop out cleanly when the refresh script could not be written.
-_gt_tabbar_chain=(set-option status-left "$(tab_view_status_left "$PROJECT_NAME" "$_gt_accent" "$_gt_ai_left" "$_gt_tabbar_mode")" ';')
+# -t: this batch is a new client, and until its attach runs an untargeted
+# set-option lands on the session the user last typed in.
+_gt_tabbar_chain=(set-option -t "$SESSION_NAME" status-left "$(tab_view_status_left "$PROJECT_NAME" "$_gt_accent" "$_gt_ai_left" "$_gt_tabbar_mode")" ';')
 if [ -n "$_gt_tabbar_refresh" ]; then
   _gt_tabbar_chain+=(set-hook -t "$SESSION_NAME" client-resized "run-shell -b \"$_gt_tabbar_refresh\"" ';')
   _gt_tabbar_chain+=(set-hook -t "$SESSION_NAME" window-layout-changed "run-shell -b \"$_gt_tabbar_refresh\"" ';')
@@ -864,10 +869,10 @@ fi
 "$TMUX_CMD" \
   "${_gt_tabbar_chain[@]}" \
   bind-key i run-shell "$_screenshot_bind" \; \
-  bind-key t run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label new-window -c \"$PROJECT_DIR\"" \; \
-  bind-key w run-shell "$_spare_close_bind" \; \
-  bind-key Tab run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label next-window" \; \
-  bind-key BTab run-shell "env -u TMUX -u TMUX_PANE tmux -L $_spare_label previous-window" \; \
+  bind-key t run-shell "$_spare_key_bind new" \; \
+  bind-key w run-shell "$_spare_key_bind close" \; \
+  bind-key Tab run-shell "$_spare_key_bind next" \; \
+  bind-key BTab run-shell "$_spare_key_bind prev" \; \
   bind-key c run-shell "$_tab_view_new_bind" \; \
   "${_gt_tab_switch_binds[@]}" \
   ${_gt_tab_close_binds[@]+"${_gt_tab_close_binds[@]}"} \

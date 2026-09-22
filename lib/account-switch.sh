@@ -228,15 +228,17 @@ _worktree_choice_ready() {
   return 1
 }
 
-# _session_side_panes <tmux_cmd> — print "<ledger_pane> <spare_pane>" (either
-# may be empty). The agent pane carries @gt_ai; of the two that don't, the
+# _session_side_panes <tmux_cmd> [session] — print "<ledger_pane> <spare_pane>"
+# (either may be empty). Without a session it reads tmux's CURRENT session, which
+# is only this tab from inside one of its own panes — see follow_agent_checkout.
+# The agent pane carries @gt_ai; of the two that don't, the
 # ledger is the one whose start command runs compact_view and the spare is the
 # other. Identifying them by start command rather than by index survives a pane
 # heal, which rebuilds them in whatever order the splits succeeded. The field
 # separator is '|' because an unset @gt_ai renders EMPTY — space-separated
 # fields would then collapse and shift the start command into the flag.
 _session_side_panes() {
-  local tmux_cmd="$1" id flag cmd ledger="" spare=""
+  local tmux_cmd="$1" session="${2-}" id flag cmd ledger="" spare=""
   while IFS='|' read -r id flag cmd; do
     [ -n "$id" ] || continue
     [ "$flag" = "1" ] && continue
@@ -244,7 +246,10 @@ _session_side_panes() {
       *compact_view*) [ -z "$ledger" ] && ledger="$id" ;;
       *) [ -z "$spare" ] && spare="$id" ;;
     esac
-  done < <("$tmux_cmd" list-panes -s -F '#{pane_id}|#{@gt_ai}|#{pane_start_command}' 2>/dev/null)
+  # "=name:" — list-panes reads -t as a window first, so "=name" alone would
+  # take a window of that name in whatever session is current.
+  done < <("$tmux_cmd" list-panes -s ${session:+-t "=$session:"} \
+    -F '#{pane_id}|#{@gt_ai}|#{pane_start_command}' 2>/dev/null)
   printf '%s %s\n' "$ledger" "$spare"
 }
 
@@ -654,11 +659,14 @@ send_continue_message() {
 # over: embedded newlines must not submit, and a pasted image PATH is only
 # re-attached as a live image chip when it arrives as a paste (the same
 # mechanism the screenshot drop uses). Best-effort: a failed paste degrades
-# to "draft stays in history".
+# to "draft stays in history". Buffers are server-wide, so the buffer is named
+# after the pane — tabs that relaunch together must not paste each other's
+# drafts — and -d drops it once pasted.
 _draft_paste() {
   local tmux_cmd="$1" pane="$2" text="$3"
-  printf '%s' "$text" | "$tmux_cmd" load-buffer -b wispdraft - 2>/dev/null || return 0
-  "$tmux_cmd" paste-buffer -p -b wispdraft -t "$pane" 2>/dev/null || true
+  printf '%s' "$text" | "$tmux_cmd" load-buffer -b "wispdraft$pane" - 2>/dev/null || return 0
+  "$tmux_cmd" paste-buffer -d -p -b "wispdraft$pane" -t "$pane" 2>/dev/null \
+    || "$tmux_cmd" delete-buffer -b "wispdraft$pane" 2>/dev/null || true
   return 0
 }
 
@@ -1675,41 +1683,48 @@ _subscription_choice_ready() {
   jq -er '.env.ANTHROPIC_AUTH_TOKEN | select(type == "string" and length > 0)' "$config_path" >/dev/null 2>&1
 }
 
-# _retarget_session_context <tmux_cmd> <relaunch_file> <new_project_dir>
+# _retarget_session_context <tmux_cmd> <relaunch_file> <new_project_dir> <session>
 # Point this tab's durable identity at another checkout. Reads _rc_* from the
 # caller's scope and retargets _rc_project_dir there (the same dynamic-scoping
 # contract _read_relaunch_ctx uses). Runs FIRST in every retarget:
 # relaunch_ai_pane re-reads this file for the pane's cwd, and it is also what
 # every later switch, tab_view_new_window and gt_ensure_panes_watch read.
+#
+# Every tmux call here and in _retarget_session_side_panes names <session>: the
+# attention watcher runs outside tmux, where a call with no -t lands on the
+# session the user last used — another tab.
 _retarget_session_context() {
-  local tmux_cmd="$1" relaunch_file="$2" new_dir="$3"
+  local tmux_cmd="$1" relaunch_file="$2" new_dir="$3" session="${4-}"
+  [ -n "$session" ] || return 1
   _set_relaunch_kv "$relaunch_file" project_dir "$new_dir" || return 1
   _rc_project_dir="$new_dir"
 
   # A crash-restore rebuilds the tab from the session env; without this it would
   # reopen the checkout the tab just left.
-  "$tmux_cmd" set-environment WISP_DECK_PATH "$new_dir" 2>/dev/null || true
+  "$tmux_cmd" set-environment -t "=$session" WISP_DECK_PATH "$new_dir" 2>/dev/null || true
   return 0
 }
 
-# _retarget_session_side_panes <tmux_cmd> <relaunch_file> <new_project_dir>
+# _retarget_session_side_panes <tmux_cmd> <relaunch_file> <new_project_dir> <session>
 # Move the ledger and the spare terminal to a checkout the context already
 # points at. Every step is fail-open: a pane that cannot be found simply keeps
 # its old cwd rather than aborting a retarget the caller has already made.
 _retarget_session_side_panes() {
-  local tmux_cmd="$1" relaunch_file="$2" new_dir="$3"
-  local lib_dir session share_dir side_panes ledger="" spare="" accent
-  local spare_label spare_conf spare_zdotdir project
+  local tmux_cmd="$1" relaunch_file="$2" new_dir="$3" session="${4-}"
+  local lib_dir share_dir side_panes ledger="" spare="" accent
+  local spare_label spare_conf spare_zdotdir project line
+  [ -n "$session" ] || return 0
 
   # Split by prefix, NOT `read -r ledger spare`: _session_side_panes leaves the
   # ledger field EMPTY when the session has no ledger pane, and read would
   # collapse the fields and hand the SPARE's id over as the ledger — respawning
   # the user's terminal as a changeset ledger.
-  side_panes="$(_session_side_panes "$tmux_cmd")"
+  side_panes="$(_session_side_panes "$tmux_cmd" "$session")"
   ledger="${side_panes%% *}"
   spare="${side_panes#* }"
-  lib_dir="$(_pool_tmux_env "$tmux_cmd" WISP_DECK_LIB_DIR)"
-  [ -n "$lib_dir" ] || return 0
+  line="$("$tmux_cmd" show-environment -t "=$session" WISP_DECK_LIB_DIR 2>/dev/null)" || line=""
+  lib_dir="${line#WISP_DECK_LIB_DIR=}"
+  [ "$lib_dir" != "$line" ] && [ -n "$lib_dir" ] || return 0
 
   if [ -n "$ledger" ]; then
     "$tmux_cmd" respawn-pane -k -t "$ledger" -c "$new_dir" \
@@ -1718,8 +1733,6 @@ _retarget_session_side_panes() {
   fi
 
   [ -n "$spare" ] || return 0
-  session="$("$tmux_cmd" display-message -p '#{session_name}' 2>/dev/null)" || session=""
-  [ -n "$session" ] || return 0
   share_dir="${relaunch_file%/*}"
   # shellcheck source=/dev/null
   declare -f spare_tabs_socket >/dev/null 2>&1 || source "$lib_dir/spare-tabs.sh"
@@ -1728,19 +1741,22 @@ _retarget_session_side_panes() {
   spare_zdotdir="$share_dir/spare-zdotdir-${session}"
   [ -d "$spare_zdotdir" ] || spare_zdotdir=""
   accent="$(get_tool_accent "${_rc_tool:-claude}" 2>/dev/null)" || accent=""
-  project="$(_pool_tmux_env "$tmux_cmd" WISP_DECK_PROJECT)"
-  # The inner spare server runs `exit-unattached on`, so respawning its pane
-  # restarts it and it re-reads this config — its @gt_dir (the + button) and its
-  # own prefix+t follow from the regenerated file rather than needing live
-  # tmux calls against a server that is about to die.
+  line="$("$tmux_cmd" show-environment -t "=$session" WISP_DECK_PROJECT 2>/dev/null)" || line=""
+  project="${line#WISP_DECK_PROJECT=}"
+  [ "$project" != "$line" ] || project=""
+  # The inner spare server reads this config when it starts, so its @gt_dir
+  # (the + button) and its own prefix+t follow the regenerated file. It only
+  # restarts when the respawn leaves it unattached (`exit-unattached on`); a
+  # tab-view sibling window's inner session keeps it alive, so its live copy is
+  # moved too. That server is this tab's own. The OUTER prefix+t is shared by
+  # every tab and reads the directory at key time (wrapper.sh), so it is never
+  # rebound here.
   spare_tabs_config "$project" "$new_dir" "$lib_dir/spare-tabs.sh" \
     "$spare_label" "${accent:-209}" "$session" > "$spare_conf" 2>/dev/null || true
+  tmux -L "$spare_label" set -g @gt_dir "$new_dir" \; \
+    bind t new-window -c "$new_dir" 2>/dev/null || true
   "$tmux_cmd" respawn-pane -k -t "$spare" -c "$new_dir" \
     "$(spare_tabs_launch_cmd "$spare_label" "$spare_conf" "$new_dir" "$spare_zdotdir")" \
-    2>/dev/null || true
-  # The OUTER prefix+t opens a spare tab too, with the dir baked in at launch.
-  "$tmux_cmd" bind-key t run-shell \
-    "env -u TMUX -u TMUX_PANE tmux -L $spare_label new-window -c \"$new_dir\"" \
     2>/dev/null || true
   return 0
 }
@@ -1749,9 +1765,12 @@ _retarget_session_side_panes() {
 # Rebuild this tab at another checkout of the same project — the user's own
 # choice from the switcher, so the agent is rebuilt with it.
 _apply_worktree_switch() {
-  local tmux_cmd="$1" relaunch_file="$2" new_dir="$3"
+  local tmux_cmd="$1" relaunch_file="$2" new_dir="$3" session
 
-  _retarget_session_context "$tmux_cmd" "$relaunch_file" "$new_dir" || return 1
+  # The switcher runs inside this tab's own pane, so $TMUX_PANE names the tab.
+  session="$("$tmux_cmd" display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} \
+    '#{session_name}' 2>/dev/null)" || session=""
+  _retarget_session_context "$tmux_cmd" "$relaunch_file" "$new_dir" "$session" || return 1
 
   # The agent, through the established draft-preserving path so attention
   # fencing, the settings overlay and the unsent-draft replay all still apply —
@@ -1759,17 +1778,21 @@ _apply_worktree_switch() {
   local _gt_fresh_launch=1
   _relaunch_preserving_draft "$tmux_cmd" "$relaunch_file" ""
 
-  _retarget_session_side_panes "$tmux_cmd" "$relaunch_file" "$new_dir"
+  _retarget_session_side_panes "$tmux_cmd" "$relaunch_file" "$new_dir" "$session"
 }
 
-# follow_agent_checkout <tmux_cmd> <relaunch_file> <new_project_dir>
+# follow_agent_checkout <tmux_cmd> <relaunch_file> <new_project_dir> [session]
 # Move this tab to the checkout its own agent moved into — the automatic
 # counterpart of the switcher's worktree row. The agent pane is deliberately
 # NOT rebuilt: the conversation running in it is the one that just created the
 # worktree, and a relaunch would throw it away as a side effect of the agent
 # doing its job. Only the panes that merely display a checkout follow.
+#
+# It runs from the attention watcher, OUTSIDE tmux, so it must name its session:
+# with no -t, tmux resolves to the session the user last used, and this tab's
+# worktree would be pushed into whichever tab is on screen.
 follow_agent_checkout() {
-  local tmux_cmd="$1" relaunch_file="$2" new_dir="$3"
+  local tmux_cmd="$1" relaunch_file="$2" new_dir="$3" session="${4-}"
   local _rc_tool="" _rc_tool_cmd="" _rc_settings="" _rc_settings_source="" \
     _rc_filter="" _rc_project_dir="" _rc_accounts_dir="" _rc_pointer="" \
     _rc_list="" _rc_colors="" _rc_default_label="" \
@@ -1779,6 +1802,17 @@ follow_agent_checkout() {
   local anchor
   [ -n "$new_dir" ] || return 1
   [ -f "$relaunch_file" ] || return 1
+  # A watcher started before the session argument existed still passes three.
+  # The wrapper names the relaunch file after its session (relaunch-<session>).
+  if [ -z "$session" ]; then
+    session="${relaunch_file##*/}"
+    session="${session#relaunch-}"
+    [ "$session" != "${relaunch_file##*/}" ] || return 1
+  fi
+  # tmux stores "." and ":" in a session name as "_" (a project named foo.io),
+  # while the watcher passes the name the wrapper asked for.
+  session="${session//[.:]/_}"
+  "$tmux_cmd" has-session -t "=$session" 2>/dev/null || return 1
   _read_relaunch_ctx "$relaunch_file"
 
   # ExitWorktree's documented clean exit REMOVES the worktree as it leaves, so
@@ -1799,8 +1833,8 @@ follow_agent_checkout() {
   new_dir="$(_resolve_dir "$new_dir")"
   [ "$new_dir" = "$(_resolve_dir "$_rc_project_dir")" ] && return 0
 
-  _retarget_session_context "$tmux_cmd" "$relaunch_file" "$new_dir" || return 1
-  _retarget_session_side_panes "$tmux_cmd" "$relaunch_file" "$new_dir"
+  _retarget_session_context "$tmux_cmd" "$relaunch_file" "$new_dir" "$session" || return 1
+  _retarget_session_side_panes "$tmux_cmd" "$relaunch_file" "$new_dir" "$session"
 }
 
 # _apply_account_switch_choice_loaded <tmux_cmd> <relaunch_file>

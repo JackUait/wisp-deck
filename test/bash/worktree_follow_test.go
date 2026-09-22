@@ -22,7 +22,7 @@ func followTmuxLog(t *testing.T, dir, relaunch, target string, panes string) (st
 	}
 	env := buildEnv(t, []string{bin}, "HOME="+dir)
 	_, code := runBashSnippet(t, accountSwitchSnippet(t,
-		fmt.Sprintf("follow_agent_checkout tmux %q %q", relaunch, target)), env)
+		fmt.Sprintf("follow_agent_checkout tmux %q %q wisp-session", relaunch, target)), env)
 	ctx, err := os.ReadFile(relaunch)
 	if err != nil {
 		t.Fatal(err)
@@ -36,6 +36,13 @@ func followTmuxLog(t *testing.T, dir, relaunch, target string, panes string) (st
 func worktreeFollowMockTmux(t *testing.T, dir, rec, panes string) string {
 	t.Helper()
 	return mockCommand(t, dir, "tmux", fmt.Sprintf(`
+orig="$*"
+if [ "$1" = "has-session" ]; then exit 0; fi
+# Drop a leading "-t <target>" so the matches below see the verb's arguments;
+# the log keeps the target so tests can assert the call named its session.
+verb="$1"; shift
+[ "$1" = "-t" ] && shift 2
+set -- "$verb" "$@"
 if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_LIB_DIR" ]; then
   printf 'WISP_DECK_LIB_DIR=%%s\n' %q; exit 0
 fi
@@ -43,7 +50,7 @@ if [ "$1" = "show-environment" ]; then printf -- '-WISP_DECK_CLAUDE_ACCOUNT\n'; 
 if [ "$1" = "display-message" ]; then printf 'wisp-session\n'; exit 0; fi
 if [ "$1" = "list-panes" ]; then printf '%%s\n' %q; exit 0; fi
 if [ "$1" = "capture-pane" ]; then printf '❯\n'; exit 0; fi
-printf '%%s\n' "$*" >> %q`, filepath.Join(projectRoot(t), "lib"), panes, rec))
+printf '%%s\n' "$orig" >> %q`, filepath.Join(projectRoot(t), "lib"), panes, rec))
 }
 
 // The whole point of following the agent: the session's side panes and its
@@ -59,7 +66,7 @@ func TestFollowAgentCheckout_retargets_the_session_at_the_new_checkout(t *testin
 	if !strings.Contains(ctx, "project_dir="+wt+"\n") {
 		t.Fatalf("relaunch context not retargeted:\n%s", ctx)
 	}
-	assertContains(t, logOut, "set-environment WISP_DECK_PATH "+wt)
+	assertContains(t, logOut, "set-environment -t =wisp-session WISP_DECK_PATH "+wt)
 	for _, pane := range []string{"%2", "%3"} {
 		if !strings.Contains(logOut, "respawn-pane -k -t "+pane) {
 			t.Fatalf("pane %s did not respawn:\n%s", pane, logOut)
@@ -109,7 +116,7 @@ func TestFollowAgentCheckout_ignores_a_directory_that_is_not_a_checkout(t *testi
 		t.Fatalf("relaunch context was retargeted anyway:\n%s", ctx)
 	}
 	assertNotContains(t, logOut, "respawn-pane")
-	assertNotContains(t, logOut, "set-environment WISP_DECK_PATH")
+	assertNotContains(t, logOut, "set-environment")
 }
 
 // Leaving a worktree is the same signal in reverse, so the main checkout has to
@@ -124,7 +131,7 @@ func TestFollowAgentCheckout_follows_back_to_the_main_checkout(t *testing.T) {
 	if !strings.Contains(ctx, "project_dir="+repo+"\n") {
 		t.Fatalf("relaunch context not retargeted home:\n%s", ctx)
 	}
-	assertContains(t, logOut, "set-environment WISP_DECK_PATH "+repo)
+	assertContains(t, logOut, "set-environment -t =wisp-session WISP_DECK_PATH "+repo)
 }
 
 // The watcher compares paths it reads from two different sources; the checkout
@@ -205,7 +212,7 @@ func TestFollowAgentCheckout_follows_home_after_the_worktree_is_removed(t *testi
 	if !strings.Contains(ctx, "project_dir="+repo+"\n") {
 		t.Fatalf("relaunch context still points at the removed worktree:\n%s", ctx)
 	}
-	assertContains(t, logOut, "set-environment WISP_DECK_PATH "+repo)
+	assertContains(t, logOut, "set-environment -t =wisp-session WISP_DECK_PATH "+repo)
 	assertContains(t, logOut, "respawn-pane -k -t %2")
 }
 
@@ -228,5 +235,5 @@ func TestFollowAgentCheckout_removed_worktree_does_not_admit_a_foreign_repo(t *t
 		t.Fatal("follow_agent_checkout accepted a checkout of a different repository")
 	}
 	assertNotContains(t, logOut, "respawn-pane")
-	assertNotContains(t, logOut, "set-environment WISP_DECK_PATH")
+	assertNotContains(t, logOut, "set-environment")
 }

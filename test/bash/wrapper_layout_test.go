@@ -289,12 +289,13 @@ func TestWrapper_spare_pane_runs_tabbed_tmux(t *testing.T) {
 		t.Fatalf("expected the spare pane split; got:\n%s", got)
 	}
 	for _, want := range []string{
-		"env -u TMUX -u TMUX_PANE tmux -L gtspare_", // nested server, $TMUX shed
-		"new-session",              // the inner session that hosts the tabs
-		"|| exec bash",             // graceful fallback if tmux is unavailable
-		"bind-key t ",              // keyboard: add a tab
-		"bind-key w ",              // keyboard: close current tab
-		"spare_tabs_close_current", // close routes through the guarded helper
+		"env -u TMUX -u TMUX_PANE ", // $TMUX shed for the nested server
+		" tmux -L gtspare_",         // the nested server itself
+		"new-session",               // the inner session that hosts the tabs
+		"|| exec bash",              // graceful fallback if tmux is unavailable
+		"bind-key t ",               // keyboard: add a tab
+		"bind-key w ",               // keyboard: close current tab
+		"spare_tabs_outer_key",      // keys resolve their tab at key time
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("expected new-session chain to contain %q; got:\n%s", want, got)

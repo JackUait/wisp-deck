@@ -408,10 +408,10 @@ _ATTENTION_WATCH_FOLLOW_SCRIPT='
 . "$1/claude-accounts.sh"
 . "$1/tmux-session.sh"
 . "$1/account-switch.sh"
-follow_agent_checkout "$2" "$3" "$4"
+follow_agent_checkout "$2" "$3" "$4" "$5"
 '
 
-# attention_watcher_follow_agent <tmux_cmd> <state-file> <relaunch-file> <lib-dir>
+# attention_watcher_follow_agent <tmux_cmd> <state-file> <relaunch-file> <lib-dir> <session>
 # Move the tab to the checkout its agent moved into. The Claude attention
 # runtime publishes the supervised session's working directory beside its state
 # file; a session whose agent entered a git worktree is simply one whose
@@ -425,7 +425,7 @@ follow_agent_checkout "$2" "$3" "$4"
 # there. Convergence clears the memo, so re-entering a worktree still follows.
 attention_watcher_follow_agent() {
   local tmux_cmd="${1-}" state_file="${2-}" relaunch_file="${3-}" lib_dir="${4-}"
-  local cwd="" project_dir="" line
+  local session="${5-}" cwd="" project_dir="" line
 
   [ -n "$tmux_cmd" ] && [ -n "$state_file" ] || return 0
   [ -n "$relaunch_file" ] && [ -f "$relaunch_file" ] || return 0
@@ -467,7 +467,7 @@ attention_watcher_follow_agent() {
 
   # fd 1 and 2 are the terminal the agent paints on — see wrapper.sh.
   bash -c "$_ATTENTION_WATCH_FOLLOW_SCRIPT" -- \
-    "$lib_dir" "$tmux_cmd" "$relaunch_file" "$cwd" >/dev/null 2>&1 || true
+    "$lib_dir" "$tmux_cmd" "$relaunch_file" "$cwd" "$session" >/dev/null 2>&1 || true
   return 0
 }
 
@@ -527,7 +527,7 @@ attention_watcher_tick() {
     reason="$_ATTENTION_WATCH_SNAPSHOT_REASON"
     tool="$_ATTENTION_WATCH_SNAPSHOT_TOOL"
     attention_watcher_follow_agent "$tmux_cmd" "$_ATTENTION_WATCH_SNAPSHOT_STATE" \
-      "$relaunch_file" "$lib_dir"
+      "$relaunch_file" "$lib_dir" "$session_name"
   fi
 
   if [ "$snapshot_valid" -eq 1 ]; then

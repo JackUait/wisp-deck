@@ -4020,8 +4020,8 @@ func TestWrapperTestingMarkerSourceContract(t *testing.T) {
 		"spare command unsets marker": mutateWrapperTestingMarkerSource(
 			t,
 			source,
-			"env -u TMUX -u TMUX_PANE",
-			"env -u WISP_DECK_TESTING -u TMUX -u TMUX_PANE",
+			"env -u TMUX_PANE bash -c",
+			"env -u WISP_DECK_TESTING -u TMUX_PANE bash -c",
 		),
 	}
 	for name, mutated := range mutations {

@@ -262,6 +262,62 @@ tick to the follow at all), `test/bash/worktree_follow_wiring_test.go`, and
 `TestClaudeRegistryMapperReportsTheSessionsWorkingDirectory` plus
 `TestWorkingDirectoryWriterPublishesBesideTheAttentionState`.
 
+### A tmux call with no `-t` lands on the tab the user last typed in
+
+A tmux command with no target resolves to the "current" session. Inside a pane
+that is the pane's own session, because tmux reads `$TMUX_PANE`. Everywhere
+else it is the session with the newest activity: the tab the user last typed
+in. Measured on 3.6a, and it matches `cmd-find.c`. The session number inside
+`$TMUX` is ignored.
+
+"Everywhere else" is most of wisp-deck:
+
+- the wrapper and its background watchers, which run outside tmux;
+- `run-shell`, `run-shell -b` and hooks, whose child gets `$TMUX` but NOT
+  `$TMUX_PANE`, even when fired by a key in the right pane;
+- a second client batch before its `attach-session`. `new-session` makes its
+  own chain safe; the later batch is a new client.
+
+This shipped as "tabs shuffle their git tree and terminal". An agent in tab A
+ran `EnterWorktree`. A's watcher followed it, but the retarget helpers asked
+tmux for "this" session untargeted. They rebuilt the ledger and spare of tab B
+(on screen at the time) inside A's worktree, rewrote B's spare config, and
+stamped B's `WISP_DECK_PATH`, so a crash-restore would reopen B there too. The
+same shape could respawn another tab's AGENT pane: the quota auto-switch runs
+its relaunch under `run-shell -b`.
+
+Rules:
+
+- **Code that runs outside a pane names its session:** `-t "=$session"` (the
+  `=` makes the match exact; a bare name also matches a prefix). A verb that
+  takes a pane or window target needs `=$session:`: there `=name` resolves to
+  nothing, and a bare `0` means pane 0 of the CURRENT window. Or hand the
+  pane down as `TMUX_PANE=<id>`, as `auto_switch_maybe_trigger` does. The
+  relaunch helpers were written for the switcher, which runs in a pane, so the
+  pane is how they find their tab.
+- **No refusal is safer than a wrong target.** `follow_agent_checkout` refuses
+  a session tmux does not have. The auto-switch refuses without a pane.
+- **Key bindings are server-wide.** Every launch rewrites them, so a value baked
+  in at bind time belongs to the tab launched LAST. A per-tab value comes from
+  `#{q:session_name}` / `#{q:window_id}`, which expand at key time.
+  `prefix+t/w/Tab/BTab` once baked `$_spare_label`: in every tab they drove the
+  newest tab's terminal, and `prefix+w` closed its tabs.
+- **The same holds one level down.** A tab-view window adds a sibling session
+  to the SAME inner spare server. `spare_tabs_outer_key` finds the right one
+  from the window's spare-pane tty.
+- **Buffers are server-wide too.** Draft replay uses one buffer per pane
+  (`wispdraft<pane>`, dropped on paste). Tabs on one login cross the
+  auto-switch threshold together.
+
+Mock tests could not catch this: the logging mock answers `list-panes` the
+same for every target. Guarded against a real, private tmux server
+(`TMUX_TMPDIR` of its own) holding two tabs, with the OTHER tab current, in
+`test/bash/cross_session_isolation_test.go`: the follow, the auto-switch run,
+the spare keys (fired through wrapper.sh's own bind string), and statically
+`TestWrapperBinds_bake_no_session_value` and the second launch batch. Such a
+test must drop `TMUX`/`TMUX_PANE` from its env: inherited from a live pane,
+they would point it at the user's real server.
+
 ### A here-document is a pipe under bash 5.3, and a pipe holds 512 bytes
 
 Bash 5.3 writes a here-document — and a here-string, which is one — into a

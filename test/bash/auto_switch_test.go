@@ -240,6 +240,7 @@ func autoSwitchTriggerEnv(t *testing.T, dir, flagValue string) ([]string, string
 	env := buildEnv(t, []string{bin},
 		"HOME="+dir,
 		"TMUX=/tmp/fake,1,0",
+		"TMUX_PANE=%7",
 		"XDG_CONFIG_HOME="+cfg,
 		"WISP_DECK_RELAUNCH_FILE="+relaunch,
 		"WISP_DECK_LIB_DIR="+filepath.Join(root, "lib"),
@@ -256,9 +257,28 @@ func TestAutoSwitchMaybeTrigger_fires_in_place_switch(t *testing.T) {
 	assertExitCode(t, code, 0)
 	logOut, _ := os.ReadFile(rec)
 	s := string(logOut)
-	assertContains(t, s, "run-shell -b")
+	assertContains(t, s, "run-shell -b TMUX_PANE=%7 bash -c")
 	assertContains(t, s, "auto_switch_relaunch")
 	assertContains(t, s, "personal")
+}
+
+// Without its pane the switch cannot name its own tab, and an untargeted one
+// lands on the tab the user last typed in — so it must not start at all.
+func TestAutoSwitchMaybeTrigger_noop_without_its_pane(t *testing.T) {
+	dir := t.TempDir()
+	env, rec, _ := autoSwitchTriggerEnv(t, dir, "on")
+	kept := env[:0]
+	for _, e := range env {
+		if !strings.HasPrefix(e, "TMUX_PANE=") {
+			kept = append(kept, e)
+		}
+	}
+	_, code := runBashFunc(t, "lib/auto-switch.sh", "auto_switch_maybe_trigger",
+		[]string{"98", "40"}, kept)
+	assertExitCode(t, code, 0)
+	if data, _ := os.ReadFile(rec); len(data) > 0 {
+		t.Fatalf("switched with no pane to name its tab:\n%s", data)
+	}
 }
 
 func TestAutoSwitchMaybeTrigger_noop_below_threshold(t *testing.T) {

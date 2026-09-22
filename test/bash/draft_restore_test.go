@@ -171,7 +171,7 @@ fi`, rec, rec))
 	if strings.Join(pastes, "|") != strings.Join(want, "|") {
 		t.Fatalf("paste sequence mismatch:\n got %q\nwant %q", pastes, want)
 	}
-	assertContains(t, string(logOut), "paste-buffer -p") // bracketed: newlines must not submit
+	assertContains(t, string(logOut), "paste-buffer -d -p") // bracketed: newlines must not submit
 	assertNotContains(t, string(logOut), "Enter")        // nothing is ever auto-submitted
 }
 
