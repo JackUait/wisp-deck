@@ -31,6 +31,11 @@ type listingPage struct {
 // (display_name, created_at, has_more) or the OpenAI one (created in epoch
 // seconds). auth is copied onto every request as-is.
 func FetchListing(client *http.Client, listURL string, auth http.Header) ([]Listed, error) {
+	// Go keeps X-Api-Key across a cross-host redirect, so none is followed; a
+	// redirect then fails the listing as a non-200.
+	noRedirects := *client
+	noRedirects.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client = &noRedirects
 	var out []Listed
 	after := ""
 	for page := 0; page < maxListingPages; page++ {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -86,5 +87,28 @@ func TestReadCodexModels_keeps_only_listed_rows(t *testing.T) {
 	}
 	if _, err := ReadCodexModels(filepath.Join(t.TempDir(), "missing.json")); err == nil {
 		t.Fatal("want an error for a missing file")
+	}
+}
+
+// Go drops Authorization on a cross-host redirect but keeps X-Api-Key, so a
+// list endpoint that redirects must not be followed at all.
+func TestFetchListing_never_follows_a_redirect_with_the_key(t *testing.T) {
+	var sawKey string
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawKey = r.Header.Get("X-Api-Key")
+		_, _ = w.Write([]byte(`{"data":[{"id":"x"}]}`))
+	}))
+	defer target.Close()
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, strings.Replace(target.URL, "127.0.0.1", "localhost", 1), http.StatusFound)
+	}))
+	defer redirect.Close()
+
+	_, err := FetchListing(http.DefaultClient, redirect.URL, http.Header{"X-Api-Key": {"SECRET"}})
+	if sawKey != "" {
+		t.Fatalf("the key reached the redirect target: %q", sawKey)
+	}
+	if err == nil {
+		t.Fatal("a redirect must read as a failed listing")
 	}
 }
