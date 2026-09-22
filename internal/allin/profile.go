@@ -105,12 +105,23 @@ func EnsureProfile(env Env, listFile, configsDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Published by rename: a reader must never see half a settings file.
-	temporary := path + ".tmp"
-	if err := os.WriteFile(temporary, append(encoded, '\n'), 0o600); err != nil {
+	// Published by rename: a reader must never see half a settings file. The
+	// temp name is unique because every All-In router can rewrite this at once.
+	temporary, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp*")
+	if err != nil {
 		return "", err
 	}
-	if err := os.Rename(temporary, path); err != nil {
+	if _, err := temporary.Write(append(encoded, '\n')); err != nil {
+		_ = temporary.Close()
+		_ = os.Remove(temporary.Name())
+		return "", err
+	}
+	if err := temporary.Close(); err != nil {
+		_ = os.Remove(temporary.Name())
+		return "", err
+	}
+	if err := os.Rename(temporary.Name(), path); err != nil {
+		_ = os.Remove(temporary.Name())
 		return "", err
 	}
 	return file, nil

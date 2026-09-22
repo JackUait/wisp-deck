@@ -351,3 +351,21 @@ func TestEnsureProfile_clears_a_sub_1m_windows_leftover_keys(t *testing.T) {
 		t.Error("the refresh dropped a key that is the user's own")
 	}
 }
+
+// Every All-In router can now rewrite the profile at once. A shared fixed temp
+// name lets one writer truncate the file another is about to rename into
+// place; standing a directory on that name proves no fixed name is used.
+func TestEnsureProfile_writes_through_its_own_temp_file(t *testing.T) {
+	env := rosterEnv(t)
+	listFile := filepath.Join(t.TempDir(), "claude-configs.list")
+	file, err := EnsureProfile(env, listFile, env.ConfigsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(env.ConfigsDir, file)+".tmp", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureProfile(env, listFile, env.ConfigsDir); err != nil {
+		t.Fatalf("a second writer's temp name blocked this one: %v", err)
+	}
+}
