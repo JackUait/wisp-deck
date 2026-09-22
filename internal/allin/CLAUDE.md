@@ -934,3 +934,21 @@ new model reaches the picker on the NEXT All-In launch after a refresh.
   app-server starts.
 - The refresher is only built when `currentHostEffectsDecision().Allowed`, so a
   test binary never reaches a real endpoint or rewrites a real profile.
+
+### A crossed login is moved back, and an open pane follows it
+
+`/login` writes into whichever slot the pane runs under, so logging in from the
+wrong pane crosses two slots. `claudeaccount.Reconcile` pins each slot to the
+email in its `.claude.json` on first sight (`claude-account-emails`), and moves
+the `claudeAiOauth` object back when slots hold each other's pinned emails.
+`mcpOAuth` shares the Keychain entry but belongs to the slot, so it stays.
+
+It runs before every claude launch (`reconcile_claude_logins`) and before
+`Resolve` reads a borrowed login's token (`GatedReconcile`, stat-gated).
+
+A move is safe under a pane that is still open. Decoded from 2.1.280, Claude
+Code's refresh takes its lock, drops its cache and re-reads the slot's entry;
+when the stored access token differs from the one in memory it adopts the
+stored one (`tengu_oauth_token_refresh_race_resolved`) and never spends its
+in-memory refresh token. So the open pane picks up its slot's own login and
+does not cross the slots again. Re-check this after a claude upgrade.

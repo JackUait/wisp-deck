@@ -92,6 +92,9 @@ type FileResolver struct {
 	Env    Env
 	Token  func(configDir string) (string, error)
 	Bridge ChatGPTBridge
+	// Reconcile puts crossed logins back in their slots before a token is
+	// read. Nil in tests, which must never reach the real home dir.
+	Reconcile func()
 }
 
 func NewResolver(env Env) *FileResolver {
@@ -104,6 +107,9 @@ func (r *FileResolver) Resolve(target Target) (Credential, error) {
 	}
 	switch target.Kind {
 	case KindAccount:
+		if r.Reconcile != nil {
+			r.Reconcile()
+		}
 		token, err := r.Token(AccountConfigDir(r.Env.AccountsDir, target.Source))
 		if err != nil || token == "" {
 			return Credential{}, fmt.Errorf("%w: %s", ErrStaleAccount, target.Source)

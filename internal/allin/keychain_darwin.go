@@ -90,6 +90,11 @@ func (keychainCLI) write(configDir string, cred oauthCredential) error {
 	if err != nil {
 		return err
 	}
+	return keychainPut(configDir, updated)
+}
+
+// keychainPut replaces one login's whole entry.
+func keychainPut(configDir string, blob []byte) error {
 	account, err := keychainAccount(configDir)
 	if err != nil {
 		return err
@@ -98,11 +103,37 @@ func (keychainCLI) write(configDir string, cred oauthCredential) error {
 	// -U updates the item these attributes already match; without it `security`
 	// refuses rather than replacing.
 	out, err := exec.Command("security", "add-generic-password",
-		"-U", "-a", account, "-s", service, "-w", string(updated)).CombinedOutput()
+		"-U", "-a", account, "-s", service, "-w", string(blob)).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("allin: storing the refreshed login failed: %w: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("allin: storing the login failed: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func (KeychainLogins) Login(configDir string) (json.RawMessage, error) {
+	blob, err := keychainBlob(configDir)
+	if err != nil {
+		return nil, err
+	}
+	return loginOf(blob)
+}
+
+func (KeychainLogins) SetLogin(configDir string, login json.RawMessage) error {
+	blob, err := keychainBlob(configDir)
+	if err != nil {
+		return err
+	}
+	updated, err := withLogin(blob, login)
+	if err != nil {
+		return err
+	}
+	return keychainPut(configDir, updated)
+}
+
+// Lock is the refresh lock, so a move never interleaves with a borrowed
+// login's refresh writing the same entry.
+func (KeychainLogins) Lock(configDir string) (func(), error) {
+	return keychainCLI{}.lock(configDir)
 }
 
 // lock serializes the refresh across every process sharing one login. The file

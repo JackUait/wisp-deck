@@ -106,6 +106,16 @@ apply_plain_terminal_claude_account() {
   export CLAUDE_CONFIG_DIR="$dir"
 }
 
+# Moves crossed logins back to the slots their emails are pinned to (see
+# claudeaccount.Reconcile). It must run before claude starts: claude reads the
+# Keychain once at launch. Silent, because this runs in the launch pane.
+reconcile_claude_logins() {
+  local accounts_dir="$1" list="$2" root="${2%/*}"
+  wisp-deck-tui claude-account reconcile --list "$list" \
+    --accounts-dir "$accounts_dir" --emails "$root/claude-account-emails" \
+    --usage-dir "$root/account-usage" >/dev/null 2>&1 || true
+}
+
 # Account registration, rename, and removal all live in the Go TUI (the single
 # source of truth). Adding a login only registers its isolated CLAUDE_CONFIG_DIR;
 # no `claude auth login` is run there — the account starts empty and Claude logs

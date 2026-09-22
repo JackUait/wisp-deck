@@ -210,3 +210,22 @@ func TestResolve_still_serves_a_self_hosted_profile(t *testing.T) {
 		t.Fatalf("got %+v, a self-hosted profile must not be routed through rolefix", got)
 	}
 }
+
+// A borrowed login must be put back in its slot before its token is read, or
+// the turn is billed to the other subscription.
+func TestResolve_reconciles_the_logins_before_reading_an_account_token(t *testing.T) {
+	env := rosterEnv(t)
+	resolver := NewResolver(env)
+	var order []string
+	resolver.Reconcile = func() { order = append(order, "reconcile") }
+	resolver.Token = func(string) (string, error) {
+		order = append(order, "token")
+		return "oat", nil
+	}
+	if _, err := resolver.Resolve(Target{Kind: KindAccount, Source: "personal"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(order, ",") != "reconcile,token" {
+		t.Fatalf("order = %v", order)
+	}
+}

@@ -1126,6 +1126,9 @@ relaunch_ai_pane() {
       && sync_claude_shared_settings "$HOME/.claude" "$new_dir"
   fi
 
+  command -v reconcile_claude_logins >/dev/null 2>&1 \
+    && reconcile_claude_logins "$_rc_accounts_dir" "$_rc_list"
+
   pane="$(find_ai_pane "$tmux_cmd")"
   [ -n "$pane" ] || return 0
   if [ "$_rc_tool" = "opencode" ] && [ -n "$_rc_attention_root" ]; then

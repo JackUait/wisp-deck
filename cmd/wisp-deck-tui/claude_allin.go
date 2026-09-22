@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jackuait/wisp-deck/internal/allin"
+	"github.com/jackuait/wisp-deck/internal/claudeaccount"
 	"github.com/jackuait/wisp-deck/internal/gptbridge"
 	"github.com/jackuait/wisp-deck/internal/usage"
 )
@@ -75,6 +76,15 @@ func newClaudeAllInCommandWithBridge(
 					Ensure:     allin.EnsureProfileIfEligible,
 				}
 				observe = refresher.Observe
+				home, _ := os.UserHomeDir()
+				resolver.Reconcile = claudeaccount.GatedReconcile(claudeaccount.ReconcileOptions{
+					ListFile:    env.AccountsList,
+					AccountsDir: env.AccountsDir,
+					EmailsFile:  filepath.Join(filepath.Dir(env.AccountsList), "claude-account-emails"),
+					UsageDir:    filepath.Join(filepath.Dir(env.AccountsList), "account-usage"),
+					HomeDir:     home,
+					Store:       allin.KeychainLogins{},
+				})
 			}
 			newHandler := func(upstream string) http.Handler {
 				return allin.NewObservingHandler(resolver, upstream, observe)

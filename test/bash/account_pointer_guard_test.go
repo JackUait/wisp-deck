@@ -227,6 +227,9 @@ func TestAccountPointerGuard_pointer_path_literals_are_allowlisted(t *testing.T)
 		// Passed to the launcher menu binary, which shows/sets the login for
 		// the NEXT session — launch-time by definition.
 		{"lib/menu-tui.sh", "select_project_interactive", "claude-account path literal", 1},
+		// The `claude-account reconcile` subcommand name, not the pointer path:
+		// it passes the list and the dirs, and never reads the pointer.
+		{"lib/claude-accounts.sh", "reconcile_claude_logins", "claude-account path literal", 1},
 		// The three launch-time resolution calls allowlisted in the reader
 		// test above spell out the path as an argument.
 		{"wrapper.sh", "", "claude-account path literal", 3},

@@ -491,6 +491,7 @@ if [ "$SELECTED_AI_TOOL" = "claude" ]; then
   else
     WISP_DECK_CLAUDE_ACCOUNT_DIR="$(resolve_claude_account_dir "$_gt_cfg_root/claude-accounts" "$_gt_cfg_root/claude-account")"
   fi
+  reconcile_claude_logins "$_gt_cfg_root/claude-accounts" "$_gt_cfg_root/claude-accounts.list"
   # A non-Default account has its own isolated CLAUDE_CONFIG_DIR, which otherwise
   # starts blank — no status line, permission mode, skills, hooks, model, etc.
   # Link the standard login's settings into it so every login shares one set of
