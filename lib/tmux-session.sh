@@ -62,7 +62,7 @@ opencode_adapter_prefix() {
 gt_claude_launch_wrapper() {
   local settings_path="$1" provider_marker="$2"
   local config_root="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
-  local settings_q accounts_list_q accounts_dir_q configs_list_q configs_dir_q
+  local settings_q accounts_list_q accounts_dir_q configs_list_q configs_dir_q label_file_q
 
   if [ -f "$settings_path" ] && grep -q 'wisp/acct\.\|wisp/cfg\.' "$settings_path" 2>/dev/null; then
     printf -v settings_q '%q' "$settings_path"
@@ -70,8 +70,11 @@ gt_claude_launch_wrapper() {
     printf -v accounts_dir_q '%q' "$config_root/claude-accounts"
     printf -v configs_list_q '%q' "$config_root/claude-configs.list"
     printf -v configs_dir_q '%q' "$config_root/claude-configs"
-    printf 'wisp-deck-tui claude-allin --settings %s --accounts-list %s --accounts-dir %s --configs-list %s --configs-dir %s --' \
-      "$settings_q" "$accounts_list_q" "$accounts_dir_q" "$configs_list_q" "$configs_dir_q"
+    # The router rewrites the profile when a model list changes; without the
+    # tag file that rewrite labels the default login "Default".
+    printf -v label_file_q '%q' "$config_root/claude-account-default-label"
+    printf 'wisp-deck-tui claude-allin --settings %s --accounts-list %s --accounts-dir %s --configs-list %s --configs-dir %s --default-label-file %s --' \
+      "$settings_q" "$accounts_list_q" "$accounts_dir_q" "$configs_list_q" "$configs_dir_q" "$label_file_q"
     return 0
   fi
 

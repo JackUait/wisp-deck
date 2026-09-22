@@ -89,11 +89,10 @@ func newClaudeAllInCommandWithBridge(
 	flags.StringVar(&env.AccountsDir, "accounts-dir", "", "directory holding each login's config dir")
 	flags.StringVar(&env.ConfigsList, "configs-list", "", "name:file list of subscription profiles")
 	flags.StringVar(&env.ConfigsDir, "configs-dir", "", "directory holding the profile settings files")
-	// Resolve never reads this — it only addresses credentials, and the label
-	// is display-only. Plumbed anyway so this Env stays shaped the same as
-	// every other construction site (ensure-allin, the TUI's own mutations).
+	// Resolve never reads this, but the model refresher's profile rewrite
+	// does: without it the default login's rows lose the user's tag.
 	flags.StringVar(&env.DefaultLabelFile, "default-label-file", "",
-		"file holding the implicit Default login's custom tag (unused here; kept for parity)")
+		"file holding the implicit Default login's custom tag")
 	return command
 }
 

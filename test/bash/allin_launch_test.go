@@ -199,3 +199,21 @@ func TestClaudeLaunch_never_stacks_the_gpt_adapter_on_the_all_in_router(t *testi
 	}
 	assertNotContains(t, got, "claude-gpt-adapter")
 }
+
+// The router now rewrites the profile itself when a model list changes, so it
+// must read the same default-login tag bin/wisp-deck's ensure-allin does, or
+// the rewrite relabels that login's rows "Default".
+func TestClaudeLaunchWrapper_passes_the_default_label_file_to_the_router(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := writeTempFile(t, dir, "overlay.json", allInPickerRow)
+	xdgHome := filepath.Join(dir, "xdg")
+
+	env := buildEnv(t, nil, "XDG_CONFIG_HOME="+xdgHome)
+	out, code := runBashFunc(t, "lib/tmux-session.sh", "gt_claude_launch_wrapper",
+		[]string{settingsPath, ""}, env)
+	assertExitCode(t, code, 0)
+
+	argv := reconstructArgv(t, out)
+	assertArgvHasToken(t, argv, "--default-label-file")
+	assertArgvHasToken(t, argv, filepath.Join(xdgHome, "wisp-deck", "claude-account-default-label"))
+}
