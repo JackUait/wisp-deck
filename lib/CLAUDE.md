@@ -313,8 +313,11 @@ Mock tests could not catch this: the logging mock answers `list-panes` the
 same for every target. Guarded against a real, private tmux server
 (`TMUX_TMPDIR` of its own) holding two tabs, with the OTHER tab current, in
 `test/bash/cross_session_isolation_test.go`: the follow, the auto-switch run,
-the spare keys (fired through wrapper.sh's own bind string), and statically
-`TestWrapperBinds_bake_no_session_value` and the second launch batch. Such a
+the spare keys (fired through wrapper.sh's own bind string). Statically,
+`TestWrapperBinds_bake_no_session_value`, the second launch batch, and
+`TestRunShellEntryPoints_name_their_tab`, which fails any `run-shell` in
+wrapper.sh or lib that neither expands `#{q:session_name}`, carries this
+session's name, nor hands down `TMUX_PANE=`. Such a
 test must drop `TMUX`/`TMUX_PANE` from its env: inherited from a live pane,
 they would point it at the user's real server.
 

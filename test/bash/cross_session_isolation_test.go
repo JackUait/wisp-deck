@@ -575,3 +575,56 @@ func TestFollowAgentCheckout_without_a_session_uses_the_relaunch_files_name(t *t
 		t.Fatalf("the tab named by its relaunch file did not follow: %q", got)
 	}
 }
+
+// Every run-shell and hook runs outside a pane, where tmux's "current" session
+// is the tab the user last typed in. So each one the wrapper or lib installs
+// must name its tab: a #{q:session_name} expanded at event time, a script or
+// argument carrying this session's name, or the pane handed down as
+// TMUX_PANE=. The helpers it reaches were written for a pane and ask tmux for
+// "this" session untargeted.
+func TestRunShellEntryPoints_name_their_tab(t *testing.T) {
+	root := projectRoot(t)
+	files, _ := filepath.Glob(filepath.Join(root, "lib", "*.sh"))
+	files = append(files, filepath.Join(root, "wrapper.sh"))
+	names := []string{"#{q:session_name}", "TMUX_PANE=", "$SESSION_NAME", "${SESSION_NAME}",
+		// ledger-hover routes to a pane id stored on its own session.
+		"#{@wisp_ledger_hover_pane}",
+		// the spare's inner config: its outer tab baked at config time, and a
+		// click on the inner server that owns that tab alone.
+		"-t $outer", "$click"}
+	for _, file := range files {
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(string(src), "\n")
+		defs := map[string]string{}
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if name, _, ok := strings.Cut(trimmed, "="); ok && strings.HasPrefix(name, "_") && !strings.ContainsAny(name, " $[") {
+				defs[name] += line + "\n"
+			}
+		}
+		for i, line := range lines {
+			if strings.HasPrefix(strings.TrimSpace(line), "#") || !strings.Contains(line, "run-shell") {
+				continue
+			}
+			text := line
+			for name, def := range defs {
+				if strings.Contains(line, "$"+name) || strings.Contains(line, "${"+name+"}") {
+					text += "\n" + def
+				}
+			}
+			named := false
+			for _, n := range names {
+				if strings.Contains(text, n) {
+					named = true
+				}
+			}
+			if !named {
+				t.Errorf("%s:%d runs a shell outside any pane without naming its tab:\n%s",
+					filepath.Base(file), i+1, strings.TrimSpace(line))
+			}
+		}
+	}
+}
