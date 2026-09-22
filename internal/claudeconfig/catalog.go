@@ -54,6 +54,9 @@ type Provider struct {
 	// SCHEMA of, so the whole turn 400s before the model reads a word. A
 	// profile denies them, and the All-In router drops them from a routed body.
 	UnsupportedTools []string
+	// ModelsURL is where this gateway lists its models, when that is not
+	// <base URL>/v1/models. All-In reads it to offer the newest models.
+	ModelsURL string
 }
 
 // SuppliesOwnModel reports whether the profile's model id, context window, and
@@ -198,6 +201,8 @@ var Providers = []Provider{
 		// pattern with that one bracket escaped answers 200. Not the same
 		// construct z.ai refuses: `\p{...}` and a lookahead both pass here.
 		UnsupportedTools: []string{"Artifact"},
+		// Measured: <base>/v1/models answers 404; the OpenAI host lists them.
+		ModelsURL: "https://api.deepseek.com/models",
 		// deepseek-v4-pro has no vision, and DeepSeek routes it to Flash from
 		// 2026-09-14, so every alias names Flash.
 		DefaultModels: [4]string{"deepseek-flash", "deepseek-flash", "deepseek-flash", "deepseek-flash"},

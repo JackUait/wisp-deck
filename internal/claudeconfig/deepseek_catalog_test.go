@@ -66,3 +66,14 @@ func TestDeepSeekProvider_declaresTheToolItsEndpointRejects(t *testing.T) {
 		t.Errorf("UnsupportedTools = %v, want [Artifact]", got)
 	}
 }
+
+func TestDeepSeekProvider_lists_models_off_its_openai_host(t *testing.T) {
+	p, ok := ProviderByKey("deepseek")
+	if !ok {
+		t.Fatal("deepseek provider missing")
+	}
+	// Its /anthropic base answers /v1/models with 404; the list lives here.
+	if p.ModelsURL != "https://api.deepseek.com/models" {
+		t.Fatalf("ModelsURL = %q", p.ModelsURL)
+	}
+}
