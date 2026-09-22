@@ -39,7 +39,7 @@ func TestRoster_offers_the_cached_claude_models_on_every_login(t *testing.T) {
 
 func TestRoster_falls_back_to_the_pinned_lineup_without_a_cache(t *testing.T) {
 	env := rosterEnv(t)
-	if !has(models(Roster(env)), "wisp/acct.personal/claude-opus-5[1m]") {
+	if !has(models(Roster(env)), "wisp/acct.personal/claude-opus-5-5[1m]") {
 		t.Fatal("no cache must keep the pinned lineup")
 	}
 }

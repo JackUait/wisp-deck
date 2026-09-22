@@ -69,10 +69,10 @@ func labelFor(rows []Row, model string) string {
 
 func TestRoster_lists_the_default_login_and_every_registered_account(t *testing.T) {
 	got := models(Roster(rosterEnv(t)))
-	if !has(got, "wisp/acct.default/claude-opus-5[1m]") {
+	if !has(got, "wisp/acct.default/claude-opus-5-5[1m]") {
 		t.Fatalf("no default opus row in %v", got)
 	}
-	if !has(got, "wisp/acct.personal/claude-opus-5[1m]") {
+	if !has(got, "wisp/acct.personal/claude-opus-5-5[1m]") {
 		t.Fatalf("no personal opus row in %v", got)
 	}
 }
@@ -325,9 +325,9 @@ func TestRoster_labels_the_default_login_with_the_users_tag(t *testing.T) {
 	if err := os.WriteFile(env.DefaultLabelFile, []byte("Work\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got := labelFor(Roster(env), "wisp/acct.default/claude-opus-5[1m]")
-	if got != "Work · Opus 5" {
-		t.Fatalf("label = %q, want %q", got, "Work · Opus 5")
+	got := labelFor(Roster(env), "wisp/acct.default/claude-opus-5-5[1m]")
+	if got != "Work · Opus 5.5" {
+		t.Fatalf("label = %q, want %q", got, "Work · Opus 5.5")
 	}
 }
 
@@ -336,9 +336,9 @@ func TestRoster_labels_the_default_login_with_the_users_tag(t *testing.T) {
 func TestRoster_default_label_falls_back_when_the_file_is_absent(t *testing.T) {
 	env := rosterEnv(t)
 	env.DefaultLabelFile = filepath.Join(t.TempDir(), "does-not-exist")
-	got := labelFor(Roster(env), "wisp/acct.default/claude-opus-5[1m]")
-	if got != "Default · Opus 5" {
-		t.Fatalf("label = %q, want %q", got, "Default · Opus 5")
+	got := labelFor(Roster(env), "wisp/acct.default/claude-opus-5-5[1m]")
+	if got != "Default · Opus 5.5" {
+		t.Fatalf("label = %q, want %q", got, "Default · Opus 5.5")
 	}
 }
 
@@ -348,9 +348,9 @@ func TestRoster_default_label_falls_back_when_the_file_is_empty(t *testing.T) {
 	if err := os.WriteFile(env.DefaultLabelFile, []byte(""), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got := labelFor(Roster(env), "wisp/acct.default/claude-opus-5[1m]")
-	if got != "Default · Opus 5" {
-		t.Fatalf("label = %q, want %q", got, "Default · Opus 5")
+	got := labelFor(Roster(env), "wisp/acct.default/claude-opus-5-5[1m]")
+	if got != "Default · Opus 5.5" {
+		t.Fatalf("label = %q, want %q", got, "Default · Opus 5.5")
 	}
 }
 
@@ -364,7 +364,7 @@ func TestRoster_row_ids_are_unchanged_by_the_default_label(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := models(Roster(env))
-	if !has(got, "wisp/acct.default/claude-opus-5[1m]") {
+	if !has(got, "wisp/acct.default/claude-opus-5-5[1m]") {
 		t.Fatalf("labeling the login changed its row id: %v", got)
 	}
 }

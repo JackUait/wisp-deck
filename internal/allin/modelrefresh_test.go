@@ -163,6 +163,30 @@ func TestObserve_refreshes_once_and_never_blocks(t *testing.T) {
 	}
 }
 
+// Claude Code's first request is `HEAD /api/hello` with no credential. If that
+// used up the one refresh, the Anthropic list would never be fetched.
+func TestObserve_waits_for_a_credentialed_request(t *testing.T) {
+	env := rosterEnv(t)
+	var hits int32
+	var sawAuth string
+	anthropic := listServer(t, `{"data":[{"id":"claude-opus-5-5"}]}`, &hits, &sawAuth)
+	pointZhipuAt(t, env, listServer(t, `{"data":[]}`, new(int32), nil).URL)
+	finished := make(chan struct{})
+	r := &ModelRefresher{Env: env, Client: http.DefaultClient, AnthropicURL: anthropic.URL,
+		Now: time.Now, Ensure: func(Env) error { close(finished); return nil }}
+
+	r.Observe(http.Header{})
+	r.Observe(http.Header{"Authorization": {"Bearer s"}})
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the credentialed request never refreshed the Anthropic list")
+	}
+	if hits != 1 || sawAuth != "Bearer s" {
+		t.Fatalf("anthropic hits=%d auth=%q", hits, sawAuth)
+	}
+}
+
 // A cached time comes back from JSON in a different Location than a freshly
 // parsed one, so an unchanged list must not read as changed.
 func TestRefresh_does_not_rewrite_the_profile_for_an_unchanged_list(t *testing.T) {

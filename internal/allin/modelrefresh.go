@@ -25,7 +25,13 @@ type ModelRefresher struct {
 
 // Observe starts one background refresh per process and returns at once. The
 // header is the session's own, taken before the router swaps any credential.
+// A request with no credential is skipped: Claude Code opens with an
+// unauthenticated `HEAD /api/hello`, and letting it use up the once meant the
+// Anthropic list was never fetched.
 func (r *ModelRefresher) Observe(sessionAuth http.Header) {
+	if len(sessionAuth) == 0 {
+		return
+	}
 	r.once.Do(func() {
 		auth := sessionAuth.Clone()
 		go r.Refresh(auth)
