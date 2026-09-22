@@ -910,3 +910,27 @@ that routes to it and not before — which is the whole point: a login the user
 never picks is never touched. `wisp-deck-tui account-usage` does walk every
 login on the machine, but **nothing in the tree invokes it** (`lib/`, `bin/`,
 `templates/` and `scripts/` carry no reference); it is a by-hand command.
+
+### The picker's models come from a cache the router fills
+
+`Roster` never touches the network: it reads `allin-models.json` (beside
+`claude-configs.list`) and falls back to `claudeLineup` / the catalog when a
+source has no entry. The router fills that file once per process, in the
+background, for entries older than 12h (`modelrefresh.go`), then re-runs
+`EnsureProfileIfEligible`. Claude Code snapshots `modelPicker` at launch, so a
+new model reaches the picker on the NEXT All-In launch after a refresh.
+
+- The Claude list is fetched with the credential the session itself sent, and
+  only when the session upstream is `api.anthropic.com`. Reading a login from
+  the Keychain instead would refresh — and rotate — the token of a login nobody
+  is using. Guarded by `TestHandler_passes_no_session_auth_for_a_non_anthropic_upstream`.
+- `Latest` keeps the highest VERSION per family, not the newest date: Kimi gives
+  every model the same date. An 8-digit segment is a snapshot date and only
+  breaks ties.
+- A failed or empty listing keeps the old entry, so a refresh never empties a
+  source. Guarded by `TestRefresh_keeps_the_old_entry_when_a_listing_is_empty`.
+- DeepSeek's `/anthropic` base has no model list; `Provider.ModelsURL` names the
+  one it does have. ChatGPT is read from Codex's own `models_cache.json`, so no
+  app-server starts.
+- The refresher is only built when `currentHostEffectsDecision().Allowed`, so a
+  test binary never reaches a real endpoint or rewrites a real profile.

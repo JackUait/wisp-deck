@@ -4,11 +4,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/jackuait/wisp-deck/internal/allin"
 	"github.com/jackuait/wisp-deck/internal/gptbridge"
+	"github.com/jackuait/wisp-deck/internal/usage"
 )
 
 func init() {
@@ -63,8 +65,19 @@ func newClaudeAllInCommandWithBridge(
 			bridge := newBridge(sessionCodexPath(codexPath))
 			resolver := allin.NewResolver(env)
 			resolver.Bridge = bridge
+			observe := func(http.Header) {}
+			if currentHostEffectsDecision().Allowed {
+				refresher := &allin.ModelRefresher{
+					Env:        env,
+					Client:     &http.Client{Timeout: 15 * time.Second},
+					CodexCache: codexModelsCache(),
+					Now:        time.Now,
+					Ensure:     allin.EnsureProfileIfEligible,
+				}
+				observe = refresher.Observe
+			}
 			newHandler := func(upstream string) http.Handler {
-				return allin.NewHandler(resolver, upstream)
+				return allin.NewObservingHandler(resolver, upstream, observe)
 			}
 			return runLoopbackWrappedLaunch(settingsPath, argv, run, exit, newHandler, bridge.Close)
 		},
@@ -105,4 +118,11 @@ func sessionCodexPath(override string) string {
 		return ""
 	}
 	return path
+}
+
+// codexModelsCache is the list Codex fetches and caches for itself. Reading it
+// starts no app-server, which would cost seconds cold.
+func codexModelsCache() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(filepath.Dir(usage.CodexSessionsDir(home)), "models_cache.json")
 }

@@ -32,7 +32,29 @@ var discardLog = log.New(io.Discard, "", 0)
 // cannot place goes to sessionUpstream on the session's own credential, so an
 // unrecognised id costs a turn nothing.
 func NewHandler(resolver Resolver, sessionUpstream string) http.Handler {
+	return NewObservingHandler(resolver, sessionUpstream, nil)
+}
+
+// NewObservingHandler is NewHandler plus a hook that sees the session's own
+// credential on every request. It gets nothing unless the session upstream
+// is Anthropic, so a provider key never reaches api.anthropic.com.
+func NewObservingHandler(resolver Resolver, sessionUpstream string, observe func(http.Header)) http.Handler {
+	sessionIsAnthropic := false
+	if parsed, err := url.Parse(sessionUpstream); err == nil && parsed.Hostname() == "api.anthropic.com" {
+		sessionIsAnthropic = true
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if observe != nil {
+			auth := http.Header{}
+			if sessionIsAnthropic {
+				for _, key := range []string{"Authorization", "X-Api-Key"} {
+					if v := r.Header.Get(key); v != "" {
+						auth.Set(key, v)
+					}
+				}
+			}
+			observe(auth)
+		}
 		base, body := sessionUpstream, []byte(nil)
 		needsRepair := false
 		if r.Method == http.MethodPost && r.Body != nil {
