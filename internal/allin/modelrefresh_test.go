@@ -121,6 +121,33 @@ func TestRefresh_reads_chatgpt_from_the_codex_cache(t *testing.T) {
 	}
 }
 
+// Codex's cache changes when Codex is upgraded, not on our clock. Reading it
+// is free, so a fresh entry must not hide a new model for 12h.
+func TestRefresh_rereads_the_codex_cache_even_when_the_entry_is_fresh(t *testing.T) {
+	env := rosterEnv(t)
+	if err := os.WriteFile(env.ConfigsList, []byte("OpenAI / ChatGPT:openai-chatgpt.json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	profile := `{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"openai-chatgpt"}}`
+	if err := os.WriteFile(filepath.Join(env.ConfigsDir, "openai-chatgpt.json"), []byte(profile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	seedCache(t, env, ModelCache{configCacheKey("openai-chatgpt.json"): {FetchedAt: now.Add(-time.Minute), Models: listed("gpt-5.6-sol")}})
+	codex := filepath.Join(t.TempDir(), "models_cache.json")
+	if err := os.WriteFile(codex, []byte(`{"models":[{"slug":"gpt-6-sol","visibility":"list","context_window":272000},{"slug":"gpt-5.6-sol","visibility":"list","context_window":272000}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := &ModelRefresher{Env: env, Client: http.DefaultClient, CodexCache: codex,
+		Now: func() time.Time { return now }, Ensure: func(Env) error { return nil }}
+	if !r.Refresh(nil) {
+		t.Fatal("a new Codex model must count as a change")
+	}
+	if got := ids(LoadModelCache(ModelCachePath(env))[configCacheKey("openai-chatgpt.json")].Models); len(got) != 1 || got[0] != "gpt-6-sol" {
+		t.Fatalf("chatgpt entry = %v", got)
+	}
+}
+
 func TestObserve_refreshes_once_and_never_blocks(t *testing.T) {
 	env := rosterEnv(t)
 	release := make(chan struct{})

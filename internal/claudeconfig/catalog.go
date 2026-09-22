@@ -152,6 +152,10 @@ var Providers = []Provider{
 			// the >=1M branch that declares no auto-compact cap and no output
 			// reserve at all.
 			{"gpt-6-astra", 0, 0, 272000, 0},
+			// gpt-6-sol and gpt-6-luna are served only to Codex 0.155.1 and
+			// newer: the models endpoint filters by client_version.
+			{"gpt-6-sol", 0, 0, 272000, 0},
+			{"gpt-6-luna", 0, 0, 272000, 0},
 			{"gpt-5.6-sol", 0, 0, 272000, 0},
 			{"gpt-5.6-terra", 0, 0, 272000, 0},
 			{"gpt-5.6-luna", 0, 0, 272000, 0},

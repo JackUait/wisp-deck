@@ -71,12 +71,17 @@ func (r *ModelRefresher) Refresh(sessionAuth http.Header) bool {
 
 	for _, rc := range routableConfigs(r.Env) {
 		key := configCacheKey(rc.Config.File)
-		if rc.Provider.SuppliesOwnModel() || cache.Fresh(key, now, modelListMaxAge) {
+		if rc.Provider.SuppliesOwnModel() {
 			continue
 		}
+		// A local read, so no age gate: Codex's cache changes when Codex is
+		// upgraded, and a new model must not wait out modelListMaxAge.
 		if rc.Provider.Auth == claudeconfig.AuthCodexChatGPT {
 			models, err := ReadCodexModels(r.CodexCache)
 			store(key, models, err)
+			continue
+		}
+		if cache.Fresh(key, now, modelListMaxAge) {
 			continue
 		}
 		listURL := rc.Provider.ModelsURL
