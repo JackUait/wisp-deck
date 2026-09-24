@@ -523,3 +523,18 @@ func TestWrapper_records_the_project_repo_at_launch(t *testing.T) {
 	}
 	assertContains(t, src[start:end], `_repo_identity "$PROJECT_DIR"`)
 }
+
+// A subdirectory shares its repository's identity, but only a checkout root may
+// move the tab.
+func TestFollowAgentCheckout_refuses_a_subdirectory_of_its_own_repo(t *testing.T) {
+	dir := t.TempDir()
+	repo, _ := worktreeSwitchRepo(t, dir)
+	sub := filepath.Join(repo, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	relaunch := followCtxPinned(t, dir, repo, repo)
+
+	ctx, logOut, code := followTmuxLog(t, dir, relaunch, sub, "")
+	assertFollowRefused(t, ctx, logOut, code, repo)
+}
