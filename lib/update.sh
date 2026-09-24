@@ -16,6 +16,8 @@ get_update_version() {
   local install_dir="$1"
   local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
   local flag="${config_home}/wisp-deck/update-available"
+  # A dev install is newer than npm; "updating" it would downgrade it.
+  [ -f "$install_dir/.dev-install" ] && return 0
   [ -f "$flag" ] || return 0
 
   local remote_version local_version
@@ -276,6 +278,12 @@ check_for_update() {
   local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
   local flag="${config_home}/wisp-deck/update-available"
   local ts_file="${config_home}/wisp-deck/last-update-check"
+
+  # A dev install is newer than npm, so any flag would offer a downgrade.
+  if [ -f "$install_dir/.dev-install" ]; then
+    rm -f "$flag"
+    return 0
+  fi
 
   # Need npm and a local version to compare
   command -v npm &>/dev/null || return 0

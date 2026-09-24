@@ -615,6 +615,29 @@ get_update_version %q
 	}
 }
 
+// A dev install (scripts/sync-dev-install.sh) is newer than npm, so an
+// "update" would be a downgrade and must never be offered.
+func TestUpdate_get_update_version_empty_for_a_dev_install(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "config", "wisp-deck")
+	os.MkdirAll(configDir, 0755)
+	writeTempFile(t, configDir, "update-available", "2.7.0")
+	installDir := filepath.Join(dir, "install")
+	os.MkdirAll(installDir, 0755)
+	writeTempFile(t, installDir, ".version", "2.6.0")
+	writeTempFile(t, installDir, ".dev-install", "0123456789abcdef")
+
+	snippet := updateSnippet(t, fmt.Sprintf(`
+XDG_CONFIG_HOME=%q
+get_update_version %q
+`, filepath.Join(dir, "config"), installDir))
+	out, code := runBashSnippet(t, snippet, nil)
+	assertExitCode(t, code, 0)
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("expected no update offer for a dev install, got %q", out)
+	}
+}
+
 // --- run_wisp_deck_update ---
 
 func TestUpdate_run_wisp_deck_update_runs_npx_latest(t *testing.T) {
@@ -708,6 +731,32 @@ exit 1
 	data := waitForFile(t, flagFile, "expected flag file to be written")
 	if strings.TrimSpace(data) != "2.7.0" {
 		t.Errorf("expected flag content '2.7.0', got %q", strings.TrimSpace(data))
+	}
+}
+
+func TestUpdate_check_for_update_skips_a_dev_install(t *testing.T) {
+	dir := t.TempDir()
+	installDir := filepath.Join(dir, "install")
+	os.MkdirAll(installDir, 0755)
+	writeTempFile(t, installDir, ".version", "2.6.0")
+	writeTempFile(t, installDir, ".dev-install", "0123456789abcdef")
+	configDir := filepath.Join(dir, "config", "wisp-deck")
+	os.MkdirAll(configDir, 0755)
+	writeTempFile(t, configDir, "update-available", "2.7.0")
+
+	npmCalls := filepath.Join(dir, "npm-calls")
+	binDir := mockCommand(t, dir, "npm", fmt.Sprintf(`echo "$@" >> %q; echo "2.7.0"`, npmCalls))
+	env := buildEnv(t, []string{binDir},
+		"XDG_CONFIG_HOME="+filepath.Join(dir, "config"))
+
+	_, code := runBashSnippet(t, updateSnippet(t, fmt.Sprintf(`check_for_update %q`, installDir)), env)
+	assertExitCode(t, code, 0)
+	// The check returns before it forks, so no polling is needed.
+	if _, err := os.Stat(npmCalls); err == nil {
+		t.Error("a dev install must not query npm")
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "update-available")); !os.IsNotExist(err) {
+		t.Errorf("a dev install must clear the update flag, stat err: %v", err)
 	}
 }
 

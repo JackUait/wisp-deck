@@ -1,12 +1,12 @@
 package bash_test
 
-// The post-commit hook keeps ~/.local/bin/wisp-deck-tui in sync with HEAD.
-// lib/ deploys itself through the live symlinks, but the Go TUI only reaches
-// panes through the installed binary — bac1be4 landed at 03:15 and every tab
-// opened before the next manual rebuild (22:16) still painted the old header.
-// The hook closes that gap: a commit touching the TUI's inputs rebuilds from
-// a clean `git archive HEAD` export (never the dirty shared checkout),
-// installs, re-signs, and warms the binary.
+// The post-commit hook keeps the install in sync with HEAD. The install is
+// copies, not symlinks, so nothing reaches live panes on its own: bac1be4
+// landed at 03:15 and every tab opened before the next manual rebuild (22:16)
+// still painted the old header. A commit touching the TUI's inputs rebuilds
+// from a clean `git archive HEAD` export (never the dirty shared checkout),
+// installs, re-signs, and warms the binary. A commit touching a distribution
+// entry runs scripts/sync-dev-install.sh.
 
 import (
 	"fmt"
@@ -65,7 +65,11 @@ cp internal/probe.txt "$MARK/probe-seen.txt" 2>/dev/null || true
 		"HOME="+homeDir,
 		"MARK="+markDir,
 		"WISP_DECK_HOOK_SYNC=1",
+		"WISP_DECK_INSTALL_DIR="+filepath.Join(homeDir, "install"),
 	)
+	if err := os.MkdirAll(filepath.Join(homeDir, "install"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	return repoDir, homeDir, markDir, env
 }
 
@@ -99,6 +103,40 @@ func TestHookSkipsCommitsThatDoNotTouchTheTui(t *testing.T) {
 	assertExitCode(t, code, 0)
 	if _, err := os.Stat(filepath.Join(markDir, "go.log")); err == nil {
 		t.Fatalf("bash-only commit must not trigger a build; output:\n%s", out)
+	}
+}
+
+func TestHookSyncsTheDevInstallOnBashChange(t *testing.T) {
+	repoDir, homeDir, markDir, env := setupHookRepo(t)
+	writeTempFile(t, repoDir, "lib/foo.sh", "# edited bash lib\n")
+	gitIn(t, repoDir, "add", "-A")
+	commitIn(t, repoDir, "bash-only change")
+
+	out, code := runHook(t, repoDir, env)
+	assertExitCode(t, code, 0)
+	installDir := filepath.Join(homeDir, "install")
+	got, err := os.ReadFile(filepath.Join(installDir, "lib", "foo.sh"))
+	if err != nil || string(got) != "# edited bash lib\n" {
+		t.Fatalf("bash commit must sync lib/ into the install; read err %v, got %q; output:\n%s", err, got, out)
+	}
+	if _, err := os.Stat(filepath.Join(installDir, ".dev-install")); err != nil {
+		t.Fatalf("synced install must carry .dev-install: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(markDir, "go.log")); err == nil {
+		t.Fatal("bash-only commit must not trigger a build")
+	}
+}
+
+func TestHookDoesNotSyncOnGoOnlyChange(t *testing.T) {
+	repoDir, homeDir, _, env := setupHookRepo(t)
+	writeTempFile(t, repoDir, "internal/tui/new.go", "package tui\n")
+	gitIn(t, repoDir, "add", "-A")
+	commitIn(t, repoDir, "tui change")
+
+	_, code := runHook(t, repoDir, env)
+	assertExitCode(t, code, 0)
+	if _, err := os.Stat(filepath.Join(homeDir, "install", ".dev-install")); !os.IsNotExist(err) {
+		t.Fatalf("a Go-only commit must not sync the install, stat err: %v", err)
 	}
 }
 

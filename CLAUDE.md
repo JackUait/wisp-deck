@@ -63,7 +63,15 @@ they bind ordinary development, not just a release:
 
 **Gotcha (binary warm-up):** the FIRST exec of a freshly built, downloaded, or re-signed `wisp-deck-tui` pays a macOS Gatekeeper/XProtect assessment (~1s idle, multi-second under load). Both the file-list diff modal and the account switcher exec this binary, so a cold binary makes the first modal open stall. **Every code path that writes or re-signs `~/.local/bin/wisp-deck-tui` MUST exec it once afterwards** (`"$bin" --version >/dev/null 2>&1 || true`). Existing warm-up sites: `wrapper.sh` (session launch, via `warm_tui_binary` in `lib/tui.sh`), `scripts/release.sh`, `lib/install.sh` (`ensure_wisp_deck_tui`), and the Makefile `install` target — all guarded by `test/bash/tui_warm_test.go`.
 
-**Gotcha (packaging is invisible locally):** the dev machine runs wisp-deck from symlinks into the repo, so a file the installer needs but `package.json`'s `files` never publishes still resolves here — and breaks for every `npx` user. This shipped in v2.22.0: `bin/wisp-deck` symlinked `~/.local/bin/wisp-deck` at the unpublished `bin/wisp-deck-config`, `ln -sf` made a dangling link, and setup reported success while the command was dead. **Whenever the installer references a new path, add it to BOTH `copyDistribution` in `bin/npx-wisp-deck.js` AND `files` in `package.json`.** Guarded by `test/npx/` (packaging cross-check + a full install into an empty HOME), which `scripts/release.sh` runs in preflight and the `Install verification` workflow runs in CI. Because the launcher skips the copy when `.version` already matches, a packaging fix only reaches users on a **version bump**.
+**Gotcha (packaging is invisible locally):** the dev machine once ran wisp-deck from symlinks into the repo (it is copies now, see below), so a file the installer needs but `package.json`'s `files` never publishes still resolves here — and breaks for every `npx` user. This shipped in v2.22.0: `bin/wisp-deck` symlinked `~/.local/bin/wisp-deck` at the unpublished `bin/wisp-deck-config`, `ln -sf` made a dangling link, and setup reported success while the command was dead. **Whenever the installer references a new path, add it to BOTH `copyDistribution` in `bin/npx-wisp-deck.js` AND `files` in `package.json`.** Guarded by `test/npx/` (packaging cross-check + a full install into an empty HOME), which `scripts/release.sh` runs in preflight and the `Install verification` workflow runs in CI. Because the launcher skips the copy when `.version` already matches, a packaging fix only reaches users on a **version bump**.
+
+**Gotcha (the dev install is not an npm install):** on a dev machine the
+post-commit hook runs `scripts/sync-dev-install.sh`, which copies HEAD's
+distribution into `~/.local/share/wisp-deck` (by rename, never in place) and
+writes `.dev-install` with the commit sha. That marker stops `npx wisp-deck` and
+the menu's update from installing the older npm package over newer code; the
+version check alone only sees "different" and would downgrade it. To go back to
+the npm build: `WISP_DECK_FORCE_INSTALL=1 npx wisp-deck`.
 
 ## Architecture
 

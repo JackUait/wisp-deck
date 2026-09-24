@@ -28,6 +28,15 @@ function main() {
 
   const version = fs.readFileSync(path.join(pkgRoot, 'VERSION'), 'utf8').trim();
 
+  // scripts/sync-dev-install.sh writes this marker. A dev install is usually
+  // newer than npm, and the version check below only sees "different", so
+  // without this an update would install the older package over it.
+  const devMarker = path.join(installDir, '.dev-install');
+  if (process.env.WISP_DECK_FORCE_INSTALL === '1') {
+    fs.rmSync(devMarker, { force: true });
+  }
+  const devInstall = fs.existsSync(devMarker);
+
   // Check if already installed at correct version
   const versionMarker = path.join(installDir, '.version');
   let installedVersion = '';
@@ -37,7 +46,9 @@ function main() {
     // Not installed yet
   }
 
-  if (installedVersion === version && isInstallIntact(installDir)) {
+  if (devInstall) {
+    process.stdout.write(`Kept the dev install at ${installDir} (.dev-install present); run with WISP_DECK_FORCE_INSTALL=1 to install ${version} from npm\n`);
+  } else if (installedVersion === version && isInstallIntact(installDir)) {
     process.stdout.write(`wisp-deck ${version} already up to date\n`);
   } else {
     // Copy bash distribution to install dir
@@ -49,7 +60,10 @@ function main() {
 
   // Download TUI binary if needed
   const skipTuiDownload = shouldSkipTuiDownload(process.env);
-  if (!skipTuiDownload) {
+  if (devInstall) {
+    // ensureTuiBinary replaces any binary not reporting this package's
+    // version, which would swap a HEAD-built dev binary for the published one.
+  } else if (!skipTuiDownload) {
     ensureTuiBinary(version);
   }
 
