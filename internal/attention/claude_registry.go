@@ -208,6 +208,7 @@ func (m ClaudeRegistryMapper) Poll(ctx context.Context) (ClaudeRegistryStatus, b
 		}
 		record, parseErr := parseClaudeRegistryRecord(recordData)
 		if parseErr != nil || record.kind != "interactive" ||
+			strings.HasPrefix(record.entrypoint, "sdk") ||
 			record.PID != candidate.pid || record.procStartSec != candidate.startSec {
 			continue
 		}
@@ -461,7 +462,10 @@ type claudeRegistryRecord struct {
 	// kind is validated but not filtered here: the caller decides which kind it
 	// is asking about — "interactive" for the supervised session, "bg" for the
 	// job a parked session handed its turn to.
-	kind        string
+	kind string
+	// entrypoint is how the process was started; "sdk-*" is a `claude -p` a
+	// hook or tool ran, never the session the pane supervises.
+	entrypoint  string
 	jobID       string
 	parkedJobID string
 }
@@ -527,6 +531,13 @@ func parseClaudeRegistryRecord(data []byte) (claudeRegistryRecord, error) {
 	if err != nil || kind == "" {
 		return claudeRegistryRecord{}, errors.New("invalid Claude registry kind")
 	}
+	entrypoint := ""
+	if raw, ok := fields["entrypoint"]; ok {
+		entrypoint, err = parseJSONString(raw)
+		if err != nil {
+			return claudeRegistryRecord{}, errors.New("invalid Claude registry entrypoint")
+		}
+	}
 	procStart, err := parseJSONString(fields["procStart"])
 	if err != nil {
 		return claudeRegistryRecord{}, fmt.Errorf("invalid Claude registry procStart: %w", err)
@@ -585,6 +596,7 @@ func parseClaudeRegistryRecord(data []byte) (claudeRegistryRecord, error) {
 		},
 		procStartSec: started.Unix(),
 		kind:         kind,
+		entrypoint:   entrypoint,
 		jobID:        jobID,
 		parkedJobID:  parkedJobID,
 	}, nil

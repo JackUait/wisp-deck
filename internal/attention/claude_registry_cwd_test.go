@@ -104,3 +104,50 @@ func TestClaudeRegistryMapperReportsTheSessionsWorkingDirectory(t *testing.T) {
 		}
 	})
 }
+
+// A hook can run `claude -p` (the security plugin's reviewer does). That child
+// writes its own "interactive" record in the same pane, with the directory it
+// reviews as its cwd. It never speaks for the tab: if it did, the tab would
+// follow it into another checkout whenever the agent's own record was missed.
+func TestClaudeRegistryMapperNeverReportsAnSDKChildAsTheSession(t *testing.T) {
+	t.Parallel()
+
+	for _, entrypoint := range []string{"sdk-py", "sdk-cli", "sdk-ts"} {
+		t.Run(entrypoint, func(t *testing.T) {
+			t.Parallel()
+			configDir := t.TempDir()
+			// The agent (101) has no readable record this tick; its hook's
+			// reviewer (103) does.
+			writeRegistryRecord(t, configDir, 103, `{"pid":103,"kind":"interactive",`+
+				`"entrypoint":"`+entrypoint+`","cwd":"/tmp/other-checkout",`+
+				`"procStart":"`+registryChildStart+`","status":"busy","updatedAt":100}`)
+			got, found, err := registryMapper(configDir, psSnapshot(
+				psProcess(100, 1, registryRootStart),
+				psProcess(101, 100, registryChildStart),
+				psProcess(102, 101, registryChildStart),
+				psProcess(103, 102, registryChildStart),
+			)).Poll(context.Background())
+			if err != nil {
+				t.Fatalf("Poll() error = %v", err)
+			}
+			if found {
+				t.Fatalf("Poll() = %#v, want the SDK child ignored", got)
+			}
+		})
+	}
+
+	t.Run("the interactive cli record still counts", func(t *testing.T) {
+		t.Parallel()
+		configDir := t.TempDir()
+		writeRegistryRecord(t, configDir, 101, `{"pid":101,"kind":"interactive",`+
+			`"entrypoint":"cli","cwd":"/tmp/project",`+
+			`"procStart":"`+registryChildStart+`","status":"idle","updatedAt":100}`)
+		got, found, err := registryMapper(configDir, psSnapshot(
+			psProcess(100, 1, registryRootStart),
+			psProcess(101, 100, registryChildStart),
+		)).Poll(context.Background())
+		if err != nil || !found || got.Cwd != "/tmp/project" {
+			t.Fatalf("Poll() = (%#v, %v, %v), want the cli record", got, found, err)
+		}
+	})
+}

@@ -74,3 +74,19 @@ Guarded by `TestClaudeReducerClearedConversationRetiresAttention`,
 `TestClaudeReducerClearedConversationKeepsTheRunningTurnArmed`,
 `TestClaudeRegistryMapperReportsTheSessionsCurrentConversation`, and
 `TestClaudeRegistryObservation_carries_the_conversation`.
+
+### A `claude -p` inside the pane is not the session
+
+A hook or a tool can run `claude -p`. The security-guidance plugin does it to
+review a commit, from inside the repository the commit landed in. That child
+writes its own registry record: `kind` "interactive", the same `tmux` pane,
+`entrypoint` "sdk-py"/"sdk-cli", and the reviewed checkout as its `cwd`.
+
+The mapper takes the shallowest valid record, and it skips an invalid one. So
+whenever the agent's own record is missed, the child answers for the tab. Its
+cwd then reaches the worktree follow, and the tab moves into whatever checkout
+the reviewer ran in. So a record whose `entrypoint` starts with `sdk` is never a
+candidate. The filter is deny-by-name: older records and the test fixtures have
+no `entrypoint` at all, and they must still count.
+
+Guarded by `TestClaudeRegistryMapperNeverReportsAnSDKChildAsTheSession`.
