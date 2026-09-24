@@ -93,6 +93,13 @@ func isoTab(t *testing.T, env []string, session, dir, lib string) {
 	isoTmux(t, env, "split-window", "-v", "-t", ledger, "-c", dir, "sleep 600")
 }
 
+// isoOwnRelaunch stamps the relaunch file a tab was launched with, as
+// wrapper.sh's new-session does; a follow refuses a tab that is not its owner.
+func isoOwnRelaunch(t *testing.T, env []string, session, relaunch string) {
+	t.Helper()
+	isoTmux(t, env, "set-environment", "-t", "="+session, "WISP_DECK_RELAUNCH_FILE", relaunch)
+}
+
 // isoPanes snapshots a session's panes: id -> "pid|start command".
 func isoPanes(t *testing.T, env []string, session string) map[string]string {
 	t.Helper()
@@ -127,6 +134,7 @@ func TestFollowAgentCheckout_never_retargets_another_tab(t *testing.T) {
 	// The wrapper names a tab after its project, and a project may contain a
 	// dot, which tmux stores as "_"; the watcher still passes the name it chose.
 	isoTab(t, env, "own.tab", repo, lib)
+	isoOwnRelaunch(t, env, "own_tab", relaunch)
 	// Created last, so it is tmux's current session for a caller outside tmux.
 	isoTab(t, env, "other", elsewhere, lib)
 	// A window whose name equals the tab's session must not stand in for it.
@@ -527,6 +535,7 @@ func TestFollowAgentCheckout_moves_a_live_spare_servers_directory(t *testing.T) 
 	env := isolationServer(t)
 	lib := isoStubLib(t)
 	isoTab(t, env, "own", repo, lib)
+	isoOwnRelaunch(t, env, "own", relaunch)
 
 	// The sibling inner session that outlives the respawn.
 	sibling := exec.Command("tmux", "-L", "gtspare_own", "new-session", "-d", "sleep 600", ";",
@@ -562,6 +571,7 @@ func TestFollowAgentCheckout_without_a_session_uses_the_relaunch_files_name(t *t
 	env := isolationServer(t)
 	lib := isoStubLib(t)
 	isoTab(t, env, "own.tab", repo, lib)
+	isoOwnRelaunch(t, env, "own_tab", relaunch)
 	isoTab(t, env, "other", resolved(t, t.TempDir()), lib)
 	otherBefore := isoPanes(t, env, "other")
 

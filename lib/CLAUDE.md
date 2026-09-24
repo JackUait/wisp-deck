@@ -235,12 +235,26 @@ working directory.
   destructive here: the conversation running in that pane is the one that just
   created the worktree. Its non-agent half is `_retarget_session_context` +
   `_retarget_session_side_panes`, and the follow calls only those.
-- **`ExitWorktree` removes the worktree as it leaves,** so the tab is asked to
-  follow home FROM a checkout that no longer exists — and `git worktree list`
-  from a deleted directory reports nothing, refusing the snap-back and stranding
-  the tab on a dead path forever. A dead anchor re-roots at the closest surviving
-  ancestor; a Claude worktree lives at `<main>/.claude/worktrees/<name>`, so that
-  reaches the repository that owned it while any other repository still fails.
+- **A tab belongs to one repository, fixed at launch.** `wrapper.sh` writes
+  `project_repo=` (the resolved `git rev-parse --git-common-dir`, which a main
+  checkout and all its worktrees share; empty for a non-git project) into the
+  relaunch file, and a follow admits a target only when ITS common dir equals
+  that. `project_dir` cannot serve: every follow rewrites it, so once a tab was
+  dragged into another repository it would vouch for that one. A full rewrite of
+  the file (the agent switch) carries the record over. `WISP_DECK_PROJECT` is
+  only a label.
+- **The question is asked of the target, never of the old checkout.**
+  `ExitWorktree` removes the worktree as it leaves, and a dead directory answers
+  no git question. Walking up from it used to re-root the check, which fails for
+  worktrees kept outside the checkout (`<parent>/.x-undo/wt/<name>`, stranding
+  the tab) and can land in an ENCLOSING repository (an ignored `vendor/x` inside
+  `y`), admitting `y`.
+- **A relaunch file written before the record existed** takes the repository
+  from tmux's `#{session_path}` (the launch directory, never rewritten), then
+  from a live `project_dir`, and walks up from a dead one only for the
+  `<main>/.claude/worktrees/<name>` layout.
+- **The session must own the relaunch file** (`WISP_DECK_RELAUNCH_FILE` in its
+  env, unset refuses), so a mis-targeted call cannot move another tab.
 - **The steady state does not fork.** Both watcher reads are builtins, and only a
   directory differing from the session's own reaches the shell that validates it.
   Each distinct directory is attempted **once** — a refused one (the agent cd'd
@@ -256,7 +270,13 @@ working directory.
 Guarded by `test/bash/worktree_follow_test.go` (including
 `_never_respawns_the_agent_pane`, `_follows_home_after_the_worktree_is_removed`
 and `_never_respawns_the_spare_as_a_ledger` — the last a `read -r ledger spare`
-field-collapse this extraction fixed), `test/bash/worktree_follow_watcher_test.go`
+field-collapse this extraction fixed; for the repository pin,
+`_refuses_an_enclosing_repo_after_its_own_is_removed`,
+`_refuses_a_sibling_repos_worktree`,
+`_follows_home_from_a_removed_out_of_tree_worktree`,
+`_never_rewrites_the_recorded_repo`, the `_unpinned_context_` cases,
+`_refuses_a_session_that_owns_another_relaunch_file` and
+`TestWriteRelaunchContext_rewrite_keeps_the_recorded_repo`), `test/bash/worktree_follow_watcher_test.go`
 (`TestAttentionWatcherTick_follows_the_agent_into_a_worktree` is what pins the
 tick to the follow at all), `test/bash/worktree_follow_wiring_test.go`, and
 `TestClaudeRegistryMapperReportsTheSessionsWorkingDirectory` plus
@@ -295,6 +315,11 @@ Rules:
   pane down as `TMUX_PANE=<id>`, as `auto_switch_maybe_trigger` does. The
   relaunch helpers were written for the switcher, which runs in a pane, so the
   pane is how they find their tab.
+- **A bare name prefix-matches once its session is gone.** Cleanup runs after
+  its own session died, so `-t dev-x-1008` hit the live `dev-x-10081` and
+  killed that tab. `=name` alone still prefix-matches on `list-panes` and finds
+  nothing on `set-option`; write `"=${name//[.:]/_}:"` everywhere, because tmux
+  stores "." and ":" as "_". Guarded by `test/bash/tmux_exact_target_test.go`.
 - **No refusal is safer than a wrong target.** `follow_agent_checkout` refuses
   a session tmux does not have. The auto-switch refuses without a pane.
 - **Key bindings are server-wide.** Every launch rewrites them, so a value baked

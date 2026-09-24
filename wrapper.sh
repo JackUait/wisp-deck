@@ -752,7 +752,7 @@ write_relaunch_context "$WISP_DECK_RELAUNCH_FILE" "$SELECTED_AI_TOOL" \
   "$WISP_DECK_CLAUDE_FILTER" "$PROJECT_DIR" "$_gt_cfg_root" \
   "${AI_TOOLS_AVAILABLE[*]}" "$CLAUDE_CMD" "$OPENCODE_CMD" "$CODEX_CMD" \
   "$WISP_DECK_ATTENTION_ROOT" "$WISP_DECK_ATTENTION_DESCRIPTOR" \
-  "$WISP_DECK_CLAUDE_SETTINGS_SOURCE"
+  "$WISP_DECK_CLAUDE_SETTINGS_SOURCE" "$(_repo_identity "$PROJECT_DIR")"
 export WISP_DECK_RELAUNCH_FILE
 
 # Start the descriptor consumer before the attach (which blocks until the

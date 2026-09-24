@@ -91,6 +91,10 @@ fi
 if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_LIB_DIR" ]; then
   printf 'WISP_DECK_LIB_DIR=%%s\n' %q; exit 0
 fi
+# The context every caller builds lives at <dir>/relaunch.
+if [ "$1" = "show-environment" ] && [ "$2" = "WISP_DECK_RELAUNCH_FILE" ]; then
+  printf 'WISP_DECK_RELAUNCH_FILE=%%s\n' %q; exit 0
+fi
 if [ "$1" = "show-environment" ]; then printf -- '-WISP_DECK_CLAUDE_ACCOUNT\n'; exit 0; fi
 if [ "$1" = "display-message" ]; then printf 'wisp-session\n'; exit 0; fi
 if [ "$1" = "list-panes" ]; then
@@ -105,7 +109,8 @@ if [ "$1" = "list-panes" ]; then
   exit 0
 fi
 if [ "$1" = "capture-pane" ]; then printf '❯\n'; exit 0; fi
-printf '%%s\n' "$orig" >> %q`, sessionLine, filepath.Join(projectRoot(t), "lib"), rec))
+printf '%%s\n' "$orig" >> %q`, sessionLine, filepath.Join(projectRoot(t), "lib"),
+		filepath.Join(dir, "relaunch"), rec))
 }
 
 // _session_worktrees turns git's porcelain listing into the switcher's

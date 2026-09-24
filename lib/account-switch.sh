@@ -199,6 +199,18 @@ _resolve_dir() {
   printf '%s\n' "${resolved:-$dir}"
 }
 
+# _repo_identity <dir> — print the resolved git common dir of <dir>, which a
+# main checkout and all its worktrees share; nothing outside a repository.
+_repo_identity() {
+  local dir="$1" common
+  [ -n "$dir" ] && [ -d "$dir" ] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+  # Without --path-format=absolute a main checkout's root prints a bare ".git".
+  common="$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 0
+  [ -n "$common" ] || return 0
+  _resolve_dir "$common"
+}
+
 # _nearest_existing_ancestor <path> — print the closest directory at or above
 # <path> that still exists, or nothing when none does. Used to re-root a check
 # whose anchor was deleted out from under it.
@@ -777,6 +789,9 @@ _read_relaunch_ctx() {
       settings_source) _rc_settings_source="$v" ;;
       filter) _rc_filter="$v" ;;
       project_dir) _rc_project_dir="$v" ;;
+      # Set flag: an EMPTY record (a non-git project) must not read as an old
+      # file that has none.
+      project_repo) _rc_project_repo="$v"; _rc_project_repo_set=1 ;;
       accounts_dir) _rc_accounts_dir="$v" ;;
       pointer) _rc_pointer="$v" ;;
       list) _rc_list="$v" ;;
@@ -941,7 +956,7 @@ _apply_subscription() {
 # write_relaunch_context <out_file> <tool> <tool_cmd> <settings> \
 #   <filter> <project_dir> <cfg_root> [tools] [claude_cmd] [opencode_cmd] \
 #   [codex_cmd] [attention_root] [attention_descriptor]
-#   [claude_settings_source] — persist everything
+#   [claude_settings_source] [project_repo] — persist everything
 # the mid-session switch needs to rebuild
 # the AI launch and locate the account files. wrapper.sh writes it once per
 # launch (every tool) and passes its path to the pane as
@@ -957,6 +972,17 @@ write_relaunch_context() {
     claude_cmd="${9:-}" opencode_cmd="${10:-}" codex_cmd="${11:-}" \
     attention_root="${12:-}" attention_descriptor="${13:-}" \
     claude_settings_source="${14:-}"
+  local repo_line="" line
+  # project_repo is the tab's repository, fixed at launch (see
+  # follow_agent_checkout). Only the launch passes it; a mid-session rewrite
+  # carries the existing record over, or the first switch would unpin the tab.
+  if [ "$#" -ge 15 ]; then
+    repo_line="project_repo=${15}"
+  elif [ -f "$out" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in project_repo=*) repo_line="$line"; break ;; esac
+    done < "$out"
+  fi
   case "$out" in */*) mkdir -p "${out%/*}" 2>/dev/null ;; esac
   # Published by rename: the ledger pane reads this file on its own schedule, and
   # an in-place rewrite lets it observe a truncated prefix — which parses into a
@@ -969,6 +995,7 @@ write_relaunch_context() {
     printf 'settings_source=%s\n' "$claude_settings_source"
     printf 'filter=%s\n' "$filter"
     printf 'project_dir=%s\n' "$project_dir"
+    if [ -n "$repo_line" ]; then printf '%s\n' "$repo_line"; fi
     printf 'accounts_dir=%s\n' "$cfg_root/claude-accounts"
     printf 'pointer=%s\n' "$cfg_root/claude-account"
     printf 'list=%s\n' "$cfg_root/claude-accounts.list"
@@ -1781,6 +1808,43 @@ _apply_worktree_switch() {
   _retarget_session_side_panes "$tmux_cmd" "$relaunch_file" "$new_dir" "$session"
 }
 
+# _session_owns_relaunch_file <tmux_cmd> <session> <relaunch_file> — exit 0 when
+# <session> was launched with this relaunch file. The file carries the tab's
+# repository, so this is what ties the checked identity to the tab being moved.
+# Unset refuses too.
+_session_owns_relaunch_file() {
+  local tmux_cmd="$1" session="$2" relaunch_file="$3" line
+  line="$("$tmux_cmd" show-environment -t "=$session" WISP_DECK_RELAUNCH_FILE 2>/dev/null)" || return 1
+  [ "${line#WISP_DECK_RELAUNCH_FILE=}" = "$relaunch_file" ]
+}
+
+# _unpinned_repo_identity <tmux_cmd> <session> <project_dir> — the repository of
+# a tab whose relaunch file predates project_repo. project_dir is rewritten by
+# every follow, so old code may already have moved it into another repository;
+# tmux's #{session_path} is the launch directory and nothing rewrites it.
+_unpinned_repo_identity() {
+  local tmux_cmd="$1" session="$2" project_dir="$3" launch id anchor top
+  launch="$("$tmux_cmd" display-message -p -t "=$session:" '#{session_path}' 2>/dev/null)" || launch=""
+  case "$launch" in
+    /*) id="$(_repo_identity "$launch")"
+        if [ -n "$id" ]; then printf '%s\n' "$id"; return 0; fi ;;
+  esac
+  if [ -d "$project_dir" ]; then
+    _repo_identity "$project_dir"
+    return 0
+  fi
+  # Both gone: ExitWorktree removed <main>/.claude/worktrees/<name>. Walk up only
+  # for that layout; from any other, the walk can land in an ENCLOSING repository.
+  anchor="$(_nearest_existing_ancestor "$project_dir")"
+  [ -n "$anchor" ] || return 0
+  top="$(git -C "$anchor" rev-parse --show-toplevel 2>/dev/null)" || return 0
+  top="$(_resolve_dir "$top")"
+  case "$project_dir" in
+    "$top"/.claude/worktrees/*) _repo_identity "$anchor" ;;
+  esac
+  return 0
+}
+
 # follow_agent_checkout <tmux_cmd> <relaunch_file> <new_project_dir> [session]
 # Move this tab to the checkout its own agent moved into — the automatic
 # counterpart of the switcher's worktree row. The agent pane is deliberately
@@ -1791,6 +1855,10 @@ _apply_worktree_switch() {
 # It runs from the attention watcher, OUTSIDE tmux, so it must name its session:
 # with no -t, tmux resolves to the session the user last used, and this tab's
 # worktree would be pushed into whichever tab is on screen.
+#
+# The target is admitted by the tab's repository alone: its git common dir must
+# equal project_repo, written once at launch and never by a follow. project_dir
+# cannot serve, because a follow rewrites it.
 follow_agent_checkout() {
   local tmux_cmd="$1" relaunch_file="$2" new_dir="$3" session="${4-}"
   local _rc_tool="" _rc_tool_cmd="" _rc_settings="" _rc_settings_source="" \
@@ -1798,8 +1866,9 @@ follow_agent_checkout() {
     _rc_list="" _rc_colors="" _rc_default_label="" \
     _rc_tools="" _rc_claude_cmd="" _rc_opencode_cmd="" _rc_codex_cmd="" \
     _rc_tool_pref="" _rc_attention_root="" _rc_attention_descriptor="" \
-    _rc_config_pointer="" _rc_configs_dir="" _rc_configs_list=""
-  local anchor
+    _rc_config_pointer="" _rc_configs_dir="" _rc_configs_list="" \
+    _rc_project_repo="" _rc_project_repo_set=""
+  local repo
   [ -n "$new_dir" ] || return 1
   [ -f "$relaunch_file" ] || return 1
   # A watcher started before the session argument existed still passes three.
@@ -1813,24 +1882,24 @@ follow_agent_checkout() {
   # while the watcher passes the name the wrapper asked for.
   session="${session//[.:]/_}"
   "$tmux_cmd" has-session -t "=$session" 2>/dev/null || return 1
+  _session_owns_relaunch_file "$tmux_cmd" "$session" "$relaunch_file" || return 1
   _read_relaunch_ctx "$relaunch_file"
 
-  # ExitWorktree's documented clean exit REMOVES the worktree as it leaves, so
-  # the tab is asked to follow home from a checkout that no longer exists.
-  # Validating against a deleted anchor reports no checkouts at all, which would
-  # refuse the snap-back and strand the tab on a dead directory forever. Re-root
-  # the question at the closest directory that survived: a worktree Claude
-  # created lives at <main>/.claude/worktrees/<name>, so walking up reaches the
-  # repository that owned it — and any other repository still fails the check.
-  anchor="$_rc_project_dir"
-  [ -d "$anchor" ] || anchor="$(_nearest_existing_ancestor "$anchor")"
-  [ -n "$anchor" ] || return 1
+  if [ "$_rc_project_repo_set" = 1 ]; then
+    repo="$_rc_project_repo"
+  else
+    repo="$(_unpinned_repo_identity "$tmux_cmd" "$session" "$_rc_project_dir")"
+  fi
+  [ -n "$repo" ] || return 1
 
-  # The agent can cd anywhere; only a checkout git itself reports for THIS
-  # project may move the session.
-  _worktree_choice_ready "$anchor" "$new_dir" || return 1
+  # Asked of the TARGET, never of the old checkout: ExitWorktree removes the
+  # worktree it leaves, and a dead directory answers no git question.
+  [ -d "$new_dir" ] || return 1
   # Compared (and applied) in git's own terms — see _resolve_dir.
   new_dir="$(_resolve_dir "$new_dir")"
+  [ "$(_repo_identity "$new_dir")" = "$repo" ] || return 1
+  # A subdirectory shares the identity; only a checkout root moves the tab.
+  _worktree_choice_ready "$new_dir" "$new_dir" || return 1
   [ "$new_dir" = "$(_resolve_dir "$_rc_project_dir")" ] && return 0
 
   _retarget_session_context "$tmux_cmd" "$relaunch_file" "$new_dir" "$session" || return 1
