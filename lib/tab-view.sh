@@ -208,7 +208,7 @@ tab_view_stamp_windows() {
   # window with two empty fields in a row would shift every later field left.
   # The unit separator is not whitespace, so empty fields survive it.
   fmt="#{window_id}${sep}#{window_width}${sep}#{@gt_ai}${sep}#{pane_id}${sep}#{@wd_tab_title}${sep}#{@wd_tab_progress}${sep}#{pane_title}"
-  inventory="$("$tmux_cmd" list-panes -s -t "$session" -F "$fmt" 2>/dev/null)" || return 0
+  inventory="$("$tmux_cmd" list-panes -s -t "=${session//[.:]/_}:" -F "$fmt" 2>/dev/null)" || return 0
   [ -n "$inventory" ] || return 0
 
   while IFS="$sep" read -r wid wwidth ai pid otitle oprog ptitle; do
@@ -262,12 +262,12 @@ tab_view_refresh_bar() {
   : "${accent:=209}"
   while read -r id flag; do
     [ "$flag" = "1" ] && { ai_pane="$id"; break; }
-  done < <("$tmux_cmd" list-panes -t "$session" -F '#{pane_id} #{@gt_ai}' 2>/dev/null)
+  done < <("$tmux_cmd" list-panes -t "=${session//[.:]/_}:" -F '#{pane_id} #{@gt_ai}' 2>/dev/null)
   if [ -n "$ai_pane" ]; then
     ai_left="$("$tmux_cmd" display-message -p -t "$ai_pane" '#{pane_left}' 2>/dev/null)"
   fi
   mode="$(tab_view_mode)"
-  "$tmux_cmd" set-option -t "$session" status-left \
+  "$tmux_cmd" set-option -t "=${session//[.:]/_}:" status-left \
     "$(tab_view_status_left "$project" "$accent" "$ai_left" "$mode")" 2>/dev/null || true
   return 0
 }
@@ -277,7 +277,7 @@ tab_view_refresh_bar() {
 # prints `NAME=value` when set and `-NAME` when unset — only the former counts.
 _tab_view_session_env() {
   local tmux_cmd="$1" session="$2" var="$3" line
-  line="$("$tmux_cmd" show-environment -t "$session" "$var" 2>/dev/null)" || return 0
+  line="$("$tmux_cmd" show-environment -t "=${session//[.:]/_}:" "$var" 2>/dev/null)" || return 0
   case "$line" in
     "$var"=*) printf '%s\n' "${line#"$var"=}" ;;
   esac
@@ -351,7 +351,7 @@ tab_view_new_window() {
   # <session>:` (empty window part) appends at the session's next free index.
   local pane0_cmd ledger_pane ai_pane
   pane0_cmd="source \"$lib_dir/compact-view.sh\" && compact_view \"$dir\"; exec bash"
-  ledger_pane="$("$tmux_cmd" new-window -t "${session}:" -P -F '#{pane_id}' \
+  ledger_pane="$("$tmux_cmd" new-window -t "=${session//[.:]/_}:" -P -F '#{pane_id}' \
     -c "$dir" "$pane0_cmd" 2>/dev/null)" || return 0
   [ -n "$ledger_pane" ] || return 0
   ai_pane="$("$tmux_cmd" split-window -h -p 75 -P -F '#{pane_id}' -c "$dir" \
@@ -387,7 +387,7 @@ tab_view_close_window() {
   local label pid tty inner
   local pids=()
 
-  [ -n "$window" ] || window="$("$tmux_cmd" display-message -p -t "$session" \
+  [ -n "$window" ] || window="$("$tmux_cmd" display-message -p -t "=${session//[.:]/_}:" \
     '#{window_id}' 2>/dev/null)" || return 0
   [ -n "$window" ] || return 0
 

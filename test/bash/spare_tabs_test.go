@@ -90,10 +90,10 @@ func TestSpareTabs_config_forwards_tab_switch_to_outer(t *testing.T) {
 		"bind C-n run-shell",
 		"bind C-p run-shell",
 		"-u TMUX",                          // forward to the outer default socket
-		"next-window -t dev-app-42",        // prefix+n cycles the project tabs
-		"previous-window -t dev-app-42",    // prefix+p cycles the other way
-		"select-window -t dev-app-42:0",    // prefix+1 -> chip 1 (window index 0)
-		"select-window -t dev-app-42:8",    // prefix+9 -> chip 9 (window index 8)
+		"next-window -t =dev-app-42:",      // prefix+n cycles the project tabs
+		"previous-window -t =dev-app-42:",  // prefix+p cycles the other way
+		"select-window -t =dev-app-42:0",   // prefix+1 -> chip 1 (window index 0)
+		"select-window -t =dev-app-42:8",   // prefix+9 -> chip 9 (window index 8)
 	} {
 		assertContains(t, out, want)
 	}

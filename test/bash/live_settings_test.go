@@ -124,7 +124,7 @@ printf '%s\n' "$*" >> "$GT_REC"
 case "$1" in
   list-sessions) printf '%s\n' "dev-alpha-1" "dev-beta-2" "plain-3" ;;
   show-environment)
-    sess="$3"; var="$4"
+    sess="${3#=}"; sess="${sess%:}"; var="$4"
     [ "$sess" = "plain-3" ] && exit 1   # not a wisp-deck session
     case "$var" in
       WISP_DECK) exit 0 ;;
@@ -160,10 +160,10 @@ func TestLiveSettings_apply_theme_to_all_sessions_per_tool(t *testing.T) {
 
 	data, _ := os.ReadFile(rec)
 	got := string(data)
-	assertContains(t, got, "set-option -t dev-alpha-1 pane-active-border-style fg=colour209")
-	assertContains(t, got, "set-option -t dev-beta-2 pane-active-border-style fg=colour141")
+	assertContains(t, got, "set-option -t =dev-alpha-1: pane-active-border-style fg=colour209")
+	assertContains(t, got, "set-option -t =dev-beta-2: pane-active-border-style fg=colour141")
 	// The non-wisp-deck session must never be touched.
-	assertNotContains(t, got, "set-option -t plain-3")
+	assertNotContains(t, got, "set-option -t =plain-3:")
 }
 
 func TestLiveSettings_apply_theme_to_all_sessions_named_preset(t *testing.T) {
@@ -188,9 +188,9 @@ func TestLiveSettings_apply_theme_to_all_sessions_named_preset(t *testing.T) {
 
 	data, _ := os.ReadFile(rec)
 	got := string(data)
-	assertContains(t, got, "set-option -t dev-alpha-1 pane-active-border-style fg=colour141")
-	assertContains(t, got, "set-option -t dev-beta-2 pane-active-border-style fg=colour141")
-	assertNotContains(t, got, "set-option -t plain-3")
+	assertContains(t, got, "set-option -t =dev-alpha-1: pane-active-border-style fg=colour141")
+	assertContains(t, got, "set-option -t =dev-beta-2: pane-active-border-style fg=colour141")
+	assertNotContains(t, got, "set-option -t =plain-3:")
 }
 
 // --- apply_settings_to_all_sessions: theme across every session ---
@@ -200,7 +200,7 @@ printf '%s\n' "$*" >> "$GT_REC"
 case "$1" in
   list-sessions) printf '%s\n' "dev-alpha-1" "plain-2" ;;
   show-environment)
-    sess="$3"; var="$4"
+    sess="${3#=}"; sess="${sess%:}"; var="$4"
     [ "$sess" = "plain-2" ] && exit 1
     case "$var" in
       WISP_DECK)      exit 0 ;;
@@ -233,9 +233,9 @@ func TestLiveSettings_apply_settings_to_all_sessions_theme(t *testing.T) {
 	data, _ := os.ReadFile(rec)
 	got := string(data)
 	// Theme accent applied to the wisp-deck session.
-	assertContains(t, got, "set-option -t dev-alpha-1 pane-active-border-style fg=colour141")
+	assertContains(t, got, "set-option -t =dev-alpha-1: pane-active-border-style fg=colour141")
 	// The non-wisp-deck session is probed but never acted on.
-	assertNotContains(t, got, "set-option -t plain-2")
+	assertNotContains(t, got, "set-option -t =plain-2:")
 }
 
 // --- apply_settings_to_all_sessions_if_changed: skip the (expensive) all-session
@@ -323,7 +323,7 @@ func TestLiveSettings_apply_if_changed_propagates_when_changed(t *testing.T) {
 	data, _ := os.ReadFile(rec)
 	got := string(data)
 	assertContains(t, got, "list-sessions")
-	assertContains(t, got, "set-option -t dev-alpha-1 pane-active-border-style fg=colour141")
+	assertContains(t, got, "set-option -t =dev-alpha-1: pane-active-border-style fg=colour141")
 }
 
 // wrapper.sh must use the change-gated propagation (with a fingerprint captured

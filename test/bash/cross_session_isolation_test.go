@@ -601,7 +601,7 @@ func TestRunShellEntryPoints_name_their_tab(t *testing.T) {
 		"#{@wisp_ledger_hover_pane}",
 		// the spare's inner config: its outer tab baked at config time, and a
 		// click on the inner server that owns that tab alone.
-		"-t $outer", "$click"}
+		"-t =${outer", "$click"}
 	for _, file := range files {
 		src, err := os.ReadFile(file)
 		if err != nil {

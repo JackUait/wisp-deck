@@ -127,7 +127,7 @@ exit 0`
 		t.Fatalf("select-pane was never called: %v", err)
 	}
 	got := string(data)
-	if !strings.Contains(got, "select-pane -t sess:0.2") {
+	if !strings.Contains(got, "select-pane -t =sess:0.2") {
 		t.Errorf("watcher should focus the geometry-resolved AI pane (2); select-pane calls:\n%s", got)
 	}
 	if strings.Contains(got, "sess:0.1") {

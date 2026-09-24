@@ -62,15 +62,15 @@ spare_tabs_config() {
   local fwd=""
   if [ -n "$outer" ]; then
     local envpfx='env -u TMUX -u TMUX_PANE tmux'
-    fwd="bind n run-shell \"$envpfx next-window -t $outer 2>/dev/null || true\"
-bind p run-shell \"$envpfx previous-window -t $outer 2>/dev/null || true\"
-bind C-n run-shell \"$envpfx next-window -t $outer 2>/dev/null || true\"
-bind C-p run-shell \"$envpfx previous-window -t $outer 2>/dev/null || true\"
-bind C-@ run-shell \"$envpfx select-window -t $outer:1 2>/dev/null || true\""
+    fwd="bind n run-shell \"$envpfx next-window -t =${outer//[.:]/_}: 2>/dev/null || true\"
+bind p run-shell \"$envpfx previous-window -t =${outer//[.:]/_}: 2>/dev/null || true\"
+bind C-n run-shell \"$envpfx next-window -t =${outer//[.:]/_}: 2>/dev/null || true\"
+bind C-p run-shell \"$envpfx previous-window -t =${outer//[.:]/_}: 2>/dev/null || true\"
+bind C-@ run-shell \"$envpfx select-window -t =${outer//[.:]/_}:1 2>/dev/null || true\""
     local n
     for ((n = 1; n <= 9; n++)); do
       fwd+="
-bind $n run-shell \"$envpfx select-window -t $outer:$((n - 1)) 2>/dev/null || true\""
+bind $n run-shell \"$envpfx select-window -t =${outer//[.:]/_}:$((n - 1)) 2>/dev/null || true\""
     done
   fi
 
@@ -284,10 +284,10 @@ spare_tabs_kill_session() {
   declare -f kill_tree >/dev/null 2>&1 || source "${BASH_SOURCE[0]%/*}/process.sh"
   while read -r pid; do
     [ -n "$pid" ] && pids+=("$pid")
-  done < <(tmux -L "$label" list-panes -s -t "$session" -F '#{pane_pid}' 2>/dev/null)
+  done < <(tmux -L "$label" list-panes -s -t "=${session//[.:]/_}:" -F '#{pane_pid}' 2>/dev/null)
 
   for pid in ${pids[@]+"${pids[@]}"}; do kill_tree "$pid" TERM; done
-  tmux -L "$label" kill-session -t "$session" 2>/dev/null || true
+  tmux -L "$label" kill-session -t "=${session//[.:]/_}:" 2>/dev/null || true
   sleep 0.3
   for pid in ${pids[@]+"${pids[@]}"}; do kill_tree "$pid" KILL; done
   return 0

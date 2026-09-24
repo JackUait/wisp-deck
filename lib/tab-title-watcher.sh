@@ -36,7 +36,7 @@ read_settings_value() {
 apply_session_theme() {
   local tmux_cmd="$1" session_name="$2" accent="$3"
   [ -z "$accent" ] && return 0
-  "$tmux_cmd" set-option -t "$session_name" pane-active-border-style "fg=colour${accent}" 2>/dev/null || true
+  "$tmux_cmd" set-option -t "=${session_name//[.:]/_}:" pane-active-border-style "fg=colour${accent}" 2>/dev/null || true
   if declare -f spare_tabs_socket >/dev/null 2>&1 && declare -f spare_tabs_set_accent >/dev/null 2>&1; then
     spare_tabs_set_accent "$(spare_tabs_socket "$session_name")" "$accent"
   fi
@@ -59,9 +59,9 @@ apply_theme_to_all_sessions() {
   # where `< <(...)` is disabled. A subshell is fine — we mutate tmux, not vars.
   "$tmux_cmd" list-sessions -F '#{session_name}' 2>/dev/null | while IFS= read -r session; do
     [ -z "$session" ] && continue
-    "$tmux_cmd" show-environment -t "$session" WISP_DECK >/dev/null 2>&1 || continue
+    "$tmux_cmd" show-environment -t "=${session//[.:]/_}:" WISP_DECK >/dev/null 2>&1 || continue
     local tool accent
-    tool="$("$tmux_cmd" show-environment -t "$session" WISP_DECK_TOOL 2>/dev/null | cut -d= -f2-)"
+    tool="$("$tmux_cmd" show-environment -t "=${session//[.:]/_}:" WISP_DECK_TOOL 2>/dev/null | cut -d= -f2-)"
     accent="$(get_theme_accent "$(gt_resolve_theme "$theme_pref" "$tool")")"
     apply_session_theme "$tmux_cmd" "$session" "$accent"
   done
@@ -85,9 +85,9 @@ apply_settings_to_all_sessions() {
   # Pipe (not process substitution): wrapper sources libs under bash --posix.
   "$tmux_cmd" list-sessions -F '#{session_name}' 2>/dev/null | while IFS= read -r session; do
     [ -z "$session" ] && continue
-    "$tmux_cmd" show-environment -t "$session" WISP_DECK >/dev/null 2>&1 || continue
+    "$tmux_cmd" show-environment -t "=${session//[.:]/_}:" WISP_DECK >/dev/null 2>&1 || continue
     local tool accent
-    tool="$("$tmux_cmd" show-environment -t "$session" WISP_DECK_TOOL 2>/dev/null | cut -d= -f2-)"
+    tool="$("$tmux_cmd" show-environment -t "=${session//[.:]/_}:" WISP_DECK_TOOL 2>/dev/null | cut -d= -f2-)"
     accent="$(get_theme_accent "$(gt_resolve_theme "$theme_pref" "$tool")")"
     apply_session_theme "$tmux_cmd" "$session" "$accent"
   done
@@ -351,7 +351,7 @@ apply_tab_title() {
 discover_ai_pane() {
   local session_name="${1-}" tmux_cmd="${2-}" listing line pane flag extra _wd_ifs _wd_glob
   local found="" count=0 suffix
-  listing="$("$tmux_cmd" list-panes -t "$session_name" -F $'#{pane_id}\t#{@gt_ai}' 2>/dev/null)" || return 1
+  listing="$("$tmux_cmd" list-panes -t "=${session_name//[.:]/_}:" -F $'#{pane_id}\t#{@gt_ai}' 2>/dev/null)" || return 1
   # Not `<<<`/`<<`: bash 5.3 pipes a here-document and that pipe can hold only
   # 512 bytes. Not `< <(...)` either — this file must parse under /bin/sh.
   _wd_ifs="$IFS"
@@ -389,7 +389,7 @@ discover_ai_pane() {
 # Usage: attention_watcher_tab_focused <session> <tmux_cmd>
 attention_watcher_tab_focused() {
   local session_name="${1-}" tmux_cmd="${2-}" flags
-  flags="$("$tmux_cmd" list-clients -t "$session_name" -F '#{client_flags}' 2>/dev/null)" || return 1
+  flags="$("$tmux_cmd" list-clients -t "=${session_name//[.:]/_}:" -F '#{client_flags}' 2>/dev/null)" || return 1
   case ",$flags," in
     *,focused,*) return 0 ;;
   esac

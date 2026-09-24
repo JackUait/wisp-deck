@@ -667,7 +667,7 @@ func TestWriteSessionSnapshot_writes_ghost_sessions_only(t *testing.T) {
 case "$1" in
   list-sessions) echo "100 dev-app-1"; echo "200 other-sess" ;;
   show-environment)
-    if [ "$3" = "dev-app-1" ]; then
+    if [ "$3" = "=dev-app-1:" ]; then
       printf 'WISP_DECK=1\nWISP_DECK_BOOT=111\nWISP_DECK_PROJECT=app\nWISP_DECK_PATH=/p/app\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\n'
     else
       printf 'SOMEVAR=1\n'
@@ -1411,7 +1411,7 @@ func TestWriteSessionSnapshot_orders_by_creation_time(t *testing.T) {
 case "$1" in
   list-sessions) echo "200 dev-a-1"; echo "100 dev-b-2" ;;
   show-environment)
-    if [ "$3" = "dev-a-1" ]; then
+    if [ "$3" = "=dev-a-1:" ]; then
       printf 'WISP_DECK=1\nWISP_DECK_BOOT=111\nWISP_DECK_PROJECT=a\nWISP_DECK_PATH=/p/a\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\n'
     else
       printf 'WISP_DECK=1\nWISP_DECK_BOOT=111\nWISP_DECK_PROJECT=b\nWISP_DECK_PATH=/p/b\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\n'
@@ -1443,7 +1443,7 @@ func TestWriteSessionSnapshot_handles_session_name_with_spaces(t *testing.T) {
 case "$1" in
   list-sessions) echo "100 dev-My Project-1" ;;
   show-environment)
-    if [ "$3" = "dev-My Project-1" ]; then
+    if [ "$3" = "=dev-My Project-1:" ]; then
       printf 'WISP_DECK=1\nWISP_DECK_BOOT=111\nWISP_DECK_PROJECT=My Project\nWISP_DECK_PATH=/p/app\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\n'
     else
       printf 'SOMEVAR=1\n'

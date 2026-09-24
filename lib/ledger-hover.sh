@@ -262,29 +262,29 @@ ledger_hover_rebuild_root_mouse() (
 ledger_hover_uninstall() {
   local tmux_cmd="$1" session_name="$2" table base base_mouse current
 
-  table=$("$tmux_cmd" show-options -qv -t "$session_name" '@wisp_ledger_hover_table' 2>/dev/null || true)
-  base=$("$tmux_cmd" show-options -qv -t "$session_name" '@wisp_ledger_hover_base' 2>/dev/null || true)
-  base_mouse=$("$tmux_cmd" show-options -qv -t "$session_name" '@wisp_ledger_hover_mouse' 2>/dev/null || true)
-  current=$("$tmux_cmd" show-options -Aqv -t "$session_name" key-table 2>/dev/null || true)
+  table=$("$tmux_cmd" show-options -qv -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_table' 2>/dev/null || true)
+  base=$("$tmux_cmd" show-options -qv -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_base' 2>/dev/null || true)
+  base_mouse=$("$tmux_cmd" show-options -qv -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_mouse' 2>/dev/null || true)
+  current=$("$tmux_cmd" show-options -Aqv -t "=${session_name//[.:]/_}:" key-table 2>/dev/null || true)
   if [ -z "$table" ]; then
     table=$(ledger_hover_table_name "$tmux_cmd" "$session_name") || return 1
   fi
 
   if [ -n "$table" ] && [ "$current" = "$table" ]; then
-    "$tmux_cmd" set-option -t "$session_name" key-table "${base:-root}" 2>/dev/null || true
+    "$tmux_cmd" set-option -t "=${session_name//[.:]/_}:" key-table "${base:-root}" 2>/dev/null || true
   fi
   if [ -n "$base_mouse" ]; then
-    "$tmux_cmd" set-option -t "$session_name" mouse "$base_mouse" 2>/dev/null || true
+    "$tmux_cmd" set-option -t "=${session_name//[.:]/_}:" mouse "$base_mouse" 2>/dev/null || true
   fi
   if [ -n "$table" ]; then
     "$tmux_cmd" unbind-key -a -T "$table" 2>/dev/null || true
   fi
 
-  "$tmux_cmd" set-option -qu -t "$session_name" '@wisp_ledger_hover_table' 2>/dev/null || true
-  "$tmux_cmd" set-option -qu -t "$session_name" '@wisp_ledger_hover_base' 2>/dev/null || true
-  "$tmux_cmd" set-option -qu -t "$session_name" '@wisp_ledger_hover_mouse' 2>/dev/null || true
-  "$tmux_cmd" set-option -qu -t "$session_name" '@wisp_ledger_hover_inside' 2>/dev/null || true
-  "$tmux_cmd" set-option -qu -t "$session_name" '@wisp_ledger_hover_pane' 2>/dev/null || true
+  "$tmux_cmd" set-option -qu -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_table' 2>/dev/null || true
+  "$tmux_cmd" set-option -qu -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_base' 2>/dev/null || true
+  "$tmux_cmd" set-option -qu -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_mouse' 2>/dev/null || true
+  "$tmux_cmd" set-option -qu -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_inside' 2>/dev/null || true
+  "$tmux_cmd" set-option -qu -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_pane' 2>/dev/null || true
   ledger_hover_rebuild_root_mouse "$tmux_cmd" 0 || true
 }
 
@@ -299,14 +299,14 @@ ledger_hover_install() {
   local table_marker rest key original_command inside_handler outside_handler wrapped_binding
 
   [ -n "$tmux_cmd" ] && [ -n "$session_name" ] && [ -n "$ledger_pane" ] || return 1
-  "$tmux_cmd" has-session -t "$session_name" 2>/dev/null || return 1
+  "$tmux_cmd" has-session -t "=${session_name//[.:]/_}:" 2>/dev/null || return 1
 
   # Reinstallation must start from the user's real base table, not recursively
   # clone a stale Wisp table left by an earlier setup attempt.
   ledger_hover_uninstall "$tmux_cmd" "$session_name"
-  base=$("$tmux_cmd" show-options -Aqv -t "$session_name" key-table 2>/dev/null || true)
+  base=$("$tmux_cmd" show-options -Aqv -t "=${session_name//[.:]/_}:" key-table 2>/dev/null || true)
   base="${base:-root}"
-  base_mouse=$("$tmux_cmd" show-options -Aqv -t "$session_name" mouse 2>/dev/null || true)
+  base_mouse=$("$tmux_cmd" show-options -Aqv -t "=${session_name//[.:]/_}:" mouse 2>/dev/null || true)
   base_mouse="${base_mouse:-off}"
   table=$(ledger_hover_table_name "$tmux_cmd" "$session_name") || return 1
   bindings=$("$tmux_cmd" list-keys -T "$base" 2>/dev/null) || return 1
@@ -377,20 +377,20 @@ ledger_hover_install() {
     fi
   done < <(printf '%s\n' "$keys")
 
-  if ! "$tmux_cmd" set-option -t "$session_name" '@wisp_ledger_hover_base' "$base" \; \
-    set-option -t "$session_name" '@wisp_ledger_hover_mouse' "$base_mouse" \; \
-    set-option -t "$session_name" '@wisp_ledger_hover_table' "$table" \; \
-    set-option -t "$session_name" '@wisp_ledger_hover_inside' 0 \; \
-    set-option -t "$session_name" '@wisp_ledger_hover_pane' "$ledger_pane" \; \
-    set-option -t "$session_name" key-table "$table" \; \
-    set-option -t "$session_name" mouse on; then
+  if ! "$tmux_cmd" set-option -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_base' "$base" \; \
+    set-option -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_mouse' "$base_mouse" \; \
+    set-option -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_table' "$table" \; \
+    set-option -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_inside' 0 \; \
+    set-option -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_pane' "$ledger_pane" \; \
+    set-option -t "=${session_name//[.:]/_}:" key-table "$table" \; \
+    set-option -t "=${session_name//[.:]/_}:" mouse on; then
     "$tmux_cmd" unbind-key -a -T "$table" 2>/dev/null || true
-    "$tmux_cmd" set-option -t "$session_name" mouse "$base_mouse" 2>/dev/null || true
-    "$tmux_cmd" set-option -qu -t "$session_name" '@wisp_ledger_hover_base' 2>/dev/null || true
-    "$tmux_cmd" set-option -qu -t "$session_name" '@wisp_ledger_hover_mouse' 2>/dev/null || true
-    "$tmux_cmd" set-option -qu -t "$session_name" '@wisp_ledger_hover_table' 2>/dev/null || true
-    "$tmux_cmd" set-option -qu -t "$session_name" '@wisp_ledger_hover_inside' 2>/dev/null || true
-    "$tmux_cmd" set-option -qu -t "$session_name" '@wisp_ledger_hover_pane' 2>/dev/null || true
+    "$tmux_cmd" set-option -t "=${session_name//[.:]/_}:" mouse "$base_mouse" 2>/dev/null || true
+    "$tmux_cmd" set-option -qu -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_base' 2>/dev/null || true
+    "$tmux_cmd" set-option -qu -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_mouse' 2>/dev/null || true
+    "$tmux_cmd" set-option -qu -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_table' 2>/dev/null || true
+    "$tmux_cmd" set-option -qu -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_inside' 2>/dev/null || true
+    "$tmux_cmd" set-option -qu -t "=${session_name//[.:]/_}:" '@wisp_ledger_hover_pane' 2>/dev/null || true
     return 1
   fi
   if ! ledger_hover_rebuild_root_mouse "$tmux_cmd" 1; then

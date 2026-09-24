@@ -181,7 +181,7 @@ codex_identity_referenced() {
   sessions="$("$tmux_cmd" list-sessions -F '#{session_name}' 2>/dev/null)" || return 0
   while IFS= read -r session; do
     [ -n "$session" ] || continue
-    env="$("$tmux_cmd" show-environment -t "$session" 2>/dev/null)" || return 0
+    env="$("$tmux_cmd" show-environment -t "=${session//[.:]/_}:" 2>/dev/null)" || return 0
     if printf '%s\n' "$env" \
       | grep -Fqx -- "WISP_DECK_CODEX_SESSION_FILE=$config_dir/session-identities/$key"; then
       return 0
@@ -284,7 +284,7 @@ write_session_snapshot() {
   local _created _line _marked _acct_present _claude_sid _codex_sid _li
   while read -r _created s; do
     [ -n "$s" ] || continue
-    env="$("$tmux_cmd" show-environment -t "$s" 2>/dev/null)" || continue
+    env="$("$tmux_cmd" show-environment -t "=${s//[.:]/_}:" 2>/dev/null)" || continue
     # ONE pass over the environment block. Each field used to come from its own
     # `echo "$env" | sed`/`grep` pipeline -- eleven processes per session, inside
     # a loop over EVERY session on the machine. Every session runs this
@@ -762,7 +762,7 @@ restore_sid_already_open() {
   sessions="$("$tmux_cmd" list-sessions -F '#{session_name}' 2>/dev/null)" || return 1
   while IFS= read -r s; do
     [ -n "$s" ] || continue
-    env="$("$tmux_cmd" show-environment -t "$s" 2>/dev/null)" || continue
+    env="$("$tmux_cmd" show-environment -t "=${s//[.:]/_}:" 2>/dev/null)" || continue
     echo "$env" | grep -q '^WISP_DECK=1$' || continue
     case "$tool" in
       claude)
@@ -865,7 +865,7 @@ restore_layout_watch() {
   local i=0 out size cur applied_size="" applied_layout="" stable=0
   while [ "$i" -lt "$max_ticks" ]; do
     i=$((i + 1))
-    out="$("$tmux_cmd" display-message -p -t "$sess:0" '#{window_width}x#{window_height} #{window_layout}' 2>/dev/null)"
+    out="$("$tmux_cmd" display-message -p -t "=${sess//[.:]/_}:0" '#{window_width}x#{window_height} #{window_layout}' 2>/dev/null)"
     size="${out%% *}"
     cur="${out#* }"
     if [ -z "$size" ]; then
@@ -875,11 +875,11 @@ restore_layout_watch() {
       # Layout changed while the window size did not: a user pane drag.
       return 0
     elif [ "$size" != "$applied_size" ]; then
-      if "$tmux_cmd" select-layout -t "$sess:0" "$layout" 2>/dev/null; then
+      if "$tmux_cmd" select-layout -t "=${sess//[.:]/_}:0" "$layout" 2>/dev/null; then
         applied_size="$size"
         # Track tmux's own rendering of the applied layout (pane ids and
         # checksum differ from the captured string) for drag detection.
-        applied_layout="$("$tmux_cmd" display-message -p -t "$sess:0" '#{window_layout}' 2>/dev/null)"
+        applied_layout="$("$tmux_cmd" display-message -p -t "=${sess//[.:]/_}:0" '#{window_layout}' 2>/dev/null)"
         stable=0
       fi
     else

@@ -223,7 +223,7 @@ func TestWrapper_enables_tmux_focus_events_before_attaching(t *testing.T) {
 	if focus < 0 {
 		t.Fatal("wrapper.sh never turns tmux focus-events on")
 	}
-	attach := strings.Index(body, "attach-session -t \"$SESSION_NAME\"")
+	attach := strings.Index(body, "attach-session -t \"=${SESSION_NAME//[.:]/_}:\"")
 	if attach < 0 {
 		t.Fatal("wrapper.sh no longer attaches the session by name")
 	}

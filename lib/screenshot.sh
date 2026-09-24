@@ -134,10 +134,10 @@ _gt_pick_marked_pane() {
 # index 1 as a last resort.
 gt_ai_pane() {
   local tmux_cmd="$1" session="$2" idx
-  idx="$("$tmux_cmd" list-panes -t "${session}:0" -F '#{pane_index} #{@gt_ai}' 2>/dev/null | _gt_pick_marked_pane)" || idx=""
+  idx="$("$tmux_cmd" list-panes -t "=${session//[.:]/_}:0" -F '#{pane_index} #{@gt_ai}' 2>/dev/null | _gt_pick_marked_pane)" || idx=""
   if [ -z "$idx" ]; then
     # The AI pane spans the full height on the right (at_right & at_top & at_bottom).
-    idx="$("$tmux_cmd" list-panes -t "${session}:0" \
+    idx="$("$tmux_cmd" list-panes -t "=${session//[.:]/_}:0" \
             -F '#{pane_index} #{pane_at_right} #{pane_at_top} #{pane_at_bottom}' 2>/dev/null \
           | awk '$2=="1" && $3=="1" && $4=="1"{print $1; exit}')"
   fi
@@ -155,10 +155,10 @@ gt_focus_ai_pane_when_ready() {
   while true; do
     sleep 0.5
     pane="$(gt_ai_pane "$tmux_cmd" "$session")"
-    content="$("$tmux_cmd" capture-pane -t "${session}:0.${pane}" -p 2>/dev/null)"
+    content="$("$tmux_cmd" capture-pane -t "=${session//[.:]/_}:0.${pane}" -p 2>/dev/null)"
     # All three tools show a prompt character when ready.
     if printf '%s' "$content" | grep -qE '[>$❯]'; then
-      "$tmux_cmd" select-pane -t "${session}:0.${pane}"
+      "$tmux_cmd" select-pane -t "=${session//[.:]/_}:0.${pane}"
       break
     fi
   done
@@ -202,8 +202,8 @@ gt_paste_latest_screenshot() {
   # Deliver the path to the AI pane as a bracketed paste (-p), regardless of
   # which pane is currently active.
   "$tmux_cmd" set-buffer -b gt-screenshot -- "$stable"
-  "$tmux_cmd" paste-buffer -d -p -b gt-screenshot -t "${session}:0.${pane}"
-  "$tmux_cmd" select-pane -t "${session}:0.${pane}" 2>/dev/null || true
+  "$tmux_cmd" paste-buffer -d -p -b gt-screenshot -t "=${session//[.:]/_}:0.${pane}"
+  "$tmux_cmd" select-pane -t "=${session//[.:]/_}:0.${pane}" 2>/dev/null || true
 }
 
 # gt_stable_screenshot_dir — print (creating) a stable, wisp-deck-owned directory

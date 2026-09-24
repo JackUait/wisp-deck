@@ -824,10 +824,10 @@ _tab_view_new_bind="bash -c 'source \"\$1/tab-view.sh\" && tab_view_new_window \
 # commands drop out cleanly when the refresh script could not be written.
 # -t: this batch is a new client, and until its attach runs an untargeted
 # set-option lands on the session the user last typed in.
-_gt_tabbar_chain=(set-option -t "$SESSION_NAME" status-left "$(tab_view_status_left "$PROJECT_NAME" "$_gt_accent" "$_gt_ai_left" "$_gt_tabbar_mode")" ';')
+_gt_tabbar_chain=(set-option -t "=${SESSION_NAME//[.:]/_}:" status-left "$(tab_view_status_left "$PROJECT_NAME" "$_gt_accent" "$_gt_ai_left" "$_gt_tabbar_mode")" ';')
 if [ -n "$_gt_tabbar_refresh" ]; then
-  _gt_tabbar_chain+=(set-hook -t "$SESSION_NAME" client-resized "run-shell -b \"$_gt_tabbar_refresh\"" ';')
-  _gt_tabbar_chain+=(set-hook -t "$SESSION_NAME" window-layout-changed "run-shell -b \"$_gt_tabbar_refresh\"" ';')
+  _gt_tabbar_chain+=(set-hook -t "=${SESSION_NAME//[.:]/_}:" client-resized "run-shell -b \"$_gt_tabbar_refresh\"" ';')
+  _gt_tabbar_chain+=(set-hook -t "=${SESSION_NAME//[.:]/_}:" window-layout-changed "run-shell -b \"$_gt_tabbar_refresh\"" ';')
 fi
 
 # Tab-switch shortcuts: prefix+n/p cycle the tab-view windows (wrap around);
@@ -856,7 +856,7 @@ if [ -n "$_gt_tab_close" ]; then
     "run-shell -b \"$_gt_tab_close #{q:session_name} #{q:window_id}\"" ';')
 fi
 if [ -n "$_gt_spare_reap" ]; then
-  _gt_tab_close_binds+=(set-hook -t "$SESSION_NAME" window-unlinked \
+  _gt_tab_close_binds+=(set-hook -t "=${SESSION_NAME//[.:]/_}:" window-unlinked \
     "run-shell -b \"$_gt_spare_reap\"" ';')
 fi
 
@@ -881,5 +881,5 @@ fi
   bind-key -n MouseDown1StatusRight run-shell "$_tab_view_dispatch_bind" \; \
   run-shell -b "$_ledger_hover_setup" \; \
   set-option -g focus-events on \; \
-  attach-session -t "$SESSION_NAME" \; \
+  attach-session -t "=${SESSION_NAME//[.:]/_}:" \; \
   set-option exit-unattached on 2>&3

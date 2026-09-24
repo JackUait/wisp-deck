@@ -22,10 +22,10 @@ case "$1" in
     ;;
   show-environment)
     case "$3" in
-      dev-app-1)
+      =dev-app-1:)
         printf 'WISP_DECK=1\nWISP_DECK_BOOT=old-boot\nWISP_DECK_PROJECT=app\nWISP_DECK_PATH=/p/app\nWISP_DECK_TOOL=codex\nWISP_DECK_TERMINAL=ghostty\nWISP_DECK_CLAUDE_SESSION=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\n%sWISP_DECK_CODEX_SESSION_FILE=%s\n'
         ;;
-      dev-app-2)
+      =dev-app-2:)
         printf 'WISP_DECK=1\nWISP_DECK_BOOT=old-boot\nWISP_DECK_PROJECT=app\nWISP_DECK_PATH=/p/app\nWISP_DECK_TOOL=codex\nWISP_DECK_TERMINAL=ghostty\nWISP_DECK_CLAUDE_SESSION=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\n%sWISP_DECK_CODEX_SESSION_FILE=%s\n'
         ;;
     esac

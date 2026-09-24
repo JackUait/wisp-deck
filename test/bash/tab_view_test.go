@@ -130,7 +130,7 @@ esac`, rec))
 		filepath.Join(projectRoot(t), "lib")), env)
 	assertExitCode(t, code, 0)
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q", rec), nil)
-	assertContains(t, logOut, "set-option -t mysession status-left")
+	assertContains(t, logOut, "set-option -t =mysession: status-left")
 	assertContains(t, logOut, strings.Repeat("─", 61)+"┬")
 	assertContains(t, logOut, "⬡ myproj")
 }
@@ -373,6 +373,6 @@ func TestWrapper_tab_view_bar_and_binds(t *testing.T) {
 	spareConf := string(confData)
 	assertContains(t, spareConf, "bind n run-shell")
 	assertContains(t, spareConf, "bind p run-shell")
-	assertContains(t, spareConf, "next-window -t dev-proj")
-	assertContains(t, spareConf, "select-window -t dev-proj")
+	assertContains(t, spareConf, "next-window -t =dev-proj")
+	assertContains(t, spareConf, "select-window -t =dev-proj")
 }

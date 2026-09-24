@@ -601,9 +601,9 @@ case "$1" in
   list-sessions) printf '100 dev-alpha-1\n100 dev-beta-1\n' ;;
   show-environment)
     case "$3" in
-      dev-alpha-1)
+      =dev-alpha-1:)
         printf 'WISP_DECK=1\nWISP_DECK_BOOT=111\nWISP_DECK_PROJECT=alpha\nWISP_DECK_PATH=/p/alpha\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\nWISP_DECK_SEQ=2002\n' ;;
-      dev-beta-1)
+      =dev-beta-1:)
         printf 'WISP_DECK=1\nWISP_DECK_BOOT=111\nWISP_DECK_PROJECT=beta\nWISP_DECK_PATH=/p/beta\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\nWISP_DECK_SEQ=2001\n' ;;
     esac ;;
   display-message) : ;;
@@ -635,9 +635,9 @@ case "$1" in
   list-sessions) printf '3000 dev-old-1\n100 dev-new-1\n' ;;
   show-environment)
     case "$3" in
-      dev-old-1)
+      =dev-old-1:)
         printf 'WISP_DECK=1\nWISP_DECK_BOOT=111\nWISP_DECK_PROJECT=old\nWISP_DECK_PATH=/p/old\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\n' ;;
-      dev-new-1)
+      =dev-new-1:)
         printf 'WISP_DECK=1\nWISP_DECK_BOOT=111\nWISP_DECK_PROJECT=new\nWISP_DECK_PATH=/p/new\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\nWISP_DECK_SEQ=2000\n' ;;
     esac ;;
   display-message) : ;;

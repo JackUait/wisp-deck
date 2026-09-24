@@ -386,7 +386,7 @@ gt_ensure_panes_watch() {
     i=$((i + 1))
     # Empty output is treated like a failed query (a real tmux either errors
     # or prints): not created yet → wait; gone after we saw it → session ended.
-    if ! out="$("$tmux_cmd" display-message -p -t "$sess:0" \
+    if ! out="$("$tmux_cmd" display-message -p -t "=${sess//[.:]/_}:0" \
       '#{window_panes} #{window_width} #{window_height}' 2>/dev/null)" \
       || [ -z "$out" ]; then
       [ "$seen" -eq 1 ] && return 0
@@ -409,10 +409,10 @@ gt_ensure_panes_watch() {
     if [ "$panes" -eq 1 ]; then
       # The stuck-tab state: only the ledger exists. Rebuild both splits in
       # the chain's order and leave the AI pane focused, as the chain does.
-      ledger="$("$tmux_cmd" display-message -p -t "$sess:0" '#{pane_id}' 2>/dev/null)"
-      if "$tmux_cmd" split-window -h -p 75 -c "$project_dir" -t "$sess:0" \
+      ledger="$("$tmux_cmd" display-message -p -t "=${sess//[.:]/_}:0" '#{pane_id}' 2>/dev/null)"
+      if "$tmux_cmd" split-window -h -p 75 -c "$project_dir" -t "=${sess//[.:]/_}:0" \
         "$ai_cmd; exec bash" 2>/dev/null; then
-        new_pane="$("$tmux_cmd" display-message -p -t "$sess:0" '#{pane_id}' 2>/dev/null)"
+        new_pane="$("$tmux_cmd" display-message -p -t "=${sess//[.:]/_}:0" '#{pane_id}' 2>/dev/null)"
         "$tmux_cmd" set-option -p -t "$new_pane" @gt_ai 1 2>/dev/null
         "$tmux_cmd" split-window -v -p 45 -c "$project_dir" -t "$ledger" \
           "$spare_cmd" 2>/dev/null
@@ -429,11 +429,11 @@ gt_ensure_panes_watch() {
         [ -n "$p" ] || continue
         [ -z "$first" ] && first="$p"
         if [ "$mark" = "1" ]; then ai_pane="$p"; else non_ai="$p"; fi
-      done <<< "$("$tmux_cmd" list-panes -t "$sess:0" -F '#{pane_id} #{@gt_ai}' 2>/dev/null)"
+      done <<< "$("$tmux_cmd" list-panes -t "=${sess//[.:]/_}:0" -F '#{pane_id} #{@gt_ai}' 2>/dev/null)"
       if [ -z "$ai_pane" ]; then
         if "$tmux_cmd" split-window -h -p 75 -c "$project_dir" -t "$first" \
           "$ai_cmd; exec bash" 2>/dev/null; then
-          new_pane="$("$tmux_cmd" display-message -p -t "$sess:0" '#{pane_id}' 2>/dev/null)"
+          new_pane="$("$tmux_cmd" display-message -p -t "=${sess//[.:]/_}:0" '#{pane_id}' 2>/dev/null)"
           "$tmux_cmd" set-option -p -t "$new_pane" @gt_ai 1 2>/dev/null
           "$tmux_cmd" select-pane -t "$new_pane" 2>/dev/null
           healed=1
@@ -464,16 +464,16 @@ cleanup_tmux_session() {
   fi
 
   local pane_pid
-  for pane_pid in $("$tmux_cmd" list-panes -s -t "$session_name" -F '#{pane_pid}' 2>/dev/null); do
+  for pane_pid in $("$tmux_cmd" list-panes -s -t "=${session_name//[.:]/_}:" -F '#{pane_pid}' 2>/dev/null); do
     kill_tree "$pane_pid" TERM
   done
 
   sleep 0.3
-  for pane_pid in $("$tmux_cmd" list-panes -s -t "$session_name" -F '#{pane_pid}' 2>/dev/null); do
+  for pane_pid in $("$tmux_cmd" list-panes -s -t "=${session_name//[.:]/_}:" -F '#{pane_pid}' 2>/dev/null); do
     kill_tree "$pane_pid" KILL
   done
 
-  "$tmux_cmd" kill-session -t "$session_name" 2>/dev/null || true
+  "$tmux_cmd" kill-session -t "=${session_name//[.:]/_}:" 2>/dev/null || true
 
   # The spare pane's nested tmux is a detached server that reparents away from
   # the pane tree, so the kills above don't reap it. Tear it down explicitly
