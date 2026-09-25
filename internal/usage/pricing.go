@@ -15,9 +15,10 @@ var modelRates = map[string]modelRate{
 	"claude-opus-4-6":   {5, 25},
 	"claude-opus-4-7":   {5, 25},
 	"claude-opus-4-8":   {5, 25},
+	"claude-opus-5-5":   {4, 20},
 	"claude-sonnet-4-5": {3, 15},
 	"claude-sonnet-4-6": {3, 15},
-	"claude-sonnet-5":   {3, 15},
+	"claude-sonnet-5":   {2, 10},
 	"claude-haiku-4-5":  {1, 5},
 	"claude-fable-5":    {10, 50},
 	"claude-mythos-5":   {10, 50},
@@ -164,11 +165,13 @@ const (
 // models that are not priced at cacheReadMult of their input rate, matched by
 // prefix like modelRates. Fable 5.1 reads a cached prefix at $0.25/MTok - 0.025x
 // its $10 input rate - and a coding session is almost entirely cache reads, so
-// the shared multiplier overstates such a month fourfold. Mythos 5.1 is left out
+// the shared multiplier overstates such a month fourfold. Opus 5.5 reads at
+// $0.20/MTok, 0.05x its $4 input rate. Mythos 5.1 is left out
 // on purpose: same tier and same $10/$50, but Anthropic has not said whether it
 // shares the cheaper read rate, and guessing it would under-report.
 var cacheReadPerMTok = map[string]float64{
 	"claude-fable-5-1": 0.25,
+	"claude-opus-5-5":  0.20,
 }
 
 // cacheReadRateFor returns the per-token cache-read price for a model: its own

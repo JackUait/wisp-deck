@@ -18,10 +18,11 @@ func TestModelCostUSD_tiers(t *testing.T) {
 	if !approx(usd, 18) {
 		t.Errorf("sonnet = %v, want 18", usd)
 	}
-	// sonnet 5 1M in + 1M out = $3 + $15 = $18 (standard published rate)
+	// sonnet 5 1M in + 1M out = $2 + $10 = $12. The planned rise to $3/$15 was
+	// cancelled, so $2/$10 is its standard rate.
 	usd, _ = ModelCostUSD(ModelUsage{Model: "claude-sonnet-5", Input: 1_000_000, Output: 1_000_000})
-	if !approx(usd, 18) {
-		t.Errorf("sonnet-5 = %v, want 18", usd)
+	if !approx(usd, 12) {
+		t.Errorf("sonnet-5 = %v, want 12", usd)
 	}
 	// haiku 1M in = $1
 	usd, _ = ModelCostUSD(ModelUsage{Model: "claude-haiku-4-5", Input: 1_000_000})
@@ -46,7 +47,7 @@ func TestModelCostUSD_futureAnthropicModelsAutoPriced(t *testing.T) {
 		{"claude-opus-5", 30},     // $5 + $25
 		{"claude-opus-4-9", 30},   // future opus point release
 		{"claude-sonnet-6", 18},   // $3 + $15
-		{"claude-sonnet-5-1", 18}, // future sonnet point release
+		{"claude-sonnet-5-1", 12}, // prices as its claude-sonnet-5 prefix: $2 + $10
 		{"claude-haiku-5", 6},     // $1 + $5
 		{"claude-fable-6", 60},    // $10 + $50
 		{"claude-mythos-6", 60},   // $10 + $50
@@ -116,6 +117,36 @@ func TestModelCostUSD_fable51PricesCacheReadsAtItsOwnRate(t *testing.T) {
 	})
 	if !approx(usd, 72.75) {
 		t.Errorf("fable-5-1 full mix = %v, want 72.75", usd)
+	}
+}
+
+func TestModelCostUSD_opus55UsesItsOwnRates(t *testing.T) {
+	// Opus 5.5 is $4/$20, and reads a cached prefix at $0.20/MTok - 0.05x its
+	// input rate, not the shared 0.1x.
+	usd, priced := ModelCostUSD(ModelUsage{Model: "claude-opus-5-5", Input: 1_000_000, Output: 1_000_000})
+	if !priced || !approx(usd, 24) {
+		t.Errorf("opus-5-5 in+out = %v priced=%v, want 24/true", usd, priced)
+	}
+	usd, _ = ModelCostUSD(ModelUsage{Model: "claude-opus-5-5", CacheRead: 1_000_000})
+	if !approx(usd, 0.20) {
+		t.Errorf("opus-5-5 cacheRead = %v, want 0.20", usd)
+	}
+	// 5m write $5 + 1h write $8.
+	usd, _ = ModelCostUSD(ModelUsage{Model: "claude-opus-5-5", CacheWrite: 2_000_000, CacheWrite1h: 1_000_000})
+	if !approx(usd, 13) {
+		t.Errorf("opus-5-5 cacheWrite = %v, want 13", usd)
+	}
+	// The rates must not leak onto Opus 5, whose id is its prefix.
+	usd, _ = ModelCostUSD(ModelUsage{Model: "claude-opus-5", Input: 1_000_000, Output: 1_000_000, CacheRead: 1_000_000})
+	if !approx(usd, 30.5) {
+		t.Errorf("opus-5 = %v, want 30.5", usd)
+	}
+}
+
+func TestModelCostUSD_sonnet5CacheReadIsTenthOfItsInput(t *testing.T) {
+	usd, _ := ModelCostUSD(ModelUsage{Model: "claude-sonnet-5", CacheRead: 1_000_000})
+	if !approx(usd, 0.20) {
+		t.Errorf("sonnet-5 cacheRead = %v, want 0.20", usd)
 	}
 }
 
