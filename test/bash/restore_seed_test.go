@@ -2,6 +2,7 @@ package bash_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -49,5 +50,21 @@ func TestWriteSessionSnapshot_tracked_sessions_cost_no_seeding(t *testing.T) {
 	assertNotContains(t, string(calls), "set-hook")
 	if _, err := os.Stat(filepath.Join(dir, "tab-order")); !os.IsNotExist(err) {
 		t.Errorf("tab-order written with nothing to seed: %v", err)
+	}
+}
+
+// The live deck had no tab-order file at all when seeding first ran.
+func TestTabOrderSeed_creates_the_file(t *testing.T) {
+	dir := t.TempDir()
+	// runBashFunc %q-quotes args, which would hand bash a literal backslash-n.
+	cmd := exec.Command("bash", "-c", `source "$1" && tab_order_seed "$2" "$3"`, "seed",
+		filepath.Join(projectRoot(t), "lib/session-restore.sh"), dir, "30\n20\n")
+	cmd.Env = buildEnv(t, nil)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("tab_order_seed: %v\n%s", err, out)
+	}
+	got := strings.Join(readLines(t, filepath.Join(dir, "tab-order")), ",")
+	if got != "20,30" {
+		t.Errorf("tab-order = %q, want 20,30", got)
 	}
 }

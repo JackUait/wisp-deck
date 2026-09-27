@@ -1271,7 +1271,7 @@ tab_order_seed() {
   done < <(printf '%s\n' "$seqs" | sort -n)
   if [ -n "$add" ]; then
     tmp="$f.tmp.$$"
-    { printf '%s' "$add"; [ -f "$f" ] && cat "$f"; } > "$tmp" 2>/dev/null \
+    { printf '%s' "$add"; if [ -f "$f" ]; then cat "$f"; fi; } > "$tmp" 2>/dev/null \
       && mv "$tmp" "$f" 2>/dev/null
     rm -f "$tmp" 2>/dev/null
   fi
