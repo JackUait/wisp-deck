@@ -415,6 +415,13 @@ WATCHER_PID=$!
 keep_awake_sync "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" 2>/dev/null || true
 
 cleanup() {
+  # First, before any slow teardown: the snapshot tells a window close from a
+  # tab close by how close together these stamps land.
+  if [ -n "${SESSION_NAME:-}" ]; then
+    mkdir -p "$SHARE_DIR/departed" 2>/dev/null
+    date +%s > "$SHARE_DIR/departed/$SESSION_NAME" 2>/dev/null || true
+  fi
+  [ -n "${_wd_focus_file:-}" ] && rm -f "${_wd_focus_file:-}"
   stop_tab_title_watcher
   # A session that logged nothing leaves no file behind; one that hit a real
   # error keeps its log (pruned after a week by gt_mute_terminal_stderr).

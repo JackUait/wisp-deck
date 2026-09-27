@@ -11,6 +11,8 @@
 # attached was closed on purpose. It must stay below the 10s heartbeat so the
 # NEXT tick drops it; a mass close never reaches that tick with a survivor.
 RESTORE_GONE_GRACE=5
+# Departures this close together are one window closing (see write_session_snapshot).
+RESTORE_BATCH_WINDOW=2
 
 # Print the current macOS boot id. Stable for one uptime; changes on every
 # reboot. Empty on failure.
@@ -273,10 +275,12 @@ write_session_snapshot() {
   # loop over every session, in a heartbeat every session runs, so the deck
   # paid it squared (114.6ms against 7.4ms at 16 sessions).
   # US-separated: IFS whitespace would collapse an empty sid and shift fields.
-  local _rows _ws _wi _wa _wsid _wl _j _k
-  local -a w_names=() w_first=() w_sid=() w_layout=() w_active=() w_extras=()
-  _rows="$("$tmux_cmd" list-windows -a -F "#{session_name}${US}#{window_index}${US}#{window_active}${US}#{@wd_claude_session}${US}#{window_layout}" 2>/dev/null || true)"
-  while IFS="$US" read -r _ws _wi _wa _wsid _wl; do
+  local _rows _ws _wi _wa _wsid _wl _wseq _j _k
+  local -a w_names=() w_first=() w_sid=() w_layout=() w_active=() w_extras=() w_unseq=()
+  # The last field says whether the session carries @wd_seq; only a session
+  # opened before tab-order tracking lacks it (seeded below).
+  _rows="$("$tmux_cmd" list-windows -a -F "#{session_name}${US}#{window_index}${US}#{window_active}${US}#{@wd_claude_session}${US}#{window_layout}${US}#{?@wd_seq,1,0}" 2>/dev/null || true)"
+  while IFS="$US" read -r _ws _wi _wa _wsid _wl _wseq; do
     [ -n "$_ws" ] || continue
     case "$_wi" in '' | *[!0-9]*) continue ;; esac
     # tmux lists a session's windows together, so its row is usually the last.
@@ -297,6 +301,8 @@ write_session_snapshot() {
       w_layout[_j]="$_wl"
       w_active[_j]=""
       w_extras[_j]=""
+      w_unseq[_j]=0
+      [ "$_wseq" = "0" ] && w_unseq[_j]=1
     elif [ "$_wi" -lt "${w_first[$_j]}" ]; then
       # Out-of-order row: the old first window becomes an extra.
       w_extras[_j]="${w_first[$_j]}${US}${w_sid[$_j]}${US}${w_layout[$_j]}${w_extras[$_j]:+$RS${w_extras[$_j]}}"
@@ -315,7 +321,8 @@ write_session_snapshot() {
   local config_dir="${snap_file%/*}"
   local s env boot proj filepath tool term sid layout acct seq identity_file identity_key
   local _created _attached _line _marked _acct_present _claude_sid _codex_sid
-  local survivors=0 live=$'\n' emitted=$'\n' first active extras
+  local survivors=0 live=$'\n' emitted=$'\n' first active extras _unseq seed_seqs=""
+  local -a seed_cmds=()
   while read -r _created _attached s; do
     [ -n "$s" ] || continue
     live="${live}${s}"$'\n'
@@ -343,7 +350,7 @@ write_session_snapshot() {
     [ "$_marked" -eq 1 ] || continue
     case "$_attached" in '' | *[!0-9]*) ;; *) [ "$_attached" -ge 1 ] && survivors=1 ;; esac
     emitted="${emitted}${s}"$'\n'
-    first=""; active=""; extras=""; layout=""; _wsid=""
+    first=""; active=""; extras=""; layout=""; _wsid=""; _unseq=0
     _k=0
     while [ "$_k" -lt "${#w_names[@]}" ]; do
       if [ "${w_names[$_k]}" = "$s" ]; then
@@ -352,6 +359,7 @@ write_session_snapshot() {
         layout="${w_layout[$_k]}"
         active="${w_active[$_k]}"
         extras="${w_extras[$_k]}"
+        _unseq="${w_unseq[$_k]}"
         break
       fi
       _k=$((_k + 1))
@@ -390,16 +398,29 @@ write_session_snapshot() {
     # Sessions from pre-seq wrappers order by creation time; the seq is
     # epoch-seeded so the two scales compare.
     case "$seq" in '' | *[!0-9]*) seq="$_created" ;; esac
+    if [ "$_unseq" = 1 ]; then
+      seed_cmds+=(set-option -t "=${s//[.:]/_}:" @wd_seq "$seq" ';')
+      seed_seqs="${seed_seqs}${seq}"$'\n'
+    fi
     printf '%s %s|%s|%s|%s|%s|%s|%s|%s|%s|%s||%s|%s|%s|%s\n' "$seq" \
       "$boot" "$proj" "$filepath" "$tool" "$term" "$sid" "$layout" "$acct" "$identity_key" \
       "$s" "$seq" "$extras" "$active" "$first" >> "$keyed"
   done < <(printf '%s\n' "$sessions")
+  # One-time: sessions from before tab-order tracking get their seq stamped
+  # and recorded ahead of every tracked tab, and the live server gets the
+  # focus hook only a new wrapper would install. Launch order is the best
+  # order known for them: a restore chain opens its tabs in exactly that order.
+  if [ -n "$seed_seqs" ]; then
+    "$tmux_cmd" "${seed_cmds[@]}" set-hook -g 'client-focus-in[77]' \
+      'set-option -gF @wd_focus_seq "#{@wd_seq}"' >/dev/null 2>&1 || true
+    tab_order_seed "$config_dir" "$seed_seqs"
+  fi
   if [ "$survivors" -eq 0 ]; then
     rm -f "$keyed"
     return 0
   fi
   # Tabs of the previous snapshot that are gone now.
-  local pb pproj ppath ptool pterm psid playout pacct pkey pname pgone pseq pextras pactive pfirst
+  local pb pproj ppath ptool pterm psid playout pacct pkey pname pgone pseq pextras pactive pfirst pbatch
   # Names a restore already reopened under new sessions. Their lines drop at
   # once: kept for the grace, a close right after the restore froze them next
   # to their replacements and restored those tabs twice.
@@ -410,26 +431,70 @@ write_session_snapshot() {
     done < "$config_dir/restored-sessions"
   fi
   _rn=0
+  # Departure stamps (written first thing by each wrapper's cleanup) of the
+  # gone tabs. Two or more leaving within RESTORE_BATCH_WINDOW seconds of each
+  # other is a window closing, not the user closing a tab: those lines get the
+  # batch flag (field 16) and never expire, so they come back even while
+  # another window's tabs survive.
+  local -a d_names=() d_at=()
+  local _d _i
   if [ -f "$snap_file" ]; then
-    while IFS='|' read -r pb pproj ppath ptool pterm psid playout pacct pkey pname pgone pseq pextras pactive pfirst; do
+    while IFS='|' read -r pb pproj ppath ptool pterm psid playout pacct pkey pname pgone pseq pextras pactive pfirst pbatch; do
+      [ -n "$pname" ] || continue
+      case "$live" in *$'\n'"$pname"$'\n'*) continue ;; esac
+      _d=""
+      { read -r _d < "$config_dir/departed/$pname"; } 2>/dev/null || _d=""
+      case "$_d" in '' | *[!0-9]*) continue ;; esac
+      d_names+=("$pname")
+      d_at+=("$_d")
+    done < "$snap_file"
+    while IFS='|' read -r pb pproj ppath ptool pterm psid playout pacct pkey pname pgone pseq pextras pactive pfirst pbatch; do
       # Old 9-field lines name no session; tmux re-reports those sessions.
       [ -n "$pname" ] || continue
       case "$emitted" in *$'\n'"$pname"$'\n'*) continue ;; esac
       case "$live" in
         *$'\n'"$pname"$'\n'*) ;;
         *)
-          case "$restored" in *$'\n'"$pname"$'\n'*) _rn=1; continue ;; esac
+          case "$restored" in
+            *$'\n'"$pname"$'\n'*)
+              _rn=1
+              rm -f "$config_dir/departed/$pname"
+              continue
+              ;;
+          esac
+          if [ "$pbatch" != 1 ]; then
+            _d=""
+            _i=0
+            while [ "$_i" -lt "${#d_names[@]}" ]; do
+              [ "${d_names[$_i]}" = "$pname" ] && { _d="${d_at[$_i]}"; break; }
+              _i=$((_i + 1))
+            done
+            if [ -n "$_d" ]; then
+              _i=0
+              while [ "$_i" -lt "${#d_names[@]}" ]; do
+                if [ "${d_names[$_i]}" != "$pname" ]; then
+                  _k=$((d_at[_i] - _d))
+                  [ "${_k#-}" -le "$RESTORE_BATCH_WINDOW" ] && { pbatch=1; break; }
+                fi
+                _i=$((_i + 1))
+              done
+            fi
+          fi
           case "$pgone" in
             '') pgone="$now" ;;
             *[!0-9]*) continue ;;
-            *) [ $((now - pgone)) -lt "$RESTORE_GONE_GRACE" ] || continue ;;
           esac
+          if [ "$pbatch" != 1 ] && [ $((now - pgone)) -ge "$RESTORE_GONE_GRACE" ]; then
+            rm -f "$config_dir/departed/$pname"
+            continue
+          fi
           ;;
       esac
       case "$pseq" in '' | *[!0-9]*) _k=0 ;; *) _k="$pseq" ;; esac
-      printf '%s %s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$_k" \
+      # Field 16 is written only when set, so ordinary lines keep 15 fields.
+      printf '%s %s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s%s\n' "$_k" \
         "$pb" "$pproj" "$ppath" "$ptool" "$pterm" "$psid" "$playout" "$pacct" "$pkey" \
-        "$pname" "$pgone" "$pseq" "$pextras" "$pactive" "$pfirst" >> "$keyed"
+        "$pname" "$pgone" "$pseq" "$pextras" "$pactive" "$pfirst" "${pbatch:+|$pbatch}" >> "$keyed"
     done < "$snap_file"
   fi
   # Once no old line names them, the list is spent. Kept, a reused PID would
@@ -501,17 +566,25 @@ maybe_restore_session() {
 
   # Stops at the first attached Wisp session, so a normal launch pays one
   # list-sessions plus one show-environment.
-  local sessions live=$'\n' _c _a _n _env
+  local sessions live=$'\n' _c _a _n _env _survivor=0
   if sessions="$("$tmux_cmd" list-sessions -F '#{session_created} #{session_attached} #{session_name}' 2>/dev/null)"; then
     while read -r _c _a _n; do
       [ -n "$_n" ] || continue
       live="${live}${_n}"$'\n'
       case "$_a" in '' | *[!0-9]* | 0) continue ;; esac
+      [ "$_survivor" = 1 ] && continue
       _env="$("$tmux_cmd" show-environment -t "=${_n//[.:]/_}:" WISP_DECK 2>/dev/null)" || continue
       case $'\n'"$_env"$'\n' in
-        *$'\n''WISP_DECK=1'$'\n'*) return 0 ;;
+        *$'\n''WISP_DECK=1'$'\n'*) _survivor=1 ;;
       esac
     done < <(printf '%s\n' "$sessions")
+  fi
+  # With a Wisp tab still attached, only a closed window's tabs (batch lines)
+  # come back; a lone tab the user closed does not.
+  if [ "$_survivor" = 1 ]; then
+    local _l
+    _l="$(awk -F'|' '$16 == "1" { print; exit }' "$snap" 2>/dev/null)"
+    [ -n "$_l" ] || return 0
   fi
 
   # Atomic claim, keyed by the snapshot's content. A restore storm starts
@@ -558,8 +631,21 @@ maybe_restore_session() {
   # one conversation — restoring the same sid twice would open duplicate tabs.
   local queued_sids=$'\n'
   local restored_names=""
-  while IFS='|' read -r b proj filepath tool term sid layout acct identity_key sname _gone _seq extras active first; do
+  # Names an earlier restore already reopened. The writer drops their lines
+  # on its first tick after the drain; until then a launch must not queue
+  # them again.
+  local _batch _rname already=$'\n'
+  if [ -f "$config_dir/restored-sessions" ]; then
+    while IFS= read -r _rname || [ -n "$_rname" ]; do
+      already="${already}${_rname}"$'\n'
+    done < "$config_dir/restored-sessions"
+  fi
+  while IFS='|' read -r b proj filepath tool term sid layout acct identity_key sname _gone _seq extras active first _batch; do
     [ -n "$filepath" ] || continue
+    [ "$_survivor" = 1 ] && [ "$_batch" != 1 ] && continue
+    if [ -n "$sname" ]; then
+      case "$already" in *$'\n'"$sname"$'\n'*) continue ;; esac
+    fi
     if [ -n "$sname" ]; then
       case "$live" in
         *$'\n'"$sname"$'\n'*)
@@ -1148,19 +1234,49 @@ restore_chain_tab_started() {
 }
 
 # Simulate Cmd+T in Ghostty so the next restored project opens as a tab of
-# this window (Ghostty has no CLI/IPC for tabs on macOS). Cmd+9 (Ghostty's
-# default last_tab) goes first: a new tab opens next to the focused one, so a
-# click on another tab mid-chain would otherwise put the rest out of order.
-# Requires the Accessibility permission for Ghostty; the non-zero exit on
-# denial is the caller's signal to fall back to separate windows.
+# this window (Ghostty has no CLI/IPC for tabs on macOS). Requires the
+# Accessibility permission for Ghostty; the non-zero exit on denial is the
+# caller's signal to fall back to separate windows. No Cmd+9 (last_tab) first:
+# sent back to back with Cmd+T it was measured landing the new tab mid-strip,
+# and the chain's Cmd+T already comes from the newest tab, which has focus.
 restore_trigger_tab() {
   osascript \
     -e 'tell application "Ghostty" to activate' \
-    -e 'tell application "System Events"' \
-    -e 'keystroke "9" using command down' \
-    -e 'keystroke "t" using command down' \
-    -e 'end tell' \
+    -e 'tell application "System Events" to keystroke "t" using command down' \
     >/dev/null 2>&1
+}
+
+# tab_order_seed <config_dir> <seqs>: put newline-separated seqs that are not
+# yet recorded at the TOP of tab-order, in numeric order. Never fails.
+tab_order_seed() {
+  local config_dir="$1" seqs="$2" f lock i=0 line have=$'\n' add="" tmp
+  f="$config_dir/tab-order"
+  lock="$f.lock"
+  _sweep_stale_lock "$lock"
+  until mkdir "$lock" 2>/dev/null; do
+    i=$((i + 1))
+    [ "$i" -ge 40 ] && return 0
+    sleep 0.05
+  done
+  if [ -f "$f" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      have="${have}${line}"$'\n'
+    done < "$f"
+  fi
+  while IFS= read -r line; do
+    case "$line" in '' | *[!0-9]*) continue ;; esac
+    case "$have" in *$'\n'"$line"$'\n'*) continue ;; esac
+    have="${have}${line}"$'\n'
+    add="${add}${line}"$'\n'
+  done < <(printf '%s\n' "$seqs" | sort -n)
+  if [ -n "$add" ]; then
+    tmp="$f.tmp.$$"
+    { printf '%s' "$add"; [ -f "$f" ] && cat "$f"; } > "$tmp" 2>/dev/null \
+      && mv "$tmp" "$f" 2>/dev/null
+    rm -f "$tmp" 2>/dev/null
+  fi
+  rmdir "$lock" 2>/dev/null
+  return 0
 }
 
 # Record where a tab sits in Ghostty's tab order: <seq> goes right after
