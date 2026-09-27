@@ -154,7 +154,7 @@ func TestMaybeRestore_stamps_queue_build_time(t *testing.T) {
 	writeTempFile(t, dir, "last-session",
 		"old-boot|proj|"+proj+"|opencode|ghostty|||\n")
 	_, code := runBashFunc(t, "lib/session-restore.sh", "maybe_restore_session",
-		[]string{dir, "boot-new"}, nil)
+		[]string{dir, "boot-new", "false"}, nil)
 	assertExitCode(t, code, 0)
 	data, err := os.ReadFile(filepath.Join(dir, "restore-queue-built-at"))
 	if err != nil {
@@ -235,7 +235,7 @@ func TestMaybeRestore_builder_holds_pop_lock_until_its_own_pop(t *testing.T) {
 	root := projectRoot(t)
 	script := `
 source ` + quote(filepath.Join(root, "lib", "session-restore.sh")) + `
-maybe_restore_session ` + quote(dir) + ` boot-new
+maybe_restore_session ` + quote(dir) + ` boot-new false
 [ -d ` + quote(filepath.Join(dir, "restore-queue.lock")) + ` ] && echo "lock-held"
 entry="$(restore_queue_pop ` + quote(dir) + ` boot-new)"
 [ -n "$entry" ] && echo "builder-popped"
@@ -254,11 +254,14 @@ entry="$(restore_queue_pop ` + quote(dir) + ` boot-new)"
 // stall every later pop for the sweep interval.
 func TestMaybeRestore_no_lock_left_when_nothing_queued(t *testing.T) {
 	dir := t.TempDir()
-	// Snapshot only contains the current boot — nothing to restore.
+	// The snapshot's only session is still alive — nothing to restore.
 	writeTempFile(t, dir, "last-session",
-		"boot-new|proj|/does/not/matter|opencode|ghostty|||\n")
+		snapLine("boot-new", "proj", "/does/not/matter", "opencode", "ghostty", "", "", "", "", "dev-proj-1", "", "10")+"\n")
+	bin := fakeTmux(t, dir, []fakeTmuxSession{
+		{name: "dev-proj-1", created: 1, attached: 0, env: wispEnv("boot-new", "proj", "/does/not/matter", "10", "")},
+	}, nil)
 	_, code := runBashFunc(t, "lib/session-restore.sh", "maybe_restore_session",
-		[]string{dir, "boot-new"}, nil)
+		[]string{dir, "boot-new", "tmux"}, buildEnv(t, []string{bin}))
 	assertExitCode(t, code, 0)
 	if _, err := os.Stat(filepath.Join(dir, "restore-queue.lock")); err == nil {
 		t.Error("no pop lock may remain when no queue was built")

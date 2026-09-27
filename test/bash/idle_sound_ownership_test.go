@@ -7346,7 +7346,10 @@ func validateShellProductionHostEffectOwnership(
 			`restore_trigger_tab() {
   osascript \
     -e 'tell application "Ghostty" to activate' \
-    -e 'tell application "System Events" to keystroke "t" using command down' \
+    -e 'tell application "System Events"' \
+    -e 'keystroke "9" using command down' \
+    -e 'keystroke "t" using command down' \
+    -e 'end tell' \
     >/dev/null 2>&1
 }`,
 		},

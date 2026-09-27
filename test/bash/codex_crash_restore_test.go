@@ -18,7 +18,7 @@ func codexCrashTmuxMock(t *testing.T, dir, identityA, identityB string, staleSta
 	return mockCommand(t, dir, "tmux", fmt.Sprintf(`
 case "$1" in
   list-sessions)
-    printf '100 dev-app-1\n200 dev-app-2\n'
+    printf '100 1 dev-app-1\n200 1 dev-app-2\n'
     ;;
   show-environment)
     case "$3" in
@@ -42,7 +42,7 @@ func runCodexCrashQueueAndBuild(t *testing.T, configDir string) string {
 	script := fmt.Sprintf(`
 source %q
 source %q
-maybe_restore_session %q new-boot
+maybe_restore_session %q new-boot false
 first="$(restore_queue_pop %q new-boot)"
 second="$(restore_queue_pop %q new-boot)"
 build_restore() {
@@ -96,8 +96,8 @@ func TestCodexCrashRestorePreservesDistinctSameProjectThreads(t *testing.T) {
 		t.Fatal(err)
 	}
 	gotSnapshot := strings.TrimSpace(string(data))
-	wantSnapshot := "old-boot|app|/p/app|codex|ghostty|" + codexSessionA + "|||dev-app-1.codex\n" +
-		"old-boot|app|/p/app|codex|ghostty|" + codexSessionB + "|||dev-app-2.codex"
+	wantSnapshot := "old-boot|app|/p/app|codex|ghostty|" + codexSessionA + "|||dev-app-1.codex|dev-app-1||100|||\n" +
+		"old-boot|app|/p/app|codex|ghostty|" + codexSessionB + "|||dev-app-2.codex|dev-app-2||200|||"
 	if gotSnapshot != wantSnapshot {
 		t.Fatalf("same-project snapshot:\n got %q\nwant %q", gotSnapshot, wantSnapshot)
 	}

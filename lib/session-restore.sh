@@ -1,10 +1,16 @@
 #!/bin/bash
 # Session restore — snapshot alive Wisp Deck tmux sessions and reopen them
-# after a reboot as ordered tabs of a single window. The first interactive
-# launch of a new boot builds a queue; every interactive launch pops one
-# entry and opens the next tab (Cmd+T), chaining until the queue is empty.
+# after a reboot or a window close as ordered tabs of a single window. The
+# first interactive launch that finds no attached Wisp session builds a
+# queue; every interactive launch pops one entry and opens the next tab
+# (Cmd+T), chaining until the queue is empty.
 # Depends on: terminals/ghostty.sh (terminal_launch_window) for the
 # no-Accessibility-permission fallback.
+
+# A tab gone from the snapshot for this many seconds while another tab stayed
+# attached was closed on purpose. It must stay below the 10s heartbeat so the
+# NEXT tick drops it; a mass close never reaches that tick with a survivor.
+RESTORE_GONE_GRACE=5
 
 # Print the current macOS boot id. Stable for one uptime; changes on every
 # reboot. Empty on failure.
@@ -12,8 +18,8 @@
 # never moves. kern.boottime is only a fallback for macOS versions without the
 # uuid — it is computed as now-minus-uptime, so an NTP clock step right after
 # login SHIFTS it (observed drifting 1s between two wrapper launches of one
-# boot), which made the once-per-boot restore gate fire twice and duplicate
-# restored tabs.
+# boot), which made a restore queue look like another boot's and get
+# discarded mid-chain.
 current_boot_id() {
   local out
   out="$(sysctl -n kern.bootsessionuuid 2>/dev/null | tr -d '[:space:]')"
@@ -172,9 +178,13 @@ codex_identity_read() {
 codex_identity_referenced() {
   local tmux_cmd="$1" config_dir="$2" key="$3" artifact sessions session env
   codex_identity_key_valid "$key" || return 1
+  # A whole-field match: the key is followed by more fields in current lines
+  # and ends the line in old ones.
   for artifact in last-session last-session.prev restore-queue; do
     if [ -f "$config_dir/$artifact" ] \
-      && grep -Fq -- "|$key" "$config_dir/$artifact" 2>/dev/null; then
+      && _RESTORE_KEY="|$key" awk 'BEGIN { k = ENVIRON["_RESTORE_KEY"]; n = length(k) }
+          index($0, k "|") || substr($0, length($0) - n + 1) == k { found = 1; exit }
+          END { exit !found }' "$config_dir/$artifact" 2>/dev/null; then
       return 0
     fi
   done
@@ -211,25 +221,30 @@ prune_codex_session_identities() {
 # Re-derive the live snapshot from alive Wisp Deck tmux sessions.
 # Usage: write_session_snapshot <tmux_cmd> <snapshot_file>
 # A session is "ours" iff its session environment contains WISP_DECK=1.
-# Sessions are ordered by creation time (tmux lists them alphabetically) so
-# the snapshot's line order reproduces the order the tabs were opened in.
-# Writes atomically (temp + mv). One line per session:
-#   boot_id|project|path|tool|terminal|conversation_id|window_layout|account|identity_key
-# conversation_id (stamped by the active tool or read from its durable
-# sidecar, may be empty) lets restore
-# reopen each tab's own conversation instead of the project's most recent one.
-# identity_key is a basename rooted beneath session-identities; it lets queue
-# construction recover a Codex UUID written after the last heartbeat began.
-# window_layout is tmux's #{window_layout} (may be empty) so restore reproduces
-# the pane sizes the session had when Wisp Deck was closed.
-# account is the Claude login THIS session runs (WISP_DECK_CLAUDE_ACCOUNT,
-# stamped at launch and kept current by the mid-session switch): a managed
-# login's dir name, "default" for a stamped Default (Keychain) login, or empty
-# when unknown (pre-stamp session). Restore relaunches each tab under ITS
-# recorded login — the global claude-account pointer must not decide here, or
-# every reboot would silently flip sessions onto whatever login the pointer
-# happened to name (the "account changed by itself" bug).
+# Writes atomically (temp + mv). One line per session, 15 '|' fields:
+#   1 boot_id | 2 project | 3 path | 4 tool | 5 terminal | 6 sid | 7 layout |
+#   8 account | 9 identity_key | 10 session_name | 11 gone_at | 12 seq |
+#   13 extra_windows | 14 active_window_index | 15 first_window_index
+# 6/7 describe the session's lowest-index window. sid lets restore reopen each
+# tab's own conversation instead of the project's most recent one; for Claude
+# the window's @wd_claude_session wins over the session env, which every
+# tab-view window overwrites. identity_key is a basename rooted beneath
+# session-identities; it lets queue construction recover a Codex UUID written
+# after the last heartbeat began. layout is tmux's #{window_layout} (may be
+# empty) so restore reproduces the pane sizes.
+# account is the Claude login THIS session runs (WISP_DECK_CLAUDE_ACCOUNT): a
+# managed login's dir name, "default" for a stamped Default (Keychain) login,
+# or empty when unknown. Restore relaunches each tab under ITS recorded login
+# — the global pointer must not decide, or a restore silently flips sessions
+# onto whatever login the pointer names.
+# 13 lists every later window as index US sid US layout, joined by RS.
 # Field delimiter is '|' — project paths containing '|' are not supported.
+#
+# Freeze: with no attached Wisp session left (window close, quit, shutdown)
+# the file is not touched, so it still lists every tab. A tab missing while
+# another stays attached gets gone_at stamped and is dropped once
+# RESTORE_GONE_GRACE has passed. Lines are ordered by the tab-order file;
+# seqs it does not list come first, by seq.
 write_session_snapshot() {
   local tmux_cmd="$1" snap_file="$2"
   # Sweep tmp files orphaned by writers killed mid-write (shutdown SIGKILLs
@@ -242,55 +257,72 @@ write_session_snapshot() {
   # snapshot now would lose the pointers to the not-yet-restored tabs. A
   # stale queue (>5 min, broken chain) no longer blocks; restore_queue_pop
   # discards it on the next launch anyway.
-  local queue="${snap_file%/*}/restore-queue"
+  local queue="${snap_file%/*}/restore-queue" now
+  now="$(date +%s)"
   if [ -f "$queue" ]; then
-    local now mtime
-    now="$(date +%s)"
+    local mtime
     mtime="$(stat -f %m "$queue" 2>/dev/null || echo 0)"
     [ $((now - mtime)) -le 300 ] && return 0
   fi
   local sessions
   # If the tmux server is unreachable (e.g. just after a reboot), do NOT
   # overwrite the snapshot — leaving it frozen is what enables restore.
-  sessions="$("$tmux_cmd" list-sessions -F '#{session_created} #{session_name}' 2>/dev/null)" || return 0
+  sessions="$("$tmux_cmd" list-sessions -F '#{session_created} #{session_attached} #{session_name}' 2>/dev/null)" || return 0
+  local US=$'\037' RS=$'\036'
+  # Every session's windows in ONE query. A per-session query sat inside a
+  # loop over every session, in a heartbeat every session runs, so the deck
+  # paid it squared (114.6ms against 7.4ms at 16 sessions).
+  # US-separated: IFS whitespace would collapse an empty sid and shift fields.
+  local _rows _ws _wi _wa _wsid _wl _j _k
+  local -a w_names=() w_first=() w_sid=() w_layout=() w_active=() w_extras=()
+  _rows="$("$tmux_cmd" list-windows -a -F "#{session_name}${US}#{window_index}${US}#{window_active}${US}#{@wd_claude_session}${US}#{window_layout}" 2>/dev/null || true)"
+  while IFS="$US" read -r _ws _wi _wa _wsid _wl; do
+    [ -n "$_ws" ] || continue
+    case "$_wi" in '' | *[!0-9]*) continue ;; esac
+    # tmux lists a session's windows together, so its row is usually the last.
+    _j=$((${#w_names[@]} - 1))
+    if [ "$_j" -lt 0 ] || [ "${w_names[$_j]}" != "$_ws" ]; then
+      _j=-1
+      _k=0
+      while [ "$_k" -lt "${#w_names[@]}" ]; do
+        [ "${w_names[$_k]}" = "$_ws" ] && { _j=$_k; break; }
+        _k=$((_k + 1))
+      done
+    fi
+    if [ "$_j" -lt 0 ]; then
+      _j=${#w_names[@]}
+      w_names[_j]="$_ws"
+      w_first[_j]="$_wi"
+      w_sid[_j]="$_wsid"
+      w_layout[_j]="$_wl"
+      w_active[_j]=""
+      w_extras[_j]=""
+    elif [ "$_wi" -lt "${w_first[$_j]}" ]; then
+      # Out-of-order row: the old first window becomes an extra.
+      w_extras[_j]="${w_first[$_j]}${US}${w_sid[$_j]}${US}${w_layout[$_j]}${w_extras[$_j]:+$RS${w_extras[$_j]}}"
+      w_first[_j]="$_wi"
+      w_sid[_j]="$_wsid"
+      w_layout[_j]="$_wl"
+    else
+      w_extras[_j]="${w_extras[$_j]:+${w_extras[$_j]}$RS}${_wi}${US}${_wsid}${US}${_wl}"
+    fi
+    [ "$_wa" = "1" ] && w_active[_j]="$_wi"
+  done < <(printf '%s\n' "$_rows")
   local tmp="${snap_file}.tmp.$$"
-  # Lines are collected keyed by launch order first ("<key> <line>"), then
-  # sorted and stripped. The key is the session's stamped WISP_DECK_SEQ, or
-  # its creation time for sessions stamped by pre-fix wrappers — created has
-  # one-second resolution, and same-second ties used to fall back to tmux's
-  # alphabetical list order, alphabetizing restored tabs (see next_launch_seq).
+  # Lines are collected as "<seq> <line>", then ordered and stripped.
   local keyed="$tmp.keyed"
   : > "$keyed"
-  # Every session's pane geometry in ONE query. This used to be a
-  # `display-message` per session, inside a loop over EVERY session on the
-  # machine, in a heartbeat that every session runs -- so the deck paid the
-  # layout squared. Measured at 16 sessions: 114.6ms for the separate calls
-  # against 7.4ms for this one, which returns the same layout strings.
-  #
-  # The session name comes LAST so `read` puts it in the trailing variable: a
-  # layout and an index never contain a space, a session name might.
-  local _layout_rows _lrow _lidx _llayout _lsess
-  local -a _layout_names=() _layout_values=()
-  _layout_rows="$("$tmux_cmd" list-windows -a -F '#{window_index} #{window_layout} #{session_name}' 2>/dev/null || true)"
-  while read -r _lidx _llayout _lsess; do
-    # The snapshot has always recorded window 0's layout.
-    [ "$_lidx" = "0" ] || continue
-    [ -n "$_lsess" ] || continue
-    _layout_names+=("$_lsess")
-    _layout_values+=("$_llayout")
-  done < <(printf '%s\n' "$_layout_rows")
   local config_dir="${snap_file%/*}"
   local s env boot proj filepath tool term sid layout acct seq identity_file identity_key
-  local _created _line _marked _acct_present _claude_sid _codex_sid _li
-  while read -r _created s; do
+  local _created _attached _line _marked _acct_present _claude_sid _codex_sid
+  local survivors=0 live=$'\n' emitted=$'\n' first active extras
+  while read -r _created _attached s; do
     [ -n "$s" ] || continue
+    live="${live}${s}"$'\n'
     env="$("$tmux_cmd" show-environment -t "=${s//[.:]/_}:" 2>/dev/null)" || continue
-    # ONE pass over the environment block. Each field used to come from its own
-    # `echo "$env" | sed`/`grep` pipeline -- eleven processes per session, inside
-    # a loop over EVERY session on the machine. Every session runs this
-    # heartbeat and they all produce the identical file, so that made the
-    # machine-wide cost quadratic in the size of the deck: measured at 11
-    # spawns for one session and 110 for ten.
+    # ONE pass over the environment block. A sed/grep pipeline per field cost
+    # eleven processes per session, in a loop over every session, in a tick
+    # every session runs.
     boot=""; proj=""; filepath=""; tool=""; term=""; identity_file=""; seq=""
     _marked=0; _acct_present=0; _claude_sid=""; _codex_sid=""; acct=""
     while IFS= read -r _line; do
@@ -309,10 +341,30 @@ write_session_snapshot() {
       esac
     done < <(printf '%s\n' "$env")
     [ "$_marked" -eq 1 ] || continue
+    case "$_attached" in '' | *[!0-9]*) ;; *) [ "$_attached" -ge 1 ] && survivors=1 ;; esac
+    emitted="${emitted}${s}"$'\n'
+    first=""; active=""; extras=""; layout=""; _wsid=""
+    _k=0
+    while [ "$_k" -lt "${#w_names[@]}" ]; do
+      if [ "${w_names[$_k]}" = "$s" ]; then
+        first="${w_first[$_k]}"
+        _wsid="${w_sid[$_k]}"
+        layout="${w_layout[$_k]}"
+        active="${w_active[$_k]}"
+        extras="${w_extras[$_k]}"
+        break
+      fi
+      _k=$((_k + 1))
+    done
     identity_key="$(codex_identity_key "$config_dir" "$identity_file" 2>/dev/null || true)"
     case "$tool" in
       claude)
-        sid="$_claude_sid"
+        sid="${_wsid:-$_claude_sid}"
+        # Every window writes the session env, so without its own stamp the
+        # first window may only borrow an id no other window claims.
+        if [ -z "$_wsid" ] && [ -n "$sid" ]; then
+          case "${US}${extras}${US}" in *"${US}${sid}${US}"*) sid="" ;; esac
+        fi
         identity_key=""
         ;;
       codex)
@@ -335,24 +387,60 @@ write_session_snapshot() {
     if [ "$_acct_present" -eq 1 ] && [ -z "$acct" ]; then
       acct="default"
     fi
-    # The exact pane geometry (7th field). tmux's #{window_layout} is an opaque
-    # string that select-layout can replay to reproduce the panes at the sizes
-    # they hold right now. It contains no '|', so it is delimiter-safe. Empty
-    # when unavailable (old tmux / race) — restore falls back to the default split.
-    layout=""
-    _li=0
-    while [ "$_li" -lt "${#_layout_names[@]}" ]; do
-      if [ "${_layout_names[$_li]}" = "$s" ]; then
-        layout="${_layout_values[$_li]}"
-        break
-      fi
-      _li=$((_li + 1))
-    done
-    # seq came out of the single parse pass above; only its validation is left.
+    # Sessions from pre-seq wrappers order by creation time; the seq is
+    # epoch-seeded so the two scales compare.
     case "$seq" in '' | *[!0-9]*) seq="$_created" ;; esac
-    echo "${seq} ${boot}|${proj}|${filepath}|${tool}|${term}|${sid}|${layout}|${acct}|${identity_key}" >> "$keyed"
+    printf '%s %s|%s|%s|%s|%s|%s|%s|%s|%s|%s||%s|%s|%s|%s\n' "$seq" \
+      "$boot" "$proj" "$filepath" "$tool" "$term" "$sid" "$layout" "$acct" "$identity_key" \
+      "$s" "$seq" "$extras" "$active" "$first" >> "$keyed"
   done < <(printf '%s\n' "$sessions")
-  sort -sn "$keyed" | cut -d' ' -f2- > "$tmp"
+  if [ "$survivors" -eq 0 ]; then
+    rm -f "$keyed"
+    return 0
+  fi
+  # Tabs of the previous snapshot that are gone now.
+  local pb pproj ppath ptool pterm psid playout pacct pkey pname pgone pseq pextras pactive pfirst
+  # Names a restore already reopened under new sessions. Their lines drop at
+  # once: kept for the grace, a close right after the restore froze them next
+  # to their replacements and restored those tabs twice.
+  local restored=$'\n' _rn
+  if [ -f "$config_dir/restored-sessions" ]; then
+    while IFS= read -r _rn || [ -n "$_rn" ]; do
+      restored="${restored}${_rn}"$'\n'
+    done < "$config_dir/restored-sessions"
+  fi
+  _rn=0
+  if [ -f "$snap_file" ]; then
+    while IFS='|' read -r pb pproj ppath ptool pterm psid playout pacct pkey pname pgone pseq pextras pactive pfirst; do
+      # Old 9-field lines name no session; tmux re-reports those sessions.
+      [ -n "$pname" ] || continue
+      case "$emitted" in *$'\n'"$pname"$'\n'*) continue ;; esac
+      case "$live" in
+        *$'\n'"$pname"$'\n'*) ;;
+        *)
+          case "$restored" in *$'\n'"$pname"$'\n'*) _rn=1; continue ;; esac
+          case "$pgone" in
+            '') pgone="$now" ;;
+            *[!0-9]*) continue ;;
+            *) [ $((now - pgone)) -lt "$RESTORE_GONE_GRACE" ] || continue ;;
+          esac
+          ;;
+      esac
+      case "$pseq" in '' | *[!0-9]*) _k=0 ;; *) _k="$pseq" ;; esac
+      printf '%s %s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$_k" \
+        "$pb" "$pproj" "$ppath" "$ptool" "$pterm" "$psid" "$playout" "$pacct" "$pkey" \
+        "$pname" "$pgone" "$pseq" "$pextras" "$pactive" "$pfirst" >> "$keyed"
+    done < "$snap_file"
+  fi
+  # Once no old line names them, the list is spent. Kept, a reused PID would
+  # give a live tab one of these names and cost it the grace.
+  [ "$_rn" = 1 ] || [ "$restored" = $'\n' ] || rm -f "$config_dir/restored-sessions"
+  local order="$config_dir/tab-order"
+  [ -f "$order" ] || order=/dev/null
+  # FILENAME, not NR==FNR: an empty tab-order would make every line match.
+  awk 'FILENAME == ARGV[1] { if (!($1 in pos)) pos[$1] = FNR; next }
+       { print (($1 in pos) ? pos[$1] : 0) " " $0 }' "$order" "$keyed" \
+    | sort -s -k1,1n -k2,2n | cut -d' ' -f3- > "$tmp"
   rm -f "$keyed"
   mv "$tmp" "$snap_file"
 }
@@ -376,12 +464,12 @@ run_snapshot_heartbeat() {
   done
 }
 
-# A launch that lost the once-per-boot claim while the winner is still
-# BUILDING must not race ahead: its very next step is the queue pop, and an
-# empty pop with no drain marker yet falls through to the picker — the storm
-# symptom via a build/pop race. Wait briefly (≤3s) for the in-flight build's
-# queue to land. Bounded to FRESH claims (≤30s): a claim whose builder died
-# mid-build persists all boot, and later launches must not pay the wait.
+# A launch that lost the restore claim while the winner is still BUILDING
+# must not race ahead: its very next step is the queue pop, and an empty pop
+# with no drain marker yet falls through to the picker — the storm symptom
+# via a build/pop race. Wait briefly (≤3s) for the in-flight build's queue to
+# land. Bounded to FRESH claims (≤30s): a claim whose builder died mid-build
+# lingers, and later launches must not pay the wait.
 # Usage: _restore_wait_for_inflight_build <config_dir> <claim_path>
 _restore_wait_for_inflight_build() {
   local config_dir="$1" claim="$2" now mtime i=0
@@ -395,82 +483,97 @@ _restore_wait_for_inflight_build() {
   return 0
 }
 
-# Once-per-boot restore gate. Call only on interactive launch, before the
-# picker. Builds the restore queue (one
-# boot_id|path|tool|conversation_id|window_layout|account|identity_key line per
-# prior-boot snapshot entry, in snapshot order) and stamps
-# last-restore-boot. Spawns nothing itself — consumers pop entries via
-# restore_queue_pop.
-# Usage: maybe_restore_session <config_dir> <current_boot_id>
+# Restore gate. Call only on interactive launch, before the picker. Builds
+# the restore queue iff the snapshot has entries and no Wisp session is alive
+# AND attached: that covers a reboot (no tmux server) and a window close (every
+# session died with its tab). The boot id no longer gates. Entries whose
+# session is still alive are skipped. Queue lines, in snapshot order:
+#   boot|path|tool|sid|layout|account|identity_key|extra_windows|active|first
+# Spawns nothing itself — consumers pop entries via restore_queue_pop.
+# Usage: maybe_restore_session <config_dir> <cur_boot> [tmux_cmd]
 maybe_restore_session() {
-  local config_dir="$1" cur_boot="$2"
+  local config_dir="$1" cur_boot="$2" tmux_cmd="${3:-tmux}"
   local snap="$config_dir/last-session"
-  local marker="$config_dir/last-restore-boot"
   local queue="$config_dir/restore-queue"
 
   [ -n "$cur_boot" ] || return 0
-  [ -f "$snap" ] || return 0
+  [ -s "$snap" ] || return 0
 
-  local last_boot=""
-  { last_boot="$(tr -d '[:space:]' < "$marker")"; } 2>/dev/null || last_boot=""
-  # Drift-tolerant: a marker stamped with a boottime-derived id of THIS boot
-  # (pre-NTP-step, or by a pre-uuid wrapper) must still hold the gate.
-  boot_id_is_current "$last_boot" "$cur_boot" && return 0
+  # Stops at the first attached Wisp session, so a normal launch pays one
+  # list-sessions plus one show-environment.
+  local sessions live=$'\n' _c _a _n _env
+  if sessions="$("$tmux_cmd" list-sessions -F '#{session_created} #{session_attached} #{session_name}' 2>/dev/null)"; then
+    while read -r _c _a _n; do
+      [ -n "$_n" ] || continue
+      live="${live}${_n}"$'\n'
+      case "$_a" in '' | *[!0-9]* | 0) continue ;; esac
+      _env="$("$tmux_cmd" show-environment -t "=${_n//[.:]/_}:" WISP_DECK 2>/dev/null)" || continue
+      case $'\n'"$_env"$'\n' in
+        *$'\n''WISP_DECK=1'$'\n'*) return 0 ;;
+      esac
+    done < <(printf '%s\n' "$sessions")
+  fi
 
-  # Atomic once-per-boot claim. Several wrappers can start simultaneously at
-  # login (macOS window reopening); only the noclobber winner may build the
-  # queue — a rebuild would resurrect entries another wrapper already popped,
-  # duplicating tabs. A claim from THIS boot under ANY id form (a legacy
-  # numeric id from a pre-uuid wrapper, or a drifted boottime id) gates just
-  # as hard — deleting it and reclaiming under the new form was exactly the
-  # double-build path. Only claims from previous boots are swept.
-  local claim="$marker.$cur_boot" old
-  for old in "$marker".*; do
+  # Atomic claim, keyed by the snapshot's content. A restore storm starts
+  # many wrappers at once; only the noclobber winner may build — a rebuild
+  # would resurrect entries another wrapper already popped, duplicating tabs.
+  # A claim older than 60s is spent: a later close of the same deck restores
+  # again.
+  local ck claim old now mtime
+  { ck="$(cksum < "$snap")"; } 2>/dev/null || return 0
+  ck="${ck%% *}"
+  claim="$config_dir/restore-claim.$ck"
+  now="$(date +%s)"
+  for old in "$config_dir"/restore-claim.*; do
     [ -e "$old" ] || continue
-    [ "$old" = "$claim" ] && continue
-    if boot_id_is_current "${old##*.}" "$cur_boot"; then
-      restore_log "$config_dir" "queue-build blocked: current-boot claim ${old##*/} already exists (cur=$cur_boot)"
+    mtime="$(stat -f %m "$old" 2>/dev/null || echo 0)"
+    if [ $((now - mtime)) -ge 60 ]; then
+      rm -f "$old"
+    elif [ "$old" = "$claim" ]; then
+      restore_log "$config_dir" "queue-build blocked: claim ${old##*/} is $((now - mtime))s old"
       _restore_wait_for_inflight_build "$config_dir" "$old"
       return 0
     fi
-    rm -f "$old"
   done
   if ! (set -o noclobber; : > "$claim") 2>/dev/null; then
+    restore_log "$config_dir" "queue-build blocked: lost the race for ${claim##*/}"
     _restore_wait_for_inflight_build "$config_dir" "$claim"
     return 0
   fi
 
-  # Keep a copy of the pre-reboot snapshot: the heartbeat rewrites
-  # last-session from currently-alive sessions soon after restore starts, so
-  # this backup is the only recovery artifact if the chain breaks.
+  # Keep a copy of the snapshot: the heartbeat rewrites last-session from
+  # currently-alive sessions once the drain ends, so this backup is the only
+  # recovery artifact if the chain breaks.
   cp "$snap" "$snap.prev" 2>/dev/null || true
 
   local tmp="$queue.tmp.$$"
   : > "$tmp"
   local queued=0 b proj filepath tool term sid layout acct identity_key identity_dedupe
+  local sname _gone _seq extras active first w widx wrest wsid wlay new_extras wsids
   local entries=()
-  # Parallel to entries[]: the exact pane layout and the session's Claude
-  # login for each entry, held aside so the unstamped-duplicate dedup pass
+  # Parallel to entries[]: fields held aside so the unstamped-duplicate pass
   # (which rewrites entries[] to path|tool|sid) never has to carry them.
-  local layouts=()
-  local accts=()
-  local identity_keys=()
+  local layouts=() accts=() identity_keys=() extras_list=() actives=() firsts=() window_sids=()
   # Non-empty sids queued so far. A snapshot must never yield two entries for
-  # one conversation — whatever upstream failure duplicates a line, restoring
-  # the same sid twice would open duplicate tabs.
+  # one conversation — restoring the same sid twice would open duplicate tabs.
   local queued_sids=$'\n'
-  while IFS='|' read -r b proj filepath tool term sid layout acct identity_key; do
-    [ -n "$b" ] || continue
-    # Skip sessions of the current boot — they are alive right now, restoring
-    # them would duplicate their tabs. Drift-tolerant so entries stamped with
-    # a shifted boottime-derived id of THIS boot are also recognized.
-    boot_id_is_current "$b" "$cur_boot" && continue
+  local restored_names=""
+  while IFS='|' read -r b proj filepath tool term sid layout acct identity_key sname _gone _seq extras active first; do
+    [ -n "$filepath" ] || continue
+    if [ -n "$sname" ]; then
+      case "$live" in
+        *$'\n'"$sname"$'\n'*)
+          restore_log "$config_dir" "queue-build skipped $sname: still alive"
+          continue
+          ;;
+      esac
+      restored_names="${restored_names}${sname}"$'\n'
+    fi
     # A stamped id is only trustworthy if its transcript is actually
     # resumable — the statusline may have stamped a brand-new session that
-    # never got a transcript (or a model turn) before the reboot, and
-    # `claude --resume <dead-id>` fails hard, dumping the tab to a bare
-    # shell. Blank such ids so the tab falls back to `claude -c` (or the
-    # duplicate-pinning below).
+    # never got a transcript (or a model turn), and `claude --resume <dead-id>`
+    # fails hard, dumping the tab to a bare shell. Blank such ids so the tab
+    # falls back to `claude -c` (or the duplicate-pinning below).
     if [ "$tool" = "codex" ]; then
       codex_session_id_valid "$sid" || sid=""
       codex_identity_key_valid "$identity_key" || identity_key=""
@@ -486,6 +589,26 @@ maybe_restore_session() {
       && ! claude_transcript_resumable "$filepath" "$sid"; then
       sid=""
     fi
+    # Tab-view windows only ever carry Claude ids; same blanking rule.
+    new_extras=""
+    wsids=""
+    if [ -n "$extras" ]; then
+      while IFS= read -r -d $'\036' w; do
+        [ -n "$w" ] || continue
+        widx="${w%%$'\037'*}"
+        wrest="${w#*$'\037'}"
+        wsid="${wrest%%$'\037'*}"
+        wlay="${wrest#*$'\037'}"
+        if [ -n "$wsid" ] && ! claude_transcript_resumable "$filepath" "$wsid"; then
+          wsid=""
+        fi
+        [ "$wsid" = "$sid" ] && wsid=""
+        case "$queued_sids" in *$'\n'"claude|$wsid"$'\n'*) wsid="" ;; esac
+        [ -n "$wsid" ] && queued_sids="${queued_sids}claude|${wsid}"$'\n'
+        [ -n "$wsid" ] && wsids="${wsids}${wsid}"$'\n'
+        new_extras="${new_extras:+$new_extras$'\036'}${widx}"$'\037'"${wsid}"$'\037'"${wlay}"
+      done < <(printf '%s\036' "$extras")
+    fi
     if [ -n "$sid" ]; then
       identity_dedupe="${tool}|${sid}"
       case "$queued_sids" in
@@ -500,26 +623,31 @@ maybe_restore_session() {
     layouts+=("$layout")
     accts+=("$acct")
     identity_keys+=("$identity_key")
+    extras_list+=("$new_extras")
+    actives+=("$active")
+    firsts+=("$first")
+    window_sids+=("$wsids")
   done < "$snap"
 
   # Unstamped duplicates: when several tabs of one project lack a conversation
   # id (claude never rendered a statusline after the id-stamping update), the
   # `claude -c` fallback would open the SAME most-recent conversation in all
   # of them. Pin each such tab to a distinct recent transcript instead,
-  # skipping ids already claimed by stamped tabs of the same project. A lone
-  # tab keeps the plain `-c` fallback — no guessing needed.
+  # skipping ids already claimed by stamped tabs or windows of the same
+  # project. A lone tab keeps the plain `-c` fallback — no guessing needed.
   local n=${#entries[@]} i j path2 tool2 sid2 dupes used
   for ((i = 0; i < n; i++)); do
     IFS='|' read -r filepath tool sid < <(printf '%s\n' "${entries[$i]}")
     if [ "$tool" = "claude" ] && [ -z "$sid" ]; then
       dupes=0
-      used=""
+      used="${window_sids[$i]}"
       for ((j = 0; j < n; j++)); do
         [ "$j" -eq "$i" ] && continue
         IFS='|' read -r path2 tool2 sid2 < <(printf '%s\n' "${entries[$j]}")
         [ "$tool2" = "claude" ] && [ "$path2" = "$filepath" ] || continue
         dupes=1
         [ -n "$sid2" ] && used="${used}${sid2}"$'\n'
+        used="${used}${window_sids[$j]}"
       done
       if [ "$dupes" -eq 1 ]; then
         sid="$(claude_pick_transcript "$filepath" "$used")"
@@ -527,7 +655,9 @@ maybe_restore_session() {
         entries[i]="${filepath}|${tool}|${sid}"
       fi
     fi
-    echo "${cur_boot}|${filepath}|${tool}|${sid}|${layouts[$i]}|${accts[$i]}|${identity_keys[$i]}" >> "$tmp"
+    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$cur_boot" "$filepath" "$tool" "$sid" \
+      "${layouts[$i]}" "${accts[$i]}" "${identity_keys[$i]}" \
+      "${extras_list[$i]}" "${actives[$i]}" "${firsts[$i]}" >> "$tmp"
     queued=1
   done
   if [ "$queued" -eq 1 ]; then
@@ -548,13 +678,7 @@ maybe_restore_session() {
       echo "$$" > "$queue.lock/owner" 2>/dev/null || true
     fi
     mv "$tmp" "$queue"
-    # Marker LAST, after the queue is live: it is the once-per-boot gate that
-    # tells other launches "the build already happened" — written any earlier
-    # it opens a window where a concurrent launch sees the gate closed but no
-    # queue to pop, and falls through to the picker. A crash between the mv
-    # and this write self-heals: the claim file still blocks a rebuild and
-    # the published queue is poppable.
-    echo "$cur_boot" > "$marker"
+    printf '%s' "$restored_names" > "$config_dir/restored-sessions" 2>/dev/null || true
     # This launch created the queue — it is the user's own window (or the
     # claim winner of a crash-resume storm) and must never be closed as a
     # surplus launch; it keeps the picker fallback when every entry is
@@ -575,9 +699,10 @@ maybe_restore_session() {
 
 # Atomically pop the first pending entry from the restore queue.
 # Usage: restore_queue_pop <config_dir> <current_boot_id>
-# Echoes "path|tool|conversation_id|window_layout|account|identity_key" (id,
-# layout, account, and key may be empty), or nothing when there is no
-# consumable entry. A queue
+# Echoes the queue line minus its boot, 9 fields:
+#   path|tool|sid|layout|account|identity_key|extra_windows|active|first
+# (all but path/tool may be empty), or nothing when there is no consumable
+# entry. A queue
 # from another boot, or one older than 5 minutes (a chain that broke), is
 # discarded so it can never hijack a tab the user opens later.
 restore_queue_pop() {
@@ -789,10 +914,10 @@ restore_sid_already_open() {
 # sid carries no identity and is never refused on those grounds (legit
 # multi-tab projects from old snapshots must still restore).
 # Usage: restore_entry_wanted <tmux_cmd> <entry>
-#   entry = path|tool|sid|layout|account|identity_key
+#   entry = restore_queue_pop's output
 restore_entry_wanted() {
-  local tmux_cmd="$1" entry="$2" filepath tool sid _layout _account _identity_key
-  IFS='|' read -r filepath tool sid _layout _account _identity_key < <(printf '%s\n' "$entry")
+  local tmux_cmd="$1" entry="$2" filepath tool sid _rest
+  IFS='|' read -r filepath tool sid _rest < <(printf '%s\n' "$entry")
   [ -d "$filepath" ] || return 1
   ! restore_sid_already_open "$tmux_cmd" "$tool" "$sid"
 }
@@ -836,7 +961,7 @@ claude_pick_transcript() {
   return 0
 }
 
-# Replay a captured #{window_layout} onto <session>'s window 0, re-applying
+# Replay a captured #{window_layout} onto <session>'s window, re-applying
 # until the window size settles. Run BACKGROUNDED by the wrapper BEFORE its
 # tmux launch command — its final attach blocks until the session ends, so a
 # replay placed after it never runs while the session is alive (the original
@@ -857,15 +982,16 @@ claude_pick_transcript() {
 #     short settle could expire before the pty resize even arrived);
 #   - the session dies, or max_ticks (default 240 = 60s) elapse.
 # Usage: restore_layout_watch <tmux_cmd> <session> <layout>
-#        [interval] [settle_ticks] [max_ticks]
+#        [interval] [settle_ticks] [max_ticks] [window_index]
 restore_layout_watch() {
   local tmux_cmd="$1" sess="$2" layout="$3"
   local interval="${4:-0.25}" settle_ticks="${5:-40}" max_ticks="${6:-240}"
+  local win="${7:-0}"
   [ -n "$layout" ] || return 0
   local i=0 out size cur applied_size="" applied_layout="" stable=0
   while [ "$i" -lt "$max_ticks" ]; do
     i=$((i + 1))
-    out="$("$tmux_cmd" display-message -p -t "=${sess//[.:]/_}:0" '#{window_width}x#{window_height} #{window_layout}' 2>/dev/null)"
+    out="$("$tmux_cmd" display-message -p -t "=${sess//[.:]/_}:${win}" '#{window_width}x#{window_height} #{window_layout}' 2>/dev/null)"
     size="${out%% *}"
     cur="${out#* }"
     if [ -z "$size" ]; then
@@ -875,11 +1001,11 @@ restore_layout_watch() {
       # Layout changed while the window size did not: a user pane drag.
       return 0
     elif [ "$size" != "$applied_size" ]; then
-      if "$tmux_cmd" select-layout -t "=${sess//[.:]/_}:0" "$layout" 2>/dev/null; then
+      if "$tmux_cmd" select-layout -t "=${sess//[.:]/_}:${win}" "$layout" 2>/dev/null; then
         applied_size="$size"
         # Track tmux's own rendering of the applied layout (pane ids and
         # checksum differ from the captured string) for drag detection.
-        applied_layout="$("$tmux_cmd" display-message -p -t "=${sess//[.:]/_}:0" '#{window_layout}' 2>/dev/null)"
+        applied_layout="$("$tmux_cmd" display-message -p -t "=${sess//[.:]/_}:${win}" '#{window_layout}' 2>/dev/null)"
         stable=0
       fi
     else
@@ -1022,12 +1148,48 @@ restore_chain_tab_started() {
 }
 
 # Simulate Cmd+T in Ghostty so the next restored project opens as a tab of
-# this window (Ghostty has no CLI/IPC for tabs on macOS). Requires the
-# Accessibility permission for Ghostty; the non-zero exit on denial is the
-# caller's signal to fall back to separate windows.
+# this window (Ghostty has no CLI/IPC for tabs on macOS). Cmd+9 (Ghostty's
+# default last_tab) goes first: a new tab opens next to the focused one, so a
+# click on another tab mid-chain would otherwise put the rest out of order.
+# Requires the Accessibility permission for Ghostty; the non-zero exit on
+# denial is the caller's signal to fall back to separate windows.
 restore_trigger_tab() {
   osascript \
     -e 'tell application "Ghostty" to activate' \
-    -e 'tell application "System Events" to keystroke "t" using command down' \
+    -e 'tell application "System Events"' \
+    -e 'keystroke "9" using command down' \
+    -e 'keystroke "t" using command down' \
+    -e 'end tell' \
     >/dev/null 2>&1
+}
+
+# Record where a tab sits in Ghostty's tab order: <seq> goes right after
+# <after_seq>, or at the end when that is empty or unknown. The snapshot
+# orders by this file. Never fails the caller.
+# Usage: tab_order_record <config_dir> <seq> [after_seq]
+tab_order_record() {
+  local config_dir="$1" seq="$2" after="${3:-}"
+  local f="$config_dir/tab-order" lock i=0
+  case "$seq" in '' | *[!0-9]*) return 0 ;; esac
+  [ -d "$config_dir" ] || return 0
+  lock="$f.lock"
+  _sweep_stale_lock "$lock"
+  until mkdir "$lock" 2>/dev/null; do
+    i=$((i + 1))
+    [ "$i" -ge 40 ] && break
+    sleep 0.05
+  done
+  {
+    [ -f "$f" ] || : > "$f"
+    _TAB_SEQ="$seq" _TAB_AFTER="$after" awk '
+      BEGIN { s = ENVIRON["_TAB_SEQ"]; a = ENVIRON["_TAB_AFTER"] }
+      $0 == s { next }
+      { print }
+      !done && a != "" && $0 == a { print s; done = 1 }
+      END { if (!done) print s }' "$f" | tail -n 500 > "$f.tmp.$$" \
+      && mv "$f.tmp.$$" "$f"
+  } 2>/dev/null
+  rm -f "$f.tmp.$$" 2>/dev/null
+  rmdir "$lock" 2>/dev/null
+  return 0
 }

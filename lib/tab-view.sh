@@ -284,15 +284,23 @@ _tab_view_session_env() {
   return 0
 }
 
-# tab_view_new_window <tmux_cmd> <lib_dir> <session>
+# tab_view_new_window <tmux_cmd> <lib_dir> <session> [resume_sid] [window_index]
 # Open a new window in <session> with the wrapper's exact three-pane layout
 # for the session's project folder. The AI pane launches a FRESH conversation
 # built from the session's relaunch context (same tool, account, settings and
 # screenshot filter) with the attention env explicitly blanked: one attention
 # generation has one publisher — window 0's — so extra windows run the raw,
 # unsupervised launch.
+#
+# Restore passes resume_sid (reopen that conversation, stamped on the window
+# as @wd_claude_session) and window_index (create at exactly that index). Only
+# such a caller gets the new window id on stdout: prefix+c and the [+] click
+# run the 3-arg form through a foreground run-shell, which shows any stdout in
+# view mode over the pane.
 tab_view_new_window() {
-  local tmux_cmd="$1" lib_dir="$2" session="$3"
+  local tmux_cmd="$1" lib_dir="$2" session="$3" resume_sid="${4:-}" window_index="${5:-}"
+  local print_id=0
+  [ $# -ge 4 ] && print_id=1
   local relaunch_file share_dir account account_dir provider codex_cmd
 
   relaunch_file="$(_tab_view_session_env "$tmux_cmd" "$session" WISP_DECK_RELAUNCH_FILE)"
@@ -329,10 +337,24 @@ tab_view_new_window() {
   codex_cmd="$(_tab_view_session_env "$tmux_cmd" "$session" WISP_DECK_CODEX_CMD)"
 
   local ai_cmd
-  ai_cmd="$(WISP_DECK_ATTENTION_FILE='' WISP_DECK_ATTENTION_GENERATION='' \
-    WISP_DECK_CLAUDE_PROVIDER="$provider" WISP_DECK_CODEX_CMD="$codex_cmd" \
-    build_switch_launch_cmd "$_rc_tool" "$_rc_tool_cmd" "$_rc_settings" \
-    "$_rc_filter" "$dir" "$account_dir" "")" || return 0
+  if [ "$print_id" = 1 ] && [ -z "$resume_sid" ] && [ "$_rc_tool" != "claude" ]; then
+    # A restored Codex/OpenCode window has no per-window id. A plain launch
+    # would replace its conversation with an empty one (lib/CLAUDE.md), so it
+    # takes the tool's own resume path (Codex's selector, OpenCode --continue).
+    # A restored Claude window without an id never got a model turn: fresh is
+    # exactly what it held.
+    ai_cmd="$(WISP_DECK_ATTENTION_FILE='' WISP_DECK_ATTENTION_GENERATION='' \
+      WISP_DECK_CLAUDE_PROVIDER="$provider" WISP_DECK_CODEX_CMD="$codex_cmd" \
+      WISP_DECK_RESUME=1 WISP_DECK_RESUME_SESSION='' \
+      WISP_DECK_CLAUDE_ACCOUNT_DIR="$account_dir" WISP_DECK_CLAUDE_SETTINGS="$_rc_settings" \
+      WISP_DECK_CLAUDE_FILTER="$_rc_filter" \
+      build_ai_launch_cmd "$_rc_tool" "$_rc_tool_cmd" "$dir")" || return 0
+  else
+    ai_cmd="$(WISP_DECK_ATTENTION_FILE='' WISP_DECK_ATTENTION_GENERATION='' \
+      WISP_DECK_CLAUDE_PROVIDER="$provider" WISP_DECK_CODEX_CMD="$codex_cmd" \
+      build_switch_launch_cmd "$_rc_tool" "$_rc_tool_cmd" "$_rc_settings" \
+      "$_rc_filter" "$dir" "$account_dir" "$resume_sid")" || return 0
+  fi
   [ -n "$ai_cmd" ] || return 0
 
   # The spare pane joins the session's EXISTING inner spare server (per-session
@@ -348,12 +370,19 @@ tab_view_new_window() {
 
   # Build the window with the wrapper's geometry: ledger, AI (75% right, marked
   # @gt_ai for pane consumers), spare (45% bottom-left), AI focused. `-t
-  # <session>:` (empty window part) appends at the session's next free index.
-  local pane0_cmd ledger_pane ai_pane
+  # <session>:` (empty window part) appends at the session's next free index;
+  # a window_index creates at exactly that index.
+  local pane0_cmd created wid ledger_pane ai_pane
   pane0_cmd="source \"$lib_dir/compact-view.sh\" && compact_view \"$dir\"; exec bash"
-  ledger_pane="$("$tmux_cmd" new-window -t "=${session//[.:]/_}:" -P -F '#{pane_id}' \
+  created="$("$tmux_cmd" new-window -t "=${session//[.:]/_}:${window_index}" -P -F '#{window_id} #{pane_id}' \
     -c "$dir" "$pane0_cmd" 2>/dev/null)" || return 0
+  read -r wid ledger_pane <<<"$created"
   [ -n "$ledger_pane" ] || return 0
+  # Stamped now, so a snapshot taken before the first statusline render
+  # still names this window's conversation.
+  if [ -n "$resume_sid" ]; then
+    "$tmux_cmd" set-option -w -t "$wid" @wd_claude_session "$resume_sid" 2>/dev/null || true
+  fi
   ai_pane="$("$tmux_cmd" split-window -h -p 75 -P -F '#{pane_id}' -c "$dir" \
     -t "$ledger_pane" "$ai_cmd; exec bash" 2>/dev/null)" || true
   if [ -n "$ai_pane" ]; then
@@ -363,6 +392,7 @@ tab_view_new_window() {
   if [ -n "$ai_pane" ]; then
     "$tmux_cmd" select-pane -t "$ai_pane" 2>/dev/null || true
   fi
+  [ "$print_id" -eq 1 ] && printf '%s\n' "$wid"
   return 0
 }
 

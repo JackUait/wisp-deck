@@ -23,6 +23,11 @@ if [ -f "$_wrapper_dir_early/lib/session-restore.sh" ]; then
   # second (tmux's created stamp cannot tell those apart).
   mkdir -p "$SHARE_DIR" 2>/dev/null
   _wd_launch_seq="$(next_launch_seq "$SHARE_DIR")"
+  # The tab where Cmd+T was pressed, read now: once the picker is up the user
+  # may look at another tab, and the focus hook would name that one instead.
+  # Backgrounded so a slow tmux server never delays the splash.
+  _wd_focus_file="$SHARE_DIR/focus-pred.$$"
+  { tmux show-option -gqv @wd_focus_seq > "$_wd_focus_file"; } >/dev/null 2>&1 &
   if [ -z "$1" ]; then
     restore_queue_active "$SHARE_DIR" "$(current_boot_id)" && _restore_participant=1
   fi
@@ -166,7 +171,7 @@ else
   # The first interactive launch of a new boot builds the restore queue; every
   # interactive launch consumes one pending entry, so prior-boot sessions come
   # back as ordered tabs of this window instead of separate windows.
-  maybe_restore_session "$SHARE_DIR" "$WISP_DECK_BOOT_ID"
+  maybe_restore_session "$SHARE_DIR" "$WISP_DECK_BOOT_ID" "$TMUX_CMD"
   # Only the queue builder, a chain-spawned tab holding the one-shot ticket,
   # or a crash-storm window that launched together with the build may pop
   # (see restore_pop_authorized). A tab the USER opens mid-drain matches none
@@ -185,11 +190,16 @@ else
     done
   fi
   if [ -n "$_queue_entry" ]; then
+    # Before restore_advance: the chain opens its tabs at the end in queue
+    # order, and the next tab must not record its seq ahead of this one.
+    tab_order_record "$SHARE_DIR" "$_wd_launch_seq" || true
     # Open the next tab immediately so the chain completes quickly while this
     # window continues its own setup.
     restore_advance "$SHARE_DIR"
     RESTORE_MODE=1
-    IFS='|' read -r _q_path _q_tool _q_sid _q_layout _q_acct _q_identity_key <<< "$_queue_entry"
+    # Old 7-field entries leave the window fields empty.
+    IFS='|' read -r _q_path _q_tool _q_sid _q_layout _q_acct _q_identity_key \
+      _q_windows _q_active _q_first <<< "$_queue_entry"
     cd "$_q_path" || exit 1
     PROJECT_NAME="$(basename "$_q_path")"
     SELECTED_AI_TOOL="$_q_tool"
@@ -667,6 +677,14 @@ _gt_panes_file="$WISP_DECK_ATTENTION_ROOT/launch-panes"
 gt_ensure_panes_watch "$TMUX_CMD" "$SESSION_NAME" "$PROJECT_DIR" \
   "$AI_LAUNCH_CMD" "$_spare_cmd" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
 
+# A restored window names its conversation at once, so a snapshot taken before
+# the first statusline render still records it. Claude only: the snapshot reads
+# this option as a claude sid.
+_wd_window_stamp=()
+if [ -n "$WISP_DECK_CLAUDE_SESSION" ]; then
+  _wd_window_stamp=(set-option -w @wd_claude_session "$WISP_DECK_CLAUDE_SESSION" ';')
+fi
+
 _wisp_deck_testing_tmux_args=()
 if [[ "${WISP_DECK_TESTING:-}" == "1" ]]; then
   _wisp_deck_testing_tmux_args=(-e WISP_DECK_TESTING=1)
@@ -687,6 +705,9 @@ env -u WISP_DECK_TESTING "$TMUX_CMD" new-session -d -P -F '#{pane_id}' -x "$_tmu
   set-option set-titles off \; \
   set-option pane-border-style "fg=colour238" \; \
   set-option pane-active-border-style "fg=colour${_gt_accent}" \; \
+  set-option @wd_seq "$_wd_launch_seq" \; \
+  set-hook -g 'client-focus-in[77]' 'set-option -gF @wd_focus_seq "#{@wd_seq}"' \; \
+  ${_wd_window_stamp[@]+"${_wd_window_stamp[@]}"} \
   split-window -h -p "$_pane0_pct" -P -F '#{pane_id}' -c "$PROJECT_DIR" \
   "$AI_LAUNCH_CMD; exec bash" \; \
   set-option -p @gt_ai 1 \; \
@@ -696,6 +717,19 @@ env -u WISP_DECK_TESTING "$TMUX_CMD" new-session -d -P -F '#{pane_id}' -x "$_tmu
 _gt_ledger_pane=""
 _gt_ai_pane=""
 { { read -r _gt_ledger_pane; read -r _gt_ai_pane; } < "$_gt_panes_file"; } 2>/dev/null || true
+_wd_focus_pred=""
+if [ -n "${_wd_focus_file:-}" ]; then
+  { read -r _wd_focus_pred < "$_wd_focus_file"; } 2>/dev/null || true
+  rm -f "$_wd_focus_file"
+fi
+case "$_wd_focus_pred" in *[!0-9]*) _wd_focus_pred="" ;; esac
+if [ "$RESTORE_MODE" -ne 1 ]; then
+  if [ "$(ghostty_new_tab_position)" = "current" ]; then
+    tab_order_record "$SHARE_DIR" "$_wd_launch_seq" "$_wd_focus_pred" || true
+  else
+    tab_order_record "$SHARE_DIR" "$_wd_launch_seq" || true
+  fi
+fi
 
 # The tab bar draws as the agent pane's top border: now that the panes exist,
 # read the AI pane's left offset so the second batch can realign the bar's ┬
@@ -799,8 +833,37 @@ _ledger_hover_setup="bash -c 'source \"$_WRAPPER_DIR/lib/ledger-hover.sh\" && le
 # final size lands, and tmux redistributes the delta equally across columns,
 # corrupting the split) and exits once the window size settles.
 # Skipped when no layout was captured (old snapshot) — the default split stays.
+_wd_first_index=0
+case "${_q_first:-}" in '' | *[!0-9]*) ;; *) _wd_first_index="$_q_first" ;; esac
 if [ "$RESTORE_MODE" -eq 1 ] && [ -n "${WISP_DECK_RESUME_LAYOUT:-}" ]; then
-  restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$WISP_DECK_RESUME_LAYOUT" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
+  restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$WISP_DECK_RESUME_LAYOUT" "" "" "" "$_wd_first_index" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
+fi
+
+# Restore the session's other tab-view windows, each at its old index with its
+# own conversation. Backgrounded for the same reason as the replay above, and
+# after write_relaunch_context, which tab_view_new_window reads. Window 0 moves
+# to its old index LAST: the heal and focus watchers target =S:0, and moving
+# it first would blind them before they took their first look.
+if [ "$RESTORE_MODE" -eq 1 ] && { [ -n "${_q_windows:-}" ] || [ "$_wd_first_index" != 0 ]; }; then
+  {
+    _wd_windows=()
+    IFS=$'\036' read -ra _wd_windows <<< "${_q_windows:-}"
+    for _wd_window in ${_wd_windows[@]+"${_wd_windows[@]}"}; do
+      IFS=$'\037' read -r _wd_index _wd_sid _wd_layout <<< "$_wd_window"
+      case "$_wd_index" in '' | *[!0-9]*) continue ;; esac
+      tab_view_new_window "$TMUX_CMD" "$_WRAPPER_DIR/lib" "$SESSION_NAME" "$_wd_sid" "$_wd_index"
+      if [ -n "$_wd_layout" ]; then
+        restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$_wd_layout" "" "" "" "$_wd_index" >/dev/null 2>&1 &
+      fi
+    done
+    if [ "$_wd_first_index" != 0 ]; then
+      "$TMUX_CMD" move-window -s "=${SESSION_NAME//[.:]/_}:0" -t "=${SESSION_NAME//[.:]/_}:$_wd_first_index"
+    fi
+    case "${_q_active:-}" in
+      '' | *[!0-9]*) ;;
+      *) "$TMUX_CMD" select-window -t "=${SESSION_NAME//[.:]/_}:$_q_active" ;;
+    esac
+  } >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
 fi
 
 # Tab view actions. Server-global binds must never bake a session name —

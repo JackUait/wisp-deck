@@ -14,11 +14,11 @@ func scalingSnapshotTmuxMock(t *testing.T, dir string, sessions int) string {
 	t.Helper()
 	var created strings.Builder
 	for i := 0; i < sessions; i++ {
-		fmt.Fprintf(&created, "%d dev-proj-%d\\n", 1700000000+i, i)
+		fmt.Fprintf(&created, "%d 1 dev-proj-%d\\n", 1700000000+i, i)
 	}
 	var windows strings.Builder
 	for i := 0; i < sessions; i++ {
-		fmt.Fprintf(&windows, "0 layout-abc dev-proj-%d\\n", i)
+		fmt.Fprintf(&windows, "dev-proj-%d\\0370\\0371\\037\\037layout-abc\\n", i)
 	}
 	body := fmt.Sprintf(`
 echo "$1" >> "${SNAP_TMUX_LOG:-/dev/null}"
@@ -92,8 +92,8 @@ func TestWriteSessionSnapshot_still_records_every_session(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("snapshot has %d lines, want 3:\n%s", len(lines), data)
 	}
-	want := "BOOT-1|proj|/tmp/proj|claude|ghostty|sid-1|layout-abc|personal|"
-	for _, line := range lines {
+	for i, line := range lines {
+		want := fmt.Sprintf("BOOT-1|proj|/tmp/proj|claude|ghostty|sid-1|layout-abc|personal||dev-proj-%d||100||0|0", i)
 		if line != want {
 			t.Errorf("snapshot line = %q, want %q", line, want)
 		}

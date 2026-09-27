@@ -29,11 +29,11 @@ func snapshotTmuxMock(t *testing.T, dir, extraEnv, layout string) string {
 	t.Helper()
 	return mockCommand(t, dir, "tmux", `
 case "$1" in
-  list-sessions) echo "100 dev-app-1" ;;
+  list-sessions) echo "100 1 dev-app-1" ;;
   show-environment)
     printf 'WISP_DECK=1\nWISP_DECK_BOOT=111\nWISP_DECK_PROJECT=app\nWISP_DECK_PATH=/p/app\nWISP_DECK_TOOL=claude\nWISP_DECK_TERMINAL=ghostty\n'
     printf '`+extraEnv+`' ;;
-  list-windows) echo "0 `+layout+` dev-app-1" ;;
+  list-windows) printf 'dev-app-1\0370\0371\037\037%s\n' "`+layout+`" ;;
   display-message) echo "`+layout+`" ;;
 esac
 `)
@@ -60,7 +60,7 @@ func TestWriteSessionSnapshot_records_session_account(t *testing.T) {
 	dir := t.TempDir()
 	bin := snapshotTmuxMock(t, dir, `WISP_DECK_CLAUDE_ACCOUNT=personal\n`, sampleLayout)
 	got := runSnapshot(t, dir, bin)
-	want := "111|app|/p/app|claude|ghostty||" + sampleLayout + "|personal|"
+	want := "111|app|/p/app|claude|ghostty||" + sampleLayout + "|personal||dev-app-1||100||0|0"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -75,7 +75,7 @@ func TestWriteSessionSnapshot_stamped_default_records_default(t *testing.T) {
 	dir := t.TempDir()
 	bin := snapshotTmuxMock(t, dir, `WISP_DECK_CLAUDE_ACCOUNT=\n`, sampleLayout)
 	got := runSnapshot(t, dir, bin)
-	want := "111|app|/p/app|claude|ghostty||" + sampleLayout + "|default|"
+	want := "111|app|/p/app|claude|ghostty||" + sampleLayout + "|default||dev-app-1||100||0|0"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -88,7 +88,7 @@ func TestWriteSessionSnapshot_unstamped_account_left_empty(t *testing.T) {
 	dir := t.TempDir()
 	bin := snapshotTmuxMock(t, dir, ``, sampleLayout)
 	got := runSnapshot(t, dir, bin)
-	want := "111|app|/p/app|claude|ghostty||" + sampleLayout + "||"
+	want := "111|app|/p/app|claude|ghostty||" + sampleLayout + "|||dev-app-1||100||0|0"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -112,7 +112,7 @@ func TestMaybeRestore_carries_account_into_queue(t *testing.T) {
 		t.Fatalf("restore-queue not written: %v", err)
 	}
 	got := strings.TrimSpace(string(queue))
-	want := "222|/p/app|claude|sid-a|" + sampleLayout + "|personal|"
+	want := "222|/p/app|claude|sid-a|" + sampleLayout + "|personal||||"
 	if got != want {
 		t.Errorf("queue:\n got %q\nwant %q", got, want)
 	}
@@ -133,7 +133,7 @@ func TestMaybeRestore_old_snapshot_without_account_still_queues(t *testing.T) {
 		t.Fatalf("restore-queue not written: %v", err)
 	}
 	got := strings.TrimSpace(string(queue))
-	want := "222|/p/app|claude|sid-a|" + sampleLayout + "||"
+	want := "222|/p/app|claude|sid-a|" + sampleLayout + "|||||"
 	if got != want {
 		t.Errorf("queue:\n got %q\nwant %q", got, want)
 	}

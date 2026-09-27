@@ -412,7 +412,21 @@ gt_stamp_claude_session() {
   if [ -n "$transcript" ]; then
     { [ -f "$transcript" ] && grep -q '"type":"assistant"' "$transcript"; } || return 0
   fi
-  tmux set-environment WISP_DECK_CLAUDE_SESSION "$sid" 2>/dev/null || true
+  # The window option names THIS window's conversation (tab-view windows share
+  # the session env). One tmux call for both; setenv goes first so a stale pane
+  # target cannot cost the session stamp, which account switch reads. The
+  # option is written only when it moved: set-option redraws every attached
+  # client, and this runs on every render. The sid lands inside a tmux format
+  # and a command string, so only a plain id is stamped.
+  local args=(set-environment WISP_DECK_CLAUDE_SESSION "$sid")
+  if [ -n "${TMUX_PANE:-}" ]; then
+    case "$sid" in
+      *[!A-Za-z0-9-]*) ;;
+      *) args+=(';' if-shell -F -t "$TMUX_PANE" "#{!=:#{@wd_claude_session},$sid}"
+           "set-option -w -t $TMUX_PANE @wd_claude_session $sid") ;;
+    esac
+  fi
+  tmux "${args[@]}" 2>/dev/null || true
 }
 
 # Record claude's CURRENTLY-active conversation id — the LIVE session — into the

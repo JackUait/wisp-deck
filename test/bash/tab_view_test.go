@@ -10,8 +10,8 @@ import (
 
 // mockTabViewTmux is a tmux spy for tab-view tests: records every invocation
 // to $GT_REC, answers show-environment lookups from MOCK_* vars, and prints
-// fake pane ids for the -P creation calls (%10 window/ledger pane, %11 AI
-// pane) so pane targeting is observable in the record.
+// fake ids for the -P creation calls (@7 window, %10 ledger pane, %11 AI
+// pane) so targeting is observable in the record.
 const mockTabViewTmux = `#!/bin/bash
 printf '%s\n' "$*" >> "$GT_REC"
 case "$1" in
@@ -26,7 +26,7 @@ case "$1" in
         echo "-WISP_DECK_CLAUDE_ACCOUNT" >&2; exit 1 ;;
       *) echo "-$last" >&2; exit 1 ;;
     esac ;;
-  new-window) echo '%10' ;;
+  new-window) case "$*" in *window_id*) echo '@7 %10' ;; *) echo '%10' ;; esac ;;
   split-window) case "$*" in *" -P "*) echo '%11' ;; esac ;;
 esac
 exit 0

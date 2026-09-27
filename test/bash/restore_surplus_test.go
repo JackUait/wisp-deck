@@ -184,7 +184,7 @@ func TestMaybeRestore_sets_builder_flag_when_queue_built(t *testing.T) {
 	root := projectRoot(t)
 	script := `
 source ` + quote(filepath.Join(root, "lib", "session-restore.sh")) + `
-maybe_restore_session ` + quote(dir) + ` boot-new
+maybe_restore_session ` + quote(dir) + ` boot-new false
 echo "builder=${WISP_DECK_RESTORE_BUILDER:-0}"
 `
 	out, code := runBashSnippet(t, script, nil)
@@ -195,15 +195,11 @@ echo "builder=${WISP_DECK_RESTORE_BUILDER:-0}"
 func TestMaybeRestore_no_builder_flag_when_gate_closed(t *testing.T) {
 	dir := t.TempDir()
 	writeTempFile(t, dir, "last-session", "boot-old|app|/p/app|opencode|ghostty|||\n")
-	writeTempFile(t, dir, "last-restore-boot", "boot-new\n")
-	root := projectRoot(t)
-	script := `
-source ` + quote(filepath.Join(root, "lib", "session-restore.sh")) + `
-maybe_restore_session ` + quote(dir) + ` boot-new
-echo "builder=${WISP_DECK_RESTORE_BUILDER:-0}"
-`
-	out, code := runBashSnippet(t, script, nil)
-	assertExitCode(t, code, 0)
+	// An attached Wisp session closes the gate.
+	bin := fakeTmux(t, dir, []fakeTmuxSession{
+		{name: "dev-app-2", created: 1, attached: 1, env: wispEnv("boot-new", "app", "/p/app", "10", "")},
+	}, nil)
+	out := runRestoreGate(t, dir, "boot-new", t.TempDir(), bin)
 	assertContains(t, out, "builder=0")
 }
 
@@ -394,15 +390,15 @@ func TestMaybeRestore_claim_loser_waits_for_inflight_build(t *testing.T) {
 	// marker) and open the picker — the storm symptom via a race. The loser
 	// must wait briefly for the in-flight build to land.
 	dir := t.TempDir()
-	// The claim exists (current boot) but neither marker nor queue yet: a
-	// build is in flight. A background writer lands the queue 300ms later.
+	// The claim exists (this snapshot) but no queue yet: a build is in
+	// flight. A background writer lands the queue 300ms later.
 	writeTempFile(t, dir, "last-session", "boot-old|app|/p/app|opencode|ghostty|||\n")
-	writeTempFile(t, dir, "last-restore-boot.boot-1", "")
+	writeTempFile(t, dir, snapshotClaim(t, dir), "")
 	root := projectRoot(t)
 	script := `
 (sleep 0.3; echo "boot-1|/p/app|claude||" > ` + quote(filepath.Join(dir, "restore-queue")) + `) &
 source ` + quote(filepath.Join(root, "lib", "session-restore.sh")) + `
-maybe_restore_session ` + quote(dir) + ` boot-1
+maybe_restore_session ` + quote(dir) + ` boot-1 false
 if [ -f ` + quote(filepath.Join(dir, "restore-queue")) + ` ]; then
   echo "QUEUE-PRESENT"
 else
@@ -598,7 +594,7 @@ func TestWriteSessionSnapshot_orders_by_launch_seq_on_created_tie(t *testing.T) 
 	dir := t.TempDir()
 	tmuxBody := `
 case "$1" in
-  list-sessions) printf '100 dev-alpha-1\n100 dev-beta-1\n' ;;
+  list-sessions) printf '100 1 dev-alpha-1\n100 1 dev-beta-1\n' ;;
   show-environment)
     case "$3" in
       =dev-alpha-1:)
@@ -632,7 +628,7 @@ func TestWriteSessionSnapshot_unstamped_session_falls_back_to_created(t *testing
 	dir := t.TempDir()
 	tmuxBody := `
 case "$1" in
-  list-sessions) printf '3000 dev-old-1\n100 dev-new-1\n' ;;
+  list-sessions) printf '3000 1 dev-old-1\n100 1 dev-new-1\n' ;;
   show-environment)
     case "$3" in
       =dev-old-1:)

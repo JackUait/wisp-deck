@@ -13,6 +13,29 @@ terminal_get_config_path() {
   echo "$HOME/.config/ghostty/config"
 }
 
+# Print Ghostty's window-new-tab-position ("current" or "end"). Read on the
+# launch path, so no subprocess. Last line wins and an empty value resets to
+# Ghostty's default, "current". Files pulled in with config-file are not read.
+# Args: [config_path]
+ghostty_new_tab_position() {
+  local config="${1:-$(terminal_get_config_path)}" line key value pos=current
+  [ -f "$config" ] || { echo "$pos"; return 0; }
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in *=*) ;; *) continue ;; esac
+    key="${line%%=*}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    [ "$key" = "window-new-tab-position" ] || continue
+    value="${line#*=}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    value="${value#\"}"
+    value="${value%\"}"
+    pos="${value:-current}"
+  done < "$config"
+  echo "$pos"
+}
+
 # Return the path where the wrapper script should be.
 terminal_get_wrapper_path() {
   echo "$HOME/.config/wisp-deck/wrapper.sh"
