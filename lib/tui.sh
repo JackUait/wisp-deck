@@ -53,10 +53,13 @@ set_tab_title() {
   # the terminal this whole exercise is about keeping clean.
   local out=/dev/stdout
   { : > /dev/tty; } 2>/dev/null && out=/dev/tty
+  # WISP_DECK_TAB_MARK (lib/session-restore.sh tab_mark_for_seq) is an
+  # invisible, per-tab id: it lets the tab strip be matched back to sessions
+  # when several tabs share a title.
   if [ -n "$tool" ]; then
-    printf '\033]0;%s · %s\007' "$project" "$tool" > "$out"
+    printf '\033]0;%s · %s%s\007' "$project" "$tool" "${WISP_DECK_TAB_MARK:-}" > "$out"
   else
-    printf '\033]0;%s\007' "$project" > "$out"
+    printf '\033]0;%s%s\007' "$project" "${WISP_DECK_TAB_MARK:-}" > "$out"
   fi
 }
 

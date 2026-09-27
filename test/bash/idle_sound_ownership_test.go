@@ -7346,8 +7346,35 @@ func validateShellProductionHostEffectOwnership(
 			`restore_trigger_tab() {
   osascript \
     -e 'tell application "Ghostty" to activate' \
-    -e 'tell application "System Events" to keystroke "t" using command down' \
+    -e 'tell application "System Events"' \
+    -e 'keystroke "9" using command down' \
+    -e 'keystroke "t" using command down' \
+    -e 'end tell' \
     >/dev/null 2>&1
+}`,
+			`tab_strip_read() {
+  osascript \
+    -e 'set US to character id 31' \
+    -e 'set out to ""' \
+    -e 'tell application "System Events"' \
+    -e 'if not (exists process "ghostty") then return ""' \
+    -e 'tell process "ghostty"' \
+    -e 'repeat with w in (windows whose subrole is "AXStandardWindow")' \
+    -e 'set fs to value of attribute "AXFullScreen" of w' \
+    -e 'set ts to ""' \
+    -e 'try' \
+    -e 'set tg to first UI element of w whose role is "AXTabGroup"' \
+    -e 'repeat with rb in (radio buttons of tg)' \
+    -e 'set ts to ts & (title of rb) & US' \
+    -e 'end repeat' \
+    -e 'on error' \
+    -e 'set ts to (name of w) & US' \
+    -e 'end try' \
+    -e 'set out to out & (fs as text) & tab & ts & linefeed' \
+    -e 'end repeat' \
+    -e 'end tell' \
+    -e 'end tell' \
+    -e 'return out' 2>/dev/null
 }`,
 		},
 		"lib/tui.sh": {
@@ -7360,10 +7387,13 @@ func validateShellProductionHostEffectOwnership(
   # the terminal this whole exercise is about keeping clean.
   local out=/dev/stdout
   { : > /dev/tty; } 2>/dev/null && out=/dev/tty
+  # WISP_DECK_TAB_MARK (lib/session-restore.sh tab_mark_for_seq) is an
+  # invisible, per-tab id: it lets the tab strip be matched back to sessions
+  # when several tabs share a title.
   if [ -n "$tool" ]; then
-    printf '\033]0;%s · %s\007' "$project" "$tool" > "$out"
+    printf '\033]0;%s · %s%s\007' "$project" "$tool" "${WISP_DECK_TAB_MARK:-}" > "$out"
   else
-    printf '\033]0;%s\007' "$project" > "$out"
+    printf '\033]0;%s%s\007' "$project" "${WISP_DECK_TAB_MARK:-}" > "$out"
   fi
 }`,
 		},

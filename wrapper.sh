@@ -23,6 +23,11 @@ if [ -f "$_wrapper_dir_early/lib/session-restore.sh" ]; then
   # second (tmux's created stamp cannot tell those apart).
   mkdir -p "$SHARE_DIR" 2>/dev/null
   _wd_launch_seq="$(next_launch_seq "$SHARE_DIR")"
+  # Invisible per-tab id carried by every title this tab sets (set_tab_title),
+  # read back from Ghostty's tab strip to learn the real tab order. Not
+  # exported: the tmux server would inherit it into every pane.
+  # shellcheck disable=SC2034  # read by set_tab_title, sourced into this shell
+  WISP_DECK_TAB_MARK="$(tab_mark_for_seq "$_wd_launch_seq")"
   # The tab where Cmd+T was pressed, read now: once the picker is up the user
   # may look at another tab, and the focus hook would name that one instead.
   # Backgrounded so a slow tmux server never delays the splash.

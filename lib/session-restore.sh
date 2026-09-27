@@ -321,7 +321,7 @@ write_session_snapshot() {
   local config_dir="${snap_file%/*}"
   local s env boot proj filepath tool term sid layout acct seq identity_file identity_key
   local _created _attached _line _marked _acct_present _claude_sid _codex_sid
-  local survivors=0 live=$'\n' emitted=$'\n' first active extras _unseq seed_seqs=""
+  local survivors=0 live=$'\n' emitted=$'\n' first active extras _unseq seed_seqs="" live_seqs=$'\n'
   local -a seed_cmds=()
   while read -r _created _attached s; do
     [ -n "$s" ] || continue
@@ -398,6 +398,7 @@ write_session_snapshot() {
     # Sessions from pre-seq wrappers order by creation time; the seq is
     # epoch-seeded so the two scales compare.
     case "$seq" in '' | *[!0-9]*) seq="$_created" ;; esac
+    live_seqs="${live_seqs}${seq}"$'\n'
     if [ "$_unseq" = 1 ]; then
       seed_cmds+=(set-option -t "=${s//[.:]/_}:" @wd_seq "$seq" ';')
       seed_seqs="${seed_seqs}${seq}"$'\n'
@@ -436,8 +437,17 @@ write_session_snapshot() {
   # other is a window closing, not the user closing a tab: those lines get the
   # batch flag (field 16) and never expire, so they come back even while
   # another window's tabs survive.
-  local -a d_names=() d_at=()
-  local _d _i
+  local -a d_names=() d_at=() w_groups=()
+  local _d _i _g _m
+  # Windows as last observed (tab_order_observe). When a gone tab's window is
+  # known, membership decides: every tab of that window gone is a window close
+  # (1), a mate still open is the user closing tabs (0). Either answer sticks;
+  # timing only decides a tab no observation covered (a fullscreen window).
+  if [ -f "$config_dir/tab-windows" ]; then
+    while IFS= read -r _g || [ -n "$_g" ]; do
+      [ -n "$_g" ] && w_groups+=("$_g")
+    done < "$config_dir/tab-windows"
+  fi
   if [ -f "$snap_file" ]; then
     while IFS='|' read -r pb pproj ppath ptool pterm psid playout pacct pkey pname pgone pseq pextras pactive pfirst pbatch; do
       [ -n "$pname" ] || continue
@@ -462,7 +472,17 @@ write_session_snapshot() {
               continue
               ;;
           esac
-          if [ "$pbatch" != 1 ]; then
+          if [ -z "$pbatch" ] && [ -n "$pseq" ]; then
+            for _g in ${w_groups[@]+"${w_groups[@]}"}; do
+              case " $_g " in *" $pseq "*) ;; *) continue ;; esac
+              pbatch=1
+              for _m in $_g; do
+                case "$live_seqs" in *$'\n'"$_m"$'\n'*) pbatch=0; break ;; esac
+              done
+              break
+            done
+          fi
+          if [ -z "$pbatch" ]; then
             _d=""
             _i=0
             while [ "$_i" -lt "${#d_names[@]}" ]; do
@@ -500,6 +520,9 @@ write_session_snapshot() {
   # Once no old line names them, the list is spent. Kept, a reused PID would
   # give a live tab one of these names and cost it the grace.
   [ "$_rn" = 1 ] || [ "$restored" = $'\n' ] || rm -f "$config_dir/restored-sessions"
+  # After the membership decisions above: a window that just closed must still
+  # be in tab-windows when its tabs are judged.
+  tab_order_observe "$config_dir"
   local order="$config_dir/tab-order"
   [ -f "$order" ] || order=/dev/null
   # FILENAME, not NR==FNR: an empty tab-order would make every line match.
@@ -1234,16 +1257,153 @@ restore_chain_tab_started() {
 }
 
 # Simulate Cmd+T in Ghostty so the next restored project opens as a tab of
-# this window (Ghostty has no CLI/IPC for tabs on macOS). Requires the
-# Accessibility permission for Ghostty; the non-zero exit on denial is the
-# caller's signal to fall back to separate windows. No Cmd+9 (last_tab) first:
-# sent back to back with Cmd+T it was measured landing the new tab mid-strip,
-# and the chain's Cmd+T already comes from the newest tab, which has focus.
+# this window (Ghostty has no CLI/IPC for tabs on macOS). Cmd+9 (Ghostty's
+# default last_tab) goes first: a new tab opens next to the focused one, so a
+# click on another tab mid-chain would otherwise put the rest out of order.
+# Verified on a real Ghostty with System Events keystrokes: from tab 2 of 5,
+# this pair adds the new tab after tab 5.
+# Requires the Accessibility permission for Ghostty; the non-zero exit on
+# denial is the caller's signal to fall back to separate windows.
 restore_trigger_tab() {
   osascript \
     -e 'tell application "Ghostty" to activate' \
-    -e 'tell application "System Events" to keystroke "t" using command down' \
+    -e 'tell application "System Events"' \
+    -e 'keystroke "9" using command down' \
+    -e 'keystroke "t" using command down' \
+    -e 'end tell' \
     >/dev/null 2>&1
+}
+
+# Invisible tab id. Word joiner, then the seq's 32 bits as zero-width space (0)
+# and zero-width non-joiner (1): all Unicode default-ignorable, so the title
+# looks unchanged, and AX hands the characters back intact. Bytes, not \u
+# escapes: /bin/bash is 3.2.
+_TAB_MARK_START=$'\342\201\240'
+_TAB_MARK_ZERO=$'\342\200\213'
+_TAB_MARK_ONE=$'\342\200\214'
+
+# tab_mark_for_seq <seq>
+tab_mark_for_seq() {
+  local seq="$1" i out="$_TAB_MARK_START"
+  case "$seq" in '' | *[!0-9]*) return 0 ;; esac
+  for ((i = 31; i >= 0; i--)); do
+    if (((seq >> i) & 1)); then out+="$_TAB_MARK_ONE"; else out+="$_TAB_MARK_ZERO"; fi
+  done
+  printf '%s\n' "$out"
+}
+
+# tab_mark_decode <title>: print the seq a title's mark encodes, or nothing.
+# Byte patterns, so it works in any locale.
+tab_mark_decode() {
+  local rest bits v=0 i
+  case "$1" in *"$_TAB_MARK_START"*) ;; *) return 0 ;; esac
+  rest="${1##*"$_TAB_MARK_START"}"
+  bits="${rest//"$_TAB_MARK_ZERO"/0}"
+  bits="${bits//"$_TAB_MARK_ONE"/1}"
+  bits="${bits:0:32}"
+  case "$bits" in *[!01]*) return 0 ;; esac
+  [ "${#bits}" -eq 32 ] || return 0
+  for ((i = 0; i < 32; i++)); do
+    v=$(((v << 1) | ${bits:i:1}))
+  done
+  printf '%s\n' "$v"
+}
+
+# tab_strip_read: one line per standard Ghostty window, "<fullscreen>\t<tab
+# titles, each followed by US>". Read-only Accessibility query.
+tab_strip_read() {
+  osascript \
+    -e 'set US to character id 31' \
+    -e 'set out to ""' \
+    -e 'tell application "System Events"' \
+    -e 'if not (exists process "ghostty") then return ""' \
+    -e 'tell process "ghostty"' \
+    -e 'repeat with w in (windows whose subrole is "AXStandardWindow")' \
+    -e 'set fs to value of attribute "AXFullScreen" of w' \
+    -e 'set ts to ""' \
+    -e 'try' \
+    -e 'set tg to first UI element of w whose role is "AXTabGroup"' \
+    -e 'repeat with rb in (radio buttons of tg)' \
+    -e 'set ts to ts & (title of rb) & US' \
+    -e 'end repeat' \
+    -e 'on error' \
+    -e 'set ts to (name of w) & US' \
+    -e 'end try' \
+    -e 'set out to out & (fs as text) & tab & ts & linefeed' \
+    -e 'end repeat' \
+    -e 'end tell' \
+    -e 'end tell' \
+    -e 'return out' 2>/dev/null
+}
+
+# tab_order_observe <config_dir>
+# Read Ghostty's tab strip through Accessibility and make tab-order follow it,
+# so a dragged tab is restored where the user left it. Also records which tabs
+# share each window (tab-windows), which tells a whole window closing from a
+# tab closing. A fullscreen window exposes no tab strip to AX (measured on
+# Ghostty 1.2.3, bar hidden or revealed) and is skipped. At most once per 10s
+# across the deck; must run under Ghostty (a wrapper child) to be trusted.
+tab_order_observe() {
+  local config_dir="$1" stamp="$1/tab-observe-at" lock="$1/tab-observe.lock"
+  local now last out fs titles title seq line win nwin=0
+  if [ "${WISP_DECK_TESTING:-}" = 1 ] && [ "${WISP_DECK_TAB_OBSERVE:-}" != 1 ]; then
+    return 0
+  fi
+  now="$(date +%s)"
+  { read -r last < "$stamp"; } 2>/dev/null || last=0
+  case "$last" in '' | *[!0-9]*) last=0 ;; esac
+  [ $((now - last)) -ge 10 ] || return 0
+  _sweep_stale_lock "$lock"
+  mkdir "$lock" 2>/dev/null || return 0
+  echo "$now" > "$stamp" 2>/dev/null
+  out="$(tab_strip_read)" || out=""
+  local -a groups=()
+  while IFS=$'\t' read -r fs titles; do
+    [ "$fs" = "false" ] || continue
+    win=""
+    while IFS= read -r -d $'\037' title || [ -n "$title" ]; do
+      seq="$(tab_mark_decode "$title")"
+      [ -n "$seq" ] && win="${win:+$win }$seq"
+    done < <(printf '%s' "$titles")
+    [ -n "$win" ] && groups+=("$win") && nwin=$((nwin + 1))
+  done < <(printf '%s\n' "$out")
+  if [ "$nwin" -eq 0 ]; then
+    rmdir "$lock" 2>/dev/null
+    return 0
+  fi
+  printf '%s\n' "${groups[@]}" > "$config_dir/tab-windows.tmp.$$" 2>/dev/null \
+    && mv "$config_dir/tab-windows.tmp.$$" "$config_dir/tab-windows" 2>/dev/null
+  # Each observed window's tabs replace, as one block, the place its first
+  # recorded tab held; tabs of unobserved windows keep their places.
+  local order="$config_dir/tab-order" new="" placed=$'\n' g s
+  local -a old=()
+  if [ -f "$order" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do old+=("$line"); done < "$order"
+  fi
+  for line in ${old[@]+"${old[@]}"}; do
+    case "$placed" in *$'\n'"$line"$'\n'*) continue ;; esac
+    s=""
+    for g in "${groups[@]}"; do
+      case " $g " in *" $line "*) s="$g"; break ;; esac
+    done
+    if [ -n "$s" ]; then
+      for seq in $s; do
+        case "$placed" in *$'\n'"$seq"$'\n'*) continue ;; esac
+        new="${new}${seq}"$'\n'; placed="${placed}${seq}"$'\n'
+      done
+    else
+      new="${new}${line}"$'\n'; placed="${placed}${line}"$'\n'
+    fi
+  done
+  for g in "${groups[@]}"; do
+    for seq in $g; do
+      case "$placed" in *$'\n'"$seq"$'\n'*) continue ;; esac
+      new="${new}${seq}"$'\n'; placed="${placed}${seq}"$'\n'
+    done
+  done
+  printf '%s' "$new" > "$order.tmp.$$" 2>/dev/null && mv "$order.tmp.$$" "$order" 2>/dev/null
+  rmdir "$lock" 2>/dev/null
+  return 0
 }
 
 # tab_order_seed <config_dir> <seqs>: put newline-separated seqs that are not

@@ -86,9 +86,9 @@ exit 0
 	assertNotContains(t, string(data), "=dev-a-1:0")
 }
 
-// Only Cmd+T. Cmd+9 sent right before it was measured on a real Ghostty
-// putting the new tab in the middle of the strip, not at the end.
-func TestRestoreTriggerTab_sends_only_new_tab(t *testing.T) {
+// Cmd+9 first, so the next restored tab is appended at the end even if the
+// user clicked another tab mid-chain.
+func TestRestoreTriggerTab_goes_to_the_last_tab_before_opening_one(t *testing.T) {
 	dir := t.TempDir()
 	rec := filepath.Join(dir, "rec")
 	bin := mockCommand(t, dir, "osascript", `for a in "$@"; do echo "$a"; done >> `+quote(rec)+`; exit 0`)
@@ -98,6 +98,7 @@ func TestRestoreTriggerTab_sends_only_new_tab(t *testing.T) {
 	if err != nil {
 		t.Fatalf("osascript not invoked: %v", err)
 	}
-	assertContains(t, string(data), `keystroke "t" using command down`)
-	assertNotContains(t, string(data), `keystroke "9"`)
+	assertSubstringsInOrder(t, string(data),
+		`keystroke "9" using command down`,
+		`keystroke "t" using command down`)
 }
