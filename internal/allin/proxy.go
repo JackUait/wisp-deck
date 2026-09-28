@@ -11,6 +11,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/jackuait/wisp-deck/internal/rolefix"
 )
@@ -39,10 +40,25 @@ func NewHandler(resolver Resolver, sessionUpstream string) http.Handler {
 // credential on every request. It gets nothing unless the session upstream
 // is Anthropic, so a provider key never reaches api.anthropic.com.
 func NewObservingHandler(resolver Resolver, sessionUpstream string, observe func(http.Header)) http.Handler {
+	return NewRoutingHandler(resolver, sessionUpstream, observe, FastRoute{})
+}
+
+// FastRoute is what a wisp/fast call needs: the row the session opens on,
+// and each profile's own fast model.
+type FastRoute struct {
+	Start      Target
+	ConfigFast func(source string) string
+}
+
+// NewRoutingHandler is NewObservingHandler plus fast-call routing. One handler
+// serves one pane, so the row it remembers is that session's row.
+func NewRoutingHandler(resolver Resolver, sessionUpstream string, observe func(http.Header), fast FastRoute) http.Handler {
 	sessionIsAnthropic := false
 	if parsed, err := url.Parse(sessionUpstream); err == nil && parsed.Hostname() == "api.anthropic.com" {
 		sessionIsAnthropic = true
 	}
+	var lastMu sync.Mutex
+	last := fast.Start
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if observe != nil {
 			auth := http.Header{}
@@ -80,6 +96,24 @@ func NewObservingHandler(resolver Resolver, sessionUpstream string, observe func
 		}
 		model, _ := payload["model"].(string)
 		target := Route(model)
+		fastCall := target.Kind == KindFast
+		lastMu.Lock()
+		if fastCall {
+			target = fastTarget(last, fast.ConfigFast)
+		} else if model != "" {
+			last = target
+		}
+		lastMu.Unlock()
+		// A session target skips the rewrite below, and the upstream must
+		// never see the marker.
+		if fastCall && target.Kind == KindSession {
+			rewritten, err := rewriteModel(payload, target.Model, nil)
+			if err != nil {
+				writeRoutingError(w, target, err)
+				return
+			}
+			body = rewritten
+		}
 
 		// KindSession never calls Resolve: Resolve's source guard rejects an
 		// empty Source, and a session row always has one.
