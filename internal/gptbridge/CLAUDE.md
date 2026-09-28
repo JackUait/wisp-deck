@@ -216,6 +216,14 @@ Three things follow:
 - **A finished thread is parked** (`parking.go`) and the next message that
   extends it exactly runs as a new turn on it. Anything that differs starts a
   new thread, so correctness never depends on the pool.
+  Claude Code sends skill bodies, attachments and queued messages as text
+  beside a tool result. Codex gets that text inside the tool output, and the
+  next request shows it as its own user message. The thread keeps its digest
+  (`supplement`) so it still matches. Clearing the fingerprint instead left
+  every subagent and every skill turn unparkable.
+  A claude.ai MCP server that connects after the first request adds tools and
+  instructions, so the first thread cannot match the next message. Codex fixes
+  both at `thread/start`; that one cold replay per session is expected.
 - **`ColdStartFuse` counts replays** and warns past 2M tokens in 10 minutes,
   through a log line in `gptbridge-cold.log` and one fixed notification an
   hour. A new background fork shows up there instead of in the quota.

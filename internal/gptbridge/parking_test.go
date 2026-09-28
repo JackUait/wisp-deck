@@ -195,3 +195,71 @@ func TestEngineStartsANewThreadWhenWebSearchChanges(t *testing.T) {
 		})
 	}
 }
+
+// runToolTurnWithSupplement runs one turn whose tool continuation also carries
+// text, the shape Claude Code sends a skill body or a queued message in.
+func runToolTurnWithSupplement(t *testing.T, engine *Engine, supplement string) string {
+	t.Helper()
+	started, err := engine.Execute(context.Background(), testTranslation("load the skill"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := started.Content[0].ID
+	continuation := testTranslation(supplement)
+	continuation.History = []map[string]any{
+		userItem("load the skill"),
+		{"type": "function_call", "call_id": id, "name": "Echo", "arguments": `{}`},
+	}
+	continuation.ToolResults = []TranslatedToolResult{{
+		ToolUseID: id, Success: true,
+		ContentItems: []ToolOutputItem{{Type: "inputText", Text: "loaded"}},
+	}}
+	parkRun(t, engine, continuation)
+	return id
+}
+
+func afterSupplementHistory(id, supplement string) []map[string]any {
+	return []map[string]any{
+		userItem("load the skill"),
+		{"type": "function_call", "call_id": id, "name": "Echo", "arguments": `{}`},
+		{"type": "function_call_output", "call_id": id, "output": "loaded"},
+		userItem(supplement),
+		assistantItem("done"),
+	}
+}
+
+func TestEngineParksAThreadWhoseToolResultCarriedText(t *testing.T) {
+	rpc := newFakeEngineRPC()
+	engine := parkingEngine(t, rpc, 16, time.Hour)
+	suspendOnFirstTurn(rpc, "rpc-skill", "ok", "done")
+	id := runToolTurnWithSupplement(t, engine, "skill body")
+	next := testTranslation("next message")
+	next.History = afterSupplementHistory(id, "skill body")
+	parkRun(t, engine, next)
+	if got := parkCalls(rpc, "thread/start"); got != 1 {
+		t.Fatalf("thread/start = %d, want the thread reused", got)
+	}
+}
+
+func TestEngineStartsANewThreadWhenTheCarriedTextDiffers(t *testing.T) {
+	cases := map[string]func(id string) []map[string]any{
+		"edited text": func(id string) []map[string]any { return afterSupplementHistory(id, "rewritten") },
+		"extra user": func(id string) []map[string]any {
+			return append(afterSupplementHistory(id, "skill body"), userItem("queued"))
+		},
+	}
+	for name, history := range cases {
+		t.Run(name, func(t *testing.T) {
+			rpc := newFakeEngineRPC()
+			engine := parkingEngine(t, rpc, 16, time.Hour)
+			suspendOnFirstTurn(rpc, "rpc-skill", "ok", "done")
+			id := runToolTurnWithSupplement(t, engine, "skill body")
+			next := testTranslation("next message")
+			next.History = history(id)
+			parkRun(t, engine, next)
+			if got := parkCalls(rpc, "thread/start"); got != 2 {
+				t.Fatalf("thread/start = %d, want a new thread", got)
+			}
+		})
+	}
+}

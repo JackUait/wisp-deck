@@ -100,13 +100,18 @@ func extendsParked(state *engineTurn, history []map[string]any, digests [][sha25
 		}
 		rest++
 	}
-	for _, item := range history[rest:] {
+	supplement := state.hasSupplement
+	for index, item := range history[rest:] {
 		switch item["type"] {
 		case "function_call", "function_call_output":
 		case "message":
-			if item["role"] != "assistant" {
+			if item["role"] == "assistant" {
+				continue
+			}
+			if !supplement || digests[rest+index] != state.supplement {
 				return false
 			}
+			supplement = false
 		default:
 			return false
 		}
@@ -151,6 +156,7 @@ func (e *Engine) continueParked(ctx context.Context, state *engineTurn, translat
 	state.history = historyDigests(translation.History)
 	state.lastInput = historyDigests([]map[string]any{inputHistoryItem(translation.Input)})[0]
 	state.expectInput = true
+	state.hasSupplement = false
 	e.mu.Lock()
 	e.turns[state.threadID] = state
 	e.mu.Unlock()

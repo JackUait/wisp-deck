@@ -95,13 +95,18 @@ type engineTurn struct {
 	pending map[string]*pendingDynamicTool
 	timer   *time.Timer
 
-	// fingerprint, lastInput and expectInput decide whether a later request
-	// may continue this thread once it is parked. An empty fingerprint never
-	// matches.
+	// fingerprint, lastInput, expectInput and supplement decide whether a
+	// later request may continue this thread once it is parked. An empty
+	// fingerprint never matches.
 	fingerprint string
 	lastInput   [sha256.Size]byte
 	expectInput bool
-	parkTimer   *time.Timer
+	// supplement is the user message the last continuation carried beside its
+	// tool results. Codex got that text inside the tool output, and the next
+	// request's history shows it as its own user message.
+	supplement    [sha256.Size]byte
+	hasSupplement bool
+	parkTimer     *time.Timer
 
 	cleanupOnce sync.Once
 }
@@ -517,12 +522,12 @@ func (e *Engine) resume(
 	if !state.adoptHistory(translation.History) {
 		return AnthropicMessage{}, invalidContinuationError{staleThreadError{state.threadID}}
 	}
-	// The user message now sits inside the adopted prefix. A continuation's
-	// own extra input would be a user item after it, which reuse cannot
-	// check, so such a turn is never parked.
+	// The user message now sits inside the adopted prefix, and so does any
+	// earlier continuation's extra text.
 	state.expectInput = false
-	if len(translation.Input) > 0 {
-		state.fingerprint = ""
+	state.hasSupplement = len(translation.Input) > 0
+	if state.hasSupplement {
+		state.supplement = historyDigests([]map[string]any{inputHistoryItem(translation.Input)})[0]
 	}
 
 	e.mu.Lock()
