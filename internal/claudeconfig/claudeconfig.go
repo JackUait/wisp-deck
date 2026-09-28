@@ -334,6 +334,12 @@ func ReadBaseURL(configsDir, file string) string {
 	return readEnvValue(configsDir, file, "ANTHROPIC_BASE_URL")
 }
 
+// ReadFastModel returns a profile's haiku mapping, the model Claude Code
+// sends its background calls to.
+func ReadFastModel(configsDir, file string) string {
+	return readEnvValue(configsDir, file, "ANTHROPIC_DEFAULT_HAIKU_MODEL")
+}
+
 // WriteProviderMarker persists an explicit catalog provider identity in an
 // existing settings file while preserving all other settings.
 func WriteProviderMarker(configsDir, file, providerKey string) error {
