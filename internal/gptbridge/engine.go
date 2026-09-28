@@ -202,6 +202,9 @@ func (e *Engine) Execute(
 	if len(e.models) > 0 && !e.models[translation.Model] {
 		return AnthropicMessage{}, fmt.Errorf("model %q is not available", translation.Model)
 	}
+	if isAgentSummaryInput(translation.Input) {
+		return localTextResponse(translation.Model, agentSummaryReply(translation.History), emit)
+	}
 	if len(translation.ToolResults) > 0 {
 		message, err := e.resume(ctx, translation, emit)
 		var unknown unknownContinuationError
