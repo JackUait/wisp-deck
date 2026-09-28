@@ -146,8 +146,17 @@ func TestEngineRebuildsTheThreadWhenClaudeCompactsMidToolCall(t *testing.T) {
 	}
 	// The stale thread must be interrupted and deleted, not left holding an
 	// unanswered app-server request and a quarter-million tokens of context.
-	if deletes := countEngineCalls(rpc, "thread/delete"); deletes < 2 {
-		t.Fatalf("thread/delete calls = %d, want the stale thread deleted too", deletes)
+	// The rebuilt thread-2 ends its turn normally and is parked for reuse.
+	rpc.mu.Lock()
+	staleDeleted := false
+	for index, call := range rpc.calls {
+		if call == "thread/delete" && strings.Contains(string(rpc.callParams[index]), `"thread-1"`) {
+			staleDeleted = true
+		}
+	}
+	rpc.mu.Unlock()
+	if !staleDeleted {
+		t.Fatal("the stale thread-1 was not deleted")
 	}
 	rpc.mu.Lock()
 	responses := len(rpc.responses)

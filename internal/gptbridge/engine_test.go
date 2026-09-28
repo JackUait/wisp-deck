@@ -198,7 +198,7 @@ func newTestEngine(t *testing.T, rpc *fakeEngineRPC) *Engine {
 	return engine
 }
 
-func TestEngineCompletesTextTurnAndDeletesThread(t *testing.T) {
+func TestEngineCompletesTextTurnAndParksThread(t *testing.T) {
 	rpc := newFakeEngineRPC()
 	rpc.onTurnStart = func(threadID, turnID string) {
 		completeTextTurn(rpc, threadID, turnID, "hello")
@@ -222,8 +222,16 @@ func TestEngineCompletesTextTurnAndDeletesThread(t *testing.T) {
 	rpc.mu.Lock()
 	calls := append([]string(nil), rpc.calls...)
 	rpc.mu.Unlock()
-	if calls[len(calls)-1] != "thread/delete" {
-		t.Fatalf("calls = %v, want final thread/delete", calls)
+	for _, call := range calls {
+		if call == "thread/delete" {
+			t.Fatalf("calls = %v, want the finished thread parked, not deleted", calls)
+		}
+	}
+	engine.mu.Lock()
+	parked := len(engine.parked)
+	engine.mu.Unlock()
+	if parked != 1 {
+		t.Fatalf("parked = %d, want 1", parked)
 	}
 	if engine.PendingTurns() != 0 {
 		t.Fatalf("pending turns = %d", engine.PendingTurns())

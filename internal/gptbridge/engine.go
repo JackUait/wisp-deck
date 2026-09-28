@@ -51,6 +51,8 @@ type EngineOptions struct {
 	Models          []string
 	// ColdStarts counts threads that replay history; nil turns it off.
 	ColdStarts *ColdStartFuse
+	ParkLimit  int
+	ParkIdle   time.Duration
 }
 
 // Engine owns app-server event dispatch and pending Claude tool turns.
@@ -66,6 +68,9 @@ type Engine struct {
 	mu        sync.Mutex
 	turns     map[string]*engineTurn
 	toolIndex map[string]*engineTurn
+	// parked holds finished threads, oldest first; they are not in turns, so
+	// dispatch drops anything the app-server sends them.
+	parked    []*engineTurn
 	closeOnce sync.Once
 }
 
@@ -89,6 +94,14 @@ type engineTurn struct {
 
 	pending map[string]*pendingDynamicTool
 	timer   *time.Timer
+
+	// fingerprint, lastInput and expectInput decide whether a later request
+	// may continue this thread once it is parked. An empty fingerprint never
+	// matches.
+	fingerprint string
+	lastInput   [sha256.Size]byte
+	expectInput bool
+	parkTimer   *time.Timer
 
 	cleanupOnce sync.Once
 }
@@ -181,6 +194,12 @@ func NewEngine(rpc EngineRPC, options EngineOptions) (*Engine, error) {
 	}
 	if options.PendingTTL <= 0 {
 		options.PendingTTL = defaultPendingTTL
+	}
+	if options.ParkLimit <= 0 {
+		options.ParkLimit = defaultParkLimit
+	}
+	if options.ParkIdle <= 0 {
+		options.ParkIdle = defaultParkIdle
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	engine := &Engine{
@@ -319,6 +338,9 @@ func (e *Engine) start(
 	translation Translation,
 	emit func([]StreamEvent) error,
 ) (AnthropicMessage, error) {
+	if state := e.takeParked(translation); state != nil {
+		return e.continueParked(ctx, state, translation, emit)
+	}
 	threadParams := map[string]any{
 		"model":                      translation.Model,
 		"cwd":                        e.options.PrivateCWD,
@@ -377,7 +399,10 @@ func (e *Engine) start(
 		threadID: started.Thread.ID, tools: make(map[string]string),
 		events: make(chan Notification, 256), requests: make(chan ServerRequest, 64),
 		errors: make(chan error, 1), pending: make(map[string]*pendingDynamicTool),
-		history: historyDigests(translation.History),
+		history:     historyDigests(translation.History),
+		fingerprint: threadFingerprint(translation),
+		lastInput:   historyDigests([]map[string]any{inputHistoryItem(translation.Input)})[0],
+		expectInput: true,
 	}
 	for _, tool := range translation.DynamicTools {
 		originalName := tool.OriginalName
@@ -491,6 +516,13 @@ func (e *Engine) resume(
 	defer state.mu.Unlock()
 	if !state.adoptHistory(translation.History) {
 		return AnthropicMessage{}, invalidContinuationError{staleThreadError{state.threadID}}
+	}
+	// The user message now sits inside the adopted prefix. A continuation's
+	// own extra input would be a user item after it, which reuse cannot
+	// check, so such a turn is never parked.
+	state.expectInput = false
+	if len(translation.Input) > 0 {
+		state.fingerprint = ""
 	}
 
 	e.mu.Lock()
@@ -622,7 +654,11 @@ func (e *Engine) runTurnBoundary(
 				return AnthropicMessage{}, err
 			}
 			if message, err := reducer.Message(); err == nil {
-				e.cleanupTurn(state, false)
+				if message.StopReason == "end_turn" && state.fingerprint != "" {
+					e.park(state)
+				} else {
+					e.cleanupTurn(state, false)
+				}
 				return message, nil
 			}
 		case request := <-state.requests:
@@ -998,6 +1034,12 @@ func (e *Engine) Close() {
 		e.mu.Unlock()
 		for _, state := range states {
 			e.cleanupTurn(state, true)
+		}
+		e.mu.Lock()
+		parked := append([]*engineTurn(nil), e.parked...)
+		e.mu.Unlock()
+		for _, state := range parked {
+			e.evictParked(state)
 		}
 	})
 }

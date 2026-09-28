@@ -198,6 +198,28 @@ Guarded by `TestTranslateWithholdsTaskOutputFromCodex`,
 `TestTranslateToolChoiceAnySurvivesWithheldTaskOutput` in `translate_test.go`,
 plus `TestBaseInstructionsPointAtTheTaskOutputFile` in `engine_test.go`.
 
+### A new thread is an uncached thread
+
+Codex scopes the prompt cache to the thread: `prompt_cache_key` is the session
+id, and the ChatGPT backend picks the cache shard from it. Measured on a live
+app-server, a byte-identical 37K-token history got 99.7% cached as the next
+turn of its own thread, and 0% in a new thread. Every `thread/start` that
+replays history is therefore a full-price replay.
+
+Three things follow:
+
+- **Claude Code's subagent progress summary is answered locally**
+  (`agentsummary.go`). It forks every running subagent every 30s; through the
+  bridge each fork replayed ~125K tokens for 3-5 words, 5,531 times in 30
+  hours. `WISP_DECK_LIVE_AGENT_SUMMARY_E2E` checks the prompt after a claude
+  upgrade.
+- **A finished thread is parked** (`parking.go`) and the next message that
+  extends it exactly runs as a new turn on it. Anything that differs starts a
+  new thread, so correctness never depends on the pool.
+- **`ColdStartFuse` counts replays** and warns past 2M tokens in 10 minutes,
+  through a log line in `gptbridge-cold.log` and one fixed notification an
+  hour. A new background fork shows up there instead of in the quota.
+
 ### A conversation's transport size is unbounded, and its token count says nothing about it
 
 A request that opens a turn replays the whole conversation into a fresh
