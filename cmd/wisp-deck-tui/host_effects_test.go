@@ -153,3 +153,19 @@ func TestHostEffectRunnerCannotPlanInvalidEffect(t *testing.T) {
 		t.Fatalf("invalid host effect returned %v, want a silent no-op", err)
 	}
 }
+
+func TestHostEffectGPTBridgeColdWarningIsFixed(t *testing.T) {
+	plan, ok := planHostEffect(newGPTBridgeColdWarningHostEffect(), []string{"HOME=/tmp/home"})
+	if !ok || plan.executable != "/usr/bin/osascript" {
+		t.Fatalf("plan = %+v, ok = %v", plan, ok)
+	}
+	environment := strings.Join(plan.environment, "\n")
+	for _, required := range []string{
+		"WISP_DECK_NOTIFICATION_TITLE=GPT bridge",
+		"WISP_DECK_NOTIFICATION_BODY=Context re-sent without cache — see gptbridge-cold.log",
+	} {
+		if strings.Count(environment, required) != 1 {
+			t.Fatalf("environment %q lacks %q", environment, required)
+		}
+	}
+}

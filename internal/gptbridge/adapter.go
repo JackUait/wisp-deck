@@ -36,6 +36,10 @@ type AdapterOptions struct {
 	ShutdownTimeout time.Duration
 	LoginTimeout    time.Duration
 	OpenURL         func(string) error
+
+	// ColdStarts is shared by every engine this adapter builds, so an
+	// app-server rebuild keeps its count.
+	ColdStarts *ColdStartFuse
 }
 
 // AdapterResult mirrors the Claude child exit.
@@ -181,7 +185,7 @@ func buildAppServerBundle(
 	if err != nil {
 		return nil, err
 	}
-	bundle, err := finishAppServerBundle(server, privateCWD, shutdownTimeout)
+	bundle, err := finishAppServerBundle(server, privateCWD, shutdownTimeout, options.ColdStarts)
 	if err != nil {
 		closeContext, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
@@ -195,7 +199,7 @@ func buildAppServerBundle(
 // already-started (and possibly just-logged-in) app-server. The caller keeps
 // ownership of server until this succeeds.
 func finishAppServerBundle(
-	server *AppServer, privateCWD string, shutdownTimeout time.Duration,
+	server *AppServer, privateCWD string, shutdownTimeout time.Duration, coldStarts *ColdStartFuse,
 ) (*appServerBundle, error) {
 	if err := ValidateChatGPTSubscription(server.Account); err != nil {
 		return nil, err
@@ -205,7 +209,7 @@ func finishAppServerBundle(
 		return nil, errors.New("Codex reported no ChatGPT subscription models; update Codex and verify `codex login status`")
 	}
 	engine, err := NewEngine(server.RPC, EngineOptions{
-		PrivateCWD: privateCWD, Models: models,
+		PrivateCWD: privateCWD, Models: models, ColdStarts: coldStarts,
 	})
 	if err != nil {
 		return nil, err
@@ -285,7 +289,7 @@ func RunAdapter(ctx context.Context, options AdapterOptions) (AdapterResult, err
 			return AdapterResult{}, err
 		}
 	}
-	bundle, err := finishAppServerBundle(appServer, privateCWD, shutdownTimeout)
+	bundle, err := finishAppServerBundle(appServer, privateCWD, shutdownTimeout, options.ColdStarts)
 	if err != nil {
 		closeAppServer()
 		return AdapterResult{}, err

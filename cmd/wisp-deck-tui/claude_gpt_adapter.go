@@ -80,6 +80,7 @@ func newClaudeGPTAdapterCommand(
 				Environment:   environment,
 				WorkingDir:    physicalCWD,
 				ClientVersion: Version,
+				ColdStarts:    newGPTBridgeColdStartFuse(gptBridgeColdLog()),
 			})
 			if err != nil {
 				return err

@@ -29,6 +29,7 @@ const (
 	claudeBackgroundNotificationCompleted
 	claudeBackgroundNotificationFailed
 	claudeBackgroundNotificationStopped
+	gptBridgeColdRebuildNotification
 )
 
 type hostEffect struct {
@@ -73,6 +74,13 @@ func newClaudeBackgroundNotificationHostEffect(
 	}
 }
 
+func newGPTBridgeColdWarningHostEffect() hostEffect {
+	return hostEffect{
+		kind:             hostEffectClaudeBackgroundNotification,
+		notificationKind: gptBridgeColdRebuildNotification,
+	}
+}
+
 func planHostEffect(effect hostEffect, inherited []string) (hostEffectPlan, bool) {
 	switch effect.kind {
 	case hostEffectSystemSound:
@@ -90,6 +98,10 @@ func planHostEffect(effect hostEffect, inherited []string) (hostEffectPlan, bool
 		if !ok {
 			return hostEffectPlan{}, false
 		}
+		title := "Claude background"
+		if effect.notificationKind == gptBridgeColdRebuildNotification {
+			title = "GPT bridge"
+		}
 		return hostEffectPlan{
 			executable: "/usr/bin/osascript",
 			arguments: []string{
@@ -98,7 +110,7 @@ func planHostEffect(effect hostEffect, inherited []string) (hostEffectPlan, bool
 			},
 			environment: hostEffectEnvironment(
 				inherited,
-				"Claude background",
+				title,
 				body,
 			),
 		}, true
@@ -121,6 +133,8 @@ func claudeBackgroundNotificationBody(
 		return "Background agent failed", true
 	case claudeBackgroundNotificationStopped:
 		return "Background agent stopped", true
+	case gptBridgeColdRebuildNotification:
+		return "Context re-sent without cache — see gptbridge-cold.log", true
 	default:
 		return "", false
 	}

@@ -31,6 +31,8 @@ type ChatGPTBridgeOptions struct {
 	ClientVersion   string
 	StartupTimeout  time.Duration
 	ShutdownTimeout time.Duration
+	// ColdStarts is shared by every engine this bridge builds.
+	ColdStarts *ColdStartFuse
 }
 
 // ChatGPTBridge owns one Codex app-server, its engine, and the loopback
@@ -174,7 +176,7 @@ func (b *ChatGPTBridge) buildAppServer(ctx context.Context, privateCWD string) (
 			"Codex is signed out, so the OpenAI / ChatGPT subscription cannot serve this turn; " +
 				"run `codex login` in a terminal, then retry")
 	}
-	bundle, err := finishAppServerBundle(server, privateCWD, shutdownTimeout)
+	bundle, err := finishAppServerBundle(server, privateCWD, shutdownTimeout, b.options.ColdStarts)
 	if err != nil {
 		closeServer()
 		return nil, err

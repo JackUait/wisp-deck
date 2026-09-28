@@ -41,6 +41,7 @@ func newClaudeAllInCommandWithExit(run claudeRolefixRunner, exit func(int)) *cob
 func newChatGPTBridge(codexPath string) allinBridge {
 	return gptbridge.NewChatGPTBridge(gptbridge.ChatGPTBridgeOptions{
 		CodexPath: codexPath, ClientVersion: Version,
+		ColdStarts: newGPTBridgeColdStartFuse(gptBridgeColdLog()),
 	})
 }
 
