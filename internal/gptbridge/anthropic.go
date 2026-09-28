@@ -164,6 +164,7 @@ func ParseMessagesRequest(payload []byte) (MessagesRequest, error) {
 		}
 		request.System = system
 	}
+	spoken := false
 	for index, message := range wire.Messages {
 		if message.Role == "system" {
 			content, err := parseContent(message.Content, message.Role)
@@ -178,9 +179,19 @@ func ParseMessagesRequest(payload []byte) (MessagesRequest, error) {
 					)
 				}
 			}
-			request.System = append(request.System, content...)
+			// Kept in the conversation, never folded into System: Claude Code
+			// sends task notifications this way, and each one would change the
+			// thread fingerprint, while a running thread never sees System again.
+			// Joining the user message before it keeps the item identical on
+			// every later request.
+			if last := len(request.Messages) - 1; last >= 0 && request.Messages[last].Role == "user" {
+				request.Messages[last].Content = append(request.Messages[last].Content, content...)
+			} else {
+				request.Messages = append(request.Messages, Message{Role: "user", Content: content})
+			}
 			continue
 		}
+		spoken = true
 		if message.Role != "user" && message.Role != "assistant" {
 			return MessagesRequest{}, fmt.Errorf("messages[%d]: unsupported role %q", index, message.Role)
 		}
@@ -193,7 +204,7 @@ func ParseMessagesRequest(payload []byte) (MessagesRequest, error) {
 		}
 		request.Messages = append(request.Messages, Message{Role: message.Role, Content: content})
 	}
-	if len(request.Messages) == 0 {
+	if !spoken {
 		return MessagesRequest{}, errors.New("messages must contain a user or assistant message")
 	}
 	return request, nil

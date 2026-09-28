@@ -221,6 +221,10 @@ Three things follow:
   next request shows it as its own user message. The thread keeps its digest
   (`supplement`) so it still matches. Clearing the fingerprint instead left
   every subagent and every skill turn unparkable.
+  Inline `role: "system"` messages (task notifications, hook context) join
+  the user message before them (`anthropic.go`). Folded into System, each
+  notification changed the fingerprint and orphaned every parked thread, and
+  a running thread never saw the notification at all.
   A claude.ai MCP server that connects after the first request adds tools and
   instructions, so the first thread cannot match the next message. Codex fixes
   both at `thread/start`; that one cold replay per session is expected.

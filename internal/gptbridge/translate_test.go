@@ -78,7 +78,11 @@ func TestTranslateRecordsSemanticInputEstimate(t *testing.T) {
 	}
 }
 
-func TestTranslateInlineSystemMessageIntoDeveloperInstructions(t *testing.T) {
+// Claude Code sends hook context and task notifications as inline system
+// messages. They stay in the conversation: folded into System they would
+// change the thread fingerprint on every notification, and a running thread
+// never receives System again.
+func TestTranslateKeepsAnInlineSystemMessageInTheConversation(t *testing.T) {
 	got := parseAndTranslate(t, `{
 		"model":"gpt-5.6-terra",
 		"max_tokens":100,
@@ -90,14 +94,85 @@ func TestTranslateInlineSystemMessageIntoDeveloperInstructions(t *testing.T) {
 			]}
 		]
 	}`)
-	if got.System != "Top-level instructions.\n\nSessionStart hook context." {
+	if got.System != "Top-level instructions." {
 		t.Fatalf("system = %q", got.System)
 	}
 	if len(got.History) != 0 {
-		t.Fatalf("history = %#v, want no inline system item", got.History)
+		t.Fatalf("history = %#v", got.History)
 	}
-	if len(got.Input) != 1 || got.Input[0].Text != "test" {
+	if len(got.Input) != 2 || got.Input[0].Text != "test" || got.Input[1].Text != "SessionStart hook context." {
 		t.Fatalf("input = %#v", got.Input)
+	}
+}
+
+func TestTranslateCarriesANotificationAfterAToolResult(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"system":"Top-level instructions.",
+		"messages":[
+			{"role":"user","content":"go"},
+			{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Echo","input":{}}]},
+			{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"done"}]},
+			{"role":"system","content":"<task-notification>agent finished</task-notification>"}
+		]
+	}`)
+	if got.System != "Top-level instructions." {
+		t.Fatalf("system = %q", got.System)
+	}
+	if len(got.ToolResults) != 1 {
+		t.Fatalf("tool results = %#v", got.ToolResults)
+	}
+	if len(got.Input) != 1 || got.Input[0].Text != "<task-notification>agent finished</task-notification>" {
+		t.Fatalf("input = %#v", got.Input)
+	}
+}
+
+func TestTranslateTurnsANotificationAfterTheAssistantIntoInput(t *testing.T) {
+	got := parseAndTranslate(t, `{
+		"model":"gpt-5.6-terra",
+		"max_tokens":100,
+		"messages":[
+			{"role":"user","content":"go"},
+			{"role":"assistant","content":"started it"},
+			{"role":"system","content":"<task-notification>agent finished</task-notification>"}
+		]
+	}`)
+	if len(got.History) != 2 {
+		t.Fatalf("history = %#v", got.History)
+	}
+	if len(got.Input) != 1 || got.Input[0].Text != "<task-notification>agent finished</task-notification>" {
+		t.Fatalf("input = %#v", got.Input)
+	}
+}
+
+// The notification a turn was opened with must be the same history item on
+// the next request, or a parked thread can never be continued.
+func TestTranslateKeepsANotificationStableAcrossRequests(t *testing.T) {
+	first := parseAndTranslate(t, `{
+		"model":"gpt-5.6-terra","max_tokens":100,"system":"S",
+		"messages":[
+			{"role":"user","content":"go"},
+			{"role":"assistant","content":"started it"},
+			{"role":"system","content":"note"}
+		]
+	}`)
+	next := parseAndTranslate(t, `{
+		"model":"gpt-5.6-terra","max_tokens":100,"system":"S",
+		"messages":[
+			{"role":"user","content":"go"},
+			{"role":"assistant","content":"started it"},
+			{"role":"system","content":"note"},
+			{"role":"assistant","content":"seen"},
+			{"role":"user","content":"next"}
+		]
+	}`)
+	if first.System != next.System {
+		t.Fatalf("system changed: %q -> %q", first.System, next.System)
+	}
+	want := historyDigests([]map[string]any{inputHistoryItem(first.Input)})[0]
+	if got := historyDigests(next.History[2:3])[0]; got != want {
+		t.Fatalf("history[2] = %#v, want the item the first request's input becomes", next.History[2])
 	}
 }
 
