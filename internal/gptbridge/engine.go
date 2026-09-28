@@ -49,6 +49,8 @@ type EngineOptions struct {
 	ToolBatchWindow time.Duration
 	PendingTTL      time.Duration
 	Models          []string
+	// ColdStarts counts threads that replay history; nil turns it off.
+	ColdStarts *ColdStartFuse
 }
 
 // Engine owns app-server event dispatch and pending Claude tool turns.
@@ -395,6 +397,7 @@ func (e *Engine) start(
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if len(translation.History) > 0 {
+		e.options.ColdStarts.Record(translation.EstimatedInputTokens)
 		if err := e.injectHistory(ctx, state.threadID, translation.History); err != nil {
 			e.cleanupTurn(state, true)
 			return AnthropicMessage{}, fmt.Errorf("inject Claude history: %w", err)
