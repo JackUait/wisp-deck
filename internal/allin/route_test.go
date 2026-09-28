@@ -40,3 +40,11 @@ func TestRoute_treats_an_unparseable_prefix_as_the_session(t *testing.T) {
 		}
 	}
 }
+
+func TestRoute_reads_the_fast_marker(t *testing.T) {
+	for _, model := range []string{FastModel, FastModel + OneMillionMarker} {
+		if got := Route(model); got != (Target{Kind: KindFast}) {
+			t.Errorf("Route(%q) = %+v, want the bare KindFast target", model, got)
+		}
+	}
+}

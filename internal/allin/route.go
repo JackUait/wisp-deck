@@ -13,6 +13,9 @@ const (
 	KindSession Kind = iota
 	KindAccount
 	KindConfig
+	// KindFast is Claude Code's background call. It names no source: the
+	// router sends it to the source of the session's last row.
+	KindFast
 )
 
 // Target is one parsed picker row.
@@ -27,6 +30,8 @@ const (
 	rowPrefix     = "wisp/"
 	accountPrefix = "acct."
 	configPrefix  = "cfg."
+	// FastModel is what routerEnv sets ANTHROPIC_SMALL_FAST_MODEL to.
+	FastModel = "wisp/fast"
 	// OneMillionMarker is what Claude Code reads off the raw model string to
 	// grant the session a 1M window. It has to be the very LAST characters of
 	// the id, so it is appended after the model, not inside it.
@@ -37,6 +42,9 @@ const (
 // session's own, never an error: the turn must still run.
 func Route(model string) Target {
 	trimmed, want1m := strip1M(model)
+	if trimmed == FastModel {
+		return Target{Kind: KindFast}
+	}
 	rest, ok := strings.CutPrefix(trimmed, rowPrefix)
 	if !ok {
 		return Target{Kind: KindSession, Model: trimmed, Want1M: want1m}
