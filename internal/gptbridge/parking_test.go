@@ -168,3 +168,30 @@ func TestEngineNeverParksAFailedTurn(t *testing.T) {
 		t.Fatalf("a failed turn was parked")
 	}
 }
+
+func TestEngineStartsANewThreadWhenWebSearchChanges(t *testing.T) {
+	cases := map[string]func(n *Translation){
+		"search off":      func(n *Translation) { n.WebSearch = false },
+		"allowed domains": func(n *Translation) { n.WebSearchAllowedDomains = []string{"other.example"} },
+		"blocked domains": func(n *Translation) { n.WebSearchBlockedDomains = []string{"bad.example"} },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			rpc := newFakeEngineRPC()
+			engine := parkingEngine(t, rpc, 16, time.Hour)
+			first := testTranslation("first")
+			first.WebSearch = true
+			first.WebSearchAllowedDomains = []string{"docs.example"}
+			parkRun(t, engine, first)
+			next := testTranslation("second")
+			next.WebSearch = true
+			next.WebSearchAllowedDomains = []string{"docs.example"}
+			next.History = []map[string]any{userItem("first"), assistantItem("ok")}
+			mutate(&next)
+			parkRun(t, engine, next)
+			if got := parkCalls(rpc, "thread/start"); got != 2 {
+				t.Fatalf("thread/start = %d, want a new thread", got)
+			}
+		})
+	}
+}

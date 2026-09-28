@@ -17,7 +17,7 @@ const agentSummaryMaxRunes = 100
 
 func isAgentSummaryInput(input []UserInput) bool {
 	for _, item := range input {
-		if item.Type == "text" && strings.HasPrefix(strings.TrimSpace(item.Text), agentSummaryPrompt) {
+		if item.Type == "text" && strings.Contains(item.Text, agentSummaryPrompt) {
 			return true
 		}
 	}

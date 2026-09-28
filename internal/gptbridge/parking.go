@@ -30,10 +30,14 @@ func inputHistoryItem(input []UserInput) map[string]any {
 }
 
 // threadFingerprint covers everything fixed at thread/start: a thread started
-// with other instructions or tools cannot serve the request.
+// with other instructions, tools or web-search settings cannot serve the
+// request. Web search sets config.web_search and the base instructions.
 func threadFingerprint(t Translation) string {
-	tools, _ := json.Marshal(t.DynamicTools)
-	sum := sha256.Sum256([]byte(t.Model + "\x00" + t.System + "\x00" + t.ToolDirective + "\x00" + string(tools)))
+	fixed, _ := json.Marshal([]any{
+		t.Model, t.System, t.ToolDirective, t.DynamicTools,
+		t.WebSearch, t.WebSearchAllowedDomains, t.WebSearchBlockedDomains,
+	})
+	sum := sha256.Sum256(fixed)
 	return string(sum[:])
 }
 

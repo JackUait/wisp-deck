@@ -91,3 +91,12 @@ func TestIsAgentSummaryInputIgnoresOrdinaryText(t *testing.T) {
 		t.Fatal("the summary prompt did not match")
 	}
 }
+
+// Claude Code wraps its fixed prompts between releases (compaction gained a
+// preamble in 2.1.263), so the match must not be anchored to either end.
+func TestIsAgentSummaryInputSurvivesAWrappedPrompt(t *testing.T) {
+	wrapped := "CRITICAL: answer briefly.\n\n" + agentSummaryPrompt + " using present tense (-ing).\n\nReminder: no tools."
+	if !isAgentSummaryInput([]UserInput{{Type: "text", Text: wrapped}}) {
+		t.Fatal("a wrapped summary prompt was not recognised")
+	}
+}
