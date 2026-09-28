@@ -197,6 +197,11 @@ func EnsureProfileIfEligible(env Env) error {
 //     It pairs with the key above rather than replacing it: the force keeps an
 //     object-shaped spec's inheritCap, so an armed Explore cap still wins.
 //
+// ANTHROPIC_SMALL_FAST_MODEL: without it Claude Code sends its background
+// calls (title, quota check) to the session model, because the loopback
+// endpoint is not first-party. The router turns the marker into the fast
+// model of the session's current source.
+//
 // A 1M window is ONE key. The sub-1M trio has to be actively deleted, not just
 // left unwritten: CLAUDE_CODE_DISABLE_1M_CONTEXT makes Claude Code ignore the
 // row marker outright, and CLAUDE_CODE_AUTO_COMPACT_WINDOW caps the window
@@ -212,6 +217,7 @@ func routerEnv() map[string]string {
 		"ANTHROPIC_BASE_URL":                      claudeconfig.AllInProvider.BaseURL,
 		"CLAUDE_CODE_DISABLE_EXPLORE_INHERIT_CAP": "1",
 		"CLAUDE_CODE_SUBAGENT_MODEL_FORCE":        "1",
+		"ANTHROPIC_SMALL_FAST_MODEL":              FastModel,
 		claudeconfig.ContextBudgetKey:             strconv.Itoa(rosterWindow),
 		"CLAUDE_CODE_AUTO_COMPACT_WINDOW":         "",
 		"CLAUDE_CODE_DISABLE_1M_CONTEXT":          "",

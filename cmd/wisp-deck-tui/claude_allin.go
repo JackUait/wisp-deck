@@ -86,8 +86,12 @@ func newClaudeAllInCommandWithBridge(
 					Store:       allin.KeychainLogins{},
 				})
 			}
+			fast := allin.FastRoute{
+				Start:      allin.StartingRow(allin.UserSettingsPath()),
+				ConfigFast: env.FastModelFor,
+			}
 			newHandler := func(upstream string) http.Handler {
-				return allin.NewObservingHandler(resolver, upstream, observe)
+				return allin.NewRoutingHandler(resolver, upstream, observe, fast)
 			}
 			return runLoopbackWrappedLaunch(settingsPath, argv, run, exit, newHandler, bridge.Close)
 		},

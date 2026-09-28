@@ -283,6 +283,16 @@ func TestEnsureProfile_forces_subagents_onto_the_picked_row(t *testing.T) {
 	}
 }
 
+// Without the key, Claude Code sends the title and quota calls to the session
+// model, because the router's loopback endpoint is not first-party. Measured
+// on 2.1.283: both went to the Opus row.
+func TestEnsureProfile_sends_background_calls_to_the_fast_marker(t *testing.T) {
+	_, _, path := generatedProfile(t)
+	if got := readEnv(t, path)["ANTHROPIC_SMALL_FAST_MODEL"]; got != FastModel {
+		t.Fatalf("ANTHROPIC_SMALL_FAST_MODEL = %q, want %q", got, FastModel)
+	}
+}
+
 // The declared window must equal what contextWindowEnv would compute for
 // rosterWindow, or every install rewrites this file. At 1M that means ONE key:
 // the sub-1M trio is deleted, and CLAUDE_CODE_AUTO_COMPACT_WINDOW surviving at

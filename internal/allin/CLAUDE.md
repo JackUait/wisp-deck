@@ -624,15 +624,23 @@ it, and the order matters: the force keeps an object-shaped spec's `inheritCap`
 resolves to opus anyway. Both keys are pinned by
 `TestEnsureProfile_forces_subagents_onto_the_picked_row` and its neighbour.
 
-Not measured, and left alone: the small/fast alias behind Claude Code's own
-background calls (the title generator, the classifiers). `og()` returns the
-main model whenever `ANTHROPIC_SMALL_FAST_MODEL` is unset and the provider is
-not first-party — which the router's loopback endpoint guarantees — and the
-one live run above showed the title request carrying the session's `wisp/…` row
-rather than a haiku id. If a future build re-derives that alias from
-`ANTHROPIC_DEFAULT_HAIKU_MODEL` regardless of provider, those calls would leak
-to api.anthropic.com the same way; a `tcpdump`-free check is to add a `model`
-log line to the router and read it for one session.
+### Background calls run on the fast model of the session's source
+
+Claude Code sends its background calls (the session title, the startup quota
+check) to its small/fast model. With the loopback endpoint and no
+`ANTHROPIC_SMALL_FAST_MODEL`, it uses the session model instead. Measured on
+2.1.283 against a capture server: without the key both calls carried the Opus
+row; with it both carried the key's value, while the main turns and the
+prompt-suggestion call stayed on the session model.
+
+`routerEnv` sets the key to `wisp/fast`. `Route` reads it as `KindFast`, and
+the handler sends it to the source of the last row it routed: a login gets
+Haiku 4.5 on that login, a profile gets its `ANTHROPIC_DEFAULT_HAIKU_MODEL`
+(or the row's own model when it has none), and the session's own login gets
+Haiku. Before the first turn the handler has no row, so it starts from the
+`model` in the session's settings file. A fast call never moves to another
+source. Guarded by `proxy_fast_test.go` and
+`TestEnsureProfile_sends_background_calls_to_the_fast_marker`.
 
 ### `ensure-allin` and `claude-allin` name the same two files the same way
 
