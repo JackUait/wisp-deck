@@ -392,6 +392,11 @@ type MainMenuModel struct {
 	// Zero means worktreeRefreshInterval; only tests set it.
 	worktreeRefreshEvery time.Duration
 
+	// worktreeSweep removes throwaway detached worktrees; nil means
+	// sweepThrowawayWorktrees. lastWorktreeSweep throttles it.
+	worktreeSweep     func(paths []string)
+	lastWorktreeSweep time.Time
+
 	// staleConfirmIdx holds the index of the stale project awaiting launch
 	// confirmation. -1 means no confirmation is active.
 	staleConfirmIdx int
@@ -2251,6 +2256,21 @@ func (m *MainMenuModel) ensureStatsLoad() tea.Cmd {
 // menu sits open only ever appears because of this poll.
 const worktreeRefreshInterval = 2 * time.Second
 
+// worktreeSweepInterval spaces out the detached-worktree sweep, which runs git
+// per detached worktree and lsof. worktreeSweepMinIdle is how long a clean
+// worktree must sit untouched first: an agent's shell leaves it between
+// commands, so lsof alone cannot see one about to be used.
+const (
+	worktreeSweepInterval = 5 * time.Minute
+	worktreeSweepMinIdle  = time.Hour
+)
+
+func sweepThrowawayWorktrees(paths []string) {
+	for _, path := range paths {
+		models.SweepDetachedWorktrees(path, worktreeSweepMinIdle)
+	}
+}
+
 // worktreesRefreshedMsg carries a completed background detection, keyed by
 // project path — the projects can be added, removed or reordered between the
 // spawn and the delivery, so an index would name the wrong project.
@@ -2271,8 +2291,22 @@ func (m *MainMenuModel) worktreeRefreshCmd() tea.Cmd {
 	if delay <= 0 {
 		delay = worktreeRefreshInterval
 	}
+	// Held back mid-flow like the apply: a removed row under an open confirm
+	// shifts the flat index it acts on.
+	var sweep func([]string)
+	midFlow := m.inputMode != "" || m.deleteMode || m.cloning || m.worktreePendingProjectIdx >= 0
+	if !midFlow && time.Since(m.lastWorktreeSweep) >= worktreeSweepInterval {
+		m.lastWorktreeSweep = time.Now()
+		sweep = m.worktreeSweep
+		if sweep == nil {
+			sweep = sweepThrowawayWorktrees
+		}
+	}
 	return func() tea.Msg {
 		time.Sleep(delay)
+		if sweep != nil {
+			sweep(paths)
+		}
 		return worktreesRefreshedMsg{byPath: models.DetectWorktreesFor(paths)}
 	}
 }

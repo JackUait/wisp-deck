@@ -259,3 +259,53 @@ func TestWorktreeRefresh_picksUpAWorktreeGitCreatedAfterTheMenuOpened(t *testing
 		t.Fatalf("worktree created outside the menu never appeared: %+v", m.projects[0].Worktrees)
 	}
 }
+
+// sweepRecorder swaps the menu's sweep for one that records the paths it got.
+func sweepRecorder(m *MainMenuModel) *[][]string {
+	var calls [][]string
+	m.worktreeSweep = func(paths []string) { calls = append(calls, paths) }
+	return &calls
+}
+
+// Throwaway detached worktrees are swept before detection, so the same round
+// already shows them gone.
+func TestWorktreeRefresh_sweepsOnTheFirstRound(t *testing.T) {
+	m := newWorktreeMenu()
+	m.worktreeRefreshEvery = time.Millisecond
+	calls := sweepRecorder(m)
+
+	m.worktreeRefreshCmd()()
+
+	if len(*calls) != 1 || len((*calls)[0]) != len(m.projects) {
+		t.Fatalf("sweep calls = %v, want one over every project", *calls)
+	}
+}
+
+// The sweep runs git per detached worktree and lsof, far too much for the
+// 2s poll.
+func TestWorktreeRefresh_sweepsAtMostOncePerSweepInterval(t *testing.T) {
+	m := newWorktreeMenu()
+	m.worktreeRefreshEvery = time.Millisecond
+	calls := sweepRecorder(m)
+
+	m.worktreeRefreshCmd()()
+	m.worktreeRefreshCmd()()
+
+	if len(*calls) != 1 {
+		t.Fatalf("swept %d times in two quick rounds, want 1", len(*calls))
+	}
+}
+
+// A sweep must not pull a row out from under an open delete confirm.
+func TestWorktreeRefresh_doesNotSweepWhileDeleteModeIsOpen(t *testing.T) {
+	m := newWorktreeMenu()
+	m.worktreeRefreshEvery = time.Millisecond
+	m.deleteMode = true
+	calls := sweepRecorder(m)
+
+	m.worktreeRefreshCmd()()
+
+	if len(*calls) != 0 {
+		t.Fatalf("swept during delete mode: %v", *calls)
+	}
+}

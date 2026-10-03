@@ -81,6 +81,23 @@ The poll surfaces ephemeral worktrees too (subagent `.claude/worktrees/*`,
 this suite's own temp checkouts) for as long as they exist; that is the list
 being true, not a defect.
 
+The poll also sweeps (`models.SweepDetachedWorktrees`), at most once per
+`worktreeSweepInterval` and never mid-flow. It removes a detached worktree only
+when that loses nothing: it must be in a throwaway root (a Claude scratchpad, or
+`.claude/worktrees/`), unlocked, idle for `worktreeSweepMinIdle`, have its HEAD
+on some ref, have no process with its cwd inside, and pass a non-force
+`git worktree remove`, which refuses uncommitted and untracked files. Ignored
+files go with it. Then `git worktree prune` drops registrations whose folder is
+gone.
+
+- **Throwaway roots only.** A detached checkout elsewhere can be deliberate.
+  blok keeps a base checkout in `.blok-undo/wt/` that is clean and on `main`.
+- **The idle wait is what protects a fresh worktree.** Claude Code's Bash tool
+  starts a new process for each command, so between commands no cwd is inside
+  the worktree and lsof cannot see it is about to be used.
+- **lsof runs last.** It costs about 0.25 CPU-s, so it runs only when a
+  candidate survives the cheaper checks.
+
 Guarded by `internal/tui/mainmenu_worktree_refresh_test.go` — including
 `_picksUpAWorktreeGitCreatedAfterTheMenuOpened`, which drives the real loop
 against a real repo, and `TestAppModel_deliversAWorktreeRefreshToTheMenuUnderAPushedScreen` —
