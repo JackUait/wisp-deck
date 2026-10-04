@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -771,15 +772,6 @@ func TestDiffView_shows_backdrop_in_margin(t *testing.T) {
 	}
 	if !strings.Contains(out, "╭") {
 		t.Errorf("box border should still render, got:\n%s", out)
-	}
-}
-
-func TestDiffView_preserves_ansi_color_in_content(t *testing.T) {
-	colored := "\x1b[32m+added\x1b[m\n\x1b[31m-removed\x1b[m\n"
-	m := sizeDiff(NewDiffView("f", colored), 80, 24)
-	out := m.View()
-	if !strings.Contains(out, "\x1b[32m") || !strings.Contains(out, "\x1b[31m") {
-		t.Error("view should preserve the diff's ANSI color escapes")
 	}
 }
 
@@ -1557,5 +1549,68 @@ func TestNewDiffView_strips_carriage_returns(t *testing.T) {
 		if out := renderBodyMode(m.bodyContent(), 120, mode); strings.Contains(out, "\r") {
 			t.Errorf("mode %d rendered a carriage return:\n%q", mode, out)
 		}
+	}
+}
+
+// stray reports the first control character in rendered output that is not a
+// newline or an SGR color escape, or "" if there is none.
+func stray(out string) string {
+	sgr := regexp.MustCompile(`^\x1b\[[0-9;]*m`)
+	for i, r := range out {
+		switch {
+		case r == '\x1b':
+			if !sgr.MatchString(out[i:]) {
+				return fmt.Sprintf("%q at %d", out[i:min(i+6, len(out))], i)
+			}
+		case r == '\n':
+		case r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f:
+			return fmt.Sprintf("%q at %d", r, i)
+		}
+	}
+	return ""
+}
+
+// File bytes reach the terminal verbatim, so any control character in them
+// acts on the screen: an ESC sequence can clear it, a lone CR or a backspace
+// moves the cursor. The model counts them as zero cells, so they must be drawn
+// as visible one-cell glyphs.
+func TestDiffView_never_sends_control_characters_from_the_file(t *testing.T) {
+	body := "+lone\rcr\n+esc\x1b[2Jclear\n+bel\x07bs\x08del\x7fc1\u009bnul\x00\n"
+	plainBody := "+lonexcr\n+escx[2Jclear\n+belxbsxdelxc1xnulx\n"
+	for _, name := range []string{"f.txt", "f.go", "f.csv"} {
+		m := NewDiffView(name, body)
+		for _, mode := range []int{diffModeInline, diffModeSideBySide} {
+			out := renderBodyMode(m.bodyContent(), 120, mode)
+			if s := stray(out); s != "" {
+				t.Errorf("%s mode %d sent control character %s:\n%q", name, mode, s, out)
+			}
+			// Each control is one visible cell, so rows match a body with a
+			// plain letter in its place.
+			plain := renderBodyMode(NewDiffView(name, plainBody).bodyContent(), 120, mode)
+			want := strings.Split(plain, "\n")
+			for i, row := range strings.Split(out, "\n") {
+				if w, pw := cellWidth(row), cellWidth(want[i]); w != pw {
+					t.Errorf("%s mode %d row %d is %d cells, want %d: %q", name, mode, i, w, pw, row)
+				}
+			}
+		}
+	}
+}
+
+func TestDiffView_title_never_sends_control_characters(t *testing.T) {
+	m := sizeDiff(NewDiffView("dir/a\rb\x1b[2J.txt", "+x\n"), 100, 20)
+	if s := stray(m.View()); s != "" {
+		t.Errorf("title sent control character %s", s)
+	}
+}
+
+func TestShowControls_draws_one_visible_cell_each(t *testing.T) {
+	got := showControls("a\rb\x1bc\x7fd\u009be\x00f\tg\nh")
+	want := "a␍b␛c␡d�e␀f\tg\nh"
+	if got != want {
+		t.Fatalf("showControls = %q, want %q", got, want)
+	}
+	if w := cellWidth("␍␛␡�␀"); w != 5 {
+		t.Fatalf("control glyphs measure %d cells, want 5", w)
 	}
 }

@@ -957,7 +957,7 @@ func renderLedgerFileRow(row ledger.Row, width int, visual ledger.RowVisualState
 	if nameWidth < 1 {
 		nameWidth = 1
 	}
-	name := runewidth.Truncate(path.Base(row.Path), nameWidth, "…")
+	name := runewidth.Truncate(showControls(path.Base(row.Path)), nameWidth, "…")
 	// The filename takes its section title's color (yellow under "modified",
 	// green under "staged", cyan under "new") so a section reads as one block.
 	nameColor := currentTheme.Text

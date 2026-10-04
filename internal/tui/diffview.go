@@ -156,6 +156,33 @@ func expandTabs(content string, tabWidth int) string {
 	return strings.Join(lines, "\n")
 }
 
+// showControls draws every control character except tab and newline as a
+// visible one-cell glyph. Text from a file or a path reaches the terminal
+// verbatim, and the width model counts controls as zero cells, so a raw one
+// acts on the screen instead: a CR or backspace moves the cursor and an ESC
+// starts a sequence. Each glyph is one cell in a live tmux.
+func showControls(s string) string {
+	if strings.IndexFunc(s, isShownControl) < 0 {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		switch {
+		case !isShownControl(r):
+			return r
+		case r < 0x20:
+			return 0x2400 + r // Unicode Control Pictures: ␀ … ␟
+		case r == 0x7f:
+			return '␡'
+		default: // C1 has no pictures
+			return '�'
+		}
+	}, s)
+}
+
+func isShownControl(r rune) bool {
+	return (r < 0x20 && r != '\t' && r != '\n') || (r >= 0x7f && r <= 0x9f)
+}
+
 // expandTabsLine expands the tabs in one raw diff line (see expandTabs).
 func expandTabsLine(line string, tabWidth int) string {
 	if line == "" || !strings.ContainsRune(line, '\t') {
@@ -1425,9 +1452,8 @@ func (m *DiffViewModel) installDiff(content string) {
 	single := isSingleSided(content)
 	// Expand tabs before highlighting so no tab reaches the column layout; the
 	// raw content is kept for the line counts/status (tabs don't affect those).
-	// A CRLF file's \r would return the cursor to column 0 and let the row's
-	// padding paint over it.
-	expanded := expandTabs(strings.ReplaceAll(content, "\r\n", "\n"), diffTabWidth)
+	// A CRLF line ending is dropped rather than shown as ␍ on every line.
+	expanded := expandTabs(showControls(strings.ReplaceAll(content, "\r\n", "\n")), diffTabWidth)
 	m.content = content
 	m.highlighted = highlightDiff(expanded, m.title)
 	m.added = added
@@ -1551,7 +1577,7 @@ func safeUpdate(update func() (tea.Model, tea.Cmd), prior tea.Model) (model tea.
 // renderPanicScreen is the render-panic fallback: plain unstyled text (nothing
 // here may panic again) naming the file, the failure, and the way out.
 func (m DiffViewModel) renderPanicScreen(r any) string {
-	return fmt.Sprintf("%s\n\npreview failed to render: %v\n\npress q or Esc to close", m.title, r)
+	return fmt.Sprintf("%s\n\npreview failed to render: %v\n\npress q or Esc to close", showControls(m.title), r)
 }
 
 // Update guards the real update step: a panic leaves the model unchanged
@@ -1951,7 +1977,7 @@ func (m DiffViewModel) render() string {
 	// diffTitleStyle adds 1 column of padding each side (+2). Reserve a 1-column
 	// gap before the right-anchored control too.
 	pathBudget := cw - lipgloss.Width(badge) - lipgloss.Width(counts) - ctrlW - 2 - 1
-	titleLeft := badge + diffTitleStyle.Render(truncatePath(m.title, pathBudget)) + counts
+	titleLeft := badge + diffTitleStyle.Render(truncatePath(showControls(m.title), pathBudget)) + counts
 	// cellWidth, not lipgloss.Width: titleLeft carries the file path, and a path
 	// with a non-Latin directory in it measures differently under the two (see
 	// forEachCell). Getting this wrong pushes the discard button off its row.

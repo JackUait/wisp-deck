@@ -1235,3 +1235,19 @@ func TestLedgerFileRowFilenameCarriesGroupColor(t *testing.T) {
 		})
 	}
 }
+
+// Paths come from `git diff --numstat -z`, which does not quote control
+// characters, so a file named with a CR or ESC would act on the pane.
+func TestRenderLedgerFileRow_never_sends_control_characters(t *testing.T) {
+	row := ledger.Row{
+		Kind: ledger.RowFile,
+		ID:   ledger.RowID{Group: ledger.GroupModified, Path: "a\rb\x1b[2J.txt"},
+		Path: "a\rb\x1b[2J.txt", Added: 1,
+	}
+	for _, hovered := range []bool{false, true} {
+		raw := renderLedgerFileRow(row, 80, ledger.RowVisualState{Hovered: hovered})
+		if s := stray(raw); s != "" {
+			t.Errorf("hovered=%v sent control character %s: %q", hovered, s, raw)
+		}
+	}
+}
