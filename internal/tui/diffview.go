@@ -1425,7 +1425,9 @@ func (m *DiffViewModel) installDiff(content string) {
 	single := isSingleSided(content)
 	// Expand tabs before highlighting so no tab reaches the column layout; the
 	// raw content is kept for the line counts/status (tabs don't affect those).
-	expanded := expandTabs(content, diffTabWidth)
+	// A CRLF file's \r would return the cursor to column 0 and let the row's
+	// padding paint over it.
+	expanded := expandTabs(strings.ReplaceAll(content, "\r\n", "\n"), diffTabWidth)
 	m.content = content
 	m.highlighted = highlightDiff(expanded, m.title)
 	m.added = added

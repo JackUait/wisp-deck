@@ -1545,3 +1545,17 @@ func TestNewDiffView_expands_tabs(t *testing.T) {
 		t.Errorf("rendered body still contains a tab:\n%q", m.bodyContent())
 	}
 }
+
+// A CRLF file must not send a carriage return to the terminal: it moves the
+// cursor to column 0, and the row's tint padding then paints over the row.
+func TestNewDiffView_strips_carriage_returns(t *testing.T) {
+	m := NewDiffView("f.csv", "+a,b\r\n+c,d\r\n")
+	if strings.Contains(m.bodyContent(), "\r") {
+		t.Errorf("body still contains a carriage return:\n%q", m.bodyContent())
+	}
+	for _, mode := range []int{diffModeInline, diffModeSideBySide} {
+		if out := renderBodyMode(m.bodyContent(), 120, mode); strings.Contains(out, "\r") {
+			t.Errorf("mode %d rendered a carriage return:\n%q", mode, out)
+		}
+	}
+}
