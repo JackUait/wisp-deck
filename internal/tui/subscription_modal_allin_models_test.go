@@ -208,20 +208,15 @@ func TestSubscriptionModal_clickingAnAllInRowTogglesIt(t *testing.T) {
 func TestSubscriptionDetailCursorLine_followsTheAllInChecklist(t *testing.T) {
 	m, rows := allInSubscriptionMenu(t)
 
-	m.subscriptionModal.detailCursor = subscriptionDetailAllInHideSpent
-	if got, want := m.subscriptionDetailCursorLine(), 8; got != want {
-		t.Fatalf("the filter row sits on line %d, want %d", got, want)
-	}
-
 	for i := range rows {
 		m.subscriptionModal.detailCursor = subscriptionDetailAllInBase + i
-		if got, want := m.subscriptionDetailCursorLine(), 9+i; got != want {
+		if got, want := m.subscriptionDetailCursorLine(), 8+i; got != want {
 			t.Fatalf("row %d sits on line %d, want %d", i, got, want)
 		}
 	}
 
 	m.subscriptionModal.detailCursor = subscriptionDetailRename
-	if got, want := m.subscriptionDetailCursorLine(), 9+len(rows); got <= want {
+	if got, want := m.subscriptionDetailCursorLine(), 8+len(rows); got <= want {
 		t.Fatalf("the action row is on line %d, want it below the %d-row checklist", got, len(rows))
 	}
 }

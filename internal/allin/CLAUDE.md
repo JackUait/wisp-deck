@@ -777,36 +777,30 @@ shape a label through the one `subscriptionAllInRowText` — the hit test locate
 row by searching the rendered line for that exact string, so a label truncated
 one way and searched for the other never matches.
 
-### A row says what its subscription has left, and a spent one is left out
+### A row says what its subscription has left, and a spent one is never hidden
 
 Every row's description ends with what the credential it spends has left
-(`Zhipu / GLM · 75% left`), and by default a source with nothing left contributes
-no row at all. Both are read from the usage caches the statusline already
-maintains, so the picker never reaches for a network on a path that writes a
-settings file. `usageFreshFor` is the same 2h `gt_sub_usage_fresh` uses
-(`lib/statusline.sh`), so the two surfaces can never disagree about whether a
-number is real.
+(`Zhipu / GLM · 75% left`). A spent source reads `0% left` and keeps its rows.
+The numbers come from the usage caches the statusline already maintains, so the
+picker never reaches for a network on a path that writes a settings file.
+`usageFreshFor` is the same 2h `gt_sub_usage_fresh` uses (`lib/statusline.sh`),
+so the two surfaces can never disagree about whether a number is real.
 
 **Claude Code snapshots `modelPicker` ONCE, at launch** — verified live: editing
 a profile under a running pane left `/model` showing the old rows, and a row
-added after launch never appeared. Everything else here follows from that:
+added after launch never appeared. That is why quota never hides a row:
 
-- **Unknown is never exhausted.** `Quota.Known` is false for a source with no
-  cache, an unreadable one, a stale one, or a provider reporting no windows, and
-  `Exhausted()` requires it. A wrong hide cannot be undone until the next
-  launch, so offering a spent row costs one failed turn while hiding a working
-  subscription costs the whole session.
-- **The filter never empties the picker.** `replaceBuiltInOptions` leaves no
-  built-in row to fall back on, so `EnsureProfile` keeps the unfiltered options
-  whenever the filter would leave nothing — a deck whose subscriptions are all
-  spent still has rows. That is also why the TUI toggle needs no last-row guard,
-  unlike `toggleAllInRow`.
+- **A hidden row stays gone for the whole session.** A 5h window resets
+  mid-session, and a row dropped at launch cannot come back until the next one.
+  An earlier build dropped spent rows by default (`claude-allin.hide-exhausted`,
+  with a modal checkbox); both are gone, and an old sidecar on disk is ignored.
+  Guarded by `TestEnsureProfile_annotates_and_keeps_an_exhausted_source` and
+  `TestSubscriptionModal_allInOffersNoSpentFilter`.
 - **`Resolve` never reads usage**, exactly like a hidden row: a session whose
   saved picker default ran out mid-conversation must still finish its turn.
-  `Usage` is called from `profile.go` alone.
+  `Usage` is called from `profile.go` and the modal's checklist only.
 - **A quota belongs to a SOURCE, not a row.** `SourceKey` reduces a row to the
-  credential it spends, so one login's rows all carry the same number and all
-  vanish together.
+  credential it spends, so one login's rows all carry the same number.
 - **Nothing refreshes these caches at launch.** Opening a pane used to arm a
   round that fetched every login AND every enabled profile, so a deck spent a
   request per source on subscriptions the session never routes to, and read
@@ -820,26 +814,10 @@ added after launch never appeared. Everything else here follows from that:
   provider stub can be reached.
 - **So a number goes unknown rather than stale.** Past `usageFreshFor`,
   `quotaFromSnapshot` returns an empty `Quota` and `Known` is false, which drops
-  the `N% left` suffix and — since `Exhausted()` requires `Known` — makes the
-  spent-row filter inert. That is the safe direction the section above already
-  argues for: a wrong hide stands for a whole session, an offered spent row
-  costs one turn.
-
-The behavior is a checkbox in the modal's All-In block, stored beside the
-configs list as `claude-allin.hide-exhausted` — the same sidecar shape as
-`claude-allin.hidden`. **Absent means on**, and an unreadable file reads as on
-too. Like a hidden row it writes immediately and refreshes the profile, never
-going through the draft: it is a property of the machine, not of the profile
-being edited.
-
-`subscriptionDetailAllInHideSpent` (`internal/tui/subscription_modal.go`) had
-exactly one legal slot — after `subscriptionDetailImages` and before
-`subscriptionDetailAllInBase`, which is a span nothing may follow. It renders as
-the first line of the block, so every checklist row moved down one line and
-`subscriptionDetailCursorLine` moved with it.
+  the `N% left` suffix.
 
 Guarded by `internal/allin/usage_test.go`,
-`internal/tui/subscription_modal_allin_hidespent_test.go`,
+`internal/tui/subscription_modal_allin_usage_test.go`,
 `cmd/wisp-deck-tui/account_usage_cmd_test.go` and
 `cmd/wisp-deck-tui/claude_allin_test.go`.
 
@@ -858,7 +836,7 @@ come back whatever `EnsureProfile` writes, and both have been read as bugs once.
 - **The session's current model is re-added as its own row when it equals no
   option's `value`.** The comparison is verbatim, and the appended row is
   labelled from the model family, so it names no source and shows no quota.
-  Neither the hidden set nor the spent filter reaches it: both shape the options
+  The hidden set does not reach it: it shapes the options
   list, and this row is pushed after that list is curated. It still routes,
   because `Route` accepts an id with no marker, but a Claude row saved before
   `OneMillionMarker` existed now reaches the upstream without the 1M beta

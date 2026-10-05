@@ -3,7 +3,6 @@ package allin
 import (
 	"fmt"
 	"math"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,9 +19,8 @@ import (
 // live: editing a profile under a running pane left /model showing the old rows
 // and never showed a row added after launch. So an annotation is only ever as
 // fresh as the last EnsureProfile call, and a row can never be re-annotated
-// mid-session. That is why an unknown or stale reading is never allowed to hide
-// a row: the cost of hiding a working subscription until the next launch is far
-// worse than the cost of offering a spent one.
+// mid-session. That is why no reading ever hides a row: a hidden row stays
+// hidden until the next launch, even after its quota resets.
 
 // usageFreshFor bounds how old a cached snapshot may be and still be believed.
 // It matches gt_sub_usage_fresh's display gate in lib/statusline.sh, so the
@@ -36,9 +34,6 @@ type Quota struct {
 	LeftPercent int
 	Known       bool
 }
-
-// Exhausted reports a source with nothing left. Unknown is never exhausted.
-func (q Quota) Exhausted() bool { return q.Known && q.LeftPercent <= 0 }
 
 // Text is how a quota reads beside a row's label.
 func (q Quota) Text() string {
@@ -169,49 +164,4 @@ func AnnotateUsage(rows []Row, usage map[string]Quota) []Row {
 		out[i].Description = text
 	}
 	return out
-}
-
-// HideExhaustedFile is the sidecar recording whether spent subscriptions are
-// left out of the picker. It sits beside the configs list, like the hidden-rows
-// file, so every surface that knows the list can derive it.
-func HideExhaustedFile(listFile string) string {
-	if listFile == "" {
-		return ""
-	}
-	return filepath.Join(filepath.Dir(listFile), "claude-allin.hide-exhausted")
-}
-
-// LoadHideExhausted reads the setting. Absent means on: hiding a row nothing
-// can route is the behaviour the feature exists for, so a machine that never
-// touched the setting gets it.
-func LoadHideExhausted(path string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return true
-	}
-	return strings.TrimSpace(string(data)) != "0"
-}
-
-// SetHideExhausted writes the setting.
-func SetHideExhausted(path string, on bool) error {
-	if path == "" {
-		return fmt.Errorf("allin: no hide-exhausted path")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	value := "0\n"
-	if on {
-		value = "1\n"
-	}
-	return os.WriteFile(path, []byte(value), 0644)
-}
-
-// ToggleHideExhausted flips the setting and returns its new state.
-func ToggleHideExhausted(path string) (bool, error) {
-	on := !LoadHideExhausted(path)
-	if err := SetHideExhausted(path, on); err != nil {
-		return false, err
-	}
-	return on, nil
 }

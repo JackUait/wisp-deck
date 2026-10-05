@@ -23,19 +23,13 @@ import (
 // the two-cell cursor marker plus the four-cell checkbox.
 const subscriptionAllInRowIndent = 6
 
-// subscriptionAllInHideSpentLabel names the filter row. The renderer and the
-// mouse hit test both use it, so the two can never search for different text.
-const subscriptionAllInHideSpentLabel = "Hide subscriptions with no limits left"
-
 // subscriptionAllInState is the roster the checklist renders, which of its rows
-// are hidden, what each source has left, and whether spent sources are filtered
-// out. Reloaded on selection and on every toggle — all four follow the machine,
-// never the draft.
+// are hidden, and what each source has left. Reloaded on selection and on every
+// toggle — all three follow the machine, never the draft.
 type subscriptionAllInState struct {
-	rows      []allin.Row
-	hidden    map[string]bool
-	usage     map[string]allin.Quota
-	hideSpent bool
+	rows   []allin.Row
+	hidden map[string]bool
+	usage  map[string]allin.Quota
 }
 
 func (m *MainMenuModel) allInEnv() allin.Env {
@@ -67,10 +61,9 @@ func (m *MainMenuModel) loadAllInChecklist() {
 	}
 	env := m.allInEnv()
 	m.subscriptionModal.allIn = subscriptionAllInState{
-		rows:      allin.Roster(env),
-		hidden:    allin.LoadHidden(allin.HiddenFile(m.claudeConfigsList)),
-		usage:     allin.Usage(env, time.Now()),
-		hideSpent: allin.LoadHideExhausted(allin.HideExhaustedFile(m.claudeConfigsList)),
+		rows:   allin.Roster(env),
+		hidden: allin.LoadHidden(allin.HiddenFile(m.claudeConfigsList)),
+		usage:  allin.Usage(env, time.Now()),
 	}
 }
 
@@ -106,23 +99,6 @@ func (m *MainMenuModel) toggleAllInRow(index int) {
 	m.loadAllInChecklist()
 }
 
-// toggleAllInHideSpent flips whether a subscription with nothing left is left
-// out of the picker, and rewrites the profile. Unlike a hidden row this needs
-// no last-row guard: EnsureProfile keeps the filter off whenever it would empty
-// the picker, so a deck whose subscriptions are all spent still has rows.
-func (m *MainMenuModel) toggleAllInHideSpent() {
-	if m.claudeConfigsList == "" {
-		return
-	}
-	if _, err := allin.ToggleHideExhausted(allin.HideExhaustedFile(m.claudeConfigsList)); err != nil {
-		m.subscriptionModal.err = err
-		return
-	}
-	m.subscriptionModal.err = nil
-	m.ensureAllIn()
-	m.loadAllInChecklist()
-}
-
 // subscriptionAllInRowLabel is one row's label with what its subscription has
 // left. Quotas come from the same caches the generated picker is annotated
 // from, so the pane and /model always read the same number.
@@ -148,19 +124,7 @@ func subscriptionAllInRowText(label string, width int) string {
 
 func (m *MainMenuModel) subscriptionAllInChecklistLines(width int, accent, dim, green lipgloss.Style) []string {
 	state := m.subscriptionModal.allIn
-	lines := make([]string, 0, len(state.rows)+2)
-
-	marker, box, style := "  ", "[ ] ", dim
-	if m.subscriptionModal.mode == subscriptionBrowse &&
-		m.subscriptionModal.pane == subscriptionDetailsPane &&
-		m.subscriptionModal.detailCursor == subscriptionDetailAllInHideSpent {
-		marker = accent.Render("▌") + " "
-	}
-	if state.hideSpent {
-		box, style = "[x] ", green
-	}
-	lines = append(lines, marker+style.Render(box+
-		subscriptionAllInRowText(subscriptionAllInHideSpentLabel, width)))
+	lines := make([]string, 0, len(state.rows)+1)
 
 	for i, row := range state.rows {
 		marker := "  "

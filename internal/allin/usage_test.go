@@ -118,42 +118,6 @@ func TestAnnotateUsage_puts_what_is_left_in_the_description(t *testing.T) {
 	}
 }
 
-func TestHideExhaustedFile_sits_beside_the_configs_list(t *testing.T) {
-	got := HideExhaustedFile("/cfg/wisp-deck/claude-configs.list")
-	if want := "/cfg/wisp-deck/claude-allin.hide-exhausted"; got != want {
-		t.Fatalf("HideExhaustedFile = %q, want %q", got, want)
-	}
-	if HideExhaustedFile("") != "" {
-		t.Fatal("an unknown list must yield no path")
-	}
-}
-
-// The whole point of the feature is that an exhausted row is out of the way, so
-// a machine that has never touched the setting gets the hiding.
-func TestLoadHideExhausted_is_on_until_it_is_turned_off(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "claude-allin.hide-exhausted")
-	if !LoadHideExhausted(path) {
-		t.Fatal("a missing file must read as on")
-	}
-	off, err := ToggleHideExhausted(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if off {
-		t.Fatal("the first toggle must turn it off")
-	}
-	if LoadHideExhausted(path) {
-		t.Fatal("off did not survive a reload")
-	}
-	on, err := ToggleHideExhausted(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !on || !LoadHideExhausted(path) {
-		t.Fatal("the second toggle must turn it back on")
-	}
-}
-
 func pickerOptions(t *testing.T, path string) []Row {
 	t.Helper()
 	picker := readPicker(t, path)
@@ -168,7 +132,9 @@ func pickerOptions(t *testing.T, path string) []Row {
 	return rows
 }
 
-func TestEnsureProfile_annotates_and_drops_an_exhausted_source(t *testing.T) {
+// Claude Code reads the picker once per launch, so a row dropped for a spent
+// quota stays gone after the quota resets. A spent row is labelled, never hidden.
+func TestEnsureProfile_annotates_and_keeps_an_exhausted_source(t *testing.T) {
 	env := rosterEnv(t)
 	now := time.Now()
 	writeUsage(t, AccountUsageFile(env.ConfigsList, "personal"), subusage.Snapshot{
@@ -184,68 +150,20 @@ func TestEnsureProfile_annotates_and_drops_an_exhausted_source(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows := pickerOptions(t, filepath.Join(env.ConfigsDir, file))
-	for _, row := range rows {
+	kept := false
+	for _, row := range pickerOptions(t, filepath.Join(env.ConfigsDir, file)) {
 		if strings.HasPrefix(row.Model, "wisp/acct.personal/") {
-			t.Fatalf("an exhausted login stayed in the picker: %+v", row)
+			kept = true
+			if !strings.HasSuffix(row.Description, "0% left") {
+				t.Fatalf("an exhausted row must say so: %+v", row)
+			}
 		}
 		if strings.HasPrefix(row.Model, "wisp/acct.default/") &&
 			!strings.HasSuffix(row.Description, "75% left") {
 			t.Fatalf("a live login was not annotated: %+v", row)
 		}
 	}
-}
-
-func TestEnsureProfile_keeps_an_exhausted_source_when_the_setting_is_off(t *testing.T) {
-	env := rosterEnv(t)
-	now := time.Now()
-	writeUsage(t, AccountUsageFile(env.ConfigsList, "personal"), subusage.Snapshot{
-		RateLimits: subusage.RateLimits{FiveHour: &subusage.Window{UsedPercentage: 100, ResetAt: now.Add(time.Hour).Unix()}},
-		FetchedAt:  now.Unix(),
-	})
-	if _, err := ToggleHideExhausted(HideExhaustedFile(env.ConfigsList)); err != nil {
-		t.Fatal(err)
-	}
-
-	file, err := EnsureProfile(env, env.ConfigsList, env.ConfigsDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	kept := false
-	for _, row := range pickerOptions(t, filepath.Join(env.ConfigsDir, file)) {
-		if strings.HasPrefix(row.Model, "wisp/acct.personal/") {
-			kept = true
-			if !strings.HasSuffix(row.Description, "0% left") {
-				t.Fatalf("a kept exhausted row must still say so: %+v", row)
-			}
-		}
-	}
 	if !kept {
-		t.Fatal("the setting is off, so nothing may be dropped for exhaustion")
-	}
-}
-
-// replaceBuiltInOptions leaves nothing to fall back on, so a deck where every
-// subscription is spent must still offer its rows rather than an empty picker.
-func TestEnsureProfile_keeps_the_picker_usable_when_every_source_is_spent(t *testing.T) {
-	env := rosterEnv(t)
-	now := time.Now()
-	for _, dir := range []string{"default", "personal"} {
-		writeUsage(t, AccountUsageFile(env.ConfigsList, dir), subusage.Snapshot{
-			RateLimits: subusage.RateLimits{FiveHour: &subusage.Window{UsedPercentage: 100, ResetAt: now.Add(time.Hour).Unix()}},
-			FetchedAt:  now.Unix(),
-		})
-	}
-	writeUsage(t, ConfigUsageFile(env.ConfigsList, "zhipu-glm"), subusage.Snapshot{
-		RateLimits: subusage.RateLimits{FiveHour: &subusage.Window{UsedPercentage: 100, ResetAt: now.Add(time.Hour).Unix()}},
-		FetchedAt:  now.Unix(),
-	})
-
-	file, err := EnsureProfile(env, env.ConfigsList, env.ConfigsDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rows := pickerOptions(t, filepath.Join(env.ConfigsDir, file)); len(rows) == 0 {
-		t.Fatal("every row was dropped, leaving a picker with nothing to pick")
+		t.Fatal("an exhausted login was dropped from the picker")
 	}
 }

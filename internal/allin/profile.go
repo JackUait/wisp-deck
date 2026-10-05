@@ -71,22 +71,6 @@ func EnsureProfile(env Env, listFile, configsDir string) (string, error) {
 		}
 		options = append(options, row)
 	}
-	// A subscription with nothing left answers every turn with a limit error,
-	// so those rows are dropped unless the user turned the setting off. The
-	// filter is applied on top of the hidden set and only when something
-	// survives it: a deck whose subscriptions are all spent still needs a
-	// picker it can pick from.
-	if LoadHideExhausted(HideExhaustedFile(env.ConfigsList)) {
-		live := make([]Row, 0, len(options))
-		for _, row := range options {
-			if !usage[SourceKey(row.Model)].Exhausted() {
-				live = append(live, row)
-			}
-		}
-		if len(live) > 0 {
-			options = live
-		}
-	}
 	// replaceBuiltInOptions leaves no built-in row to fall back on, so an empty
 	// options list is a picker with nothing to pick, in a session that has no
 	// other way to change model. The modal refuses to hide the last row; a
