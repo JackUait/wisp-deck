@@ -938,3 +938,49 @@ when the stored access token differs from the one in memory it adopts the
 stored one (`tengu_oauth_token_refresh_race_resolved`) and never spends its
 in-memory refresh token. So the open pane picks up its slot's own login and
 does not cross the slots again. Re-check this after a claude upgrade.
+
+### A resumed conversation is put back on its own row, because Claude Code would not
+
+Measured on 2.1.289 against a capture server: `/model` prints "saved as your
+default for new sessions" and writes `model` into the config dir's
+`settings.json`; a RUNNING session ignores an outside change to that key; and
+`--resume` sends the whole conversation to the CURRENT value, not the row the
+conversation ran on — unless Claude Code can restore the model the
+transcript's REPLIES name. Through this router those are bare upstream ids:
+`claude-opus-5-5` for any Claude row, which it does restore and `Route` sends
+to the pane's OWN login (measured: the resumed turn reached
+api.anthropic.com on the session credential); a GPT or DeepSeek id, which it
+refuses ("could not be restored … using <settings model> instead"). Either
+way the row is lost. Every All-In pane runs under `~/.claude`, and the overlay
+carries no `model`, so every pane shares one value. A reboot restore, an
+account-switch relaunch or a respawn therefore moved a pane onto whatever row
+another pane picked last — a personal conversation onto the work login, a
+DeepSeek or GPT one onto Claude. Transcripts showed it happening for weeks.
+
+The fix keeps the row per conversation, not per pane:
+
+- **The router records it.** Every request carries `X-Claude-Code-Session-Id`
+  (`SessionHeader`). On a non-fast request whose model differs from the last
+  one seen for that session, the handler calls `FastRoute.Remember`, which
+  `claude-allin` points at `SessionRows` (`allin-session-rows/<sid>` beside the
+  accounts list). The call sits under `lastMu` so two quick picks are stored in
+  order; it runs per change, not per request.
+- **The launch reapplies it.** `build_ai_launch_cmd` passes
+  `--resume-session <sid>` to `claude-allin` only when `WISP_DECK_RESUME=1`.
+  `claude-allin` sets `ANTHROPIC_MODEL` to the stored row for the child.
+  Measured: `ANTHROPIC_MODEL` outranks the settings `model`, and an in-session
+  `/model` still outranks `ANTHROPIC_MODEL`, so the pick still works.
+- **Background calls before the first turn follow it.** `StartingRowFor`
+  prefers the session's row over the shared settings value.
+
+A NEW conversation still opens on the shared value. That is Claude Code's
+documented "default for new sessions", and the main turn and its background
+calls agree on it.
+
+Both values are validated: the id is spliced into a shell command, and the row
+becomes an environment value, so `SessionRows` and `gt_claude_launch_wrapper`
+refuse anything outside a plain id's characters, and `wisp/fast` is never
+stored. Guarded by `sessionrow_test.go`,
+`TestRouter_remembers_each_session_row_once_per_change`,
+`TestClaudeAllIn_resumes_a_session_on_the_row_it_last_ran_on` and
+`TestClaudeLaunch_tells_the_router_which_session_it_resumes`.

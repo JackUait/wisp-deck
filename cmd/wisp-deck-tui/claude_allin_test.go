@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackuait/wisp-deck/internal/allin"
 )
 
 // The child is launched against a live local router: proving the rewritten
@@ -160,5 +162,59 @@ func TestClaudeAllIn_fetches_no_usage_at_launch(t *testing.T) {
 	case path := <-hits:
 		t.Fatalf("the launch fetched usage from a subscription the session never picked: %s", path)
 	case <-time.After(2 * time.Second):
+	}
+}
+
+// Claude Code resumes a conversation on the shared settings.json model, which
+// any pane's /model pick overwrites. The launch must put the conversation back
+// on the row it last ran on.
+func TestClaudeAllIn_resumes_a_session_on_the_row_it_last_ran_on(t *testing.T) {
+	dir := t.TempDir()
+	settings := filepath.Join(dir, "overlay.json")
+	if err := os.WriteFile(settings, []byte(`{"env":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	accountsList := filepath.Join(dir, "claude-accounts.list")
+	const session = "d2b840fb-2662-4480-ad4b-f732a12f6f3f"
+	rows := allin.SessionRows{Dir: allin.SessionRowsDir(accountsList)}
+	if err := rows.Record(session, "wisp/acct.personal/claude-opus-5-5[1m]"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ANTHROPIC_MODEL", "")
+	var seen string
+	command := newClaudeAllInCommand(func([]string) error {
+		seen = os.Getenv("ANTHROPIC_MODEL")
+		return nil
+	})
+	command.SetArgs([]string{"--settings", settings, "--accounts-list", accountsList,
+		"--resume-session", session, "--", "true"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if seen != "wisp/acct.personal/claude-opus-5-5[1m]" {
+		t.Fatalf("child saw ANTHROPIC_MODEL=%q", seen)
+	}
+}
+
+func TestClaudeAllIn_leaves_the_model_alone_for_an_unknown_session(t *testing.T) {
+	dir := t.TempDir()
+	settings := filepath.Join(dir, "overlay.json")
+	if err := os.WriteFile(settings, []byte(`{"env":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ANTHROPIC_MODEL", "")
+	var seen string
+	command := newClaudeAllInCommand(func([]string) error {
+		seen = os.Getenv("ANTHROPIC_MODEL")
+		return nil
+	})
+	command.SetArgs([]string{"--settings", settings,
+		"--accounts-list", filepath.Join(dir, "claude-accounts.list"),
+		"--resume-session", "d2b840fb-2662-4480-ad4b-f732a12f6f3f", "--", "true"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if seen != "" {
+		t.Fatalf("child saw ANTHROPIC_MODEL=%q", seen)
 	}
 }

@@ -48,6 +48,9 @@ func NewObservingHandler(resolver Resolver, sessionUpstream string, observe func
 type FastRoute struct {
 	Start      Target
 	ConfigFast func(source string) string
+	// Remember is told each conversation's row when it changes, so a resume
+	// can put the conversation back on it. Nil remembers nothing.
+	Remember func(session, model string)
 }
 
 // NewRoutingHandler is NewObservingHandler plus fast-call routing. One handler
@@ -59,6 +62,7 @@ func NewRoutingHandler(resolver Resolver, sessionUpstream string, observe func(h
 	}
 	var lastMu sync.Mutex
 	last := fast.Start
+	remembered := map[string]string{}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if observe != nil {
 			auth := http.Header{}
@@ -97,11 +101,18 @@ func NewRoutingHandler(resolver Resolver, sessionUpstream string, observe func(h
 		model, _ := payload["model"].(string)
 		target := Route(model)
 		fastCall := target.Kind == KindFast
+		session := r.Header.Get(SessionHeader)
 		lastMu.Lock()
 		if fastCall {
 			target = fastTarget(last, fast.ConfigFast)
 		} else if model != "" {
 			last = target
+			// Under the lock, so two quick picks are stored in order. It runs
+			// only when a session's row changes, not per request.
+			if session != "" && fast.Remember != nil && remembered[session] != model {
+				remembered[session] = model
+				fast.Remember(session, model)
+			}
 		}
 		lastMu.Unlock()
 		// A session target skips the rewrite below, and the upstream must

@@ -217,3 +217,52 @@ func TestClaudeLaunchWrapper_passes_the_default_label_file_to_the_router(t *test
 	assertArgvHasToken(t, argv, "--default-label-file")
 	assertArgvHasToken(t, argv, filepath.Join(xdgHome, "wisp-deck", "claude-account-default-label"))
 }
+
+// Claude Code resumes on the shared settings.json model, which another pane's
+// /model pick overwrites. The router is told which conversation it resumes so
+// it can put that conversation back on its own row.
+func TestClaudeLaunch_tells_the_router_which_session_it_resumes(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := writeTempFile(t, dir, "overlay.json", allInPickerRow)
+	const session = "d2b840fb-2662-4480-ad4b-f732a12f6f3f"
+	env := buildEnv(t, nil,
+		"HOME=/home/tester",
+		"WISP_DECK_CLAUDE_PROVIDER=allin",
+		"WISP_DECK_CLAUDE_SETTINGS="+settingsPath,
+		"WISP_DECK_RESUME=1",
+		"WISP_DECK_RESUME_SESSION="+session,
+	)
+	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
+		[]string{"claude", "claude"}, env)
+	assertExitCode(t, code, 0)
+	got := strings.TrimSpace(out)
+	router := got[:strings.Index(got, " -- ")]
+	assertContains(t, router, "--resume-session "+session)
+}
+
+func TestClaudeLaunch_names_no_session_for_a_fresh_launch(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := writeTempFile(t, dir, "overlay.json", allInPickerRow)
+	env := buildEnv(t, nil,
+		"HOME=/home/tester",
+		"WISP_DECK_CLAUDE_PROVIDER=allin",
+		"WISP_DECK_CLAUDE_SETTINGS="+settingsPath,
+		"WISP_DECK_RESUME=0",
+		"WISP_DECK_RESUME_SESSION=d2b840fb-2662-4480-ad4b-f732a12f6f3f",
+	)
+	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
+		[]string{"claude", "claude"}, env)
+	assertExitCode(t, code, 0)
+	assertNotContains(t, out, "--resume-session")
+}
+
+// The id is spliced into a shell command, so anything that is not a plain
+// session id is dropped rather than quoted into it.
+func TestClaudeLaunchWrapper_drops_a_session_id_that_is_not_an_id(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := writeTempFile(t, dir, "overlay.json", allInPickerRow)
+	out, code := runBashFunc(t, "lib/tmux-session.sh", "gt_claude_launch_wrapper",
+		[]string{settingsPath, "", "x; touch /tmp/pwned"}, nil)
+	assertExitCode(t, code, 0)
+	assertNotContains(t, out, "--resume-session")
+}

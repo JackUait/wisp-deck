@@ -46,7 +46,7 @@ opencode_adapter_prefix() {
   esac
 }
 
-# gt_claude_launch_wrapper <settings_path> <provider_marker>
+# gt_claude_launch_wrapper <settings_path> <provider_marker> [resume_session]
 #
 # Print the argv prefix that wraps one Claude launch, or nothing. Gated on the
 # settings file itself holding wisp/acct. or wisp/cfg. picker rows (the exact
@@ -59,10 +59,16 @@ opencode_adapter_prefix() {
 # silently strips whichever proxy the OTHER branch would have applied.
 # Featherless keeps the role-repair proxy otherwise. The two never stack: the
 # router already forwards to whatever endpoint a row names.
+#
+# resume_session names the conversation a resume reopens. Claude Code resumes
+# on the shared settings.json model, which any pane's /model pick overwrites;
+# the router uses the id to put the conversation back on its own row. It is
+# dropped unless it looks like an id, because it is spliced into a command.
 gt_claude_launch_wrapper() {
-  local settings_path="$1" provider_marker="$2"
+  local settings_path="$1" provider_marker="$2" resume_session="${3:-}"
   local config_root="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
   local settings_q accounts_list_q accounts_dir_q configs_list_q configs_dir_q label_file_q
+  local resume_arg=""
 
   if [ -f "$settings_path" ] && grep -q 'wisp/acct\.\|wisp/cfg\.' "$settings_path" 2>/dev/null; then
     printf -v settings_q '%q' "$settings_path"
@@ -73,8 +79,12 @@ gt_claude_launch_wrapper() {
     # The router rewrites the profile when a model list changes; without the
     # tag file that rewrite labels the default login "Default".
     printf -v label_file_q '%q' "$config_root/claude-account-default-label"
-    printf 'wisp-deck-tui claude-allin --settings %s --accounts-list %s --accounts-dir %s --configs-list %s --configs-dir %s --default-label-file %s --' \
-      "$settings_q" "$accounts_list_q" "$accounts_dir_q" "$configs_list_q" "$configs_dir_q" "$label_file_q"
+    case "$resume_session" in
+      '' | *[!A-Za-z0-9-]*) ;;
+      *) resume_arg=" --resume-session $resume_session" ;;
+    esac
+    printf 'wisp-deck-tui claude-allin --settings %s --accounts-list %s --accounts-dir %s --configs-list %s --configs-dir %s --default-label-file %s%s --' \
+      "$settings_q" "$accounts_list_q" "$accounts_dir_q" "$configs_list_q" "$configs_dir_q" "$label_file_q" "$resume_arg"
     return 0
   fi
 
@@ -183,8 +193,9 @@ build_ai_launch_cmd() {
   # anything. Either proxy points this session's settings overlay at itself;
   # with no overlay there is nothing to redirect, so the launch is left alone.
   if [ "$tool" = "claude" ] && [ -n "${WISP_DECK_CLAUDE_SETTINGS:-}" ]; then
-    local wrapper_prefix
-    wrapper_prefix="$(gt_claude_launch_wrapper "$WISP_DECK_CLAUDE_SETTINGS" "${WISP_DECK_CLAUDE_PROVIDER:-}")"
+    local wrapper_prefix resume_session=""
+    [ "${WISP_DECK_RESUME:-0}" = "1" ] && resume_session="${WISP_DECK_RESUME_SESSION:-}"
+    wrapper_prefix="$(gt_claude_launch_wrapper "$WISP_DECK_CLAUDE_SETTINGS" "${WISP_DECK_CLAUDE_PROVIDER:-}" "$resume_session")"
     if [ -n "$wrapper_prefix" ]; then
       printf -v raw_q '%q' "$raw"
       raw="${wrapper_prefix} bash -c ${raw_q}"

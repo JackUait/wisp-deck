@@ -52,7 +52,7 @@ func newChatGPTBridge(codexPath string) allinBridge {
 func newClaudeAllInCommandWithBridge(
 	run claudeRolefixRunner, exit func(int), newBridge func(codexPath string) allinBridge,
 ) *cobra.Command {
-	var settingsPath, codexPath string
+	var settingsPath, codexPath, resumeSession string
 	var env allin.Env
 	command := &cobra.Command{
 		Use:          "claude-allin --settings PATH -- COMMAND [ARG...]",
@@ -87,9 +87,19 @@ func newClaudeAllInCommandWithBridge(
 					Store:       allin.KeychainLogins{},
 				})
 			}
+			rows := allin.SessionRows{Dir: allin.SessionRowsDir(env.AccountsList)}
+			// Claude Code resumes on the shared settings.json model, which
+			// any pane's /model pick overwrites. ANTHROPIC_MODEL outranks it
+			// and an in-session /model still outranks ANTHROPIC_MODEL.
+			if row := rows.Lookup(resumeSession); row != "" {
+				_ = os.Setenv("ANTHROPIC_MODEL", row)
+			}
 			fast := allin.FastRoute{
-				Start:      allin.StartingRow(allin.UserSettingsPath()),
+				Start:      allin.StartingRowFor(rows, resumeSession, allin.UserSettingsPath()),
 				ConfigFast: env.FastModelFor,
+			}
+			if rows.Dir != "" {
+				fast.Remember = func(session, model string) { _ = rows.Record(session, model) }
 			}
 			newHandler := func(upstream string) http.Handler {
 				return allin.NewRoutingHandler(resolver, upstream, observe, fast)
@@ -99,6 +109,8 @@ func newClaudeAllInCommandWithBridge(
 	}
 	flags := command.Flags()
 	flags.StringVar(&settingsPath, "settings", "", "launch settings overlay to point at the router")
+	flags.StringVar(&resumeSession, "resume-session", "",
+		"Claude session id this launch resumes; puts it back on its own row")
 	flags.StringVar(&codexPath, "codex", "", "absolute Codex executable path (defaults to WISP_DECK_CODEX_CMD)")
 	flags.StringVar(&env.AccountsList, "accounts-list", "", "name:dir list of Claude logins")
 	flags.StringVar(&env.AccountsDir, "accounts-dir", "", "directory holding each login's config dir")

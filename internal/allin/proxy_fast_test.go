@@ -137,3 +137,43 @@ func TestFastCall_on_the_session_login_never_sends_the_marker_upstream(t *testin
 		t.Fatalf("a session fast call resolved %+v", resolver.targets)
 	}
 }
+
+func postSessionModel(t *testing.T, handler http.Handler, session, model string) {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages",
+		strings.NewReader(`{"model":"`+model+`"}`))
+	request.Header.Set("Authorization", "Bearer session")
+	request.Header.Set(SessionHeader, session)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("%s: status %d: %s", model, recorder.Code, recorder.Body.String())
+	}
+}
+
+type rememberedRow struct{ session, model string }
+
+func TestRouter_remembers_each_session_row_once_per_change(t *testing.T) {
+	var got []rememberedRow
+	remember := func(session, model string) { got = append(got, rememberedRow{session, model}) }
+	handler, _, _ := fastFixture(t, FastRoute{Remember: remember})
+	postSessionModel(t, handler, "s1", "wisp/acct.personal/claude-opus-5-5[1m]")
+	postSessionModel(t, handler, "s1", "wisp/acct.personal/claude-opus-5-5[1m]")
+	postSessionModel(t, handler, "s1", FastModel)
+	postSessionModel(t, handler, "s2", "wisp/cfg.deepseek/deepseek-flash")
+	postSessionModel(t, handler, "s1", "wisp/acct.default/claude-opus-5-5[1m]")
+	postModel(t, handler, "wisp/acct.default/claude-fable-5-1")
+	want := []rememberedRow{
+		{"s1", "wisp/acct.personal/claude-opus-5-5[1m]"},
+		{"s2", "wisp/cfg.deepseek/deepseek-flash"},
+		{"s1", "wisp/acct.default/claude-opus-5-5[1m]"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("remembered %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("remembered %+v, want %+v", got, want)
+		}
+	}
+}
