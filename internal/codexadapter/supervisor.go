@@ -989,9 +989,14 @@ func waitForCodexSocketOrServer(
 	}
 	for {
 		info, err := os.Lstat(socketPath)
+		if err == nil && info.Mode()&os.ModeSymlink != 0 {
+			// Codex 0.160+ binds under its own /tmp/codex-daemon-<uid>/ and leaves
+			// a symlink here. It may name a socket that is not bound yet.
+			info, err = privateSocketTarget(socketPath)
+		}
 		switch {
 		case err == nil:
-			if info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeSocket == 0 {
+			if info.Mode()&os.ModeSocket == 0 {
 				return errors.New("app-server path is not a Unix socket")
 			}
 			if err := os.Chmod(socketPath, 0o600); err != nil {
@@ -1019,6 +1024,33 @@ func waitForCodexSocketOrServer(
 			return fmt.Errorf("wait for app-server socket: %w", ctx.Err())
 		}
 	}
+}
+
+// privateSocketTarget follows the symlink Codex leaves at the listen path. The
+// target must be ours, in a directory nobody else can write to, or another user
+// could swap in a socket of their own.
+func privateSocketTarget(link string) (os.FileInfo, error) {
+	target, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := os.Stat(filepath.Dir(target))
+	if err != nil {
+		return nil, err
+	}
+	if !ownedByCurrentUser(info) || !ownedByCurrentUser(dir) || dir.Mode().Perm()&0o022 != 0 {
+		return nil, errors.New("app-server socket symlink leaves a private location")
+	}
+	return info, nil
+}
+
+func ownedByCurrentUser(info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && int(stat.Uid) == os.Getuid()
 }
 
 func openCodexErrorLog(path string) (*os.File, error) {
