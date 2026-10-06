@@ -143,6 +143,29 @@ func TestModelCostUSD_opus55UsesItsOwnRates(t *testing.T) {
 	}
 }
 
+func TestModelCostUSD_gpt6TiersHaveTheirOwnRates(t *testing.T) {
+	cases := []struct {
+		model              string
+		in, out, cacheRead float64
+	}{
+		{"gpt-6-astra", 10, 50, 1},
+		{"gpt-6-sol", 2, 10, 0.20},
+		{"gpt-6-luna", 0.10, 0.50, 0.01},
+	}
+	for _, c := range cases {
+		for i := 0; i < 30; i++ { // map order is randomized; hammer it
+			usd, priced := ModelCostUSD(ModelUsage{Model: c.model, Input: 1_000_000, Output: 1_000_000})
+			if !priced || !approx(usd, c.in+c.out) {
+				t.Fatalf("%s in+out = %v priced=%v, want %v", c.model, usd, priced, c.in+c.out)
+			}
+		}
+		usd, _ := ModelCostUSD(ModelUsage{Model: c.model, CacheRead: 1_000_000})
+		if !approx(usd, c.cacheRead) {
+			t.Errorf("%s cacheRead = %v, want %v", c.model, usd, c.cacheRead)
+		}
+	}
+}
+
 func TestModelCostUSD_sonnet5CacheReadIsTenthOfItsInput(t *testing.T) {
 	usd, _ := ModelCostUSD(ModelUsage{Model: "claude-sonnet-5", CacheRead: 1_000_000})
 	if !approx(usd, 0.20) {

@@ -62,8 +62,13 @@ var modelRates = map[string]modelRate{
 	// The gpt-6 tier, which "gpt-5" does not prefix-match at all — without an
 	// entry Astra prices as $0. Its published rate doubles above 272K input
 	// tokens; that tier is not modeled, because ChatGPT access through the
-	// bridge is notional rather than metered.
-	"gpt-6": {10, 50},
+	// bridge is notional rather than metered. Sol and Luna need their own
+	// entries: the bare "gpt-6" prefix would bill them at Astra's rate, 5x and
+	// 100x too high. Sourced 2026-10-06 from pricing aggregators; OpenAI's own
+	// page was unreachable.
+	"gpt-6":      {10, 50},
+	"gpt-6-sol":  {2, 10},
+	"gpt-6-luna": {0.1, 0.5},
 	// Codex "-codex" variants share their base gpt-5.x rate via prefix match, EXCEPT
 	// the mini tier, which is 5x cheaper and needs its own longer-prefix entry so it
 	// is not priced at the full gpt-5.1 rate.

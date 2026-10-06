@@ -132,6 +132,28 @@ func TestParseFile_dedupsByMessageID(t *testing.T) {
 	}
 }
 
+func TestParseFile_countsAMessageFromItsFinalLine(t *testing.T) {
+	dir := t.TempDir()
+	// Claude Code shape: a streaming snapshot first (output_tokens 3, no
+	// iterations), then the final line with stop_reason, the real output count,
+	// and an advisor round that only the final line's iterations carry.
+	content := `{"type":"assistant","timestamp":"2026-10-05T10:16:56.473Z","message":{"id":"m","model":"claude-opus-5-5","stop_reason":null,"usage":{"input_tokens":2,"output_tokens":3,"cache_creation_input_tokens":2620,"cache_read_input_tokens":130843}}}
+{"type":"assistant","timestamp":"2026-10-05T10:16:57.000Z","message":{"id":"m","model":"claude-opus-5-5","stop_reason":"tool_use","usage":{"input_tokens":4,"output_tokens":1145,"cache_creation_input_tokens":4743,"cache_read_input_tokens":264306,"iterations":[{"type":"message","input_tokens":2,"output_tokens":534,"cache_read_input_tokens":130843,"cache_creation_input_tokens":2620},{"type":"advisor_message","model":"claude-opus-5-5","input_tokens":135831,"output_tokens":9451,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},{"type":"message","input_tokens":2,"output_tokens":611,"cache_read_input_tokens":133463,"cache_creation_input_tokens":2123}]}}}
+`
+	p := writeFixture(t, dir, "s.jsonl", content)
+	months, _, err := ParseFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oct := months["2026-10"]
+	if oct == nil {
+		t.Fatal("no October usage")
+	}
+	if oct.Input != 135835 || oct.Output != 10596 || oct.CacheWrite != 4743 || oct.CacheRead != 264306 {
+		t.Errorf("Oct = %+v, want in135835 out10596 cw4743 cr264306", oct)
+	}
+}
+
 func TestParseFile_skipsNonAssistantNoUsageAndMalformed(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"type":"user","timestamp":"2026-05-01T10:00:00.000Z","message":{"id":"u"}}

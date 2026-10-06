@@ -141,8 +141,11 @@ func addCounts(byModel map[string]*ModelUsage, model string, c usageCounts) {
 
 // ParseFile reads a single .jsonl transcript and aggregates token usage by month
 // and by model. Non-assistant records, records without usage, and malformed lines
-// are skipped. Assistant records are deduped by message.id within this file. A
-// record with no model id is attributed to "unknown".
+// are skipped. Assistant records are deduped by message.id within this file, and
+// the LAST line for an id wins: Claude Code writes a streaming snapshot first
+// (output_tokens of a few tokens, no iterations), and only the final line holds
+// the real output count and the advisor rounds in iterations. A record with no
+// model id is attributed to "unknown".
 func ParseFile(path string) (map[string]*MonthlyUsage, FileMeta, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -156,9 +159,9 @@ func ParseFile(path string) (map[string]*MonthlyUsage, FileMeta, error) {
 	}
 	meta := FileMeta{ModTime: info.ModTime(), Size: info.Size()}
 
-	// month -> model -> accumulator
-	acc := map[string]map[string]*ModelUsage{}
-	seen := map[string]bool{}
+	// Kept in first-seen order; a later line for the same id replaces the record.
+	var records []transcriptRecord
+	index := map[string]int{}
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
@@ -175,11 +178,21 @@ func ParseFile(path string) (map[string]*MonthlyUsage, FileMeta, error) {
 			continue
 		}
 		if id := rec.Message.ID; id != "" {
-			if seen[id] {
+			if i, ok := index[id]; ok {
+				records[i] = rec
 				continue
 			}
-			seen[id] = true
+			index[id] = len(records)
 		}
+		records = append(records, rec)
+	}
+	if err := sc.Err(); err != nil {
+		return nil, meta, err
+	}
+
+	// month -> model -> accumulator
+	acc := map[string]map[string]*ModelUsage{}
+	for _, rec := range records {
 		month := rec.Timestamp[:7]
 		byModel := acc[month]
 		if byModel == nil {
@@ -210,9 +223,6 @@ func ParseFile(path string) (map[string]*MonthlyUsage, FileMeta, error) {
 			}
 			addCounts(byModel, model, u.usageCounts)
 		}
-	}
-	if err := sc.Err(); err != nil {
-		return nil, meta, err
 	}
 
 	months := make(map[string]*MonthlyUsage, len(acc))

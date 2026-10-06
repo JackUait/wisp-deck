@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 )
 
-// cacheVersion is 7: ParseCodexRollout now discards the replayed history that
-// forked/resumed/compacted Codex rollouts dump at load, which had inflated a real
-// month's Codex usage 31x. Every v6 entry counted those replays, so v6 caches must
-// rebuild; the bump also outranks v6 journal sources (see historySource ordering).
-// LoadCache rejects a mismatched version.
-const cacheVersion = 7
+// cacheVersion is 8: ParseFile now counts a Claude message from its LAST line,
+// not its first streaming snapshot, which had undercounted output and dropped
+// advisor rounds. Every v7 entry holds the snapshot counts, so v7 caches must
+// rebuild; the bump also outranks v7 journal sources (see historySource
+// ordering). LoadCache rejects a mismatched version.
+const cacheVersion = 8
 
 // fileCacheEntry stores one transcript file's identity and its parsed months.
 type fileCacheEntry struct {
