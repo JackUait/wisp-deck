@@ -151,6 +151,7 @@ func TestModelCostUSD_gpt6TiersHaveTheirOwnRates(t *testing.T) {
 		{"gpt-6-astra", 10, 50, 1},
 		{"gpt-6-sol", 2, 10, 0.20},
 		{"gpt-6-luna", 0.10, 0.50, 0.01},
+		{"gpt-6.1-sol", 2, 10, 0.10}, // cached input is half the 6 Sol rate
 	}
 	for _, c := range cases {
 		for i := 0; i < 30; i++ { // map order is randomized; hammer it

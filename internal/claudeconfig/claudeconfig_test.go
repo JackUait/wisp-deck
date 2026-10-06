@@ -389,6 +389,7 @@ func TestOpenAIProviderModelsAndLimits(t *testing.T) {
 	// id here that it does not serve is a picker row that 400s. Probed against
 	// 0.153.4 on 2026-09-08; gpt-5.4 was in this list and is not served.
 	want := []string{
+		"gpt-6.1-sol",
 		"gpt-6-astra",
 		"gpt-6-sol",
 		"gpt-6-luna",

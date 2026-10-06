@@ -72,6 +72,7 @@ var modelRates = map[string]modelRate{
 	"gpt-6-astra": {10, 50},
 	"gpt-6-sol":   {2, 10},
 	"gpt-6-luna":  {0.1, 0.5},
+	"gpt-6.1-sol": {2, 10},
 	// Codex "-codex" variants share their base gpt-5.x rate via prefix match, EXCEPT
 	// the mini tier, which is 5x cheaper and needs its own longer-prefix entry so it
 	// is not priced at the full gpt-5.1 rate.
@@ -180,6 +181,8 @@ const (
 var cacheReadPerMTok = map[string]float64{
 	"claude-fable-5-1": 0.25,
 	"claude-opus-5-5":  0.20,
+	// Half the 6 Sol cache-read rate; sourced 2026-10-06 from a pricing aggregator.
+	"gpt-6.1-sol": 0.10,
 }
 
 // cacheReadRateFor returns the per-token cache-read price for a model: its own
