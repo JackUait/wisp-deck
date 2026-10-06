@@ -129,14 +129,34 @@ func TestClaudeGPTLaunchDoesNotChangeOtherProviders(t *testing.T) {
 func TestClaudeGPTLaunchRequiresAbsoluteCodexPath(t *testing.T) {
 	for _, codex := range []string{"", "codex"} {
 		t.Run(codex, func(t *testing.T) {
+			// A PATH with no codex: the launch looks Codex up itself when the
+			// session env names none, and this machine has a real one.
 			out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
-				[]string{"claude", "claude"}, chatGPTLaunchEnv(t, "WISP_DECK_CODEX_CMD="+codex))
+				[]string{"claude", "claude"}, chatGPTLaunchEnv(t,
+					"WISP_DECK_CODEX_CMD="+codex, "PATH=/usr/bin:/bin"))
 			if code == 0 {
 				t.Fatalf("invalid Codex path accepted: %q", out)
 			}
 			assertContains(t, out, "Codex")
 			assertContains(t, out, "relaunch")
 			assertNotContains(t, out, "codex login")
+		})
+	}
+}
+
+// WISP_DECK_CODEX_CMD is fixed when a tab opens. A tab opened while Codex was
+// being reinstalled carries it empty for life, so every later launch in it (a
+// new window, a switch, a pane rebuild) must find Codex on its own.
+func TestClaudeGPTLaunchFindsCodexWhenTheSessionEnvNamesNone(t *testing.T) {
+	dir := t.TempDir()
+	bin := mockCommand(t, dir, "codex", "exit 0")
+	for _, codex := range []string{"", "codex"} {
+		t.Run(codex, func(t *testing.T) {
+			out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
+				[]string{"claude", "claude"}, chatGPTLaunchEnv(t,
+					"WISP_DECK_CODEX_CMD="+codex, "PATH="+bin+":/usr/bin:/bin"))
+			assertExitCode(t, code, 0)
+			assertContains(t, out, "claude-gpt-adapter --codex "+filepath.Join(bin, "codex"))
 		})
 	}
 }

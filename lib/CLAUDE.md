@@ -417,3 +417,20 @@ unrestoreable chat. A restored Codex tab may launch an exact
 never fall back to plain Codex: a plain launch silently replaces the lost
 conversation with an empty one. Guarded by
 `test/bash/codex_crash_restore_test.go` and the Codex supervisor tests.
+
+### A pane started from an empty command dies, and nothing says why
+
+Every AI pane starts as `"$cmd; exec bash"`. A launch builder that fails prints
+nothing, and `cmd="$(builder)"` carries on with an empty string, so tmux runs
+`; exec bash` — a syntax error. The pane exits at once and its agent is gone.
+This shipped: a switch to the ChatGPT subscription found no Codex path, the
+builder failed, `build_switch_launch_cmd` returned 0 anyway, and the user saw
+Claude Code crash. Test the command for emptiness before every launch, and keep
+the running agent when it is empty. `TestEveryPaneLaunchRefusesAnEmptyCommand`
+scans `lib/` and `wrapper.sh` and fails on a site with no such test.
+
+Codex's path is the usual reason a build fails. `WISP_DECK_CODEX_CMD` is fixed
+once, when the tab opens, and stays empty for the tab's life if Codex was being
+reinstalled at that moment. Never treat it as the only answer: the ChatGPT
+launch (`build_ai_launch_cmd`), the subscription switch (`_apply_subscription`)
+and `claude-allin` each look Codex up again when it is empty.

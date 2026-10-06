@@ -171,6 +171,18 @@ build_ai_launch_cmd() {
   if [ "$tool" = "claude" ] \
      && [ "${WISP_DECK_CLAUDE_PROVIDER:-}" = "openai-chatgpt" ]; then
     local codex_cmd="${WISP_DECK_CODEX_CMD:-}" codex_q
+    # WISP_DECK_CODEX_CMD is fixed when the tab opens, and empty for life if
+    # Codex was mid-reinstall then. Look again rather than fail every launch.
+    case "$codex_cmd" in
+      /*) ;;
+      *)
+        if declare -f resolve_agent_cmd >/dev/null 2>&1; then
+          codex_cmd="$(resolve_agent_cmd codex "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck/codex-cmd")" || codex_cmd=""
+        else
+          codex_cmd="$(command -v codex 2>/dev/null)" || codex_cmd=""
+        fi
+        ;;
+    esac
     case "$codex_cmd" in
       /*) ;;
       *)
@@ -393,6 +405,8 @@ gt_ensure_panes_watch() {
   local interval="${6:-0.25}" max_ticks="${7:-60}"
   local i=0 out panes width height seen=0 healed=0
   local ledger new_pane ai_pane first non_ai p mark
+  # An empty command would rebuild the AI pane as "; exec bash", which dies.
+  [ -n "$ai_cmd" ] || return 0
   while [ "$i" -lt "$max_ticks" ]; do
     i=$((i + 1))
     # Empty output is treated like a failed query (a real tmux either errors

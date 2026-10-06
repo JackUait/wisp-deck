@@ -598,6 +598,12 @@ case "$SELECTED_AI_TOOL" in
     }
     ;;
 esac
+# A builder that fails prints nothing; an empty command starts the AI pane as
+# "; exec bash", which dies on the spot.
+if [ -z "$AI_LAUNCH_CMD" ]; then
+  printf '\033[31mError:\033[0m Could not prepare the %s launch command.\n' "$SELECTED_AI_TOOL" >&3
+  exit 1
+fi
 
 # Ghostty is the only supported terminal; the snapshot's terminal field is
 # kept for backward compatibility with restore.
