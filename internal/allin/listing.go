@@ -106,6 +106,12 @@ func ReadCodexModels(path string) ([]Listed, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	return ParseCodexModels(data)
+}
+
+// ParseCodexModels parses Codex's model catalog JSON: the models_cache.json
+// file, or what `codex debug models` prints (which carries no client_version).
+func ParseCodexModels(data []byte) ([]Listed, string, error) {
 	var cache struct {
 		ClientVersion string `json:"client_version"`
 		Models        []struct {

@@ -13,9 +13,13 @@ const modelListMaxAge = 12 * time.Hour
 
 // ModelRefresher keeps allin-models.json current from inside the router.
 type ModelRefresher struct {
-	Env          Env
-	Client       *http.Client
-	CodexCache   string
+	Env        Env
+	Client     *http.Client
+	CodexCache string
+	// CodexList asks the bridge's own Codex for the models it serves. When
+	// set, the shared CodexCache file is not read: other Codex versions on the
+	// machine write it too.
+	CodexList    func() ([]Listed, error)
 	AnthropicURL string
 	Now          func() time.Time
 	Ensure       func(Env) error
@@ -77,6 +81,11 @@ func (r *ModelRefresher) Refresh(sessionAuth http.Header) bool {
 		// A local read, so no age gate: Codex's cache changes when Codex is
 		// upgraded, and a new model must not wait out modelListMaxAge.
 		if rc.Provider.Auth == claudeconfig.AuthCodexChatGPT {
+			if r.CodexList != nil {
+				models, err := r.CodexList()
+				store(key, models, err)
+				continue
+			}
 			// The ChatGPT desktop app's bundled, older Codex writes the same
 			// file, and the bridge serves through the CLI. Keep the list from
 			// the newest client that wrote it.

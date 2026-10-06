@@ -1,6 +1,7 @@
 package allin
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -186,6 +187,44 @@ func TestRefresh_keeps_the_codex_list_an_older_client_would_overwrite(t *testing
 	}
 	if got := refresh(`{"client_version":"0.161.0","models":[{"slug":"gpt-7","visibility":"list"}]}`); len(got) != 1 || got[0] != "gpt-7" {
 		t.Fatalf("a newer client must replace the list: %v", got)
+	}
+}
+
+// Three Codex versions write models_cache.json on one machine (the CLI, the
+// old app-servers of panes still open, the desktop app's bundled copy), so a
+// lister that asks the bridge's own Codex wins over the shared file.
+func TestRefresh_asks_the_codex_lister_instead_of_the_shared_file(t *testing.T) {
+	env := rosterEnv(t)
+	if err := os.WriteFile(env.ConfigsList, []byte("OpenAI / ChatGPT:openai-chatgpt.json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	profile := `{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"openai-chatgpt"}}`
+	if err := os.WriteFile(filepath.Join(env.ConfigsDir, "openai-chatgpt.json"), []byte(profile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	codex := filepath.Join(t.TempDir(), "models_cache.json")
+	if err := os.WriteFile(codex, []byte(`{"client_version":"9.9.9","models":[{"slug":"from-the-file","visibility":"list"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	listErr := error(nil)
+	r := &ModelRefresher{Env: env, Client: http.DefaultClient, CodexCache: codex,
+		CodexList: func() ([]Listed, error) {
+			if listErr != nil {
+				return nil, listErr
+			}
+			return []Listed{{ID: "gpt-6.1-sol"}}, nil
+		},
+		Now: func() time.Time { return now }, Ensure: func(Env) error { return nil }}
+	key := configCacheKey("openai-chatgpt.json")
+	r.Refresh(nil)
+	if got := ids(LoadModelCache(ModelCachePath(env))[key].Models); len(got) != 1 || got[0] != "gpt-6.1-sol" {
+		t.Fatalf("chatgpt entry = %v, want the lister's list", got)
+	}
+	listErr = errors.New("codex failed")
+	r.Refresh(nil)
+	if got := ids(LoadModelCache(ModelCachePath(env))[key].Models); len(got) != 1 || got[0] != "gpt-6.1-sol" {
+		t.Fatalf("a failed lister must keep the old entry, never fall back to the file: %v", got)
 	}
 }
 

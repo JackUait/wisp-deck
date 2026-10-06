@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -73,6 +75,7 @@ func newClaudeAllInCommandWithBridge(
 					Env:        env,
 					Client:     &http.Client{Timeout: 15 * time.Second},
 					CodexCache: codexModelsCache(),
+					CodexList:  codexModelLister(sessionCodexPath(codexPath)),
 					Now:        time.Now,
 					Ensure:     allin.EnsureProfileIfEligible,
 				}
@@ -144,6 +147,30 @@ func sessionCodexPath(override string) string {
 		return ""
 	}
 	return path
+}
+
+// codexModelListTimeout bounds `codex debug models`, which fetches the live
+// list (~0.7s warm). It runs in the background refresh, never on a turn.
+const codexModelListTimeout = 30 * time.Second
+
+// codexModelLister asks the bridge's own Codex which models it serves. The
+// shared models_cache.json cannot answer that: the ChatGPT desktop app's
+// bundled Codex and the app-servers of panes opened before an upgrade write
+// it too, each with the shorter list their older client is offered.
+func codexModelLister(codexPath string) func() ([]allin.Listed, error) {
+	if codexPath == "" {
+		return nil
+	}
+	return func() ([]allin.Listed, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), codexModelListTimeout)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, codexPath, "debug", "models").Output()
+		if err != nil {
+			return nil, err
+		}
+		models, _, err := allin.ParseCodexModels(out)
+		return models, err
+	}
 }
 
 // codexModelsCache is the list Codex fetches and caches for itself. Reading it

@@ -10957,6 +10957,7 @@ func unauditedProductionProcessCalls(root, path string, source []byte) []string 
 
 func auditedProductionProcessCalls() map[string]int {
 	return map[string]int{
+		`cmd/wisp-deck-tui/claude_allin.go:codexModelLister:exec.CommandContext(ctx, codexPath, "debug", "models")`:                                                                                                            1,
 		`cmd/wisp-deck-tui/claude_background.go:runClaudeBackgroundAgents:exec.CommandContext(ctx, claude, "agents", "--json", "--all")`:                                                                                       1,
 		`cmd/wisp-deck-tui/claude_background.go:claudeBackgroundProcessStart:exec.CommandContext(ctx, "/bin/ps", "-p", strconv.Itoa(pid), "-o", "lstart=")`:                                                                    1,
 		`cmd/wisp-deck-tui/host_effects.go:runHostEffect:exec.CommandContext(ctx, plan.executable, plan.arguments...)`:                                                                                                         1,

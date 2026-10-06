@@ -916,11 +916,17 @@ new model reaches the picker on the NEXT All-In launch after a refresh.
 - A failed or empty listing keeps the old entry, so a refresh never empties a
   source. Guarded by `TestRefresh_keeps_the_old_entry_when_a_listing_is_empty`.
 - DeepSeek's `/anthropic` base has no model list; `Provider.ModelsURL` names the
-  one it does have. ChatGPT is read from Codex's own `models_cache.json`, so no
-  app-server starts. The ChatGPT desktop app bundles an older Codex that
-  rewrites that same file with the shorter list its client version is offered,
-  so the entry records `client_version` and an older writer never replaces it.
-  Guarded by `TestRefresh_keeps_the_codex_list_an_older_client_would_overwrite`.
+  one it does have. ChatGPT is listed by running the bridge's own Codex
+  (`codex debug models`, ~0.7s, in the background refresh), never by trusting
+  the shared `~/.codex/models_cache.json`. Three Codex versions wrote that file
+  on one machine at once: the CLI, the app-servers of panes opened before an
+  upgrade, and the ChatGPT desktop app's bundled copy. Each wrote the shorter
+  list its client version is offered, and All-In showed whichever came last.
+  A failed listing keeps the old entry; it never falls back to the file. The
+  file (with its `client_version` gate) is read only when no Codex path is
+  known. Guarded by `TestRefresh_asks_the_codex_lister_instead_of_the_shared_file`,
+  `TestRefresh_keeps_the_codex_list_an_older_client_would_overwrite`, and
+  `TestCodexModelLister_asks_the_bridge_codex`.
 - The refresher is only built when `currentHostEffectsDecision().Allowed`, so a
   test binary never reaches a real endpoint or rewrites a real profile.
 
