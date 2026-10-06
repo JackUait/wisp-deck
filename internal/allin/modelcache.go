@@ -19,6 +19,8 @@ func configCacheKey(file string) string {
 type CacheEntry struct {
 	FetchedAt time.Time `json:"fetched_at"`
 	Models    []Listed  `json:"models"`
+	// ClientVersion is the Codex client that wrote a ChatGPT list.
+	ClientVersion string `json:"client_version,omitempty"`
 }
 
 // ModelCache holds every source's last good list, keyed by source.

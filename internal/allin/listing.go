@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -96,15 +98,17 @@ func FetchListing(client *http.Client, listURL string, auth http.Header) ([]List
 	return out, nil
 }
 
-// ReadCodexModels reads the model list Codex caches for itself. Only rows it
-// shows in its own picker are kept; hidden ones are internal.
-func ReadCodexModels(path string) ([]Listed, error) {
+// ReadCodexModels reads the model list Codex caches for itself, and the
+// version of the Codex client that wrote it. Only rows it shows in its own
+// picker are kept; hidden ones are internal.
+func ReadCodexModels(path string) ([]Listed, string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var cache struct {
-		Models []struct {
+		ClientVersion string `json:"client_version"`
+		Models        []struct {
 			Slug          string `json:"slug"`
 			DisplayName   string `json:"display_name"`
 			Visibility    string `json:"visibility"`
@@ -112,7 +116,7 @@ func ReadCodexModels(path string) ([]Listed, error) {
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(data, &cache); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var out []Listed
 	for _, m := range cache.Models {
@@ -121,5 +125,38 @@ func ReadCodexModels(path string) ([]Listed, error) {
 		}
 		out = append(out, Listed{ID: m.Slug, Label: m.DisplayName, Context: m.ContextWindow})
 	}
-	return out, nil
+	return out, cache.ClientVersion, nil
+}
+
+// olderCodexVersion reports whether version a is below b, comparing dotted
+// numeric parts. An unparseable or empty version is never older, so a cache
+// without one still updates the list.
+func olderCodexVersion(a, b string) bool {
+	pa, okA := codexVersionParts(a)
+	pb, okB := codexVersionParts(b)
+	if !okA || !okB {
+		return false
+	}
+	for i := range pa {
+		if pa[i] != pb[i] {
+			return pa[i] < pb[i]
+		}
+	}
+	return false
+}
+
+func codexVersionParts(v string) ([3]int, bool) {
+	var parts [3]int
+	fields := strings.Split(v, ".")
+	if len(fields) != 3 {
+		return parts, false
+	}
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			return parts, false
+		}
+		parts[i] = n
+	}
+	return parts, true
 }

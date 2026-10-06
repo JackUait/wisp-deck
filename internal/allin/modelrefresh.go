@@ -77,8 +77,18 @@ func (r *ModelRefresher) Refresh(sessionAuth http.Header) bool {
 		// A local read, so no age gate: Codex's cache changes when Codex is
 		// upgraded, and a new model must not wait out modelListMaxAge.
 		if rc.Provider.Auth == claudeconfig.AuthCodexChatGPT {
-			models, err := ReadCodexModels(r.CodexCache)
+			// The ChatGPT desktop app's bundled, older Codex writes the same
+			// file, and the bridge serves through the CLI. Keep the list from
+			// the newest client that wrote it.
+			models, version, err := ReadCodexModels(r.CodexCache)
+			if olderCodexVersion(version, cache[key].ClientVersion) {
+				continue
+			}
 			store(key, models, err)
+			if entry, ok := cache[key]; ok && err == nil && len(models) > 0 {
+				entry.ClientVersion = version
+				cache[key] = entry
+			}
 			continue
 		}
 		if cache.Fresh(key, now, modelListMaxAge) {

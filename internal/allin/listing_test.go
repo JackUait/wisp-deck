@@ -78,14 +78,14 @@ func TestReadCodexModels_keeps_only_listed_rows(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ReadCodexModels(path)
+	got, _, err := ReadCodexModels(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 1 || got[0].ID != "gpt-6-astra" || got[0].Label != "GPT-6-Astra" || got[0].Context != 272000 {
 		t.Fatalf("got %+v", got)
 	}
-	if _, err := ReadCodexModels(filepath.Join(t.TempDir(), "missing.json")); err == nil {
+	if _, _, err := ReadCodexModels(filepath.Join(t.TempDir(), "missing.json")); err == nil {
 		t.Fatal("want an error for a missing file")
 	}
 }

@@ -917,7 +917,10 @@ new model reaches the picker on the NEXT All-In launch after a refresh.
   source. Guarded by `TestRefresh_keeps_the_old_entry_when_a_listing_is_empty`.
 - DeepSeek's `/anthropic` base has no model list; `Provider.ModelsURL` names the
   one it does have. ChatGPT is read from Codex's own `models_cache.json`, so no
-  app-server starts.
+  app-server starts. The ChatGPT desktop app bundles an older Codex that
+  rewrites that same file with the shorter list its client version is offered,
+  so the entry records `client_version` and an older writer never replaces it.
+  Guarded by `TestRefresh_keeps_the_codex_list_an_older_client_would_overwrite`.
 - The refresher is only built when `currentHostEffectsDecision().Allowed`, so a
   test binary never reaches a real endpoint or rewrites a real profile.
 

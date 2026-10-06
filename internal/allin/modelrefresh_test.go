@@ -148,6 +148,47 @@ func TestRefresh_rereads_the_codex_cache_even_when_the_entry_is_fresh(t *testing
 	}
 }
 
+// The ChatGPT desktop app bundles its own, older Codex and writes the same
+// models_cache.json. The bridge serves turns through the CLI, so a list an
+// older client wrote must not replace one a newer client wrote.
+func TestRefresh_keeps_the_codex_list_an_older_client_would_overwrite(t *testing.T) {
+	env := rosterEnv(t)
+	if err := os.WriteFile(env.ConfigsList, []byte("OpenAI / ChatGPT:openai-chatgpt.json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	profile := `{"env":{"WISP_DECK_SUBSCRIPTION_PROVIDER":"openai-chatgpt"}}`
+	if err := os.WriteFile(filepath.Join(env.ConfigsDir, "openai-chatgpt.json"), []byte(profile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	codex := filepath.Join(t.TempDir(), "models_cache.json")
+	refresh := func(body string) []string {
+		t.Helper()
+		if err := os.WriteFile(codex, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		r := &ModelRefresher{Env: env, Client: http.DefaultClient, CodexCache: codex,
+			Now: func() time.Time { return now }, Ensure: func(Env) error { return nil }}
+		r.Refresh(nil)
+		return ids(LoadModelCache(ModelCachePath(env))[configCacheKey("openai-chatgpt.json")].Models)
+	}
+	newer := `{"client_version":"0.160.1","models":[{"slug":"gpt-6-astra","visibility":"list"},{"slug":"gpt-6.1-sol","visibility":"list"}]}`
+	older := `{"client_version":"0.153.1","models":[{"slug":"gpt-6-astra","visibility":"list"}]}`
+	if got := refresh(newer); len(got) != 2 {
+		t.Fatalf("after 0.160.1: %v, want 2 models", got)
+	}
+	if got := refresh(older); len(got) != 2 {
+		t.Fatalf("0.153.1 replaced the 0.160.1 list: %v", got)
+	}
+	same := `{"client_version":"0.160.1","models":[{"slug":"gpt-6.1-sol","visibility":"list"}]}`
+	if got := refresh(same); len(got) != 1 || got[0] != "gpt-6.1-sol" {
+		t.Fatalf("the same client must still update the list: %v", got)
+	}
+	if got := refresh(`{"client_version":"0.161.0","models":[{"slug":"gpt-7","visibility":"list"}]}`); len(got) != 1 || got[0] != "gpt-7" {
+		t.Fatalf("a newer client must replace the list: %v", got)
+	}
+}
+
 func TestObserve_refreshes_once_and_never_blocks(t *testing.T) {
 	env := rosterEnv(t)
 	release := make(chan struct{})
