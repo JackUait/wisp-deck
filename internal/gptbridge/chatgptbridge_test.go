@@ -219,6 +219,40 @@ func TestChatGPTBridge_refuses_a_launch_with_no_codex(t *testing.T) {
 	}
 }
 
+// A pane whose launch found no Codex (it was mid-reinstall) must not keep
+// every GPT turn dead until a relaunch: the bridge looks again on each turn.
+func TestChatGPTBridge_finds_a_codex_installed_after_launch(t *testing.T) {
+	builder := &countingBuilder{}
+	answers := []string{"", "/opt/codex"}
+	lookups := 0
+	bridge := NewChatGPTBridge(ChatGPTBridgeOptions{ResolveCodexPath: func() string {
+		answer := answers[min(lookups, len(answers)-1)]
+		lookups++
+		return answer
+	}})
+	bridge.buildBundle = builder.build
+	t.Cleanup(bridge.Close)
+
+	if _, _, err := bridge.Endpoint(); err == nil {
+		t.Fatal("Endpoint succeeded before Codex was found")
+	}
+	if _, _, err := bridge.Endpoint(); err != nil {
+		t.Fatalf("Endpoint after Codex appeared: %v", err)
+	}
+	if bridge.options.CodexPath != "/opt/codex" {
+		t.Fatalf("bridge starts Codex at %q; want /opt/codex", bridge.options.CodexPath)
+	}
+	if _, _, err := bridge.Endpoint(); err != nil {
+		t.Fatalf("third Endpoint: %v", err)
+	}
+	if lookups != 2 {
+		t.Fatalf("looked Codex up %d times; want 2 (a hit is kept, a miss is not)", lookups)
+	}
+	if builder.count() != 1 {
+		t.Fatalf("built %d bundles; want 1", builder.count())
+	}
+}
+
 func TestChatGPTBridge_close_shuts_the_app_server_down_and_removes_its_private_cwd(t *testing.T) {
 	builder := &countingBuilder{}
 	bridge := newTestChatGPTBridge(t, builder)

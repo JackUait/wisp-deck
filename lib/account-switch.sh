@@ -755,7 +755,7 @@ build_switch_launch_cmd() {
     WISP_DECK_CLAUDE_FILTER="$filter" \
     WISP_DECK_OPENCODE_HANDOFF_PROMPT="$opencode_handoff_prompt" \
       build_ai_launch_cmd "$tool" "$tool_cmd" "$project_dir"
-    return 0
+    return
   fi
   # Fresh launch: no resume. claude takes no positional dir (its cwd is set by
   # respawn-pane's -c); opencode does, so only it gets project_dir as the extra.
@@ -951,6 +951,20 @@ _apply_subscription() {
   export WISP_DECK_CLAUDE_PROVIDER="$new_provider"
   "$tmux_cmd" set-environment WISP_DECK_CLAUDE_CONFIG "$stamp" 2>/dev/null || true
   "$tmux_cmd" set-environment WISP_DECK_CLAUDE_PROVIDER "$new_provider" 2>/dev/null || true
+  # The launch reads Codex from WISP_DECK_CODEX_CMD, frozen when the tab opened.
+  # It is empty if Codex was missing then (mid-reinstall), while the readiness
+  # check above approved _tool_cmd_for's answer. Hand the launch that same path.
+  local codex_cmd
+  case "${WISP_DECK_CODEX_CMD:-}" in
+    /*) [ -x "$WISP_DECK_CODEX_CMD" ] && return 0 ;;
+  esac
+  codex_cmd="$(_tool_cmd_for codex)"
+  case "$codex_cmd" in
+    /*) [ -x "$codex_cmd" ] || return 0 ;;
+    *) return 0 ;;
+  esac
+  export WISP_DECK_CODEX_CMD="$codex_cmd"
+  "$tmux_cmd" set-environment WISP_DECK_CODEX_CMD "$codex_cmd" 2>/dev/null || true
 }
 
 # write_relaunch_context <out_file> <tool> <tool_cmd> <settings> \
@@ -1218,7 +1232,14 @@ relaunch_ai_pane() {
       "${WISP_DECK_ERROR_LOG:-/dev/null}" 2>/dev/null || true
   fi
   cmd="$(build_switch_launch_cmd "$_rc_tool" "$_rc_tool_cmd" \
-    "$launch_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir" "$sid")"
+    "$launch_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir" "$sid")" || cmd=""
+  # An empty command respawns as "; exec bash", a syntax error that kills the
+  # pane. Keep the running agent instead.
+  if [ -z "$cmd" ]; then
+    [ "$attention_lock_held" = 1 ] \
+      && attention_relaunch_lock_release "$_rc_attention_root" 2>/dev/null || true
+    return 1
+  fi
 
   "$tmux_cmd" respawn-pane -k -t "$pane" -c "$_rc_project_dir" "$cmd; exec bash"
 
@@ -1586,7 +1607,13 @@ relaunch_switch_tool() {
   fi
   cmd="$(build_switch_launch_cmd "$target" "$tool_cmd" \
     "$launch_settings" "$_rc_filter" "$_rc_project_dir" "$new_dir" "$sid" \
-    "$builder_handoff" "$opencode_handoff")"
+    "$builder_handoff" "$opencode_handoff")" || cmd=""
+  # See relaunch_ai_pane: an empty command kills the pane.
+  if [ -z "$cmd" ]; then
+    [ "$attention_lock_held" = 1 ] \
+      && attention_relaunch_lock_release "$_rc_attention_root" 2>/dev/null || true
+    return 1
+  fi
   "$tmux_cmd" respawn-pane -k -t "$pane" -c "$_rc_project_dir" "$cmd$trailing_handoff; exec bash"
 
   [ -n "$pool" ] && pool_set "$pool/meta" last_tool "$target"

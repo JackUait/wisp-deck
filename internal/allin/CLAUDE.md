@@ -516,6 +516,14 @@ budget. `TestLiveChatGPTBridgeStartsAndServes` re-measures it and fails at 20s.
   change to `gt_claude_launch_wrapper` was needed. A **relative** value is
   dropped rather than resolved — it would exec against whatever directory the
   pane sits in — and reads as absent, which is the bridge's own 400 naming Codex.
+- **An empty `WISP_DECK_CODEX_CMD` is not final.** `wrapper.sh` resolves Codex
+  once, when the tab opens; a tab opened while Codex was being reinstalled
+  carries an empty value for its whole life. `lookupCodexPath` then searches
+  PATH and the `codex-cmd` cache setup writes, at launch and again on every GPT
+  turn until it finds one (a hit is kept, a miss is not). Without it every GPT
+  row in that pane answered 400 until a relaunch. Guarded by
+  `TestClaudeAllIn_finds_codex_when_the_session_environment_has_none` and
+  `TestChatGPTBridge_finds_a_codex_installed_after_launch`.
 
 ### Known exposure: the loopback port mints turns on any credential, unauthenticated
 

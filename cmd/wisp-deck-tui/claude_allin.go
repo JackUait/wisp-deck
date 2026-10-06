@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -40,9 +41,9 @@ func newClaudeAllInCommandWithExit(run claudeRolefixRunner, exit func(int)) *cob
 
 // newChatGPTBridge is the production bridge: lazy, so a session that never
 // picks a GPT row never starts a Codex app-server.
-func newChatGPTBridge(codexPath string) allinBridge {
+func newChatGPTBridge(codexPath string, lookup func() string) allinBridge {
 	return gptbridge.NewChatGPTBridge(gptbridge.ChatGPTBridgeOptions{
-		CodexPath: codexPath, ClientVersion: Version,
+		CodexPath: codexPath, ResolveCodexPath: lookup, ClientVersion: Version,
 		ColdStarts: newGPTBridgeColdStartFuse(gptBridgeColdLog()),
 	})
 }
@@ -52,7 +53,7 @@ func newChatGPTBridge(codexPath string) allinBridge {
 // and exit-code contract itself is runLoopbackWrappedLaunch, shared with
 // claude-rolefix so the two never drift apart.
 func newClaudeAllInCommandWithBridge(
-	run claudeRolefixRunner, exit func(int), newBridge func(codexPath string) allinBridge,
+	run claudeRolefixRunner, exit func(int), newBridge func(codexPath string, lookup func() string) allinBridge,
 ) *cobra.Command {
 	var settingsPath, codexPath, resumeSession string
 	var env allin.Env
@@ -66,7 +67,12 @@ func newClaudeAllInCommandWithBridge(
 			// Built unconditionally and started by nothing: the bridge only
 			// execs Codex when a ChatGPT row actually resolves, so a session
 			// that never picks one pays for this exactly nothing.
-			bridge := newBridge(sessionCodexPath(codexPath))
+			lookup := lookupCodexPath(filepath.Dir(env.AccountsList))
+			codex := sessionCodexPath(codexPath)
+			if codex == "" {
+				codex = lookup()
+			}
+			bridge := newBridge(codex, lookup)
 			resolver := allin.NewResolver(env)
 			resolver.Bridge = bridge
 			observe := func(http.Header) {}
@@ -75,7 +81,7 @@ func newClaudeAllInCommandWithBridge(
 					Env:        env,
 					Client:     &http.Client{Timeout: 15 * time.Second},
 					CodexCache: codexModelsCache(),
-					CodexList:  codexModelLister(sessionCodexPath(codexPath)),
+					CodexList:  codexModelLister(codex),
 					Now:        time.Now,
 					Ensure:     allin.EnsureProfileIfEligible,
 				}
@@ -132,7 +138,8 @@ func newClaudeAllInCommandWithBridge(
 // wrapper.sh already stamps WISP_DECK_CODEX_CMD into the tmux session env (and
 // lib/tab-view.sh re-exports it for a new tab), so every process in the pane
 // inherits it — including this one, however deep the launch chain nests. The
-// flag is the override a test uses.
+// flag is the override a test uses. An empty result is not final: see
+// lookupCodexPath.
 //
 // A relative value is dropped rather than resolved. It would otherwise exec
 // against whatever directory the pane happens to sit in; reported as absent it
@@ -147,6 +154,29 @@ func sessionCodexPath(override string) string {
 		return ""
 	}
 	return path
+}
+
+// lookupCodexPath finds Codex the way resolve_agent_cmd does when the session
+// env names none: PATH, then the path setup cached in <configRoot>/codex-cmd.
+// The env is empty when the tab opened while Codex was being reinstalled.
+func lookupCodexPath(configRoot string) func() string {
+	return func() string {
+		if path, err := exec.LookPath("codex"); err == nil && filepath.IsAbs(path) {
+			return path
+		}
+		raw, err := os.ReadFile(filepath.Join(configRoot, "codex-cmd"))
+		if err != nil {
+			return ""
+		}
+		path := strings.TrimSpace(strings.SplitN(string(raw), "\n", 2)[0])
+		if !filepath.IsAbs(path) {
+			return ""
+		}
+		if info, err := os.Stat(path); err != nil || info.IsDir() || info.Mode().Perm()&0o111 == 0 {
+			return ""
+		}
+		return path
+	}
 }
 
 // codexModelListTimeout bounds `codex debug models`, which fetches the live

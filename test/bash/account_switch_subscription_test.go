@@ -712,6 +712,11 @@ func TestApplyAccountSwitchChoice_chatgpt_uses_hidden_codex_bridge(t *testing.T)
 	}
 	logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q 2>/dev/null || true", rec), nil)
 	assertContains(t, logOut, "respawn-pane")
+	// The session env carries no WISP_DECK_CODEX_CMD here, as in a tab whose
+	// launch ran while Codex was being reinstalled. The respawn must still
+	// name the Codex the readiness check approved, or the pane runs "; exec
+	// bash" and dies.
+	assertContains(t, logOut, "claude-gpt-adapter --codex "+codexCmd)
 }
 
 func TestApplyAccountSwitchChoice_chatgpt_rejects_when_codex_command_disappears(t *testing.T) {

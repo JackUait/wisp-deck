@@ -27,10 +27,13 @@ const (
 type ChatGPTBridgeOptions struct {
 	// CodexPath is the absolute Codex executable. Empty means Codex is not
 	// installed on this machine, which is reported rather than attempted.
-	CodexPath       string
-	ClientVersion   string
-	StartupTimeout  time.Duration
-	ShutdownTimeout time.Duration
+	CodexPath string
+	// ResolveCodexPath is asked on each turn while CodexPath is empty. A hit is
+	// kept and a miss is not, so a Codex installed after launch is found.
+	ResolveCodexPath func() string
+	ClientVersion    string
+	StartupTimeout   time.Duration
+	ShutdownTimeout  time.Duration
 	// ColdStarts is shared by every engine this bridge builds.
 	ColdStarts *ColdStartFuse
 }
@@ -86,10 +89,13 @@ func (b *ChatGPTBridge) Endpoint() (string, string, error) {
 	if b.server != nil {
 		return b.server.URL(), b.key, nil
 	}
+	if b.options.CodexPath == "" && b.options.ResolveCodexPath != nil {
+		b.options.CodexPath = b.options.ResolveCodexPath()
+	}
 	if b.options.CodexPath == "" {
 		return "", "", errors.New(
 			"Codex is required for the OpenAI / ChatGPT subscription; install it with `wisp-deck`, " +
-				"then relaunch this session")
+				"then send the message again")
 	}
 	if err := b.start(); err != nil {
 		// A failed start is never cached: the usual cause (a signed-out Codex,

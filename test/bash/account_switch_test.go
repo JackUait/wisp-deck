@@ -783,6 +783,40 @@ printf '%%s\n' "$*" >> %q`, rec))
 	assertContains(t, logOut, "--resume sess-abc-123")
 }
 
+// A respawn of an empty command runs "; exec bash", a syntax error that
+// kills the pane and the agent in it. Both relaunch paths must keep the
+// running agent when the launch command cannot be built.
+func TestRelaunch_never_respawns_an_unbuildable_command(t *testing.T) {
+	for _, call := range []string{"relaunch_ai_pane tmux %q", "relaunch_switch_tool tmux %q claude"} {
+		t.Run(strings.Fields(call)[0], func(t *testing.T) {
+			dir := t.TempDir()
+			relaunch := writeTempFile(t, dir, "relaunch", strings.Join([]string{
+				"tool=claude",
+				"tool_cmd=claude",
+				"claude_cmd=claude",
+				"settings=/cfg/settings.json",
+				"filter=",
+				"project_dir=/proj",
+				"accounts_dir=" + filepath.Join(dir, "claude-accounts"),
+				"pointer=" + filepath.Join(dir, "claude-account"),
+				"",
+			}, "\n"))
+			rec := filepath.Join(dir, "tmux.log")
+			bin := mockCommand(t, dir, "tmux", fmt.Sprintf(`
+if [ "$1" = "list-panes" ]; then printf '%%s\n' "%%1 1"; exit 0; fi
+printf '%%s\n' "$*" >> %q`, rec))
+			env := buildEnv(t, []string{bin}, "HOME="+dir)
+			_, code := runBashSnippet(t, accountSwitchSnippet(t,
+				"build_ai_launch_cmd() { return 1; }; "+fmt.Sprintf(call, relaunch)), env)
+			if code == 0 {
+				t.Fatal("relaunch reported success without a launch command")
+			}
+			logOut, _ := runBashSnippet(t, fmt.Sprintf("cat %q 2>/dev/null || true", rec), nil)
+			assertNotContains(t, logOut, "respawn-pane")
+		})
+	}
+}
+
 // End-to-end regression guard for the "account switch after /new resurrected
 // the closed conversation" bug: the durable stamp still names the old session
 // (sess-old) while claude's LIVE session moved to a fresh one (sess-new). The

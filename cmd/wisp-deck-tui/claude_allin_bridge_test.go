@@ -52,7 +52,7 @@ func TestClaudeAllIn_closes_the_chatgpt_bridge_when_the_child_exits(t *testing.T
 	bridge := &spyBridge{}
 	command := newClaudeAllInCommandWithBridge(
 		func([]string) error { return nil }, func(int) {},
-		func(string) allinBridge { return bridge })
+		func(string, func() string) allinBridge { return bridge })
 	command.SetArgs([]string{"--settings", settings, "--configs-dir", configs, "--", "true"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestClaudeAllIn_closes_the_chatgpt_bridge_before_it_propagates_an_exit_code
 	command := newClaudeAllInCommandWithBridge(
 		func([]string) error { return exitCodeError(7) },
 		func(code int) { events = append(events, "exit") },
-		func(string) allinBridge { return bridge })
+		func(string, func() string) allinBridge { return bridge })
 	command.SetArgs([]string{"--settings", settings, "--configs-dir", configs, "--", "true"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestClaudeAllIn_closes_the_chatgpt_bridge_when_the_launch_is_left_unwrapped
 	ran := false
 	command := newClaudeAllInCommandWithBridge(
 		func([]string) error { ran = true; return nil }, func(int) {},
-		func(string) allinBridge { return bridge })
+		func(string, func() string) allinBridge { return bridge })
 	command.SetArgs([]string{"--settings", filepath.Join(t.TempDir(), "absent.json"), "--", "true"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
@@ -112,7 +112,7 @@ func TestClaudeAllIn_takes_the_codex_path_from_the_session_environment(t *testin
 	var got string
 	command := newClaudeAllInCommandWithBridge(
 		func([]string) error { return nil }, func(int) {},
-		func(path string) allinBridge { got = path; return &spyBridge{} })
+		func(path string, _ func() string) allinBridge { got = path; return &spyBridge{} })
 	command.SetArgs([]string{"--settings", settings, "--configs-dir", configs, "--", "true"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
@@ -128,15 +128,45 @@ func TestClaudeAllIn_takes_the_codex_path_from_the_session_environment(t *testin
 func TestClaudeAllIn_ignores_a_relative_codex_path(t *testing.T) {
 	settings, configs := allInBridgeFixture(t)
 	t.Setenv("WISP_DECK_CODEX_CMD", "codex")
+	t.Setenv("PATH", t.TempDir())
 	got := "unset"
 	command := newClaudeAllInCommandWithBridge(
 		func([]string) error { return nil }, func(int) {},
-		func(path string) allinBridge { got = path; return &spyBridge{} })
+		func(path string, _ func() string) allinBridge { got = path; return &spyBridge{} })
 	command.SetArgs([]string{"--settings", settings, "--configs-dir", configs, "--", "true"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	if got != "" {
 		t.Fatalf("bridge was built with codex path %q; want the relative value dropped", got)
+	}
+}
+
+// A tab opened while Codex was being reinstalled has no WISP_DECK_CODEX_CMD.
+// Every GPT row in that pane answered 400 until a relaunch; the bridge must
+// find Codex on PATH instead, and keep looking on later turns.
+func TestClaudeAllIn_finds_codex_when_the_session_environment_has_none(t *testing.T) {
+	settings, configs := allInBridgeFixture(t)
+	bin := t.TempDir()
+	codex := filepath.Join(bin, "codex")
+	if err := os.WriteFile(codex, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WISP_DECK_CODEX_CMD", "")
+	t.Setenv("PATH", bin)
+	var got string
+	var lookup func() string
+	command := newClaudeAllInCommandWithBridge(
+		func([]string) error { return nil }, func(int) {},
+		func(path string, find func() string) allinBridge { got, lookup = path, find; return &spyBridge{} })
+	command.SetArgs([]string{"--settings", settings, "--configs-dir", configs, "--", "true"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got != codex {
+		t.Fatalf("bridge was built with codex path %q; want %q", got, codex)
+	}
+	if lookup == nil || lookup() != codex {
+		t.Fatal("bridge has no lookup to find a Codex installed after launch")
 	}
 }

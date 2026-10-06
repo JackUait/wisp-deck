@@ -47,3 +47,39 @@ func TestCodexModelLister_asks_the_bridge_codex(t *testing.T) {
 		t.Fatal("no codex path must leave the lister unset, so the cache file is read")
 	}
 }
+
+// A pane launched while Codex was mid-reinstall carries an empty
+// WISP_DECK_CODEX_CMD. The bridge then looks Codex up itself, the way
+// resolve_agent_cmd does: PATH first, then the path setup cached.
+func TestLookupCodexPath_finds_codex_without_the_session_env(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	codex := filepath.Join(bin, "codex")
+	if err := os.WriteFile(codex, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lookup := lookupCodexPath(root)
+
+	t.Setenv("PATH", t.TempDir())
+	if got := lookup(); got != "" {
+		t.Fatalf("no codex anywhere: got %q", got)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "codex-cmd"), []byte(codex+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := lookup(); got != codex {
+		t.Fatalf("cached path: got %q, want %q", got, codex)
+	}
+
+	if err := os.Remove(filepath.Join(root, "codex-cmd")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	if got := lookup(); got != codex {
+		t.Fatalf("PATH lookup: got %q, want %q", got, codex)
+	}
+}
