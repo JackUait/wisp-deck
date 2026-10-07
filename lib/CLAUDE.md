@@ -228,7 +228,13 @@ transcript has one) and publishes its checkout root, found by walking up to
 `.git`. A cd into a subdirectory therefore never moves the tab, and the follow's
 `_worktree_choice_ready` root check still holds.
 
-- **Sidechain entries are skipped**, so a subagent's worktree never drags the tab.
+- **Sidechain entries are skipped**, so a subagent's own moves never drag the
+  tab. The MAIN agent stepping into a subagent's `agent-<id>` worktree to
+  inspect it (`cd <wt> && git log`) is a real move, and the tab follows it: each
+  hop in and out respawns the ledger and the spare, killing whatever runs there.
+- **A new `sessionId` keeps the last cwd.** Compaction replaces the id but not
+  the directory, and until the new transcript has an entry the record's cwd is
+  still the launch directory; falling back to it bounced the tab home and back.
 - **The steady state is one stat.** The first read takes the transcript's last
   1MB; later reads start where the last stopped. Guarded by
   `TestTranscriptWorkdirReadsOnlyWhatIsNew`.

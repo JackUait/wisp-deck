@@ -61,12 +61,14 @@ func (t *TranscriptWorkdir) transcriptCwd(status ClaudeRegistryStatus) string {
 		return ""
 	}
 	if status.SessionID != t.sessionID {
-		*t = TranscriptWorkdir{ConfigDir: t.ConfigDir, sessionID: status.SessionID, onRead: t.onRead}
+		// cwd carries over: compaction replaces the id but not the directory,
+		// and the record's cwd may still be the launch directory.
+		t.sessionID, t.path, t.nextGlob, t.offset, t.pending = status.SessionID, "", time.Time{}, 0, nil
 	}
 	if t.path == "" {
 		t.path = t.locate(status)
 		if t.path == "" {
-			return ""
+			return t.cwd
 		}
 	}
 	info, err := os.Stat(t.path)

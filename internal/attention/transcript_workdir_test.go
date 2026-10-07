@@ -210,3 +210,22 @@ func TestTranscriptWorkdirReadsOnlyWhatIsNew(t *testing.T) {
 		t.Fatalf("append read %d bytes, want only the new %d", reads, want)
 	}
 }
+
+// Compaction replaces the session id but keeps the working directory. Until
+// the new transcript has an entry, the record's cwd is still the launch
+// directory, and falling back to it would bounce the tab home and back.
+func TestTranscriptWorkdirKeepsTheDirectoryAcrossANewConversation(t *testing.T) {
+	t.Parallel()
+	fx := newTranscriptFixture(t)
+	tracker := &TranscriptWorkdir{ConfigDir: fx.configDir}
+
+	appendTranscript(t, fx.transcript, transcriptLine(fx.worktree, false))
+	if got := tracker.Resolve(fx.status); got != fx.worktree {
+		t.Fatalf("before compaction: %q", got)
+	}
+	status := fx.status
+	status.SessionID = "sid-compacted"
+	if got := tracker.Resolve(status); got != fx.worktree {
+		t.Fatalf("new conversation with no entry yet: %q, want %q", got, fx.worktree)
+	}
+}
