@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/jackuait/wisp-deck/internal/attention"
@@ -24,7 +26,7 @@ func TestClaudeAttentionPublishesTheWorkingDirectoryWithTheAttentionState(t *tes
 			},
 			true,
 			func(o attention.ClaudeReducerObservation) { observed = append(observed, o) },
-			func(dir string) { directories = append(directories, dir) },
+			func(s attention.ClaudeRegistryStatus) { directories = append(directories, s.Cwd) },
 		)
 		if len(observed) != 1 || observed[0].Status != attention.ClaudeObservedBusy {
 			t.Fatalf("observations = %#v, want one busy observation", observed)
@@ -46,7 +48,7 @@ func TestClaudeAttentionPublishesTheWorkingDirectoryWithTheAttentionState(t *tes
 			attention.ClaudeRegistryStatus{Cwd: "/tmp/stale"},
 			false,
 			func(o attention.ClaudeReducerObservation) { observed = append(observed, o) },
-			func(dir string) { directories = append(directories, dir) },
+			func(s attention.ClaudeRegistryStatus) { directories = append(directories, s.Cwd) },
 		)
 		if len(observed) != 1 || observed[0].Status != attention.ClaudeObservedUnknown {
 			t.Fatalf("observations = %#v, want one unknown observation", observed)
@@ -55,4 +57,38 @@ func TestClaudeAttentionPublishesTheWorkingDirectoryWithTheAttentionState(t *tes
 			t.Fatalf("directories = %#v, want none", directories)
 		}
 	})
+}
+
+// The registry record keeps the launch directory when a Bash cd moves Claude
+// into another worktree; the published directory has to come from the
+// transcript, which records the move.
+func TestClaudeWorkdirPublisherFollowsTheTranscript(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	main := filepath.Join(root, "repo")
+	worktree := filepath.Join(main, ".claude", "worktrees", "feature")
+	if err := os.MkdirAll(filepath.Join(main, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, ".git"), []byte("gitdir: /x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configDir := filepath.Join(root, "config")
+	var directories []string
+	publish := newClaudeWorkdirPublisher(configDir, func(dir string) { directories = append(directories, dir) })
+	transcript := filepath.Join(configDir, "projects", "p", "sid.jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"type":"user","cwd":"` + worktree + `"}` + "\n"
+	if err := os.WriteFile(transcript, []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	publish(attention.ClaudeRegistryStatus{SessionID: "sid", Cwd: main})
+	if len(directories) != 1 || directories[0] != worktree {
+		t.Fatalf("directories = %#v, want [%q]", directories, worktree)
+	}
 }

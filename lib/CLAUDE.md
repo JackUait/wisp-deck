@@ -216,11 +216,30 @@ sat in it, and a crash-restore reopened it. The tab now follows.
 `git worktree add` does not move the agent — following it would detach the
 ledger from where the agent actually works — and subagent worktrees and this
 repo's own test suite create worktrees constantly, so a list-poll would yank the
-ledger into a temp checkout mid-test-run. Claude's account-local registry record
-carries `cwd`, and it moves in BOTH directions (`EnterWorktree` and
-`ExitWorktree`), so one field drives the follow and the snap back out. This is
-Claude-only by construction, not by omission: no other agent moves its own
-working directory.
+ledger into a temp checkout mid-test-run.
+
+**The cwd comes from the transcript, not the registry record.** A Bash `cd`
+into another worktree also moves Claude Code's working directory, but the
+registry record (`sessions/<pid>.json`) and the process cwd both keep the
+launch directory; only `EnterWorktree`/`ExitWorktree` rewrite the record. Every
+main-thread transcript entry carries the session's cwd at the time, so
+`attention.TranscriptWorkdir` reads the newest one (the record's cwd until the
+transcript has one) and publishes its checkout root, found by walking up to
+`.git`. A cd into a subdirectory therefore never moves the tab, and the follow's
+`_worktree_choice_ready` root check still holds.
+
+- **Sidechain entries are skipped**, so a subagent's worktree never drags the tab.
+- **The steady state is one stat.** The first read takes the transcript's last
+  1MB; later reads start where the last stopped. Guarded by
+  `TestTranscriptWorkdirReadsOnlyWhatIsNew`.
+- **The transcript is found by `sessionId`**, under the project directory
+  named after the record's cwd (every non-alphanumeric byte becomes `-`). A
+  resumed conversation lives under another project, so a glob over
+  `projects/*/<sid>.jsonl` is the fallback, at most every 10s.
+
+This is Claude-only by evidence, not by omission: 226 Codex rollouts and 13
+OpenCode sessions with a recorded cwd never changed it mid-session, so those
+tabs never leave the directory they launched in.
 
 - **No second discovery path.** `ClaudeRegistryMapper` already finds and
   validates that record every poll (live PID, `procStart`, launch-tree scope),

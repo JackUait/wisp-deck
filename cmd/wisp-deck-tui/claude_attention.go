@@ -109,9 +109,9 @@ func runClaudeAttention(
 	}
 	// The sidecar is an observer too, and a separate one: a session whose
 	// working directory cannot be published still needs its attention state.
-	publishWorkdir := func(dir string) {
+	publishWorkdir := newClaudeWorkdirPublisher(options.ConfigDir, func(dir string) {
 		_ = workdir.Publish(dir)
-	}
+	})
 
 	supervisor := attention.ClaudeSupervisor{
 		Poll: func(pollContext context.Context, rootPID int, processes []attention.SupervisorProcess) error {
@@ -153,11 +153,21 @@ func claudeAttentionPublish(
 	status attention.ClaudeRegistryStatus,
 	found bool,
 	publishObservation func(attention.ClaudeReducerObservation),
-	publishWorkdir func(string),
+	publishWorkdir func(attention.ClaudeRegistryStatus),
 ) {
 	publishObservation(claudeRegistryObservation(status, found))
 	if found {
-		publishWorkdir(status.Cwd)
+		publishWorkdir(status)
+	}
+}
+
+// newClaudeWorkdirPublisher publishes the checkout the session works in. The
+// record's cwd misses a Bash cd into another worktree, so the transcript is
+// read for it.
+func newClaudeWorkdirPublisher(configDir string, publish func(string)) func(attention.ClaudeRegistryStatus) {
+	tracker := &attention.TranscriptWorkdir{ConfigDir: configDir}
+	return func(status attention.ClaudeRegistryStatus) {
+		publish(tracker.Resolve(status))
 	}
 }
 
