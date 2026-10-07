@@ -23,6 +23,7 @@ named after the upgrade you just did.
 
 ```bash
 WISP_DECK_LIVE_CLAUDE_E2E=1 go test ./test/bash/ -run TestLiveClaude -v  # After a claude upgrade: verify the real-claude behaviors draft preservation depends on
+WISP_DECK_LIVE_CLAUDE_CWD_E2E=1 CLAUDE_CONFIG_DIR=~/.config/wisp-deck/claude-accounts/<login> go test ./internal/attention/ -run TestLiveClaudeTranscriptRecordsACdIntoAWorktree -v  # After a claude upgrade: verify a Bash cd into a worktree still lands in the transcript's cwd, the only signal that moves the tab's terminal with its agent (the registry record never sees a cd; costs one short haiku turn)
 WISP_DECK_LIVE_AGENT_SUMMARY_E2E=1 go test ./internal/gptbridge/ -run TestLiveClaudeStillSendsTheAgentSummaryPrompt -v  # After a claude upgrade: verify Claude Code's subagent progress-summary prompt still starts with agentSummaryPrompt, or the GPT bridge replays a whole conversation uncached every 30s per subagent (costs nothing)
 WISP_DECK_TMUX_WIDTH_E2E=1 go test ./internal/tui/ -run TestCellWidth_matches_a_live_tmux  # After a tmux/go-runewidth/uniseg bump: re-check the diff pager's width model against a real tmux
 WISP_DECK_LIVE_IMAGE_E2E=1 go test ./internal/gptbridge/ -run TestLiveImageEndToEnd -v  # After a codex upgrade: verify a generated image still reports a savedPath that exists, and still round-trips back into Codex (costs one real image generation)

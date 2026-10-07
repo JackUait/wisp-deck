@@ -238,6 +238,11 @@ transcript has one) and publishes its checkout root, found by walking up to
 - **The steady state is one stat.** The first read takes the transcript's last
   1MB; later reads start where the last stopped. Guarded by
   `TestTranscriptWorkdirReadsOnlyWhatIsNew`.
+- **Guarded twice.** `TestRunClaudeAttentionPublishesTheTranscriptsCheckout`
+  drives the real `claude-attention` run path with a stand-in Claude whose
+  record keeps the launch directory, so reverting to the record's cwd goes red.
+  `TestLiveClaudeTranscriptRecordsACdIntoAWorktree` (see the root `CLAUDE.md`)
+  catches a Claude upgrade that stops writing the cd to the transcript.
 - **The transcript is found by `sessionId`**, under the project directory
   named after the record's cwd (every non-alphanumeric byte becomes `-`). A
   resumed conversation lives under another project, so a glob over
