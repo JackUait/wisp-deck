@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -13,16 +14,7 @@ import (
 // `thread/tokenUsage/updated` for a bridged turn, so the streamed usage carries
 // Codex's own accounting instead of the bridge's byte estimate.
 //
-// message_start is emitted before the turn runs, so it can only carry
-// estimatePromptTokens' bytes/4 guess with no cache split. message_delta is the
-// only chance to correct it. While the delta reported output alone, every
-// bridged turn was recorded as a fully uncached prompt: one month showed
-// 46,044 of 46,066 GPT assistant messages with cache_read_input_tokens 0 and
-// 20.4B tokens billed as fresh input, roughly 5x the real API-equivalent.
-//
-// Forwarding the real usage is worth nothing if Codex stops sending it, and it
-// would fail silently — the reducer falls back to the estimate, which looks
-// like a plausible number rather than an error. Run this after a codex upgrade.
+// Missing Codex accounting leaves zero billable usage. Run after a codex upgrade.
 //
 //	WISP_DECK_LIVE_TOKEN_USAGE_E2E=1 go test ./internal/gptbridge/ -run TestLiveCodexReportsTokenUsage -v
 //
@@ -65,10 +57,6 @@ func TestLiveCodexReportsTokenUsage(t *testing.T) {
 
 	translation := testTranslation("Reply with exactly: ok")
 	translation.Model = models[0]
-	// A sentinel estimate no real prompt can produce: the turn carries the base
-	// instructions and a tool schema, so anything the estimate could return is
-	// thousands of tokens. If the streamed usage is still 1, the delta is the
-	// fallback and Codex sent no accounting at all.
 	translation.EstimatedInputTokens = 1
 
 	var events []StreamEvent
@@ -85,11 +73,9 @@ func TestLiveCodexReportsTokenUsage(t *testing.T) {
 	t.Logf("message usage:  %+v", message.Usage)
 
 	if streamed.InputTokens+streamed.CacheReadInputTokens <= 1 {
-		t.Fatalf("streamed usage is still the estimate, so Codex sent no "+
-			"thread/tokenUsage/updated and every bridged turn will be priced as an "+
-			"uncached byte guess: %+v", streamed)
+		t.Fatalf("Codex sent no billable thread/tokenUsage/updated: %+v", streamed)
 	}
-	if streamed != message.Usage {
+	if !reflect.DeepEqual(streamed, message.Usage) {
 		t.Errorf("streamed usage %+v differs from the non-streaming message usage %+v; "+
 			"Claude Code records the streamed one", streamed, message.Usage)
 	}

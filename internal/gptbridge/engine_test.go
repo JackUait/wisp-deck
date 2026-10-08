@@ -238,7 +238,7 @@ func TestEngineCompletesTextTurnAndParksThread(t *testing.T) {
 	}
 }
 
-func TestEngineReportsRequestSemanticEstimate(t *testing.T) {
+func TestEngineDoesNotBillRequestSemanticEstimate(t *testing.T) {
 	rpc := newFakeEngineRPC()
 	rpc.onTurnStart = func(threadID, turnID string) {
 		completeTextTurn(rpc, threadID, turnID, "done")
@@ -264,13 +264,13 @@ func TestEngineReportsRequestSemanticEstimate(t *testing.T) {
 		} `json:"message"`
 	}
 	decodeEventData(t, events[0].Data, &start)
-	if start.Message.Usage.InputTokens != translation.EstimatedInputTokens {
-		t.Fatalf("message_start input tokens = %d, want request estimate %d",
-			start.Message.Usage.InputTokens, translation.EstimatedInputTokens)
+	if start.Message.Usage.InputTokens != 0 {
+		t.Fatalf("message_start input tokens = %d, want zero before actual usage",
+			start.Message.Usage.InputTokens)
 	}
 }
 
-func TestEngineDefaultsMissingSemanticEstimateToOne(t *testing.T) {
+func TestEngineLeavesMissingUsageUnbilled(t *testing.T) {
 	rpc := newFakeEngineRPC()
 	rpc.onTurnStart = func(threadID, turnID string) {
 		rpc.notifications <- notification(
@@ -302,8 +302,8 @@ func TestEngineDefaultsMissingSemanticEstimateToOne(t *testing.T) {
 		} `json:"message"`
 	}
 	decodeEventData(t, events[0].Data, &start)
-	if start.Message.Usage.InputTokens != 1 {
-		t.Fatalf("message_start input tokens = %d, want minimum fallback 1",
+	if start.Message.Usage.InputTokens != 0 {
+		t.Fatalf("message_start input tokens = %d, want zero without actual usage",
 			start.Message.Usage.InputTokens)
 	}
 }

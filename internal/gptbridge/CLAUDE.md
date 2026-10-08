@@ -1,5 +1,20 @@
 # gptbridge — gotchas
 
+### Tool usage arrives only after the tool results return
+
+Codex 0.160.1 emits its usage notification after pending tools resolve. Waiting
+for it before returning tool calls deadlocks. A prompt estimate must never enter
+response usage, including message_start: Claude keeps that estimate even when
+the final input count is zero.
+
+The billing baseline lives on engineTurn and survives both tool resumes and
+parked-thread reuse. Cumulative counter differences count delayed requests once.
+Top-level usage keeps the latest request's context size; usage.iterations carries
+any different billing total, which internal/usage already treats as authoritative.
+A counter reset rebases the baseline without discarding usage already collected.
+
+Guarded by usage_accounting_test.go and usage_cost_test.go.
+
 Gotchas for the Codex bridge. Loaded when Claude opens a file in this package.
 
 ### There are two ways in, and only one of them owns a terminal

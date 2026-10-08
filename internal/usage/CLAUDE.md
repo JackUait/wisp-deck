@@ -71,7 +71,8 @@ Prices come from a source, never from a sibling's rate.
   a message is counted once per copy. Measured at ~0.4% of GPT-6 Sol in Oct
   2026. Dedup is per file on purpose (see the aggregate cache), so this is
   tolerated.
-- **Bridged GPT rows can carry an estimate instead of real usage**: when Codex
-  sends usage after the bridge has answered, the row holds a bytes/4 input with
-  no cache split. In Oct 2026 these rows held 2.39B of GPT-6 Sol's 2.55B
-  "fresh" input. The fix belongs in `internal/gptbridge`, not here.
+- **Historical bridged GPT rows can carry estimates instead of real usage**:
+  old responses recorded bytes/4 input without a cache split. New responses
+  defer billing until Codex reports real usage and use usage.iterations when
+  delayed billing differs from the latest context. Old estimates cannot be
+  corrected without their original Codex accounting.

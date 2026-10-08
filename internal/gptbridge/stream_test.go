@@ -3,6 +3,7 @@ package gptbridge
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -238,13 +239,17 @@ func TestResponseReducerRejectsCrossTurnEvents(t *testing.T) {
 	}
 }
 
-func TestResponseReducerRequiresUsageOrEstimate(t *testing.T) {
+func TestResponseReducerLeavesMissingUsageUnbilled(t *testing.T) {
 	reducer := NewResponseReducer(ResponseOptions{
 		MessageID: "msg_usage", Model: "gpt-5.6-terra",
 	})
 	_ = reducer.Start()
-	if _, err := reducer.Finish("end_turn"); err == nil || !strings.Contains(err.Error(), "usage") {
-		t.Fatalf("Finish error = %v", err)
+	events, err := reducer.Finish("end_turn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := messageDeltaUsage(t, events); !reflect.DeepEqual(got, Usage{}) {
+		t.Fatalf("unreported usage = %+v, want zero", got)
 	}
 }
 
@@ -286,8 +291,8 @@ func TestResponseReducerReportsWebSearchWithEmptyDisplayQuery(t *testing.T) {
 	if input["query"] != "web search" {
 		t.Fatalf("server tool input = %v", input)
 	}
-	if message.Usage.OutputTokens == 0 {
-		t.Fatal("fallback usage omitted server_tool_use output")
+	if message.Usage.ServerToolUse == nil || message.Usage.ServerToolUse.WebSearchRequests != 1 {
+		t.Fatalf("server tool usage = %+v, want one web search", message.Usage.ServerToolUse)
 	}
 }
 
@@ -455,11 +460,6 @@ func messageDeltaUsage(t *testing.T, events []StreamEvent) Usage {
 	return Usage{}
 }
 
-// message_start is emitted before the turn runs, so it can only carry the byte
-// estimate. message_delta is the sole channel that can correct it, and Claude
-// Code replaces input_tokens/cache_read_input_tokens from it whenever they are
-// positive. Reporting output alone left every bridged turn recorded as a fully
-// uncached prompt, which priced a month of Codex traffic ~5x over.
 func TestResponseReducerReportsCodexCacheReadsInTheStreamedUsage(t *testing.T) {
 	reducer := NewResponseReducer(ResponseOptions{
 		MessageID: "msg_cache", Model: "gpt-5.6-sol", EstimatedInputTokens: 40000,
@@ -492,15 +492,12 @@ func TestResponseReducerReportsCodexCacheReadsInTheStreamedUsage(t *testing.T) {
 
 	got := messageDeltaUsage(t, events)
 	want := Usage{InputTokens: 2000, OutputTokens: 120, CacheReadInputTokens: 36000}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("message_delta usage = %+v, want %+v", got, want)
 	}
 }
 
-// Without a tokenUsage notification the estimate is all there is, and the delta
-// must restate it. Emitting a bare output-only usage sends "input_tokens":0,
-// which the Anthropic SDK accumulator copies over the estimate.
-func TestResponseReducerRestatesTheInputEstimateWhenCodexReportsNoUsage(t *testing.T) {
+func TestResponseReducerDoesNotBillTheInputEstimateWhenCodexReportsNoUsage(t *testing.T) {
 	reducer := NewResponseReducer(ResponseOptions{
 		MessageID: "msg_estimate", Model: "gpt-5.6-sol", EstimatedInputTokens: 1234,
 	})
@@ -520,7 +517,7 @@ func TestResponseReducerRestatesTheInputEstimateWhenCodexReportsNoUsage(t *testi
 	events = append(events, final...)
 
 	got := messageDeltaUsage(t, events)
-	if got.InputTokens != 1234 || got.CacheReadInputTokens != 0 {
-		t.Errorf("message_delta usage = %+v, want input 1234 and no cache read", got)
+	if !reflect.DeepEqual(got, Usage{}) {
+		t.Errorf("message_delta usage = %+v, want zero without actual usage", got)
 	}
 }

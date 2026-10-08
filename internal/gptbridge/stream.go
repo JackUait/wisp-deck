@@ -8,7 +8,6 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 )
 
 // Usage is Anthropic-compatible token usage.
@@ -18,6 +17,20 @@ type Usage struct {
 	CacheCreationInputTokens int64            `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens     int64            `json:"cache_read_input_tokens,omitempty"`
 	ServerToolUse            *ServerToolUsage `json:"server_tool_use,omitempty"`
+	Iterations               []UsageIteration `json:"iterations,omitempty"`
+}
+
+type UsageIteration struct {
+	Model                string `json:"model"`
+	InputTokens          int64  `json:"input_tokens"`
+	OutputTokens         int64  `json:"output_tokens"`
+	CacheReadInputTokens int64  `json:"cache_read_input_tokens"`
+}
+
+type codexTokenUsage struct {
+	InputTokens       int64 `json:"inputTokens"`
+	CachedInputTokens int64 `json:"cachedInputTokens"`
+	OutputTokens      int64 `json:"outputTokens"`
 }
 
 // ServerToolUsage is Anthropic-compatible server-tool request usage.
@@ -71,6 +84,7 @@ type ResponseOptions struct {
 	TurnID               string
 	IncludeThinking      bool
 	EstimatedInputTokens int64
+	usageBaseline        codexTokenUsage
 }
 
 // ResponseReducer converts app-server deltas into one Anthropic message and
@@ -84,8 +98,10 @@ type ResponseReducer struct {
 	itemID   string
 	blocks   []ResponseContentBlock
 	usage    Usage
-	usageSet bool
 	stop     string
+
+	usageTotal codexTokenUsage
+	billed     Usage
 
 	webSearchToolUses map[string]string
 	webSearchDone     map[string]bool
@@ -97,7 +113,7 @@ type ResponseReducer struct {
 // NewResponseReducer constructs a turn-scoped response reducer.
 func NewResponseReducer(options ResponseOptions) *ResponseReducer {
 	return &ResponseReducer{
-		options: options, current: -1,
+		options: options, current: -1, usageTotal: options.usageBaseline,
 		webSearchToolUses: make(map[string]string),
 		webSearchDone:     make(map[string]bool),
 		imageGenerations:  make(map[string]bool),
@@ -110,10 +126,7 @@ func (r *ResponseReducer) Start() []StreamEvent {
 		return nil
 	}
 	r.started = true
-	input := r.options.EstimatedInputTokens
-	if input < 0 {
-		input = 0
-	}
+	// Claude keeps a nonzero start estimate even when the final usage is zero.
 	return []StreamEvent{{
 		Event: "message_start",
 		Data: map[string]any{
@@ -122,7 +135,7 @@ func (r *ResponseReducer) Start() []StreamEvent {
 				"id": r.options.MessageID, "type": "message", "role": "assistant",
 				"model": r.options.Model, "content": []any{},
 				"stop_reason": nil, "stop_sequence": nil,
-				"usage": Usage{InputTokens: input},
+				"usage": Usage{},
 			},
 		},
 	}}
@@ -212,12 +225,8 @@ func (r *ResponseReducer) Apply(notification Notification) ([]StreamEvent, error
 			ThreadID   string `json:"threadId"`
 			TurnID     string `json:"turnId"`
 			TokenUsage struct {
-				Last struct {
-					InputTokens           int64 `json:"inputTokens"`
-					CachedInputTokens     int64 `json:"cachedInputTokens"`
-					OutputTokens          int64 `json:"outputTokens"`
-					ReasoningOutputTokens int64 `json:"reasoningOutputTokens"`
-				} `json:"last"`
+				Last  codexTokenUsage  `json:"last"`
+				Total *codexTokenUsage `json:"total"`
 			} `json:"tokenUsage"`
 		}
 		if err := json.Unmarshal(notification.Params, &params); err != nil {
@@ -234,7 +243,20 @@ func (r *ResponseReducer) Apply(notification Notification) ([]StreamEvent, error
 			InputTokens: input, OutputTokens: params.TokenUsage.Last.OutputTokens,
 			CacheReadInputTokens: params.TokenUsage.Last.CachedInputTokens,
 		}
-		r.usageSet = true
+		if total := params.TokenUsage.Total; total != nil {
+			input := total.InputTokens - r.usageTotal.InputTokens
+			cached := total.CachedInputTokens - r.usageTotal.CachedInputTokens
+			output := total.OutputTokens - r.usageTotal.OutputTokens
+			// Context-limit errors reset the counters; the reset is not new usage.
+			if input >= 0 && cached >= 0 && output >= 0 {
+				r.billed.InputTokens += max(input-cached, 0)
+				r.billed.CacheReadInputTokens += cached
+				r.billed.OutputTokens += output
+			}
+			r.usageTotal = *total
+		} else {
+			r.billed = r.usage
+		}
 		return nil, nil
 	case "turn/completed":
 		var params struct {
@@ -531,14 +553,15 @@ func (r *ResponseReducer) Finish(stopReason string) ([]StreamEvent, error) {
 	default:
 		return nil, fmt.Errorf("unsupported Anthropic stop reason %q", stopReason)
 	}
-	if !r.usageSet {
-		if r.options.EstimatedInputTokens <= 0 {
-			return nil, errors.New("successful response is missing token usage or an input estimate")
-		}
-		r.usage = Usage{
-			InputTokens:  r.options.EstimatedInputTokens,
-			OutputTokens: r.estimatedOutputTokens(),
-		}
+	// Top-level usage sizes the latest context; iterations carry unbilled requests.
+	if r.usage.InputTokens != r.billed.InputTokens ||
+		r.usage.CacheReadInputTokens != r.billed.CacheReadInputTokens ||
+		r.usage.OutputTokens != r.billed.OutputTokens {
+		r.usage.Iterations = []UsageIteration{{
+			Model: r.options.Model, InputTokens: r.billed.InputTokens,
+			CacheReadInputTokens: r.billed.CacheReadInputTokens,
+			OutputTokens:         r.billed.OutputTokens,
+		}}
 	}
 	if r.webSearchRequests > 0 {
 		r.usage.ServerToolUse = &ServerToolUsage{WebSearchRequests: r.webSearchRequests}
@@ -555,10 +578,7 @@ func (r *ResponseReducer) Finish(stopReason string) ([]StreamEvent, error) {
 				"delta": map[string]any{
 					"stop_reason": stopReason, "stop_sequence": nil,
 				},
-				// The whole usage, not just output: message_start went out before the
-				// turn ran, so it could only carry the byte estimate, and this is
-				// the only chance to correct it. Claude Code replaces input_tokens
-				// and cache_read_input_tokens from here whenever they are positive.
+				// Stats reads iterations; Claude sizes context from the top-level counts.
 				"usage": r.usage,
 			},
 		},
@@ -617,24 +637,6 @@ func (r *ResponseReducer) closeCurrent() []StreamEvent {
 	r.current = -1
 	r.itemID = ""
 	return events
-}
-
-func (r *ResponseReducer) estimatedOutputTokens() int64 {
-	var runes int
-	for _, block := range r.blocks {
-		switch block.Type {
-		case "text":
-			runes += utf8.RuneCountInString(block.Text)
-		case "thinking":
-			runes += utf8.RuneCountInString(block.Thinking)
-		case "tool_use", "server_tool_use":
-			runes += len(block.Input)
-		}
-	}
-	if runes == 0 {
-		return 0
-	}
-	return int64((runes + 3) / 4)
 }
 
 func contentStart(index int, block any) StreamEvent {

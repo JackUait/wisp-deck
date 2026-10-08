@@ -95,6 +95,9 @@ type engineTurn struct {
 	pending map[string]*pendingDynamicTool
 	timer   *time.Timer
 
+	// Parking preserves the thread's cumulative billing baseline.
+	usageTotal codexTokenUsage
+
 	// fingerprint, lastInput, expectInput and supplement decide whether a
 	// later request may continue this thread once it is parked. An empty
 	// fingerprint never matches.
@@ -605,15 +608,11 @@ func (e *Engine) runTurnBoundary(
 		e.cleanupTurn(state, true)
 		return AnthropicMessage{}, err
 	}
-	estimatedInputTokens := translation.EstimatedInputTokens
-	if estimatedInputTokens < 1 {
-		estimatedInputTokens = 1
-	}
 	reducer := NewResponseReducer(ResponseOptions{
 		MessageID: messageID, Model: translation.Model,
 		ThreadID: state.threadID, TurnID: state.turnID,
-		IncludeThinking:      translation.Effort != "",
-		EstimatedInputTokens: estimatedInputTokens,
+		IncludeThinking: translation.Effort != "",
+		usageBaseline:   state.usageTotal,
 	})
 	if err := emitEvents(emit, reducer.Start()); err != nil {
 		e.cleanupTurn(state, true)
@@ -659,6 +658,7 @@ func (e *Engine) runTurnBoundary(
 				return AnthropicMessage{}, err
 			}
 			if message, err := reducer.Message(); err == nil {
+				state.usageTotal = reducer.usageTotal
 				if message.StopReason == "end_turn" && state.fingerprint != "" {
 					e.park(state)
 				} else {
@@ -709,6 +709,7 @@ func (e *Engine) runTurnBoundary(
 				e.cleanupTurn(state, true)
 				return AnthropicMessage{}, err
 			}
+			state.usageTotal = reducer.usageTotal
 			e.schedulePendingExpiry(state)
 			return message, nil
 		case err := <-state.errors:

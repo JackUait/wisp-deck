@@ -2,6 +2,7 @@ package gptbridge
 
 import (
 	"context"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -70,7 +71,7 @@ func TestEngineAnswersAProgressSummaryWithoutCodex(t *testing.T) {
 	if message.StopReason != "end_turn" || len(message.Content) != 1 || message.Content[0].Text != "Reading engine.go" {
 		t.Fatalf("message = %+v", message)
 	}
-	if message.Usage != (Usage{}) {
+	if !reflect.DeepEqual(message.Usage, Usage{}) {
 		t.Fatalf("usage = %+v, want zero", message.Usage)
 	}
 	if len(events) == 0 || events[0].Event != "message_start" || events[len(events)-1].Event != "message_stop" {
