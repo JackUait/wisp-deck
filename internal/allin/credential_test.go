@@ -84,6 +84,20 @@ func TestResolve_reports_a_stale_account_by_name(t *testing.T) {
 	}
 }
 
+// The cause is the only thing that tells a dead refresh token from a missing
+// Keychain entry, and the two need different fixes.
+func TestResolve_keeps_the_reason_a_stale_account_failed(t *testing.T) {
+	env := rosterEnv(t)
+	resolver := NewResolver(env)
+	resolver.Token = func(string) (string, error) {
+		return "", errors.New("allin: refreshing the login failed: invalid_grant")
+	}
+	_, err := resolver.Resolve(Target{Kind: KindAccount, Source: "personal"})
+	if !errors.Is(err, ErrStaleAccount) || !strings.Contains(err.Error(), "invalid_grant") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestResolve_refuses_a_source_that_escapes_its_directory(t *testing.T) {
 	env := rosterEnv(t)
 	if _, err := NewResolver(env).Resolve(Target{Kind: KindConfig, Source: "../../etc/passwd"}); err == nil {

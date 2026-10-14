@@ -50,6 +50,22 @@ func AccountToken(accountsDir, login string) (string, error) {
 // 401 about eleven times before giving up.
 var ErrStaleAccount = errors.New("allin: account credential unavailable")
 
+// StaleAccountError carries why a login's token could not be read. The cause
+// is what tells a missing Keychain entry from a refresh token the server
+// already retired, and only the second one is fixed by signing in again.
+type StaleAccountError struct {
+	Login string
+	Cause error
+}
+
+func (e *StaleAccountError) Error() string {
+	return fmt.Sprintf("%v: %s: %v", ErrStaleAccount, e.Login, e.Cause)
+}
+
+func (e *StaleAccountError) Is(target error) bool { return target == ErrStaleAccount }
+
+func (e *StaleAccountError) Unwrap() error { return e.Cause }
+
 // Credential is the endpoint and auth header one target needs.
 type Credential struct {
 	BaseURL string
@@ -111,8 +127,11 @@ func (r *FileResolver) Resolve(target Target) (Credential, error) {
 			r.Reconcile()
 		}
 		token, err := r.Token(AccountConfigDir(r.Env.AccountsDir, target.Source))
-		if err != nil || token == "" {
-			return Credential{}, fmt.Errorf("%w: %s", ErrStaleAccount, target.Source)
+		if err == nil && token == "" {
+			err = errors.New("the Keychain entry holds no access token")
+		}
+		if err != nil {
+			return Credential{}, &StaleAccountError{Login: target.Source, Cause: err}
 		}
 		return Credential{BaseURL: anthropicUpstream, Header: "Authorization", Value: "Bearer " + token}, nil
 	case KindConfig:

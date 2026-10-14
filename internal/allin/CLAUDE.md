@@ -660,14 +660,18 @@ two commands read the same files from the same roots. `bin/wisp-deck` passes the
 long names; see also the `Env` section above, which is what those roots must
 agree with.
 
-### Known limitation: there is no token refresh
+### A stale login's 400 carries the reason
 
-An account whose Keychain access token has expired resolves as
-`ErrStaleAccount`, and the 400 response names the login by directory so the
-user can fix it — but the fix is manual: open a wisp-deck tab on that login
-once, which makes Claude Code itself refresh the token. Nothing in this
-package attempts a refresh. This is a stated v1 decision (see "Открытые
-риски" in the spec), not a bug to fix reflexively.
+An account whose Keychain token cannot be served resolves as a
+`StaleAccountError` (which `errors.Is` `ErrStaleAccount`), and the 400 names
+the login AND the cause. The cause is the only way to tell the failures apart
+from the pane: no Keychain entry under the slot's service name, a blob that does
+not parse, no refresh token, or a refresh the server refused. Expired tokens are
+refreshed here (see "A borrowed login's OAuth token is refreshed here" below),
+so the old advice — "open a tab on that login so Claude refreshes it" — did
+nothing for any of these. Guarded by
+`TestResolve_keeps_the_reason_a_stale_account_failed` and
+`TestHandler_names_why_a_stale_account_failed`.
 
 ### `allin` is a third key in `get_claude_config_provider`'s allowlist, and it is admitted for a different reason than the other two
 

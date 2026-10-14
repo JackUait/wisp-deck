@@ -97,6 +97,18 @@ func TestHandler_reports_a_stale_account_as_400_not_401(t *testing.T) {
 	}
 }
 
+func TestHandler_names_why_a_stale_account_failed(t *testing.T) {
+	cause := &StaleAccountError{Login: "personal", Cause: errors.New("refreshing the login failed: invalid_grant")}
+	handler := NewHandler(fakeResolver{err: cause}, "http://unused.invalid")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/messages",
+		strings.NewReader(`{"model":"wisp/acct.personal/claude-opus-5"}`)))
+
+	if !strings.Contains(recorder.Body.String(), "invalid_grant") {
+		t.Fatalf("body hides the cause: %s", recorder.Body.String())
+	}
+}
+
 func TestHandler_routes_a_count_tokens_request_the_same_way(t *testing.T) {
 	var gotPath, gotAuth string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

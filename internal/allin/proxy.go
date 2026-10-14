@@ -260,10 +260,12 @@ func addBeta(header http.Header, value string) {
 func writeRoutingError(w http.ResponseWriter, target Target, err error) {
 	message := fmt.Sprintf("wisp-deck: %v", err)
 	if errors.Is(err, ErrStaleAccount) {
-		message = fmt.Sprintf(
-			"wisp-deck: the login %q has no usable credential. Open it once "+
-				"(a wisp-deck tab on that account) so Claude refreshes its token, then retry.",
-			target.Source)
+		message = fmt.Sprintf("wisp-deck: the login %q has no usable credential", target.Source)
+		var stale *StaleAccountError
+		if errors.As(err, &stale) {
+			message += fmt.Sprintf(" (%v)", stale.Cause)
+		}
+		message += ". Run /login in a wisp-deck tab on that account, then retry."
 	}
 	body, _ := json.Marshal(map[string]any{
 		"type":  "error",
