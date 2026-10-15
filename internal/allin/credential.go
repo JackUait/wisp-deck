@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jackuait/wisp-deck/internal/claudeaccount"
 	"github.com/jackuait/wisp-deck/internal/claudeconfig"
 )
 
@@ -49,6 +50,52 @@ func AccountToken(accountsDir, login string) (string, error) {
 // deterministic, so the router must surface it as 400: Claude Code retries a
 // 401 about eleven times before giving up.
 var ErrStaleAccount = errors.New("allin: account credential unavailable")
+
+// StaleAccountError is a login a turn could not get a token for. Its text is
+// the whole 400 the pane shows, so it carries the cause and the fix.
+//
+// /login writes the login of the pane it runs in, not the row's. Advice that
+// sends the user to /login in a pane on another login signs that login in
+// over its own, so the text names both logins whenever they differ.
+type StaleAccountError struct {
+	Login string
+	// PaneLogin is the label of the login this pane runs under; "" if unknown.
+	PaneLogin string
+	Own       bool
+	Err       error
+}
+
+func (e *StaleAccountError) Unwrap() []error { return []error{ErrStaleAccount, e.Err} }
+
+func (e *StaleAccountError) Error() string {
+	if !errors.Is(e.Err, ErrSignedOut) {
+		return fmt.Sprintf("the login %q could not be used (%v). Retry the turn; if it keeps failing, "+
+			"open a wisp-deck tab on %q and run /login there.", e.Login, e.Err, e.Login)
+	}
+	if e.Own {
+		return fmt.Sprintf("this pane's login %q is signed out (%v). Run /login in this pane.", e.Login, e.Err)
+	}
+	message := fmt.Sprintf("the login %q is signed out (%v). To fix it, open a wisp-deck tab on %q and run /login there.",
+		e.Login, e.Err, e.Login)
+	if e.PaneLogin != "" {
+		message += fmt.Sprintf(" Do not run /login in this pane: it signs in %q, not %q.", e.PaneLogin, e.Login)
+	}
+	return message
+}
+
+// PaneLogin names the login a pane's Claude Code runs under, from its
+// CLAUDE_CONFIG_DIR: "default" when unset, the account dir when the dir sits in
+// accountsDir, "" otherwise.
+func PaneLogin(accountsDir, configDir string) string {
+	if configDir == "" {
+		return "default"
+	}
+	clean := filepath.Clean(configDir)
+	if filepath.Dir(clean) == filepath.Clean(accountsDir) {
+		return filepath.Base(clean)
+	}
+	return ""
+}
 
 // Credential is the endpoint and auth header one target needs.
 type Credential struct {
@@ -95,10 +142,26 @@ type FileResolver struct {
 	// Reconcile puts crossed logins back in their slots before a token is
 	// read. Nil in tests, which must never reach the real home dir.
 	Reconcile func()
+	// PaneLogin is the login dir this router's pane runs under (see the
+	// PaneLogin func); "" leaves it out of the stale-login advice.
+	PaneLogin string
 }
 
 func NewResolver(env Env) *FileResolver {
 	return &FileResolver{Env: env, Token: keychainToken}
+}
+
+// loginLabel names a login dir the way its picker rows do.
+func (r *FileResolver) loginLabel(dir string) string {
+	if dir == "default" {
+		return claudeaccount.GetDefaultLabel(r.Env.DefaultLabelFile)
+	}
+	for _, account := range claudeaccount.Load(r.Env.AccountsList) {
+		if account.Dir == dir && account.Label != "" {
+			return account.Label
+		}
+	}
+	return dir
 }
 
 func (r *FileResolver) Resolve(target Target) (Credential, error) {
@@ -111,8 +174,15 @@ func (r *FileResolver) Resolve(target Target) (Credential, error) {
 			r.Reconcile()
 		}
 		token, err := r.Token(AccountConfigDir(r.Env.AccountsDir, target.Source))
-		if err != nil || token == "" {
-			return Credential{}, fmt.Errorf("%w: %s", ErrStaleAccount, target.Source)
+		if err == nil && token == "" {
+			err = errors.New("allin: the Keychain entry holds no access token")
+		}
+		if err != nil {
+			stale := &StaleAccountError{Login: r.loginLabel(target.Source), Own: r.PaneLogin == target.Source, Err: err}
+			if r.PaneLogin != "" {
+				stale.PaneLogin = r.loginLabel(r.PaneLogin)
+			}
+			return Credential{}, stale
 		}
 		return Credential{BaseURL: anthropicUpstream, Header: "Authorization", Value: "Bearer " + token}, nil
 	case KindConfig:

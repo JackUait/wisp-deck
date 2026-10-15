@@ -2,6 +2,7 @@ package allin
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -81,6 +82,76 @@ func TestResolve_reports_a_stale_account_by_name(t *testing.T) {
 	_, err := resolver.Resolve(Target{Kind: KindAccount, Source: "personal"})
 	if !errors.Is(err, ErrStaleAccount) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// staleResolver is a resolver on the default pane of a deck whose default
+// login is tagged "Work", with Token failing the way the test names.
+func staleResolver(t *testing.T, paneLogin string, tokenErr error) *FileResolver {
+	t.Helper()
+	env := rosterEnv(t)
+	env.DefaultLabelFile = filepath.Join(t.TempDir(), "claude-account-default-label")
+	if err := os.WriteFile(env.DefaultLabelFile, []byte("Work\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolver := NewResolver(env)
+	resolver.PaneLogin = paneLogin
+	resolver.Token = func(string) (string, error) { return "", tokenErr }
+	return resolver
+}
+
+// /login writes the login of the pane it runs in. Advising it from a pane on
+// another login signs that other login in and overwrites it, so the advice
+// must name the login to fix and warn off this pane.
+func TestResolve_tells_a_signed_out_login_where_to_run_login(t *testing.T) {
+	cause := fmt.Errorf("%w: the refresh token was refused: token refresh failed (400): invalid_grant", ErrSignedOut)
+	_, err := staleResolver(t, "default", cause).Resolve(Target{Kind: KindAccount, Source: "personal"})
+	if !errors.Is(err, ErrStaleAccount) || !errors.Is(err, ErrSignedOut) {
+		t.Fatalf("err = %v, want ErrStaleAccount and ErrSignedOut", err)
+	}
+	for _, want := range []string{
+		`"Personal" is signed out`,
+		"invalid_grant",
+		`open a wisp-deck tab on "Personal" and run /login there`,
+		`Do not run /login in this pane: it signs in "Work", not "Personal"`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("message lacks %q:\n%s", want, err)
+		}
+	}
+}
+
+func TestResolve_tells_a_pane_on_its_own_signed_out_login_to_run_login_here(t *testing.T) {
+	cause := fmt.Errorf("%w: it stores no refresh token", ErrSignedOut)
+	_, err := staleResolver(t, "personal", cause).Resolve(Target{Kind: KindAccount, Source: "personal"})
+	if !strings.Contains(err.Error(), "Run /login in this pane") || strings.Contains(err.Error(), "Do not run") {
+		t.Fatalf("message:\n%s", err)
+	}
+}
+
+func TestResolve_asks_for_a_retry_when_the_login_failed_for_a_passing_reason(t *testing.T) {
+	cause := errors.New("allin: refreshing the login failed: dial tcp: i/o timeout")
+	_, err := staleResolver(t, "default", cause).Resolve(Target{Kind: KindAccount, Source: "personal"})
+	if !errors.Is(err, ErrStaleAccount) {
+		t.Fatalf("err = %v, want ErrStaleAccount", err)
+	}
+	if !strings.Contains(err.Error(), "Retry") || !strings.Contains(err.Error(), "i/o timeout") ||
+		strings.Contains(err.Error(), "signed out") {
+		t.Fatalf("message:\n%s", err)
+	}
+}
+
+func TestPaneLogin_names_the_login_a_pane_runs_under(t *testing.T) {
+	accounts := "/home/u/.config/wisp-deck/claude-accounts"
+	for _, tc := range []struct{ configDir, want string }{
+		{"", "default"},
+		{accounts + "/personal", "personal"},
+		{accounts + "/personal/", "personal"},
+		{"/somewhere/else", ""},
+	} {
+		if got := PaneLogin(accounts, tc.configDir); got != tc.want {
+			t.Errorf("PaneLogin(%q) = %q, want %q", tc.configDir, got, tc.want)
+		}
 	}
 }
 

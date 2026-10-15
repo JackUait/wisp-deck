@@ -23,6 +23,19 @@ type Tokens struct {
 	ExpiresAt    int64 // ms epoch
 }
 
+// RefreshError is a refresh the token endpoint answered with a non-2xx status.
+// Code is the OAuth "error" field ("invalid_grant" means the refresh token
+// itself was refused), empty when the body carries none.
+type RefreshError struct {
+	Status int
+	Code   string
+	Body   string
+}
+
+func (e *RefreshError) Error() string {
+	return fmt.Sprintf("token refresh failed (%d): %s", e.Status, e.Body)
+}
+
 // RefreshToken exchanges a refresh token for a fresh access token. A non-2xx
 // response is returned as an error so the caller can decide whether to retire
 // the account.
@@ -47,7 +60,14 @@ func RefreshToken(endpoint, refreshToken string) (Tokens, error) {
 	defer res.Body.Close()
 	body, _ := io.ReadAll(res.Body)
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return Tokens{}, fmt.Errorf("token refresh failed (%d): %s", res.StatusCode, string(body))
+		refused := &RefreshError{Status: res.StatusCode, Body: string(body)}
+		var oauthError struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(body, &oauthError) == nil {
+			refused.Code = oauthError.Error
+		}
+		return Tokens{}, refused
 	}
 
 	var data struct {

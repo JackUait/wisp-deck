@@ -139,6 +139,8 @@ func (KeychainLogins) Lock(configDir string) (func(), error) {
 // lock serializes the refresh across every process sharing one login. The file
 // is keyed by the Keychain service name, so two logins never wait on each
 // other and the default login (which has no config dir) still gets its own.
+// The flock only excludes other wisp-deck processes, so Claude Code's own
+// refresh lock is taken under it as well.
 func (keychainCLI) lock(configDir string) (func(), error) {
 	sum := sha256.Sum256([]byte(KeychainService(configDir)))
 	path := filepath.Join(os.TempDir(), "wisp-deck-allin-refresh-"+hex.EncodeToString(sum[:])[:16]+".lock")
@@ -150,7 +152,15 @@ func (keychainCLI) lock(configDir string) (func(), error) {
 		file.Close() //nolint:errcheck -- the lock was never taken
 		return nil, err
 	}
-	return func() { file.Close() }, nil //nolint:errcheck -- closing the fd releases the lock
+	releaseClaude, err := defaultClaudeLock.acquire(claudeLockDir(configDir))
+	if err != nil {
+		file.Close() //nolint:errcheck -- closing the fd releases the lock
+		return nil, err
+	}
+	return func() {
+		releaseClaude()
+		file.Close() //nolint:errcheck -- closing the fd releases the lock
+	}, nil
 }
 
 // keychainBlob reads one login's raw entry. Both read and write go through it,

@@ -660,14 +660,50 @@ two commands read the same files from the same roots. `bin/wisp-deck` passes the
 long names; see also the `Env` section above, which is what those roots must
 agree with.
 
-### Known limitation: there is no token refresh
+### A stale login's 400 carries the cause and names where to run /login
 
-An account whose Keychain access token has expired resolves as
-`ErrStaleAccount`, and the 400 response names the login by directory so the
-user can fix it — but the fix is manual: open a wisp-deck tab on that login
-once, which makes Claude Code itself refresh the token. Nothing in this
-package attempts a refresh. This is a stated v1 decision (see "Открытые
-риски" in the spec), not a bug to fix reflexively.
+A login the router cannot get a token for resolves as a `StaleAccountError`
+(`credential.go`), and its text is the whole 400 body. It carries the real
+cause and one of three fixes:
+
+- **Signed out** (`ErrSignedOut`: the refresh answered `invalid_grant`, or the
+  entry stores no refresh token). Only a `/login` under that login's own config
+  dir fixes it. The text names that login, and adds "Do not run /login in this
+  pane" with the pane's own login whenever the two differ.
+- **The pane's own login is signed out.** Then `/login` here is the fix.
+- **Anything else** (a dropped connection, a busy lock, a failed Keychain
+  read). The text asks for a retry.
+
+The warning is load-bearing. `/login` writes the login of the pane it runs in,
+never the row's, and every All-In pane runs under `~/.claude`. On 2026-10-14 the
+old text ("Open it once so Claude refreshes its token") sent the user to
+`/login` in an All-In pane routed to `personal`: it signed the personal account
+into the Work slot, overwrote the Work login, and fixed nothing, because the
+personal slot still held its refused token.
+
+The pane's login cannot come from the router's own `CLAUDE_CONFIG_DIR`. The
+launch puts `CLAUDE_CONFIG_DIR=…` or `env -u CLAUDE_CONFIG_DIR` inside the
+`bash -c` the router wraps, so it reaches only the child claude. The router's
+own value is whatever the pane inherited. So `gt_claude_launch_wrapper` sets
+`WISP_DECK_PANE_CONFIG_DIR` on the router from `WISP_DECK_CLAUDE_ACCOUNT_DIR`,
+the variable the child's prefix is built from (empty means the default login).
+`paneLoginFromLaunch` reads it, then unsets it so the child never inherits it.
+It is an env assignment, not a flag. `lib/` reaches the dev install on every
+commit, but the binary does not, and an older binary refuses an unknown flag
+and kills the launch. Unset means an older launch and names no pane login.
+Labels come from the same sources as the picker rows, so the text matches
+`/model`. Guarded by `TestClaudeLaunch_tells_the_router_the_panes_own_login_dir`,
+`TestClaudeLaunch_tells_the_router_a_default_pane_runs_on_the_default_login`,
+`TestPaneLoginFromLaunch_reads_the_launchs_pane_dir` and
+`TestClaudeAllIn_keeps_the_pane_config_dir_out_of_the_childs_env`.
+
+Before this, `Resolve` dropped the cause and the advice was fixed. The 400 text
+is also what the transcript keeps, so the cause has to be in it, or the next
+failure cannot be diagnosed either. Guarded by
+`TestResolve_tells_a_signed_out_login_where_to_run_login`,
+`TestResolve_tells_a_pane_on_its_own_signed_out_login_to_run_login_here`,
+`TestResolve_asks_for_a_retry_when_the_login_failed_for_a_passing_reason` and
+`TestHandler_shows_the_resolvers_advice_for_a_stale_login`.
 
 ### `allin` is a third key in `get_claude_config_provider`'s allowlist, and it is admitted for a different reason than the other two
 
@@ -881,6 +917,59 @@ expiring. Three things that look optional and are not:
   service name, so two logins never wait on each other.
 - **A failed write-back does NOT fail the turn.** The rotation already happened
   upstream by then, so refusing would lose the turn without saving the login.
+
+Three more rules close the ways a rotation kills a login for good. Each rule
+answers a path that spends a refresh token the server already retired. The
+server then answers `invalid_grant` on every later refresh.
+
+- **A failed re-read under the lock fails the turn.** The copy read before the
+  lock may name a token another process already spent. The old code fell back
+  to that copy and spent it again. Guarded by
+  `TestFreshToken_never_spends_the_unlocked_copy_when_the_locked_read_fails`.
+- **A rotated pair is never thrown away.** The write-back is retried
+  (`saveAttempts`). A pair that still fails is kept in this process (`unsaved`)
+  and served and saved by a later call, but only while the Keychain still holds
+  the token it replaced. Anything else there is newer (a `/login`, or Claude
+  Code's own refresh) and wins. Guarded by
+  `TestFreshToken_keeps_a_rotated_login_it_could_not_save` and
+  `TestFreshToken_drops_a_kept_login_once_the_keychain_holds_a_newer_one`.
+- **Claude Code's own refresh lock is held too** (`claudelock.go`). The flock in
+  `$TMPDIR` only excludes other wisp-deck processes. Claude Code locks
+  `<config dir>/.oauth_refresh.lock` (`~/.claude` for the default login), so a
+  pane under that dir and the router could spend one refresh token at once.
+  An `acct.` row on the pane's own login does this on every refresh, because
+  it is `KindAccount` too. The protocol is decoded from 2.1.300's bundled
+  proper-lockfile: mkdir the dir, a holder rewrites its mtime every 5s, and a
+  lock untouched for 60s is removed with a plain rmdir and taken over. The router
+  waits up to 35s, past Claude Code's 30s refresh timeout, before it answers
+  with a retry.
+  Claude Code also writes an owner record beside the lock
+  (`.oauth_refresh.lock.owner`: pid, process start, the lock dir's birthtime),
+  so the lock dir stays empty and a plain rmdir always clears a stale one. A
+  waiting Claude Code retries 5 times, then compares the mtime over at least
+  7.5s. A changed mtime means "holder alive" and it backs off (`lock_busy`). It
+  takes a lock over early only through an owner record whose birthtime matches
+  the dir and whose pid is gone. The router writes no record, so Claude Code
+  never takes a live router's lock over (`no_owner_record`), and the 5s touch
+  reads as alive. The router touches and removes only the dir it made
+  (`os.SameFile`). If it stalls past 60s and Claude Code takes the path over,
+  touching that new dir would make Claude Code's lockfile call its own lock
+  compromised and abort its refresh.
+  Re-check the name and the timings after a claude upgrade
+  (2.1.295 to 2.1.300 all carry the name). Claude Code also takes a legacy
+  `<config dir>.lock`. The router does not. On this machine
+  `claude-accounts/personal.lock` is a stale, non-empty dir from July, which
+  Claude Code's rmdir cannot clear; it logs that and refreshes without it.
+  Guarded by `claudelock_test.go` and
+  `TestKeychainLock_holds_claude_codes_refresh_lock`.
+
+On 2026-10-14 the `personal` login died, and why is not known. The router
+refreshed it at 08:02:15Z. The next refresh, at the 8h-minus-`refreshSkew` mark
+(15:57Z), was refused, and every turn after it failed. Claude Code on that slot
+then reported "Login expired". No other wisp-deck path read that token in
+between, and the router had dropped the refresh error, which is why the 400 now
+carries it. The rules above close every wisp-deck path that could have spent
+it; they do not prove one did.
 
 The write patches the three OAuth fields into the existing blob rather than
 rebuilding it: `subscriptionType`, `scopes`, `rateLimitTier` and

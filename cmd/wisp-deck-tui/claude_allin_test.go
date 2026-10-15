@@ -82,11 +82,9 @@ func TestClaudeAllIn_runs_the_child_when_the_overlay_cannot_be_read(t *testing.T
 	}
 }
 
-// Resolve never reads DefaultLabelFile — the login's tag is display-only, and
-// this command only addresses credentials — but the flag is still wired here
-// so this Env is shaped the same as every other construction site
-// (ensure-allin, the TUI's own mutations). This just proves the flag exists
-// and does not break the launch.
+// DefaultLabelFile names the default login in Resolve's stale-login advice and
+// in the model refresher's rows. This just proves the flag exists and does not
+// break the launch.
 func TestClaudeAllIn_accepts_a_default_label_file_flag(t *testing.T) {
 	ran := false
 	command := newClaudeAllInCommand(func([]string) error { ran = true; return nil })
@@ -216,5 +214,50 @@ func TestClaudeAllIn_leaves_the_model_alone_for_an_unknown_session(t *testing.T)
 	}
 	if seen != "" {
 		t.Fatalf("child saw ANTHROPIC_MODEL=%q", seen)
+	}
+}
+
+// The launch names the pane's login in WISP_DECK_PANE_CONFIG_DIR; empty means
+// the default login, and an unset one (an older launch) names nothing.
+func TestPaneLoginFromLaunch_reads_the_launchs_pane_dir(t *testing.T) {
+	accounts := filepath.Join(t.TempDir(), "claude-accounts")
+	for _, tc := range []struct {
+		set         bool
+		value, want string
+	}{
+		{false, "", ""},
+		{true, "", "default"},
+		{true, filepath.Join(accounts, "personal"), "personal"},
+	} {
+		if tc.set {
+			t.Setenv(paneConfigDirEnv, tc.value)
+		} else {
+			t.Setenv(paneConfigDirEnv, "")
+			os.Unsetenv(paneConfigDirEnv)
+		}
+		if got := paneLoginFromLaunch(accounts); got != tc.want {
+			t.Errorf("set=%v value=%q: got %q, want %q", tc.set, tc.value, got, tc.want)
+		}
+		if _, still := os.LookupEnv(paneConfigDirEnv); still {
+			t.Errorf("set=%v value=%q: %s left for the child", tc.set, tc.value, paneConfigDirEnv)
+		}
+	}
+}
+
+// The child must not inherit it: a nested launch inside the pane would read a
+// value meant for this router.
+func TestClaudeAllIn_keeps_the_pane_config_dir_out_of_the_childs_env(t *testing.T) {
+	t.Setenv(paneConfigDirEnv, "")
+	var leaked bool
+	command := newClaudeAllInCommand(func([]string) error {
+		_, leaked = os.LookupEnv(paneConfigDirEnv)
+		return nil
+	})
+	command.SetArgs([]string{"--settings", filepath.Join(t.TempDir(), "absent.json"), "--", "true"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if leaked {
+		t.Fatalf("the child inherited %s", paneConfigDirEnv)
 	}
 }

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -46,6 +47,43 @@ func TestRefreshToken_hardErrorReported(t *testing.T) {
 	_, err := RefreshToken(srv.URL, "dead")
 	if err == nil {
 		t.Fatal("expected error on 401")
+	}
+}
+
+// A refused refresh token needs a new /login; a dropped connection only needs
+// a retry. Callers can only tell the two apart from the status and the OAuth
+// error code.
+func TestRefreshToken_reportsTheStatusAndOAuthErrorCode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":"invalid_grant","error_description":"Refresh token not found or invalid"}`))
+	}))
+	defer srv.Close()
+
+	_, err := RefreshToken(srv.URL, "dead")
+	var refused *RefreshError
+	if !errors.As(err, &refused) {
+		t.Fatalf("err = %v (%T), want a *RefreshError", err, err)
+	}
+	if refused.Status != http.StatusBadRequest || refused.Code != "invalid_grant" {
+		t.Fatalf("got status %d code %q", refused.Status, refused.Code)
+	}
+}
+
+func TestRefreshToken_reportsNoCodeForABodyThatIsNotJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(`<html>bad gateway</html>`))
+	}))
+	defer srv.Close()
+
+	_, err := RefreshToken(srv.URL, "rt")
+	var refused *RefreshError
+	if !errors.As(err, &refused) {
+		t.Fatalf("err = %v (%T), want a *RefreshError", err, err)
+	}
+	if refused.Status != http.StatusBadGateway || refused.Code != "" {
+		t.Fatalf("got status %d code %q", refused.Status, refused.Code)
 	}
 }
 

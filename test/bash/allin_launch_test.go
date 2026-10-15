@@ -266,3 +266,71 @@ func TestClaudeLaunchWrapper_drops_a_session_id_that_is_not_an_id(t *testing.T) 
 	assertExitCode(t, code, 0)
 	assertNotContains(t, out, "--resume-session")
 }
+
+// routerArgv is the router's own argv out of a printed Claude launch: the part
+// before " -- ", which is where the wrapped child's command starts.
+func routerArgv(t *testing.T, launch string) []string {
+	t.Helper()
+	got := strings.TrimSpace(launch)
+	end := strings.Index(got, " -- ")
+	if end < 0 {
+		t.Fatalf("no router in launch: %q", got)
+	}
+	return reconstructArgv(t, got[:end])
+}
+
+// paneConfigDir is the value the launch assigns WISP_DECK_PANE_CONFIG_DIR on
+// the router's own command.
+func paneConfigDir(t *testing.T, argv []string) string {
+	t.Helper()
+	const assign = "WISP_DECK_PANE_CONFIG_DIR="
+	if len(argv) == 0 || !strings.HasPrefix(argv[0], assign) {
+		t.Fatalf("router command does not start with %s: %v", assign, argv)
+	}
+	return strings.TrimPrefix(argv[0], assign)
+}
+
+// The account prefix (CLAUDE_CONFIG_DIR=… or env -u) wraps only the child
+// claude, so the router cannot read the pane's login from its own env. It is
+// told, so its stale-login advice can warn "/login here signs in <this login>".
+// It is an env assignment, not a flag: lib/ reaches the dev install on commit
+// while the binary does not, and an older binary refuses an unknown flag.
+func TestClaudeLaunch_tells_the_router_the_panes_own_login_dir(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := writeTempFile(t, dir, "overlay.json", allInPickerRow)
+	account := "/home/tester/.config/wisp-deck/claude-accounts/personal"
+	env := buildEnv(t, nil,
+		"HOME=/home/tester",
+		"WISP_DECK_CLAUDE_PROVIDER=allin",
+		"WISP_DECK_CLAUDE_SETTINGS="+settingsPath,
+		"WISP_DECK_CLAUDE_ACCOUNT_DIR="+account,
+		"WISP_DECK_RESUME=0",
+	)
+	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
+		[]string{"claude", "claude"}, env)
+	assertExitCode(t, code, 0)
+	if got := paneConfigDir(t, routerArgv(t, out)); got != account {
+		t.Fatalf("pane config dir %q, want %q", got, account)
+	}
+}
+
+// A Default pane sheds any inherited CLAUDE_CONFIG_DIR for its child, so the
+// router must hear "default" (an empty dir), not the stray value.
+func TestClaudeLaunch_tells_the_router_a_default_pane_runs_on_the_default_login(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := writeTempFile(t, dir, "overlay.json", allInPickerRow)
+	env := buildEnv(t, nil,
+		"HOME=/home/tester",
+		"CLAUDE_CONFIG_DIR=/home/tester/.config/wisp-deck/claude-accounts/personal",
+		"WISP_DECK_CLAUDE_PROVIDER=allin",
+		"WISP_DECK_CLAUDE_SETTINGS="+settingsPath,
+		"WISP_DECK_CLAUDE_ACCOUNT_DIR=",
+		"WISP_DECK_RESUME=0",
+	)
+	out, code := runBashFunc(t, "lib/tmux-session.sh", "build_ai_launch_cmd",
+		[]string{"claude", "claude"}, env)
+	assertExitCode(t, code, 0)
+	if got := paneConfigDir(t, routerArgv(t, out)); got != "" {
+		t.Fatalf("pane config dir %q, want empty (the default login)", got)
+	}
+}

@@ -75,6 +75,7 @@ func newClaudeAllInCommandWithBridge(
 			bridge := newBridge(codex, lookup)
 			resolver := allin.NewResolver(env)
 			resolver.Bridge = bridge
+			resolver.PaneLogin = paneLoginFromLaunch(env.AccountsDir)
 			observe := func(http.Header) {}
 			if currentHostEffectsDecision().Allowed {
 				refresher := &allin.ModelRefresher{
@@ -125,11 +126,29 @@ func newClaudeAllInCommandWithBridge(
 	flags.StringVar(&env.AccountsDir, "accounts-dir", "", "directory holding each login's config dir")
 	flags.StringVar(&env.ConfigsList, "configs-list", "", "name:file list of subscription profiles")
 	flags.StringVar(&env.ConfigsDir, "configs-dir", "", "directory holding the profile settings files")
-	// Resolve never reads this, but the model refresher's profile rewrite
-	// does: without it the default login's rows lose the user's tag.
+	// The model refresher's profile rewrite and Resolve's stale-login advice
+	// both read it: without it the default login loses the user's tag.
 	flags.StringVar(&env.DefaultLabelFile, "default-label-file", "",
 		"file holding the implicit Default login's custom tag")
 	return command
+}
+
+// paneConfigDirEnv is set by gt_claude_launch_wrapper (lib/tmux-session.sh) on
+// this command only. The pane's CLAUDE_CONFIG_DIR prefix wraps the child
+// claude, not this process, so this env is the only place the router learns
+// which login /login in its pane writes.
+const paneConfigDirEnv = "WISP_DECK_PANE_CONFIG_DIR"
+
+// paneLoginFromLaunch reads the pane's login dir and removes it, so the child
+// and anything nested in the pane never inherit it. Unset (an older launch)
+// names no login.
+func paneLoginFromLaunch(accountsDir string) string {
+	dir, ok := os.LookupEnv(paneConfigDirEnv)
+	if !ok {
+		return ""
+	}
+	_ = os.Unsetenv(paneConfigDirEnv)
+	return allin.PaneLogin(accountsDir, dir)
 }
 
 // sessionCodexPath resolves the Codex executable the ChatGPT bridge will exec.

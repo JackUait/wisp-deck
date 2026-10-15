@@ -67,7 +67,7 @@ opencode_adapter_prefix() {
 gt_claude_launch_wrapper() {
   local settings_path="$1" provider_marker="$2" resume_session="${3:-}"
   local config_root="${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck"
-  local settings_q accounts_list_q accounts_dir_q configs_list_q configs_dir_q label_file_q
+  local settings_q accounts_list_q accounts_dir_q configs_list_q configs_dir_q label_file_q pane_dir_q
   local resume_arg=""
 
   if [ -f "$settings_path" ] && grep -q 'wisp/acct\.\|wisp/cfg\.' "$settings_path" 2>/dev/null; then
@@ -83,8 +83,13 @@ gt_claude_launch_wrapper() {
       '' | *[!A-Za-z0-9-]*) ;;
       *) resume_arg=" --resume-session $resume_session" ;;
     esac
-    printf 'wisp-deck-tui claude-allin --settings %s --accounts-list %s --accounts-dir %s --configs-list %s --configs-dir %s --default-label-file %s%s --' \
-      "$settings_q" "$accounts_list_q" "$accounts_dir_q" "$configs_list_q" "$configs_dir_q" "$label_file_q" "$resume_arg"
+    # The account prefix only reaches the child claude, so the router is told
+    # which login /login in this pane writes (empty = default). An env
+    # assignment, not a flag: lib/ syncs on commit, the binary does not, and an
+    # older binary refuses an unknown flag.
+    printf -v pane_dir_q '%q' "${WISP_DECK_CLAUDE_ACCOUNT_DIR:-}"
+    printf 'WISP_DECK_PANE_CONFIG_DIR=%s wisp-deck-tui claude-allin --settings %s --accounts-list %s --accounts-dir %s --configs-list %s --configs-dir %s --default-label-file %s%s --' \
+      "$pane_dir_q" "$settings_q" "$accounts_list_q" "$accounts_dir_q" "$configs_list_q" "$configs_dir_q" "$label_file_q" "$resume_arg"
     return 0
   fi
 

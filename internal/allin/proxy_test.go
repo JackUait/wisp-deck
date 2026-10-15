@@ -3,6 +3,7 @@ package allin
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -94,6 +95,27 @@ func TestHandler_reports_a_stale_account_as_400_not_401(t *testing.T) {
 	}
 	if envelope.Type != "error" || envelope.Error.Type != "invalid_request_error" {
 		t.Fatalf("envelope %+v", envelope)
+	}
+}
+
+// The 400 body is all the user sees of a failed login, so it must be the
+// resolver's own advice, not a fixed line.
+func TestHandler_shows_the_resolvers_advice_for_a_stale_login(t *testing.T) {
+	stale := &StaleAccountError{Login: "Personal", PaneLogin: "Work", Err: fmt.Errorf("%w: invalid_grant", ErrSignedOut)}
+	handler := NewHandler(fakeResolver{err: stale}, "http://unused.invalid")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/messages",
+		strings.NewReader(`{"model":"wisp/acct.personal/claude-opus-5"}`)))
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status %d", recorder.Code)
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "invalid_grant") || !strings.Contains(body, `Do not run /login in this pane`) {
+		t.Fatalf("body lacks the advice: %s", body)
+	}
+	if strings.Contains(body, "Open it once") {
+		t.Fatalf("body still carries the old advice: %s", body)
 	}
 }
 
