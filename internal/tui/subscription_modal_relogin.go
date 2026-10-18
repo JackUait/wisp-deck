@@ -260,10 +260,6 @@ func (m *MainMenuModel) subscriptionSignInLines(width int, buttons func(string, 
 	state := &m.subscriptionModal.signIn
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	accent := lipgloss.NewStyle().Foreground(m.theme.Primary).Bold(true)
-	approve := "Approve the sign-in in your browser."
-	if state.email != "" {
-		approve = "Approve the sign-in in your browser as " + state.email + "."
-	}
 	status := "Waiting for the browser…"
 	switch {
 	case state.submitted:
@@ -274,7 +270,12 @@ func (m *MainMenuModel) subscriptionSignInLines(width int, buttons func(string, 
 	lines := []string{
 		dim.Bold(true).Render(modalTruncate("SIGN IN AGAIN · "+strings.ToUpper(state.label), width)),
 		"",
-		modalTruncate(approve, width),
+		modalTruncate("Approve the sign-in in your browser", width),
+	}
+	if state.email != "" {
+		lines = append(lines, modalTruncate("as "+state.email+".", width))
+	}
+	lines = append(lines,
 		dim.Render(modalTruncate("This window updates by itself when you finish.", width)),
 		"",
 		accent.Render(modalTruncate(status, width)),
@@ -283,7 +284,7 @@ func (m *MainMenuModel) subscriptionSignInLines(width int, buttons func(string, 
 		state.input.View(),
 		"",
 		buttons("[ Submit code ]", accent, "[ Cancel ]"),
-	}
+	)
 	if strings.Contains(strings.ToLower(state.lastLine), "fail") {
 		lines = append(lines, "", lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(modalTruncate(state.lastLine, width)))
 	}

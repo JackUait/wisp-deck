@@ -77,7 +77,7 @@ func signInEventFor(m *MainMenuModel, ev signInEvent) subscriptionSignInMsg {
 }
 
 func detailText(m *MainMenuModel) string {
-	return stripAnsi(strings.Join(m.subscriptionDetailLines(70, 30), "\n"))
+	return stripAnsi(strings.Join(m.subscriptionDetailLines(60, 30), "\n"))
 }
 
 func TestLoginActions_offerSignInAgainBeforeDelete(t *testing.T) {
@@ -165,13 +165,14 @@ func TestRelogin_aFailedStartIsShown(t *testing.T) {
 
 // The panel stays inside the modal and names the account to approve.
 func TestSignInPanel_asksForTheBrowserFirstAndOffersAPasteField(t *testing.T) {
+	// 60 is the details pane in the widest modal; the email must not be cut.
 	m, _, _ := newReloginMenu(t)
 	m.openSubscriptionModal()
 	putCursorOnLogin(m, 0)
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
 	m.Update(signInEventFor(m, signInEvent{url: "https://claude.com/cai/oauth/authorize?x=1"}))
 	out := detailText(m)
-	for _, want := range []string{"SIGN IN AGAIN", "work@corp.example", "browser", "paste", "[ Submit code ]", "[ Cancel ]"} {
+	for _, want := range []string{"SIGN IN AGAIN", "as work@corp.example.", "browser", "paste", "[ Submit code ]", "[ Cancel ]"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("panel missing %q:\n%s", want, out)
 		}
