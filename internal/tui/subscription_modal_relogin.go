@@ -1,11 +1,14 @@
 package tui
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,7 +22,10 @@ type ClaudeLoginFunc func(configDir, email string) *exec.Cmd
 
 // subscriptionReloginDoneMsg arrives when the sign-in process has exited and
 // the menu has the terminal back.
-type subscriptionReloginDoneMsg struct{ err error }
+type subscriptionReloginDoneMsg struct {
+	err    error
+	detail string // last line the sign-in printed
+}
 
 // SetClaudeLogin wires the sign-in runner. Left unset (tests, builds that may
 // not touch the host), the action reports it is unavailable.
@@ -77,9 +83,9 @@ func (m *MainMenuModel) startSubscriptionRelogin() tea.Cmd {
 	m.subscriptionModal.detailCursor = subscriptionDetailRelogin
 	m.subscriptionModal.err = nil
 	dir := rows[idx].Dir
-	cmd := m.claudeLogin(m.loginConfigDir(dir), m.loginPins[loginSlotKey(dir)])
-	return tea.Exec(&loginExec{Cmd: cmd}, func(err error) tea.Msg {
-		return subscriptionReloginDoneMsg{err: err}
+	login := &loginExec{Cmd: m.claudeLogin(m.loginConfigDir(dir), m.loginPins[loginSlotKey(dir)])}
+	return tea.Exec(login, func(err error) tea.Msg {
+		return subscriptionReloginDoneMsg{err: err, detail: login.lastLine()}
 	})
 }
 
@@ -87,7 +93,11 @@ func (m *MainMenuModel) applySubscriptionReloginDone(msg subscriptionReloginDone
 	m.refreshLoginIdentities()
 	m.subscriptionModal.err = nil
 	if msg.err != nil {
-		m.subscriptionModal.err = errors.New("sign-in failed: " + msg.err.Error())
+		reason := msg.err.Error()
+		if msg.detail != "" {
+			reason = msg.detail + " (" + reason + ")"
+		}
+		m.subscriptionModal.err = errors.New("sign-in failed: " + reason)
 	}
 }
 
@@ -103,13 +113,53 @@ func (m *MainMenuModel) loginMismatch(dir string) string {
 
 // loginExec gives the sign-in the terminal on stderr as well. Bubble Tea
 // passes the menu's own stderr, which the launcher captures to a file.
-type loginExec struct{ *exec.Cmd }
+// On a failure it waits for Enter: the menu redraws over the terminal the
+// moment Run returns, which would wipe the reason.
+type loginExec struct {
+	*exec.Cmd
+	in   io.Reader
+	out  io.Writer
+	tail bytes.Buffer
+}
 
-func (c *loginExec) SetStdin(r io.Reader) { c.Stdin = r }
+func (c *loginExec) SetStdin(r io.Reader) {
+	c.in = r
+	c.Stdin = r
+}
 
 func (c *loginExec) SetStdout(w io.Writer) {
-	c.Stdout = w
-	c.Stderr = w
+	c.out = w
+	tee := io.MultiWriter(w, &c.tail)
+	c.Stdout = tee
+	c.Stderr = tee
 }
 
 func (c *loginExec) SetStderr(io.Writer) {}
+
+func (c *loginExec) Run() error {
+	err := c.Cmd.Run()
+	if err != nil && c.out != nil && c.in != nil {
+		fmt.Fprintf(c.out, "\r\nSign-in failed (%v). Press Enter to return to the menu.", err)
+		buf := make([]byte, 1)
+		for {
+			if n, rerr := c.in.Read(buf); rerr != nil || (n == 1 && (buf[0] == '\n' || buf[0] == '\r')) {
+				break
+			}
+		}
+	}
+	return err
+}
+
+// lastLine is the last non-empty line the sign-in printed, without escapes.
+func (c *loginExec) lastLine() string {
+	text := ansiEscape.ReplaceAllString(c.tail.String(), "")
+	lines := strings.FieldsFunc(text, func(r rune) bool { return r == '\n' || r == '\r' })
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)`)

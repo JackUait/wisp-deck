@@ -181,6 +181,44 @@ func TestSubscriptionModalMouse_clickSignInAgain(t *testing.T) {
 	}
 }
 
+// A failed sign-in keeps its output on screen until Enter, and its last line
+// reaches the details pane, so the reason is not wiped by the menu redraw.
+func TestLoginExec_pausesAfterAFailureAndKeepsTheLastLine(t *testing.T) {
+	c := &loginExec{Cmd: exec.Command("sh", "-c", "printf 'first\\n\\033[31mOAuth error: bad code\\033[0m\\n'; exit 1")}
+	var tty strings.Builder
+	c.SetStdin(strings.NewReader("\n"))
+	c.SetStdout(&tty)
+	if err := c.Run(); err == nil {
+		t.Fatal("expected the failure")
+	}
+	if !strings.Contains(tty.String(), "Press Enter") {
+		t.Errorf("no pause prompt:\n%q", tty.String())
+	}
+	if got := c.lastLine(); got != "OAuth error: bad code" {
+		t.Errorf("lastLine = %q", got)
+	}
+}
+
+func TestLoginExec_doesNotPauseAfterASuccess(t *testing.T) {
+	c := &loginExec{Cmd: exec.Command("true")}
+	var tty strings.Builder
+	c.SetStdin(strings.NewReader(""))
+	c.SetStdout(&tty)
+	if err := c.Run(); err != nil || strings.Contains(tty.String(), "Press Enter") {
+		t.Fatalf("err=%v out=%q", err, tty.String())
+	}
+}
+
+func TestReloginDone_showsTheLastOutputLine(t *testing.T) {
+	m, _ := newReloginMenu(t)
+	m.openSubscriptionModal()
+	putCursorOnLogin(m, 0)
+	m.Update(subscriptionReloginDoneMsg{err: errors.New("exit status 1"), detail: "OAuth error: bad code"})
+	if m.subscriptionModal.err == nil || !strings.Contains(m.subscriptionModal.err.Error(), "OAuth error: bad code") {
+		t.Fatalf("err = %v", m.subscriptionModal.err)
+	}
+}
+
 // The child must get the terminal on stderr too: the menu's own stderr is a
 // file the launcher captures.
 func TestLoginExec_sendsStderrToTheTerminal(t *testing.T) {
@@ -188,7 +226,7 @@ func TestLoginExec_sendsStderrToTheTerminal(t *testing.T) {
 	var tty strings.Builder
 	c.SetStdout(&tty)
 	c.SetStderr(os.Stderr)
-	if c.Stderr != c.Stdout {
-		t.Fatal("stderr does not follow the terminal")
+	if _, err := c.Stderr.Write([]byte("x")); err != nil || tty.String() != "x" {
+		t.Fatal("stderr does not reach the terminal")
 	}
 }
