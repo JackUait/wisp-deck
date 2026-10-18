@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/jackuait/wisp-deck/internal/claudeaccount"
+	"github.com/jackuait/wisp-deck/internal/util"
 )
 
 // ClaudeLoginFunc builds the sign-in process for one login: configDir is ""
@@ -83,7 +84,10 @@ func (m *MainMenuModel) startSubscriptionRelogin() tea.Cmd {
 	m.subscriptionModal.detailCursor = subscriptionDetailRelogin
 	m.subscriptionModal.err = nil
 	dir := rows[idx].Dir
-	login := &loginExec{Cmd: m.claudeLogin(m.loginConfigDir(dir), m.loginPins[loginSlotKey(dir)])}
+	login := &loginExec{
+		Cmd:      m.claudeLogin(m.loginConfigDir(dir), m.loginPins[loginSlotKey(dir)]),
+		terminal: util.ControllingTerminalPath,
+	}
 	return tea.Exec(login, func(err error) tea.Msg {
 		return subscriptionReloginDoneMsg{err: err, detail: login.lastLine()}
 	})
@@ -120,6 +124,9 @@ type loginExec struct {
 	in   io.Reader
 	out  io.Writer
 	tail bytes.Buffer
+	// terminal names the real tty device. Bubble Tea passes its /dev/tty
+	// handle, which claude's Bun runtime rejects ("EINVAL: kqueue").
+	terminal func() (string, error)
 }
 
 func (c *loginExec) SetStdin(r io.Reader) {
@@ -137,6 +144,15 @@ func (c *loginExec) SetStdout(w io.Writer) {
 func (c *loginExec) SetStderr(io.Writer) {}
 
 func (c *loginExec) Run() error {
+	if c.terminal != nil {
+		if path, err := c.terminal(); err == nil {
+			if device, err := os.OpenFile(path, os.O_RDWR, 0); err == nil {
+				defer device.Close()
+				c.SetStdin(device)
+				c.SetStdout(device)
+			}
+		}
+	}
 	err := c.Cmd.Run()
 	if err != nil && c.out != nil && c.in != nil {
 		fmt.Fprintf(c.out, "\r\nSign-in failed (%v). Press Enter to return to the menu.", err)

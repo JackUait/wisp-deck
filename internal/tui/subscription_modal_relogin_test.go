@@ -230,3 +230,43 @@ func TestLoginExec_sendsStderrToTheTerminal(t *testing.T) {
 		t.Fatal("stderr does not reach the terminal")
 	}
 }
+
+// Bun's kqueue rejects the /dev/tty handle Bubble Tea passes, so the sign-in
+// runs on the real terminal device instead.
+func TestLoginExec_runsOnTheRealTerminalDevice(t *testing.T) {
+	device := filepath.Join(t.TempDir(), "ttys-fake")
+	if err := os.WriteFile(device, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := &loginExec{
+		Cmd:      exec.Command("sh", "-c", "echo on-device"),
+		terminal: func() (string, error) { return device, nil },
+	}
+	var passed strings.Builder
+	c.SetStdin(strings.NewReader(""))
+	c.SetStdout(&passed)
+	if err := c.Run(); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(device)
+	if !strings.Contains(string(got), "on-device") || passed.Len() != 0 {
+		t.Fatalf("device got %q, passed writer got %q", got, passed.String())
+	}
+	if c.lastLine() != "on-device" {
+		t.Errorf("lastLine = %q", c.lastLine())
+	}
+}
+
+// Without a device it falls back to what Bubble Tea passed.
+func TestLoginExec_fallsBackWhenNoDevice(t *testing.T) {
+	c := &loginExec{
+		Cmd:      exec.Command("sh", "-c", "echo fallback"),
+		terminal: func() (string, error) { return "", errors.New("none") },
+	}
+	var passed strings.Builder
+	c.SetStdin(strings.NewReader(""))
+	c.SetStdout(&passed)
+	if err := c.Run(); err != nil || !strings.Contains(passed.String(), "fallback") {
+		t.Fatalf("err=%v out=%q", err, passed.String())
+	}
+}
