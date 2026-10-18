@@ -85,7 +85,7 @@ func TestLoginActions_offerSignInAgainBeforeDelete(t *testing.T) {
 	m.openSubscriptionModal()
 	putCursorOnLogin(m, 0)
 	if got := m.subscriptionLoginActions(); len(got) != 3 || got[2] != subscriptionDetailRelogin {
-		t.Fatalf("Default actions = %v, want Use, Rename, Sign in again", got)
+		t.Fatalf("Default actions = %v, want Use, Rename, Re-login", got)
 	}
 	putCursorOnLogin(m, 1)
 	got := m.subscriptionLoginActions()
@@ -172,7 +172,7 @@ func TestSignInPanel_asksForTheBrowserFirstAndOffersAPasteField(t *testing.T) {
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
 	m.Update(signInEventFor(m, signInEvent{url: "https://claude.com/cai/oauth/authorize?x=1"}))
 	out := detailText(m)
-	for _, want := range []string{"SIGN IN AGAIN", "as work@corp.example.", "browser", "paste", "[ Submit code ]", "[ Cancel ]"} {
+	for _, want := range []string{"RE-LOGIN", "as work@corp.example.", "browser", "paste", "[ Submit code ]", "[ Cancel ]"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("panel missing %q:\n%s", want, out)
 		}
@@ -313,7 +313,7 @@ func TestLoginDetails_flagAnAccountThatDoesNotMatchThePin(t *testing.T) {
 	m.openSubscriptionModal()
 	putCursorOnLogin(m, 0)
 	out := stripAnsi(strings.Join(m.subscriptionLoginDetailLines(70, 30), "\n"))
-	for _, want := range []string{"me@home.example", "Expected work@corp.example", "[ Sign in again ]"} {
+	for _, want := range []string{"me@home.example", "Expected work@corp.example", "[ Re-login ]"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("details missing %q:\n%s", want, out)
 		}
@@ -335,7 +335,7 @@ func TestSubscriptionModalMouse_clickSignInAgain(t *testing.T) {
 	m, calls, _ := newReloginMenu(t)
 	m.openSubscriptionModal()
 	putCursorOnLogin(m, 1)
-	x, y := subscriptionCardCell(t, m, "[ Sign in again ]")
+	x, y := subscriptionCardCell(t, m, "[ Re-login ]")
 	if target := m.subscriptionModalTarget(x, y); target.kind != subscriptionHitRelogin {
 		t.Fatalf("target = %+v, want subscriptionHitRelogin", target)
 	}
@@ -417,6 +417,28 @@ func TestPTYSignIn_cancelKillsTheProcess(t *testing.T) {
 			}
 		case <-deadline:
 			t.Fatal("cancel did not end the process")
+		}
+	}
+}
+
+// The narrowest details pane (an 80-column terminal) is 45 cells wide. The
+// panel and a managed login's four actions must fit it uncut.
+func TestReloginLayout_fitsTheNarrowDetailsPane(t *testing.T) {
+	m, _, _ := newReloginMenu(t)
+	m.openSubscriptionModal()
+	putCursorOnLogin(m, 1)
+	actions := stripAnsi(strings.Join(m.subscriptionLoginDetailLines(45, 30), "\n"))
+	if !strings.Contains(actions, "[ Use ]  [ Rename ]  [ Re-login ]  [ Delete ]") {
+		t.Errorf("actions cut at 45 cells:\n%s", actions)
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	panel := stripAnsi(strings.Join(m.subscriptionDetailLines(45, 30), "\n"))
+	if strings.Contains(panel, "…") && !strings.Contains(panel, "Waiting for the browser…") && !strings.Contains(panel, "Starting sign-in…") {
+		t.Errorf("panel cut at 45 cells:\n%s", panel)
+	}
+	for _, line := range strings.Split(panel, "\n") {
+		if strings.HasSuffix(strings.TrimSpace(line), "…") && !strings.Contains(line, "Waiting") && !strings.Contains(line, "Starting") {
+			t.Errorf("cut line: %q", line)
 		}
 	}
 }

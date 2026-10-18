@@ -2678,7 +2678,7 @@ func (m *MainMenuModel) subscriptionModalTarget(cardX, cardY int) subscriptionHi
 		{"[ Use ]", subscriptionHitUse},
 		{"[ Rename ]", subscriptionHitRename},
 		{"[ Delete ]", subscriptionHitDelete},
-		{"[ Sign in again ]", subscriptionHitRelogin},
+		{"[ Re-login ]", subscriptionHitRelogin},
 		{"[ Create login ]", subscriptionHitAddLogin},
 	} {
 		if hitText(button.text) {

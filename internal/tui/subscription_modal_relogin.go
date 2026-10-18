@@ -268,7 +268,7 @@ func (m *MainMenuModel) subscriptionSignInLines(width int, buttons func(string, 
 		status = "Starting sign-in…"
 	}
 	lines := []string{
-		dim.Bold(true).Render(modalTruncate("SIGN IN AGAIN · "+strings.ToUpper(state.label), width)),
+		dim.Bold(true).Render(modalTruncate("RE-LOGIN · "+strings.ToUpper(state.label), width)),
 		"",
 		modalTruncate("Approve the sign-in in your browser", width),
 	}
@@ -276,11 +276,11 @@ func (m *MainMenuModel) subscriptionSignInLines(width int, buttons func(string, 
 		lines = append(lines, modalTruncate("as "+state.email+".", width))
 	}
 	lines = append(lines,
-		dim.Render(modalTruncate("This window updates by itself when you finish.", width)),
+		dim.Render(modalTruncate("It closes by itself when you are done.", width)),
 		"",
 		accent.Render(modalTruncate(status, width)),
 		"",
-		dim.Render(modalTruncate("If the page shows a code instead, paste it here:", width)),
+		dim.Render(modalTruncate("Or paste the code the page shows:", width)),
 		state.input.View(),
 		"",
 		buttons("[ Submit code ]", accent, "[ Cancel ]"),

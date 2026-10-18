@@ -262,7 +262,7 @@ func (m *MainMenuModel) subscriptionLoginDetailLines(width, height int) []string
 	if pin := m.loginMismatch(login.Dir); pin != "" {
 		red := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 		lines = append(lines,
-			red.Render(modalTruncate("Expected "+pin+". Sign in again with it.", width)),
+			red.Render(modalTruncate("Expected "+pin+". Re-login with it.", width)),
 			dim.Render(modalTruncate("Sign out of claude.ai in your browser first,", width)),
 			dim.Render(modalTruncate("or it may approve the wrong account again.", width)),
 		)
@@ -277,7 +277,7 @@ func (m *MainMenuModel) subscriptionLoginDetailLines(width, height int) []string
 	)
 	use := m.subscriptionActionLabel(subscriptionHitUse, subscriptionDetailUse, "[ Use ]", accent, label)
 	rename := m.subscriptionActionLabel(subscriptionHitRename, subscriptionDetailRename, "[ Rename ]", accent, label)
-	relogin := m.subscriptionActionLabel(subscriptionHitRelogin, subscriptionDetailRelogin, "[ Sign in again ]", accent, label)
+	relogin := m.subscriptionActionLabel(subscriptionHitRelogin, subscriptionDetailRelogin, "[ Re-login ]", accent, label)
 	actions := use + "  " + rename + "  " + relogin
 	if idx >= 1 {
 		actions += "  " + m.subscriptionActionLabel(subscriptionHitDelete, subscriptionDetailDelete, "[ Delete ]", accent, label)
