@@ -7,22 +7,39 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 // A login can be signed in again from its details pane. `/login` in a pane
 // routed to another login writes into the wrong slot, and the only fix is a
-// fresh sign-in under the slot's own config dir.
+// fresh sign-in under the slot's own config dir. The sign-in runs inside the
+// modal: claude finishes on its own when the browser reaches its local
+// callback, and a pasted code is the fallback.
 
 type loginCall struct {
 	configDir string
 	email     string
 }
 
-// newReloginMenu is a unified-modal menu with a recording login runner, a
-// private HOME for the Default login's .claude.json, and pinned emails.
-func newReloginMenu(t *testing.T) (*MainMenuModel, *[]loginCall) {
+type fakeSignIn struct {
+	submitted []string
+	cancelled int
+	events    chan signInEvent
+}
+
+func (f *fakeSignIn) Submit(code string) error {
+	f.submitted = append(f.submitted, code)
+	return nil
+}
+
+func (f *fakeSignIn) Cancel() { f.cancelled++ }
+
+// newReloginMenu is a unified-modal menu with a recording login builder, a
+// fake sign-in process, a private HOME for the Default login's .claude.json,
+// and pinned emails.
+func newReloginMenu(t *testing.T) (*MainMenuModel, *[]loginCall, *fakeSignIn) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -36,7 +53,12 @@ func newReloginMenu(t *testing.T) (*MainMenuModel, *[]loginCall) {
 		*calls = append(*calls, loginCall{configDir, email})
 		return exec.Command("true")
 	})
-	return m, calls
+	fake := &fakeSignIn{}
+	m.startSignIn = func(*exec.Cmd) (claudeSignIn, <-chan signInEvent, error) {
+		fake.events = make(chan signInEvent, 8)
+		return fake, fake.events, nil
+	}
+	return m, calls, fake
 }
 
 func writeIdentity(t *testing.T, file, email string) {
@@ -50,8 +72,16 @@ func writeIdentity(t *testing.T, file, email string) {
 	}
 }
 
+func signInEventFor(m *MainMenuModel, ev signInEvent) subscriptionSignInMsg {
+	return subscriptionSignInMsg{generation: m.subscriptionModal.signIn.generation, event: ev}
+}
+
+func detailText(m *MainMenuModel) string {
+	return stripAnsi(strings.Join(m.subscriptionDetailLines(70, 30), "\n"))
+}
+
 func TestLoginActions_offerSignInAgainBeforeDelete(t *testing.T) {
-	m, _ := newReloginMenu(t)
+	m, _, _ := newReloginMenu(t)
 	m.openSubscriptionModal()
 	putCursorOnLogin(m, 0)
 	if got := m.subscriptionLoginActions(); len(got) != 3 || got[2] != subscriptionDetailRelogin {
@@ -72,7 +102,7 @@ func TestLoginActions_offerSignInAgainBeforeDelete(t *testing.T) {
 
 // The Default login runs without CLAUDE_CONFIG_DIR and prefills its pin.
 func TestReloginKey_signsTheDefaultLoginInWithItsPinnedEmail(t *testing.T) {
-	m, calls := newReloginMenu(t)
+	m, calls, _ := newReloginMenu(t)
 	m.openSubscriptionModal()
 	putCursorOnLogin(m, 0)
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
@@ -82,10 +112,13 @@ func TestReloginKey_signsTheDefaultLoginInWithItsPinnedEmail(t *testing.T) {
 	if len(*calls) != 1 || (*calls)[0] != (loginCall{"", "work@corp.example"}) {
 		t.Fatalf("login calls = %+v", *calls)
 	}
+	if m.subscriptionModal.mode != subscriptionLoginSignIn {
+		t.Fatalf("mode = %v, want the in-modal sign-in", m.subscriptionModal.mode)
+	}
 }
 
 func TestReloginKey_signsAManagedLoginInUnderItsOwnDir(t *testing.T) {
-	m, calls := newReloginMenu(t)
+	m, calls, _ := newReloginMenu(t)
 	m.openSubscriptionModal()
 	putCursorOnLogin(m, 1) // Work
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
@@ -97,7 +130,7 @@ func TestReloginKey_signsAManagedLoginInUnderItsOwnDir(t *testing.T) {
 
 // A login with no pin still signs in, just without a prefilled address.
 func TestRelogin_withoutAPinPassesNoEmail(t *testing.T) {
-	m, calls := newReloginMenu(t)
+	m, calls, _ := newReloginMenu(t)
 	m.openSubscriptionModal()
 	putCursorOnLogin(m, 2) // Personal, not pinned
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
@@ -116,10 +149,165 @@ func TestRelogin_withoutARunnerExplainsItself(t *testing.T) {
 	}
 }
 
+func TestRelogin_aFailedStartIsShown(t *testing.T) {
+	m, _, _ := newReloginMenu(t)
+	m.startSignIn = func(*exec.Cmd) (claudeSignIn, <-chan signInEvent, error) {
+		return nil, nil, errors.New("no pty")
+	}
+	m.openSubscriptionModal()
+	putCursorOnLogin(m, 0)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	if m.subscriptionModal.mode != subscriptionBrowse || m.subscriptionModal.err == nil ||
+		!strings.Contains(m.subscriptionModal.err.Error(), "no pty") {
+		t.Fatalf("mode=%v err=%v", m.subscriptionModal.mode, m.subscriptionModal.err)
+	}
+}
+
+// The panel stays inside the modal and names the account to approve.
+func TestSignInPanel_asksForTheBrowserFirstAndOffersAPasteField(t *testing.T) {
+	m, _, _ := newReloginMenu(t)
+	m.openSubscriptionModal()
+	putCursorOnLogin(m, 0)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m.Update(signInEventFor(m, signInEvent{url: "https://claude.com/cai/oauth/authorize?x=1"}))
+	out := detailText(m)
+	for _, want := range []string{"SIGN IN AGAIN", "work@corp.example", "browser", "paste", "[ Submit code ]", "[ Cancel ]"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("panel missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// Pasted text goes to the input, never to the browse shortcuts (d deletes,
+// x disables, u switches login, r renames).
+func TestSignInPanel_aPastedCodeLandsInTheInput(t *testing.T) {
+	m, _, fake := newReloginMenu(t)
+	m.openSubscriptionModal()
+	putCursorOnLogin(m, 1)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	before := m.selectedAccount
+	cursor := m.subscriptionModal.profileCursor
+	code := "duxraies#Code-123"
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(code), Paste: true})
+	for _, k := range []tea.KeyType{tea.KeyUp, tea.KeyDown, tea.KeyTab} {
+		m.Update(tea.KeyMsg{Type: k})
+	}
+	if got := m.subscriptionModal.signIn.input.Value(); got != code {
+		t.Fatalf("input = %q, want %q", got, code)
+	}
+	if m.subscriptionModal.mode != subscriptionLoginSignIn || m.selectedAccount != before ||
+		m.subscriptionModal.profileCursor != cursor || len(m.claudeAccounts) != 2 {
+		t.Fatal("a key in the code ran a browse action")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if len(fake.submitted) != 1 || fake.submitted[0] != code {
+		t.Fatalf("submitted = %q", fake.submitted)
+	}
+}
+
+func TestSignInPanel_trimsTheCodeAndRefusesAnEmptyOne(t *testing.T) {
+	m, _, fake := newReloginMenu(t)
+	m.openSubscriptionModal()
+	putCursorOnLogin(m, 0)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if len(fake.submitted) != 0 {
+		t.Fatalf("empty code submitted: %q", fake.submitted)
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("  abc#1 \n"), Paste: true})
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if len(fake.submitted) != 1 || fake.submitted[0] != "abc#1" {
+		t.Fatalf("submitted = %q", fake.submitted)
+	}
+}
+
+func TestSignInPanel_escCancelsTheProcess(t *testing.T) {
+	m, _, fake := newReloginMenu(t)
+	m.openSubscriptionModal()
+	putCursorOnLogin(m, 0)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if fake.cancelled == 0 || m.subscriptionModal.mode != subscriptionBrowse {
+		t.Fatalf("cancelled=%d mode=%v", fake.cancelled, m.subscriptionModal.mode)
+	}
+	if !m.subscriptionModal.open {
+		t.Fatal("Esc during sign-in must cancel the sign-in, not close the modal")
+	}
+}
+
+func TestSignInPanel_closingTheModalCancelsTheProcess(t *testing.T) {
+	m, _, fake := newReloginMenu(t)
+	m.openSubscriptionModal()
+	putCursorOnLogin(m, 0)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m.cancelSubscriptionAuth()
+	if fake.cancelled == 0 {
+		t.Fatal("closing the modal left the sign-in running")
+	}
+}
+
+func TestSignInPanel_cancelButtonCancels(t *testing.T) {
+	m, _, fake := newReloginMenu(t)
+	m.openSubscriptionModal()
+	putCursorOnLogin(m, 0)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	x, y := subscriptionCardCell(t, m, "[ Cancel ]")
+	m.Update(subscriptionScreenMouse(m, x, y, tea.MouseActionPress, tea.MouseButtonLeft))
+	if fake.cancelled == 0 || m.subscriptionModal.mode != subscriptionBrowse {
+		t.Fatalf("cancelled=%d mode=%v", fake.cancelled, m.subscriptionModal.mode)
+	}
+}
+
+// Exit 0 ends the panel and the pane shows the account the login now holds.
+func TestSignInDone_successRefreshesTheShownAccount(t *testing.T) {
+	m, _, _ := newReloginMenu(t)
+	identity := filepath.Join(os.Getenv("HOME"), ".claude.json")
+	writeIdentity(t, identity, "me@home.example")
+	m.openSubscriptionModal()
+	putCursorOnLogin(m, 0)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	writeIdentity(t, identity, "work@corp.example")
+	m.Update(signInEventFor(m, signInEvent{done: true}))
+	if m.subscriptionModal.mode != subscriptionBrowse || m.subscriptionModal.err != nil {
+		t.Fatalf("mode=%v err=%v", m.subscriptionModal.mode, m.subscriptionModal.err)
+	}
+	out := detailText(m)
+	if !strings.Contains(out, "work@corp.example") || strings.Contains(out, "Expected") {
+		t.Errorf("identity not refreshed:\n%s", out)
+	}
+}
+
+func TestSignInDone_failureShowsClaudesMessage(t *testing.T) {
+	m, _, _ := newReloginMenu(t)
+	m.openSubscriptionModal()
+	putCursorOnLogin(m, 0)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m.Update(signInEventFor(m, signInEvent{line: "Login failed: Request failed with status code 400"}))
+	m.Update(signInEventFor(m, signInEvent{done: true, err: errors.New("exit status 1")}))
+	if m.subscriptionModal.err == nil || !strings.Contains(m.subscriptionModal.err.Error(), "status code 400") {
+		t.Fatalf("err = %v", m.subscriptionModal.err)
+	}
+}
+
+// An event from a cancelled sign-in must not end a newer one.
+func TestSignInEvents_fromAnOldSignInAreIgnored(t *testing.T) {
+	m, _, _ := newReloginMenu(t)
+	m.openSubscriptionModal()
+	putCursorOnLogin(m, 0)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	stale := signInEventFor(m, signInEvent{done: true, err: errors.New("killed")})
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m.Update(stale)
+	if m.subscriptionModal.mode != subscriptionLoginSignIn || m.subscriptionModal.err != nil {
+		t.Fatalf("stale event ended the new sign-in: mode=%v err=%v", m.subscriptionModal.mode, m.subscriptionModal.err)
+	}
+}
+
 // The details pane names the signed-in account and flags one that does not
 // match the pin, which is how a crossed login shows up.
 func TestLoginDetails_flagAnAccountThatDoesNotMatchThePin(t *testing.T) {
-	m, _ := newReloginMenu(t)
+	m, _, _ := newReloginMenu(t)
 	writeIdentity(t, filepath.Join(os.Getenv("HOME"), ".claude.json"), "me@home.example")
 	m.openSubscriptionModal()
 	putCursorOnLogin(m, 0)
@@ -132,7 +320,7 @@ func TestLoginDetails_flagAnAccountThatDoesNotMatchThePin(t *testing.T) {
 }
 
 func TestLoginDetails_matchingAccountHasNoWarning(t *testing.T) {
-	m, _ := newReloginMenu(t)
+	m, _, _ := newReloginMenu(t)
 	writeIdentity(t, filepath.Join(os.Getenv("HOME"), ".claude.json"), "Work@Corp.example")
 	m.openSubscriptionModal()
 	putCursorOnLogin(m, 0)
@@ -142,33 +330,8 @@ func TestLoginDetails_matchingAccountHasNoWarning(t *testing.T) {
 	}
 }
 
-// After the sign-in returns, the pane re-reads the identity it shows.
-func TestReloginDone_refreshesTheShownAccount(t *testing.T) {
-	m, _ := newReloginMenu(t)
-	identity := filepath.Join(os.Getenv("HOME"), ".claude.json")
-	writeIdentity(t, identity, "me@home.example")
-	m.openSubscriptionModal()
-	putCursorOnLogin(m, 0)
-	writeIdentity(t, identity, "work@corp.example")
-	m.Update(subscriptionReloginDoneMsg{})
-	out := stripAnsi(strings.Join(m.subscriptionLoginDetailLines(70, 30), "\n"))
-	if !strings.Contains(out, "work@corp.example") || strings.Contains(out, "Expected") {
-		t.Errorf("identity not refreshed:\n%s", out)
-	}
-}
-
-func TestReloginDone_showsAFailure(t *testing.T) {
-	m, _ := newReloginMenu(t)
-	m.openSubscriptionModal()
-	putCursorOnLogin(m, 0)
-	m.Update(subscriptionReloginDoneMsg{err: errors.New("exit status 1")})
-	if m.subscriptionModal.err == nil || !strings.Contains(m.subscriptionModal.err.Error(), "exit status 1") {
-		t.Fatalf("err = %v", m.subscriptionModal.err)
-	}
-}
-
 func TestSubscriptionModalMouse_clickSignInAgain(t *testing.T) {
-	m, calls := newReloginMenu(t)
+	m, calls, _ := newReloginMenu(t)
 	m.openSubscriptionModal()
 	putCursorOnLogin(m, 1)
 	x, y := subscriptionCardCell(t, m, "[ Sign in again ]")
@@ -181,92 +344,78 @@ func TestSubscriptionModalMouse_clickSignInAgain(t *testing.T) {
 	}
 }
 
-// A failed sign-in keeps its output on screen until Enter, and its last line
-// reaches the details pane, so the reason is not wiped by the menu redraw.
-func TestLoginExec_pausesAfterAFailureAndKeepsTheLastLine(t *testing.T) {
-	c := &loginExec{Cmd: exec.Command("sh", "-c", "printf 'first\\n\\033[31mOAuth error: bad code\\033[0m\\n'; exit 1")}
-	var tty strings.Builder
-	c.SetStdin(strings.NewReader("\n"))
-	c.SetStdout(&tty)
-	if err := c.Run(); err == nil {
-		t.Fatal("expected the failure")
-	}
-	if !strings.Contains(tty.String(), "Press Enter") {
-		t.Errorf("no pause prompt:\n%q", tty.String())
-	}
-	if got := c.lastLine(); got != "OAuth error: bad code" {
-		t.Errorf("lastLine = %q", got)
-	}
-}
-
-func TestLoginExec_doesNotPauseAfterASuccess(t *testing.T) {
-	c := &loginExec{Cmd: exec.Command("true")}
-	var tty strings.Builder
-	c.SetStdin(strings.NewReader(""))
-	c.SetStdout(&tty)
-	if err := c.Run(); err != nil || strings.Contains(tty.String(), "Press Enter") {
-		t.Fatalf("err=%v out=%q", err, tty.String())
-	}
-}
-
-func TestReloginDone_showsTheLastOutputLine(t *testing.T) {
-	m, _ := newReloginMenu(t)
-	m.openSubscriptionModal()
-	putCursorOnLogin(m, 0)
-	m.Update(subscriptionReloginDoneMsg{err: errors.New("exit status 1"), detail: "OAuth error: bad code"})
-	if m.subscriptionModal.err == nil || !strings.Contains(m.subscriptionModal.err.Error(), "OAuth error: bad code") {
-		t.Fatalf("err = %v", m.subscriptionModal.err)
-	}
-}
-
-// The child must get the terminal on stderr too: the menu's own stderr is a
-// file the launcher captures.
-func TestLoginExec_sendsStderrToTheTerminal(t *testing.T) {
-	c := &loginExec{Cmd: exec.Command("true")}
-	var tty strings.Builder
-	c.SetStdout(&tty)
-	c.SetStderr(os.Stderr)
-	if _, err := c.Stderr.Write([]byte("x")); err != nil || tty.String() != "x" {
-		t.Fatal("stderr does not reach the terminal")
-	}
-}
-
-// Bun's kqueue rejects the /dev/tty handle Bubble Tea passes, so the sign-in
-// runs on the real terminal device instead.
-func TestLoginExec_runsOnTheRealTerminalDevice(t *testing.T) {
-	device := filepath.Join(t.TempDir(), "ttys-fake")
-	if err := os.WriteFile(device, nil, 0o600); err != nil {
+// The real process side: claude prints its link inside an OSC 8 hyperlink,
+// then a prompt with no newline, reads a line, and exits.
+func TestPTYSignIn_reportsTheLinkThePromptAndTheExit(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "code")
+	script := `printf 'Opening browser to sign in\342\200\246\r\nIf the browser didn'"'"'t open, visit: \033]8;;https://claude.com/cai/oauth/authorize?code=true&x=1\a\033[94mhttps://claude.com/cai/oauth/authorize?code=true&x=1\033[39m\033]8;;\a\r\nPaste code here if prompted > '; read -r code; printf '%s' "$code" > ` + out + `; echo 'Login failed: bad'; exit 1`
+	handle, events, err := startPTYSignIn(exec.Command("sh", "-c", script))
+	if err != nil {
 		t.Fatal(err)
 	}
-	c := &loginExec{
-		Cmd:      exec.Command("sh", "-c", "echo on-device"),
-		terminal: func() (string, error) { return device, nil },
+	var url string
+	var prompted bool
+	deadline := time.After(10 * time.Second)
+	for !prompted || url == "" {
+		select {
+		case ev := <-events:
+			if ev.url != "" {
+				url = ev.url
+			}
+			prompted = prompted || ev.prompt
+			if ev.done {
+				t.Fatalf("exited before the prompt: %v", ev.err)
+			}
+		case <-deadline:
+			t.Fatalf("no link/prompt: url=%q prompted=%v", url, prompted)
+		}
 	}
-	var passed strings.Builder
-	c.SetStdin(strings.NewReader(""))
-	c.SetStdout(&passed)
-	if err := c.Run(); err != nil {
+	if url != "https://claude.com/cai/oauth/authorize?code=true&x=1" {
+		t.Errorf("url = %q", url)
+	}
+	if err := handle.Submit("abc#1"); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := os.ReadFile(device)
-	if !strings.Contains(string(got), "on-device") || passed.Len() != 0 {
-		t.Fatalf("device got %q, passed writer got %q", got, passed.String())
-	}
-	if c.lastLine() != "on-device" {
-		t.Errorf("lastLine = %q", c.lastLine())
+	var last string
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				t.Fatal("events closed without done")
+			}
+			if ev.line != "" {
+				last = ev.line
+			}
+			if ev.done {
+				if ev.err == nil || last != "Login failed: bad" {
+					t.Fatalf("done err=%v last=%q", ev.err, last)
+				}
+				if got, _ := os.ReadFile(out); string(got) != "abc#1" {
+					t.Fatalf("child read %q", got)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("no exit")
+		}
 	}
 }
 
-// Without a device it falls back to what Bubble Tea passed.
-func TestLoginExec_fallsBackWhenNoDevice(t *testing.T) {
-	c := &loginExec{
-		Cmd:      exec.Command("sh", "-c", "echo fallback"),
-		terminal: func() (string, error) { return "", errors.New("none") },
+func TestPTYSignIn_cancelKillsTheProcess(t *testing.T) {
+	handle, events, err := startPTYSignIn(exec.Command("sh", "-c", "trap '' INT; sleep 30"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	var passed strings.Builder
-	c.SetStdin(strings.NewReader(""))
-	c.SetStdout(&passed)
-	if err := c.Run(); err != nil || !strings.Contains(passed.String(), "fallback") {
-		t.Fatalf("err=%v out=%q", err, passed.String())
+	handle.Cancel()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok || ev.done {
+				return
+			}
+		case <-deadline:
+			t.Fatal("cancel did not end the process")
+		}
 	}
 }

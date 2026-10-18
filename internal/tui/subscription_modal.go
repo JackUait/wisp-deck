@@ -76,6 +76,7 @@ const (
 	subscriptionDiscardConfirm
 	subscriptionLoginName
 	subscriptionPickModel
+	subscriptionLoginSignIn
 )
 
 const (
@@ -204,6 +205,8 @@ type subscriptionModalState struct {
 	// The All-In profile's picker checklist, reloaded on selection and on
 	// every toggle. Empty for every other profile.
 	allIn subscriptionAllInState
+	// The in-modal `claude auth login` for a login row.
+	signIn subscriptionSignInState
 }
 
 type subscriptionProfile struct {
@@ -535,6 +538,7 @@ func (m *MainMenuModel) setSubscriptionAuthResult(
 }
 
 func (m *MainMenuModel) cancelSubscriptionAuth() {
+	m.cancelSubscriptionSignIn()
 	auth := &m.subscriptionModal.auth
 	if auth.cancel != nil {
 		auth.cancel()
@@ -561,6 +565,9 @@ func (m *MainMenuModel) moveSubscriptionLifecycleAction(delta int) {
 }
 
 func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.subscriptionModal.mode == subscriptionLoginSignIn {
+		return m.updateSubscriptionSignIn(msg)
+	}
 	if m.subscriptionModal.mode == subscriptionEditKey {
 		return m.updateSubscriptionKeyInput(msg)
 	}
@@ -1771,6 +1778,8 @@ func (m *MainMenuModel) subscriptionLifecycleLines(width, height int) []string {
 			"",
 			buttons("[ Delete ]", danger, "[ Cancel ]"),
 		)
+	case subscriptionLoginSignIn:
+		lines = append(lines, m.subscriptionSignInLines(width, buttons)...)
 	case subscriptionDiscardConfirm:
 		lines = append(lines,
 			danger.Render("DISCARD UNSAVED CHANGES?"),
@@ -2247,7 +2256,7 @@ func (m *MainMenuModel) subscriptionDetailLines(width, height int) []string {
 	switch m.subscriptionModal.mode {
 	case subscriptionEditKey, subscriptionEditField, subscriptionAddProvider,
 		subscriptionAddName, subscriptionRename, subscriptionDeleteConfirm,
-		subscriptionDiscardConfirm, subscriptionLoginName:
+		subscriptionDiscardConfirm, subscriptionLoginName, subscriptionLoginSignIn:
 		return m.subscriptionLifecycleLines(width, height)
 	}
 
@@ -2512,6 +2521,8 @@ func (m *MainMenuModel) subscriptionLifecycleLabels() (confirm, cancel string) {
 		return "[ Delete ]", "[ Cancel ]"
 	case subscriptionDiscardConfirm:
 		return "[ Discard ]", "[ Keep editing ]"
+	case subscriptionLoginSignIn:
+		return "[ Submit code ]", "[ Cancel ]"
 	default:
 		return "", ""
 	}
