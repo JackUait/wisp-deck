@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jackuait/wisp-deck/internal/models"
@@ -141,7 +142,7 @@ func runMainMenu(cmd *cobra.Command, args []string) error {
 	}
 	// Wired here, not in buildMainMenuModel: tests drive that builder, and a
 	// key press there must never start a real sign-in.
-	if currentHostEffectsDecision().Allowed {
+	if claudeLoginAllowed(testing.Testing(), os.Getenv(wispDeckTestingEnvironment)) {
 		model.SetClaudeLogin(claudeLoginCommand)
 	}
 

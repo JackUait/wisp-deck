@@ -18,6 +18,13 @@ func claudeLoginCommand(configDir, email string) *exec.Cmd {
 	return cmd
 }
 
+// claudeLoginAllowed refuses only tests. It does not use the host-effects
+// decision: that one denies any process under /usr/bin/login, which runs as
+// root, so a user cannot read its arguments.
+func claudeLoginAllowed(testBinary bool, testEnvironment string) bool {
+	return !testBinary && testEnvironment != "1"
+}
+
 func claudeLoginArgs(email string) []string {
 	args := []string{"auth", "login", "--claudeai"}
 	if email != "" {

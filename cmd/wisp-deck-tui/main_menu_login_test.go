@@ -48,3 +48,23 @@ func TestClaudeLoginArgs(t *testing.T) {
 		t.Errorf("email: %v", got)
 	}
 }
+
+// A menu opened from a terminal tab runs under /usr/bin/login, a root process
+// whose arguments a user cannot read, so the host-effects ancestry check
+// denies it. Sign-in is a key the user pressed, so only tests are refused.
+func TestClaudeLoginAllowed(t *testing.T) {
+	cases := []struct {
+		testBinary bool
+		env        string
+		want       bool
+	}{
+		{false, "", true},
+		{true, "", false},
+		{false, "1", false},
+	}
+	for _, c := range cases {
+		if got := claudeLoginAllowed(c.testBinary, c.env); got != c.want {
+			t.Errorf("claudeLoginAllowed(%v, %q) = %v, want %v", c.testBinary, c.env, got, c.want)
+		}
+	}
+}
