@@ -45,6 +45,7 @@ const (
 	subscriptionDetailDelete
 	subscriptionDetailSave
 	subscriptionDetailUse
+	subscriptionDetailRelogin
 	// Appended last on purpose: moveSubscriptionDetail treats the span from
 	// Rename to Save as the action row, so a value inserted above Rename would
 	// drag the action buttons into the field list.
@@ -101,6 +102,7 @@ const (
 	subscriptionHitLogin
 	subscriptionHitAddLogin
 	subscriptionHitUse
+	subscriptionHitRelogin
 )
 
 type subscriptionHitTarget struct {
@@ -328,6 +330,7 @@ func (m *MainMenuModel) openSubscriptionModal() tea.Cmd {
 	// (SetActiveClaudeConfig has no disk counterpart of its own).
 	m.ensureAllIn()
 	m.claudeConfigs = LoadClaudeConfigsList(m.claudeConfigsList)
+	m.refreshLoginIdentities()
 	m.subscriptionModal = subscriptionModalState{
 		open:           true,
 		pane:           subscriptionProfilesPane,
@@ -735,6 +738,10 @@ func (m *MainMenuModel) updateSubscriptionModal(msg tea.KeyMsg) (tea.Model, tea.
 					m.moveSubscriptionDetail(1)
 				} else {
 					m.moveSubscriptionProfile(1)
+				}
+			case 'i':
+				if m.subscriptionModalOnLoginRow() {
+					return m, m.startSubscriptionRelogin()
 				}
 			case 'u':
 				if m.subscriptionModalOnLoginRow() {
@@ -1368,6 +1375,8 @@ func (m *MainMenuModel) activateSubscriptionDetail() (tea.Model, tea.Cmd) {
 		return m, m.beginSubscriptionKeyEdit()
 	case subscriptionDetailUse:
 		m.useSubscriptionLogin()
+	case subscriptionDetailRelogin:
+		return m, m.startSubscriptionRelogin()
 	case subscriptionDetailRename:
 		if m.subscriptionModalOnLoginRow() {
 			m.startSubscriptionLoginRename()
@@ -2658,6 +2667,7 @@ func (m *MainMenuModel) subscriptionModalTarget(cardX, cardY int) subscriptionHi
 		{"[ Use ]", subscriptionHitUse},
 		{"[ Rename ]", subscriptionHitRename},
 		{"[ Delete ]", subscriptionHitDelete},
+		{"[ Sign in again ]", subscriptionHitRelogin},
 		{"[ Create login ]", subscriptionHitAddLogin},
 	} {
 		if hitText(button.text) {
@@ -2780,6 +2790,8 @@ func (m *MainMenuModel) handleSubscriptionModalMouse(msg tea.MouseMsg) (tea.Mode
 		case subscriptionHitUse:
 			m.subscriptionModal.detailCursor = subscriptionDetailUse
 			m.useSubscriptionLogin()
+		case subscriptionHitRelogin:
+			return m, m.startSubscriptionRelogin()
 		case subscriptionHitProvider:
 			m.subscriptionModal.providerCursor = target.index
 			return m, m.beginSubscriptionAddName()

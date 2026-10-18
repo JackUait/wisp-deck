@@ -165,6 +165,9 @@ func loginSlots(opts ReconcileOptions) []loginSlot {
 	return slots
 }
 
+// StateEmail is the account email a login's .claude.json records, or "".
+func StateEmail(file string) string { return stateEmail(file) }
+
 func stateEmail(file string) string {
 	data, err := os.ReadFile(file)
 	if err != nil {

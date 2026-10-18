@@ -34,7 +34,7 @@ func (m *MainMenuModel) openSubscriptionModalLoginAdd() tea.Cmd {
 // subscriptionLoginActions lists the details-pane action rows for the login
 // under the cursor. The implicit Default login cannot be deleted.
 func (m *MainMenuModel) subscriptionLoginActions() []int {
-	actions := []int{subscriptionDetailUse, subscriptionDetailRename}
+	actions := []int{subscriptionDetailUse, subscriptionDetailRename, subscriptionDetailRelogin}
 	if m.subscriptionModalLoginIndex() >= 1 {
 		actions = append(actions, subscriptionDetailDelete)
 	}
@@ -251,7 +251,21 @@ func (m *MainMenuModel) subscriptionLoginDetailLines(width, height int) []string
 		subscriptionSectionLine("CONNECTION", width, dim.Bold(true), dim),
 		valueRow("Config dir", dirText, dim),
 		valueRow("Status", status, statusStyle),
-		dim.Render("Signs in on first launch under this login."),
+	}
+	account := m.loginEmails[loginSlotKey(login.Dir)]
+	if account == "" {
+		lines = append(lines, valueRow("Account", "not signed in", dim))
+		lines = append(lines, dim.Render("Signs in on first launch under this login."))
+	} else {
+		lines = append(lines, valueRow("Account", account, label))
+	}
+	if pin := m.loginMismatch(login.Dir); pin != "" {
+		red := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+		lines = append(lines,
+			red.Render(modalTruncate("Expected "+pin+". Sign in again with it.", width)),
+			dim.Render(modalTruncate("Sign out of claude.ai in your browser first,", width)),
+			dim.Render(modalTruncate("or it may approve the wrong account again.", width)),
+		)
 	}
 	if m.subscriptionModal.err != nil {
 		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("196")).
@@ -263,7 +277,8 @@ func (m *MainMenuModel) subscriptionLoginDetailLines(width, height int) []string
 	)
 	use := m.subscriptionActionLabel(subscriptionHitUse, subscriptionDetailUse, "[ Use ]", accent, label)
 	rename := m.subscriptionActionLabel(subscriptionHitRename, subscriptionDetailRename, "[ Rename ]", accent, label)
-	actions := use + "  " + rename
+	relogin := m.subscriptionActionLabel(subscriptionHitRelogin, subscriptionDetailRelogin, "[ Sign in again ]", accent, label)
+	actions := use + "  " + rename + "  " + relogin
 	if idx >= 1 {
 		actions += "  " + m.subscriptionActionLabel(subscriptionHitDelete, subscriptionDetailDelete, "[ Delete ]", accent, label)
 	}

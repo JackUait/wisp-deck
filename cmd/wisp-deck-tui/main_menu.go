@@ -139,6 +139,11 @@ func runMainMenu(cmd *cobra.Command, args []string) error {
 	) {
 		model.SetSoundPreview(mainMenuSoundPreview)
 	}
+	// Wired here, not in buildMainMenuModel: tests drive that builder, and a
+	// key press there must never start a real sign-in.
+	if currentHostEffectsDecision().Allowed {
+		model.SetClaudeLogin(claudeLoginCommand)
+	}
 
 	appModel := tui.NewAppModel(model)
 	// All-motion (not just cell-motion) so hover events arrive without a button

@@ -341,6 +341,9 @@ type MainMenuModel struct {
 	codexPath         string         // absolute Codex executable used for ChatGPT auth
 	chatGPTAuthCheck  chatGPTAuthCheckFunc
 	chatGPTAuthLogin  chatGPTAuthLoginFunc
+	claudeLogin       ClaudeLoginFunc
+	loginEmails       map[string]string // slot key -> account its .claude.json records
+	loginPins         map[string]string // slot key -> email claude-account-emails pins
 
 	// Claude account (native login) selection state
 	claudeAccounts         []ClaudeAccount // Default is implicit index 0, not stored here
@@ -2536,6 +2539,10 @@ func (m *MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case subscriptionAuthLoginMsg:
 		return m, m.applySubscriptionAuthLogin(msg)
+
+	case subscriptionReloginDoneMsg:
+		m.applySubscriptionReloginDone(msg)
+		return m, nil
 
 	case statsLoadedMsg:
 		m.statsMonths = msg.months
