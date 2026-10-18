@@ -223,6 +223,17 @@ func (m *MainMenuModel) renderSettingsBox() string {
 	wakeStyle := lipgloss.NewStyle().Foreground(wakeColor)
 	itemLines[m.keepAwakeRowIndex()] = []string{m.renderSettingsItem(m.keepAwakeRowIndex(), "Keep awake while working", wakeState, wakeStyle, primaryBoldStyle, leftBorder, rightBorder)}
 
+	// Remote control item: Claude's own auto-connect setting, shared by every
+	// account, so sessions show up in the Claude app and on claude.ai/code.
+	rcColor := lipgloss.Color("241") // gray when off
+	rcState := "[Off]"
+	if m.RemoteControlEnabled() {
+		rcColor = lipgloss.Color("114") // green when on
+		rcState = "[On]"
+	}
+	rcStyle := lipgloss.NewStyle().Foreground(rcColor)
+	itemLines[rowRemoteControl] = []string{m.renderSettingsItem(rowRemoteControl, "Remote control", rcState, rcStyle, primaryBoldStyle, leftBorder, rightBorder)}
+
 	// Emit each section: a header row (blank-separated from the prior section)
 	// followed by its item rows in visual order. The initial emptyRow above stands
 	// in for the blank before the first header.

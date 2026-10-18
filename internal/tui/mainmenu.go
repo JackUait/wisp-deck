@@ -358,6 +358,9 @@ type MainMenuModel struct {
 	autoSwitchFile string // flag file path for persistence
 	keepAwake      string // "on" or "off" — hold the kernel sleep veto while an agent works
 
+	claudeSettingsFile string // Claude Code's shared settings.json; "" disables the Remote control row
+	remoteControl      bool
+
 	// About panel: a small credit card opened with 'a' on the Settings tab and
 	// closed with Esc. Purely informational — no selectable rows.
 	aboutOpen bool
@@ -1506,20 +1509,21 @@ func (m *MainMenuModel) CycleTab(direction string) {
 // tail rows were derived arithmetically from the row count, so appending a row
 // silently aimed ↵-on-Account at the Auto-switch toggle.
 const (
-	rowMascot       = 0
-	rowTabTitle     = 1
-	rowIdleSound    = 2
-	rowTheme        = 3
-	rowUsageBars    = 4
-	rowSubscription = 5
-	rowAutoSwitch   = 6
-	rowAITools      = 7
-	rowKeepAwake    = 8
-	rowTabBar       = 9
+	rowMascot        = 0
+	rowTabTitle      = 1
+	rowIdleSound     = 2
+	rowTheme         = 3
+	rowUsageBars     = 4
+	rowSubscription  = 5
+	rowAutoSwitch    = 6
+	rowAITools       = 7
+	rowKeepAwake     = 8
+	rowTabBar        = 9
+	rowRemoteControl = 10
 )
 
 // settingsItemCount returns the number of settings rows.
-func (m *MainMenuModel) settingsItemCount() int { return rowTabBar + 1 }
+func (m *MainMenuModel) settingsItemCount() int { return rowRemoteControl + 1 }
 
 // autoSwitchRowIndex is the index of the Auto-switch toggle.
 func (m *MainMenuModel) autoSwitchRowIndex() int { return rowAutoSwitch }
@@ -1544,7 +1548,7 @@ func (m *MainMenuModel) settingsSections() []settingsSection {
 	account = append(account, rowAutoSwitch)
 	return []settingsSection{
 		{title: "Appearance", indices: appearance},
-		{title: "Tools", indices: []int{rowAITools}},
+		{title: "Tools", indices: []int{rowAITools, rowRemoteControl}},
 		{title: "Notifications", indices: []int{rowIdleSound}},
 		{title: "Power", indices: []int{rowKeepAwake}},
 		{title: "Account", indices: account},
@@ -1640,6 +1644,28 @@ func (m *MainMenuModel) CycleKeepAwake() {
 		m.keepAwake = "on"
 	}
 	m.persistSetting("keep_awake", m.keepAwake)
+}
+
+// RemoteControlEnabled reports whether new Claude sessions connect to Remote
+// Control at startup.
+func (m *MainMenuModel) RemoteControlEnabled() bool { return m.remoteControl }
+
+// SetClaudeSettingsFile points the Remote control row at Claude's settings
+// file and loads its current value.
+func (m *MainMenuModel) SetClaudeSettingsFile(path string) {
+	m.claudeSettingsFile = path
+	m.remoteControl = readRemoteControl(path)
+}
+
+// CycleRemoteControl flips Claude's remoteControlAtStartup. The row changes
+// only when the write lands, so it never shows a value Claude will not see.
+func (m *MainMenuModel) CycleRemoteControl() {
+	if m.claudeSettingsFile == "" {
+		return
+	}
+	if writeRemoteControl(m.claudeSettingsFile, !m.remoteControl) == nil {
+		m.remoteControl = !m.remoteControl
+	}
 }
 
 // readAutoSwitch reads the on/off flag file; anything other than "on" is off.
@@ -3005,6 +3031,8 @@ func (m *MainMenuModel) settingsEnter() (tea.Model, tea.Cmd) {
 		m.CycleAutoSwitch()
 	case m.keepAwakeRowIndex():
 		m.CycleKeepAwake()
+	case rowRemoteControl:
+		m.CycleRemoteControl()
 	}
 	return m, nil
 }
@@ -3030,6 +3058,8 @@ func (m *MainMenuModel) settingsValueRight() tea.Cmd {
 		m.CycleAutoSwitch()
 	case m.keepAwakeRowIndex():
 		m.CycleKeepAwake()
+	case rowRemoteControl:
+		m.CycleRemoteControl()
 	}
 	return nil
 }
@@ -3055,6 +3085,8 @@ func (m *MainMenuModel) settingsValueLeft() tea.Cmd {
 		m.CycleAutoSwitch()
 	case m.keepAwakeRowIndex():
 		m.CycleKeepAwake()
+	case rowRemoteControl:
+		m.CycleRemoteControl()
 	}
 	return nil
 }

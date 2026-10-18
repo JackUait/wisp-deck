@@ -65,7 +65,7 @@ func TestRenderSettingsBox_hidesCreditByDefault(t *testing.T) {
 		t.Errorf("settings footer missing 'a about' hint:\n%s", out)
 	}
 	// Adding a shortcut must not add a selectable row.
-	if got := m.settingsItemCount(); got != rowTabBar+1 {
+	if got := m.settingsItemCount(); got != rowRemoteControl+1 {
 		t.Errorf("settingsItemCount changed to %d; About is a shortcut, not a row", got)
 	}
 }
@@ -108,7 +108,7 @@ func TestSettingsItemOrder_groupsAppearanceThenSections(t *testing.T) {
 	got := m.settingsItemOrder()
 	// Appearance, Tools, Notifications, Power, Account.
 	want := []int{rowMascot, rowTabTitle, rowTabBar, rowTheme, rowUsageBars,
-		rowAITools, rowIdleSound, rowKeepAwake, rowSubscription, rowAutoSwitch}
+		rowAITools, rowRemoteControl, rowIdleSound, rowKeepAwake, rowSubscription, rowAutoSwitch}
 	if len(got) != len(want) {
 		t.Fatalf("settingsItemOrder len=%d want %d: %v", len(got), len(want), got)
 	}
@@ -127,8 +127,12 @@ func TestSettingsStep_movesInVisualOrder(t *testing.T) {
 		t.Fatalf("down from Usage bars → %d, want %d (AI tools)", m.settingsSelected, rowAITools)
 	}
 	m.settingsStep(1, false)
+	if m.settingsSelected != rowRemoteControl {
+		t.Fatalf("down from AI tools → %d, want %d (Remote control)", m.settingsSelected, rowRemoteControl)
+	}
+	m.settingsStep(1, false)
 	if m.settingsSelected != 2 {
-		t.Fatalf("down from AI tools → %d, want 2 (Idle sound)", m.settingsSelected)
+		t.Fatalf("down from Remote control → %d, want 2 (Idle sound)", m.settingsSelected)
 	}
 	m.settingsStep(1, false)
 	if m.settingsSelected != rowKeepAwake {

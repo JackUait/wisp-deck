@@ -67,6 +67,8 @@ select_project_interactive() {
   cmd_args+=("--tab-bar" "$tab_bar")
   cmd_args+=("--keep-awake" "$keep_awake")
   cmd_args+=("--settings-file" "$settings_file")
+  # Every Claude account links its settings.json to this one file.
+  cmd_args+=("--claude-settings-file" "$HOME/.claude/settings.json")
   # The Settings → AI tools panel installs a tool by sourcing lib/install.sh, so
   # tell the menu where lib/ lives. WISP_DECK_LIB_DIR is only exported inside a
   # running session; the launcher path derives it from this module's location.

@@ -18,16 +18,17 @@ func rowTestMenu() *MainMenuModel {
 // settingsItemCount()-2, an equality that held only by coincidence.
 func TestSettingsRowConstants_are_distinct_and_contiguous(t *testing.T) {
 	rows := map[string]int{
-		"mascot":       rowMascot,
-		"tabTitle":     rowTabTitle,
-		"idleSound":    rowIdleSound,
-		"theme":        rowTheme,
-		"usageBars":    rowUsageBars,
-		"subscription": rowSubscription,
-		"autoSwitch":   rowAutoSwitch,
-		"aiTools":      rowAITools,
-		"keepAwake":    rowKeepAwake,
-		"tabBar":       rowTabBar,
+		"mascot":        rowMascot,
+		"tabTitle":      rowTabTitle,
+		"idleSound":     rowIdleSound,
+		"theme":         rowTheme,
+		"usageBars":     rowUsageBars,
+		"subscription":  rowSubscription,
+		"autoSwitch":    rowAutoSwitch,
+		"aiTools":       rowAITools,
+		"keepAwake":     rowKeepAwake,
+		"tabBar":        rowTabBar,
+		"remoteControl": rowRemoteControl,
 	}
 	seen := map[int]string{}
 	max := -1
@@ -81,8 +82,8 @@ func TestSettingsSections_include_a_Tools_section_with_the_ai_tools_row(t *testi
 			continue
 		}
 		found = true
-		if len(s.indices) != 1 || s.indices[0] != rowAITools {
-			t.Errorf("Tools section indices = %v, want [%d]", s.indices, rowAITools)
+		if len(s.indices) != 2 || s.indices[0] != rowAITools || s.indices[1] != rowRemoteControl {
+			t.Errorf("Tools section indices = %v, want [%d %d]", s.indices, rowAITools, rowRemoteControl)
 		}
 	}
 	if !found {

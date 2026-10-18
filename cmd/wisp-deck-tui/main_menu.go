@@ -36,6 +36,7 @@ var (
 	mainMenuUpdateVer              string
 	mainMenuSoundName              string
 	mainMenuSettingsFile           string
+	mainMenuClaudeSettingsFile     string
 	mainMenuSoundFile              string
 	mainMenuClaudeConfigFile       string
 	mainMenuClaudeConfigsList      string
@@ -67,6 +68,7 @@ func init() {
 	mainMenuCmd.Flags().StringVar(&mainMenuUpdateVer, "update-version", "", "Optional update notification version")
 	mainMenuCmd.Flags().StringVar(&mainMenuSoundName, "sound-name", "", "Sound name for notifications (empty = off)")
 	mainMenuCmd.Flags().StringVar(&mainMenuSettingsFile, "settings-file", "", "Path to settings file for persistence")
+	mainMenuCmd.Flags().StringVar(&mainMenuClaudeSettingsFile, "claude-settings-file", "", "Claude Code settings.json the Remote control row edits")
 	mainMenuCmd.Flags().StringVar(&mainMenuSoundFile, "sound-file", "", "Path to sound features JSON file for persistence")
 	mainMenuCmd.Flags().StringVar(&mainMenuClaudeConfigFile, "claude-config-file", "", "Path to active Claude config pointer file")
 	mainMenuCmd.Flags().StringVar(&mainMenuClaudeConfigsList, "claude-configs-list", "", "Path to Claude configs list (name:file)")
@@ -192,6 +194,9 @@ func buildMainMenuModel() (*tui.MainMenuModel, error) {
 	model.SetTabTitle(mainMenuTabTitle)
 	model.SetTabBar(mainMenuTabBar)
 	model.SetKeepAwake(mainMenuKeepAwake)
+	if mainMenuClaudeSettingsFile != "" {
+		model.SetClaudeSettingsFile(mainMenuClaudeSettingsFile)
+	}
 	model.SetSoundName(resolveMainMenuSoundName(mainMenuSoundName, mainMenuSoundFile))
 	model.SetProjectsFile(mainMenuProjectsFile)
 	if mainMenuAIToolFile != "" {

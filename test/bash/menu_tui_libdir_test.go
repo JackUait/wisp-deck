@@ -111,3 +111,35 @@ select_project_interactive `+dir+`/projects || true
 	}
 	t.Fatalf("menu-tui.sh did not pass --codex: %v", args)
 }
+
+// The Remote control row edits Claude's shared settings.json. The menu learns
+// that path only from this flag, so tests that walk the rows never touch HOME.
+func TestMenuTui_passes_claude_settings_file_to_the_main_menu(t *testing.T) {
+	dir := t.TempDir()
+	argLog := filepath.Join(dir, "args")
+	binDir := mockCommand(t, dir, "wisp-deck-tui",
+		fmt.Sprintf(`printf '%%s\n' "$@" > %q; echo '{"selected":false}'`, argLog))
+	mockCommand(t, dir, "jq", `echo "false"`)
+	env := buildEnv(t, []string{binDir}, "XDG_CONFIG_HOME="+dir, "HOME="+dir)
+	writeTempFile(t, dir, "projects", "app:/tmp/app\n")
+
+	runBashSnippet(t, `
+error(){ :; }
+AI_TOOLS_AVAILABLE=(claude)
+source `+projectRoot(t)+`/lib/menu-tui.sh
+select_project_interactive `+dir+`/projects || true
+`, env)
+
+	raw, _ := os.ReadFile(argLog)
+	args := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	want := filepath.Join(dir, ".claude", "settings.json")
+	for i, a := range args {
+		if a == "--claude-settings-file" && i+1 < len(args) {
+			if args[i+1] != want {
+				t.Errorf("--claude-settings-file = %q, want %q", args[i+1], want)
+			}
+			return
+		}
+	}
+	t.Fatalf("no --claude-settings-file in args: %v", args)
+}
