@@ -361,6 +361,10 @@ fi
 # every lib it calls to remember its own `2>/dev/null`. fd 3 keeps the real
 # terminal for the one thing the user must still see: tmux failing to start at
 # all, below — after which there is no UI left to protect.
+#
+# Every job backgrounded below must close fd 3 (`3>&-`). A job that keeps it
+# holds the caller's stderr open after the wrapper exits, so anything reading
+# the wrapper's output to EOF waits for that job too.
 exec 3>&2
 _WD_ERROR_LOG="$SHARE_DIR/logs/${SESSION_NAME}.log"
 gt_mute_terminal_stderr "$_WD_ERROR_LOG"
@@ -411,7 +415,7 @@ fi
 # otherwise be the session terminal, where the AI tool is drawing a full-screen
 # UI, and these jobs keep running for the whole session. Nothing reads it.
 # (stderr already goes to the session log — see gt_mute_terminal_stderr above.)
-gt_focus_ai_pane_when_ready "$TMUX_CMD" "$SESSION_NAME" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
+gt_focus_ai_pane_when_ready "$TMUX_CMD" "$SESSION_NAME" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" 3>&- &
 WATCHER_PID=$!
 
 # Reap holders left by sessions that died without running their trap (SIGKILL,
@@ -437,6 +441,7 @@ cleanup() {
   # machine unable to sleep is worse than leaving a temp file behind.
   keep_awake_drop "${XDG_CONFIG_HOME:-$HOME/.config}/wisp-deck" "$SESSION_NAME" 2>/dev/null || true
   [ -n "${HEARTBEAT_PID:-}" ] && kill_tree "$HEARTBEAT_PID" TERM 2>/dev/null || true
+  [ -n "${HEAL_WATCHER_PID:-}" ] && kill "$HEAL_WATCHER_PID" 2>/dev/null || true
   cleanup_tmux_session "$SESSION_NAME" "$WATCHER_PID" "$TMUX_CMD"
   attention_cleanup "${WISP_DECK_ATTENTION_ROOT:-}" 2>/dev/null || true
   rm -f "$SHARE_DIR/spare-${SESSION_NAME}.conf"
@@ -693,7 +698,8 @@ _gt_panes_file="$WISP_DECK_ATTENTION_ROOT/launch-panes"
 # rebuilds missing panes once the window has real space and exits the moment
 # the three-pane layout exists.
 gt_ensure_panes_watch "$TMUX_CMD" "$SESSION_NAME" "$PROJECT_DIR" \
-  "$AI_LAUNCH_CMD" "$_spare_cmd" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
+  "$AI_LAUNCH_CMD" "$_spare_cmd" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" 3>&- &
+HEAL_WATCHER_PID=$!
 
 # A restored window names its conversation at once, so a snapshot taken before
 # the first statusline render still records it. Claude only: the snapshot reads
@@ -818,7 +824,7 @@ start_tab_title_watcher "$SESSION_NAME" "$PROJECT_NAME" "$_tab_title_setting" "$
 # Wisp Deck sessions. Backgrounded lib function, not an inline loop: each tick
 # re-sources the lib in a throwaway bash, so snapshot fixes reach sessions
 # already running.
-run_snapshot_heartbeat "$_WRAPPER_DIR" "$TMUX_CMD" "$WISP_DECK_SNAPSHOT" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
+run_snapshot_heartbeat "$_WRAPPER_DIR" "$TMUX_CMD" "$WISP_DECK_SNAPSHOT" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" 3>&- &
 HEARTBEAT_PID=$!
 
 # Drag-dropping a screenshot onto a specific tmux pane is unreliable: tmux
@@ -854,7 +860,7 @@ _ledger_hover_setup="bash -c 'source \"$_WRAPPER_DIR/lib/ledger-hover.sh\" && le
 _wd_first_index=0
 case "${_q_first:-}" in '' | *[!0-9]*) ;; *) _wd_first_index="$_q_first" ;; esac
 if [ "$RESTORE_MODE" -eq 1 ] && [ -n "${WISP_DECK_RESUME_LAYOUT:-}" ]; then
-  restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$WISP_DECK_RESUME_LAYOUT" "" "" "" "$_wd_first_index" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
+  restore_layout_watch "$TMUX_CMD" "$SESSION_NAME" "$WISP_DECK_RESUME_LAYOUT" "" "" "" "$_wd_first_index" >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" 3>&- &
 fi
 
 # Restore the session's other tab-view windows, each at its old index with its
@@ -881,7 +887,7 @@ if [ "$RESTORE_MODE" -eq 1 ] && { [ -n "${_q_windows:-}" ] || [ "$_wd_first_inde
       '' | *[!0-9]*) ;;
       *) "$TMUX_CMD" select-window -t "=${SESSION_NAME//[.:]/_}:$_q_active" ;;
     esac
-  } >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" &
+  } >/dev/null 2>>"${WISP_DECK_ERROR_LOG:-/dev/null}" 3>&- &
 fi
 
 # Tab view actions. Server-global binds must never bake a session name —
